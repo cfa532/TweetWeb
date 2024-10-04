@@ -1,20 +1,5 @@
 import { defineStore } from 'pinia';
 
-interface User {
-    avatar: string;
-    username: string;
-    alias: string;
-    profile: string;
-}
-
-interface Tweet {
-    tweetId: string;
-    user: User;
-    content: string;
-    media: string[];
-    timestamp: string;
-}
-
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[]
@@ -26,5 +11,3 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     }
 });
-
-export type { Tweet, User };

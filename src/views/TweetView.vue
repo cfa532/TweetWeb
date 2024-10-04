@@ -1,5 +1,5 @@
-<script setup>
-import { useTweetStore, type Tweet, type User } from "@/stores/tweetStore";
+<script setup lang="ts">
+import { useTweetStore } from "@/stores/tweetStore";
 
 const tweet = defineProps < { tweet: Tweet } > (); // Typed props
 const formattedTime = computed(() => {

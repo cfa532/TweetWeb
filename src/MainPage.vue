@@ -1,7 +1,7 @@
-<script lang="ts" setup>
+<script setup lang="ts">
 import { onMounted } from 'vue';
-import { useTweetStore } from "@/stores/tweetStore.ts";
-import TweetView from "@/views/TweetView.vue"
+import { useTweetStore } from "@/stores/tweetStore";
+import { TweetView } from "@/views/TweetView.vue"
 
 const tweetStore = useTweetStore();
 tweetStore.tweets = [
@@ -10,6 +10,7 @@ tweetStore.tweets = [
             avatar: 'https://example.com/avatar.jpg',
             username: 'John Doe',
             alias: 'johndoe',
+            profile: "Good one"
         },
         content: 'This is a sample tweet content.',
         media: [
