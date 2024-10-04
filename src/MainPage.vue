@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useTweetStore } from "@/stores/tweetStore";
-import { TweetView } from "@/views/TweetView.vue"
+import { TweetView } from "@/views"
 
 const tweetStore = useTweetStore();
 tweetStore.tweets = [
     {
+        tweetId: "dfdghdfdbzdfbdrtndgrbsdfgserfva",
         user: {
             avatar: 'https://example.com/avatar.jpg',
             username: 'John Doe',
             alias: 'johndoe',
-            profile: "Good one"
+            profile: undefined,
         },
         content: 'This is a sample tweet content.',
         media: [
@@ -26,9 +27,8 @@ onMounted(()=> {
 </script>
 
 <template>
-    <div class="container mt-5">
-        <TweetView v-for="(tweet, index) in tweetStore.tweets" :key="index"></TweetView>
-    </div>
+    <TweetView v-for="(tweet, index) in tweetStore.tweets" :tweet="tweet" :key="index" />
 </template>
 
-<style scoped></style>
+<style scoped>
+</style>

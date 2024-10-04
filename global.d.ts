@@ -11,5 +11,5 @@ interface Tweet {
     user: User;
     content: string | undefined;
     media: string[] | undefined;
-    timestamp: string | undefined;
+    timestamp: string | number;
 }

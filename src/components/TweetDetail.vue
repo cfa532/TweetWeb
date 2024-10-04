@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
-import { useTweetStore, type Tweet, type User } from '@/stores/tweetStore';
+import { useTweetStore } from '@/stores/tweetStore';
 
 const route = useRoute();
 const tweetStore = useTweetStore();
@@ -37,7 +37,7 @@ onMounted(()=> {
                     </div>
                     <div class="card-body">
                         <p class="card-text">{{ tweet.content }}</p>
-                        <div v-if="tweet.media.length" class="media-attachments">
+                        <div v-if="tweet.media?.length" class="media-attachments">
                             <img v-for="(media, index) in tweet.media" :key="index" :src="media"
                                 class="img-fluid mb-2" />
                         </div>
