@@ -4,7 +4,7 @@ import MainPage from '@/MainPage.vue';
 
 const routes = [
   { path: '/', name:"main", component: MainPage},
-  { path: '/tweet/:userId/:tweetId',
+  { path: '/tweet/:tweetId',
     name: 'TweetDetail',
     component: TweetDetail,
     props: true

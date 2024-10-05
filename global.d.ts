@@ -1,15 +1,42 @@
+interface Window {
+    mmInfo: any       // add to window obj for testing convenience
+    getParam: any
+    hprose: any
+    lapi: any         // Leither api handler
+}
 
 interface User {
-    avatar: string | undefined;
+    mid: string;
+    avatar?: string;
     username: string;
-    alias: string | undefined;
-    profile: string | undefined;
+    alias?: string;
+    profile?: string;
+
+    likeCount?: number;
+    bookmarkCount?: number;
+    retweetCount?: number;
+    commentCount?: number;
 }
 
 interface Tweet {
-    tweetId: string;
-    user: User;
-    content: string | undefined;
-    media: string[] | undefined;
-    timestamp: string | number;
+    mid: string;
+    author: User;
+    content?: string;
+    attachments?: string[];
+    timestamp?: string | number;
+    originalTweetId?: string;
+    originalTweet?: Tweet;
+    originalAuthor?: User;
+    comments?: Tweet[];
+    client?: any;
+}
+
+interface ScorePair {
+    score: number
+    member: string
+}
+
+interface FVPair {
+    field: string
+    value: any
 }
