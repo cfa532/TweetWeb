@@ -12,7 +12,6 @@ export const useTweetListStore = defineStore('tweetStore', {
         // Load tweets of a list of followed User IDs
         async loadTweets() {
             this.followings.forEach(async uid => {
-                console.log(uid)
                 let author = await this.getUser(uid)
                 if (!author) return
                 let ts = await this.getTweetListByUser(author)
@@ -32,8 +31,9 @@ export const useTweetListStore = defineStore('tweetStore', {
                     if (t.originalTweetId) {
                         t.originalTweet = await this.getTweet(t.originalTweetId)
                     }
-                    console.log(t)
-                    this.tweets = this.tweets.concat(t)
+                    if (this.tweets.findIndex(e => e.mid === t.mid) === -1) {
+                        this.tweets = this.tweets.concat(t);
+                    }
                 })
             })
         },
@@ -149,7 +149,6 @@ export const useTweetListStore = defineStore('tweetStore', {
             }) as any[]
             // comment type if a different Tweet type from the definition in this app
             comments.forEach(async e => {
-                console.log(e)
                 let author = await this.getUser(e.authorId)
                 if (author) {
                     tweet.comments?.push({
@@ -162,7 +161,6 @@ export const useTweetListStore = defineStore('tweetStore', {
                         })
                     })
                 }
-                console.log(tweet)
             })
         },
 

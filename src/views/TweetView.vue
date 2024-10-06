@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import { useRouter } from 'vue-router';
+import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const props = defineProps<{ tweet: Tweet; }>();
-const formattedTime = computed(() => {
-    const date = new Date(props.tweet.timestamp as string);
-    return date.toLocaleString();
-});
 
 onMounted(() => {
     console.log("In TweetView");
@@ -21,13 +18,13 @@ function openDetailView() {
 </script>
 
 <template>
-    <div class="card" style="width: 40rem;" @click="openDetailView">
+    <div class="card" @click="openDetailView">
         <div class="card-header d-flex align-items-start">
             <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="50"
                 height="50" />
             <div>
                 <h5 class="mb-0">{{ tweet.author.name }}</h5>
-                <small class="text-muted">@{{ tweet.author.username }} - {{ formattedTime }}</small>
+                <small class="text-muted">@{{ tweet.author.username }} - {{ formatTimeDifference(tweet.timestamp as number) }}</small>
             </div>
         </div>
         <div class="card-body">
@@ -46,7 +43,7 @@ function openDetailView() {
 
 .card {
     width: 100%;
-    margin-bottom: 10px;
+    margin-bottom: 15px;
 }
 
 .card-wrapper {
