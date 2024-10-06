@@ -9,7 +9,7 @@ interface User {
     mid: string;
     avatar?: string;
     username: string;
-    alias?: string;
+    name?: string;
     profile?: string;
 
     likeCount?: number;
@@ -31,7 +31,8 @@ interface Tweet {
     originalTweet?: Tweet;
     originalAuthor?: User;
     comments?: Tweet[];
-    client?: any;       // Hprose client handler
+
+    provider?: string;       // Hprose client handler
 }
 
 interface ScorePair {

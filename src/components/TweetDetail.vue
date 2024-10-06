@@ -17,11 +17,9 @@ onMounted(async ()=> {
     } else {
         tweet.value = JSON.parse(tweet.value)
     }
-    comments.value = tweet.value.comments
+    await tweetStore.loadComments(tweet.value)
 });
-function loadComments() {
 
-}
 function formattedTime(t: number){
     const date = new Date(t);
     return date.toLocaleString();
@@ -37,8 +35,8 @@ function formattedTime(t: number){
                         <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="50"
                             height="50">
                         <div>
-                            <h5 class="mb-0">{{ tweet.author.username }}</h5>
-                            <small class="text-muted">@{{ tweet.author.alias }} - {{ formattedTime(tweet.timestamp as number) }}</small>
+                            <h5 class="mb-0">{{ tweet.author.name }}</h5>
+                            <small class="text-muted">@{{ tweet.author.username }} - {{ formattedTime(tweet.timestamp as number) }}</small>
                         </div>
                     </div>
                     <div class="card-body">
@@ -52,13 +50,13 @@ function formattedTime(t: number){
                 <div v-else>
                     <p>Loading tweet...</p>
                 </div>
-                <div v-for="(comment, index) in tweet.commetns" :key="index"  class="comment card mb-3">
+                <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index"  class="comment card mb-3">
                     <div class="card-header d-flex align-items-center">
                         <img :src="comment.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="50"
                             height="50">
                         <div>
-                            <h5 class="mb-0">{{ comment.author.username }}</h5>
-                            <small class="text-muted">@{{ comment.author.alias }} - {{ formattedTime(comment.timestamp as number) }}</small>
+                            <h5 class="mb-0">{{ comment.author.name }}</h5>
+                            <small class="text-muted">@{{ comment.author.username }} - {{ formattedTime(comment.timestamp as number) }}</small>
                         </div>
                     </div>
                     <div class="card-body">

@@ -12,6 +12,7 @@ export const useTweetListStore = defineStore('tweetStore', {
         // Load tweets of a list of followed User IDs
         async loadTweets() {
             this.followings.forEach(async uid=>{
+                console.log(uid)
                 let author = await this.getUser(uid)
                 if (!author) return
                 let ts = await this.getTweetListByUser(author)
@@ -22,12 +23,14 @@ export const useTweetListStore = defineStore('tweetStore', {
                     if (this.tweets.find(e=>{e.mid==t.mid}))
                         return
                     t.author = author
+                    t.provider = author.provider
                     t.attachments = t.attachments?.map(e=>{
-                        return this.getMediaUrl(e, "http://"+author.provider!)
+                        return this.getMediaUrl(e, "http://"+author.provider)
                     })
                     if (t.originalTweetId) {
                         t.originalTweet = await this.getTweet(t.originalTweetId)
                     }
+                    console.log(t)
                     this.tweets = this.tweets.concat(t)
                 })
             })
@@ -49,6 +52,7 @@ export const useTweetListStore = defineStore('tweetStore', {
             if (tweet) return tweet
 
             tweet = await this.fetchTweet(tweetId)
+            console.log(tweet, tweetId)
             if (!tweet) return
 
             if (tweet?.originalTweetId) {
@@ -74,22 +78,24 @@ export const useTweetListStore = defineStore('tweetStore', {
             let tweetInDB = await providerClient.RunMApp("get_tweet", {
                 aid: this.lapi.appId,
                 ver: "last",
-                tweetId: tweetId,
-                userId: "0000000000000000000000000000000",  // just a placeholder
+                tweetid: tweetId,
+                userid: "0000000000000000000000000000000",  // just a placeholder
             })
+            console.log(tweetInDB)
             // get author data of the tweet.
             let author = await this.getUser(tweetInDB.authorId)
             if (!author) return
 
             let tweet = {
                 mid : tweetInDB.mid,
+                timestamp: tweetInDB.timestamp,
                 author : author,
                 content : tweetInDB.content,
                 attachments : tweetInDB.attachments?.map((e:string)=>{
                     return this.getMediaUrl(e, "http://"+providerIp)
                 }),
                 originalTweetId : tweetInDB.originalTweetId,
-                client: providerClient
+                provider: providerIp
             }
             this.tweets.push(tweet)
             return tweet
@@ -102,8 +108,8 @@ export const useTweetListStore = defineStore('tweetStore', {
 
             let providerIp = await this.getProviderIp(this.lapi.client, userId)
             if (!providerIp) return
-
             let providerClient = this.lapi.getClient(providerIp)
+
             author = await providerClient.RunMApp("get_user_core_data", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -128,8 +134,12 @@ export const useTweetListStore = defineStore('tweetStore', {
             })
         },
 
-        async getComments(tweet: Tweet): Promise<Tweet[] | undefined> {
-            let comments = tweet.client.RunMApp("get_comments", {
+        async loadComments(tweet: Tweet) {
+            console.log(tweet)
+            if (!tweet.provider) return
+
+            let client = this.lapi.getClient(tweet.provider)
+            let comments = client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
                 tweetid: tweet.mid,
@@ -137,10 +147,10 @@ export const useTweetListStore = defineStore('tweetStore', {
             }) as Tweet[]
             comments.forEach(async e=>{
                 let c = await this.getTweet(e.mid)
+                console.log(e, c)
                 if (c)
                     tweet.comments?.push(c)
             })
-            return
         },
 
         getMediaUrl(mid: string | undefined, baseUrl: string): string {

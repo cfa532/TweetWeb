@@ -14,19 +14,20 @@ onMounted(() => {
 });
 function openDetailView() {
   // Route to the tweet detail page using the tweet ID
+  console.log("open detail view")
   sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
   router.push(`/tweet/${props.tweet.mid}`);
 };
 </script>
 
 <template>
-    <div class="card" style="width: 40rem;" @onclick="openDetailView">
+    <div class="card" style="width: 40rem;" @click="openDetailView">
         <div class="card-header d-flex align-items-start">
             <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="50"
                 height="50" />
             <div>
-                <h5 class="mb-0">{{ tweet.author.username }}</h5>
-                <small class="text-muted">@{{ tweet.author.alias }} - {{ formattedTime }}</small>
+                <h5 class="mb-0">{{ tweet.author.name }}</h5>
+                <small class="text-muted">@{{ tweet.author.username }} - {{ formattedTime }}</small>
             </div>
         </div>
         <div class="card-body">
@@ -44,7 +45,8 @@ function openDetailView() {
 }
 
 .card {
-    width: 100%
+    width: 100%;
+    margin-bottom: 10px;
 }
 
 .card-wrapper {
