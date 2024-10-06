@@ -19,8 +19,27 @@ onMounted(async () => {
     }
     await tweetStore.loadComments(tweet.value)
 });
-function downloadApk() {
-    
+async function downloadApk() {
+    let url = await tweetStore.getDownloadLink()
+    if (!url) return
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.blob(); // Convert the response to a Blob
+        })
+        .then(blob => {
+            const link = document.createElement('a');
+            link.href = window.URL.createObjectURL(blob);
+            link.download = 'downloaded-file.apk';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        })
+        .catch(error => {
+            console.error('There was a problem with the fetch operation:', error);
+        });
 }
 </script>
 

@@ -6,7 +6,7 @@ export const useTweetListStore = defineStore('tweetStore', {
         tweets: [] as Tweet[],
         authors: [] as User[],
         followings: ["yifT_a-gWN9-JXsJ6P7gqizKMDM", "agvvgWJmmXtji5FLTt768Plu3He"],
-        lapi: useLeitherStore(),
+        leitherStore: useLeitherStore(),
     }),
     actions: {
         // Load tweets of a list of followed User IDs
@@ -40,7 +40,7 @@ export const useTweetListStore = defineStore('tweetStore', {
 
         async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
             return await author.client.RunMApp("get_tweets", {
-                aid: this.lapi.appId,
+                aid: this.leitherStore.appId,
                 ver: "last",
                 userid: author.mid,
                 start: Date.now(),
@@ -72,13 +72,13 @@ export const useTweetListStore = defineStore('tweetStore', {
         async fetchTweet(tweetId: string): Promise<Tweet | undefined> {
 
             // Get IP address of the provider of this tweet
-            let providerIp = await this.getProviderIp(this.lapi.client, tweetId)
+            let providerIp = await this.getProviderIp(this.leitherStore.client, tweetId)
             if (!providerIp) return
-            let providerClient = this.lapi.getClient(providerIp)
+            let providerClient = this.leitherStore.getClient(providerIp)
 
             // Get tweet data from Mimei. Its definition is different from this app.
             let tweetInDB = await providerClient.RunMApp("get_tweet", {
-                aid: this.lapi.appId,
+                aid: this.leitherStore.appId,
                 ver: "last",
                 tweetid: tweetId,
                 userid: "0000000000000000000000000000000",  // just a placeholder
@@ -112,12 +112,12 @@ export const useTweetListStore = defineStore('tweetStore', {
             let author = this.authors.find(e => { e.mid == userId })
             if (author) return author
 
-            let providerIp = await this.getProviderIp(this.lapi.client, userId)
+            let providerIp = await this.getProviderIp(this.leitherStore.client, userId)
             if (!providerIp) return
-            let providerClient = this.lapi.getClient(providerIp)
+            let providerClient = this.leitherStore.getClient(providerIp)
 
             author = await providerClient.RunMApp("get_user_core_data", {
-                aid: this.lapi.appId,
+                aid: this.leitherStore.appId,
                 ver: "last",
                 userid: userId,
             })
@@ -134,7 +134,7 @@ export const useTweetListStore = defineStore('tweetStore', {
         // Given a mimie Id, find IP of its best provider
         async getProviderIp(client: any, mid: string): Promise<string | undefined> {
             return await client.RunMApp("get_provider", {
-                aid: this.lapi.appId,
+                aid: this.leitherStore.appId,
                 ver: "last",
                 mid: mid,
             })
@@ -143,9 +143,9 @@ export const useTweetListStore = defineStore('tweetStore', {
         async loadComments(tweet: Tweet) {
             if (!tweet.provider) return
 
-            let client = this.lapi.getClient(tweet.provider)
+            let client = this.leitherStore.getClient(tweet.provider)
             let comments = client.RunMApp("get_comments", {
-                aid: this.lapi.appId,
+                aid: this.leitherStore.appId,
                 ver: "last",
                 tweetid: tweet.mid,
                 userid: "00000000000000000000000000",
@@ -175,10 +175,10 @@ export const useTweetListStore = defineStore('tweetStore', {
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
 
-        getDownloadLink(): string {
-            return this.lapi.client.RunMApp("download_upgrade", {
-                aid: this.lapi.appId, ver:"last"
-            })
+        async getDownloadLink(): Promise<string | undefined> {
+            return await this.leitherStore.client.RunMApp("download_upgrade", {
+                aid: this.leitherStore.appId, ver:"last"}
+            )
         }
     }
 });
