@@ -5,52 +5,58 @@ export const useTweetListStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
         authors: [] as User[],
-        fullowings: ["yifT_a-gWN9-JXsJ6P7gqizKMDM", "agvvgWJmmXtji5FLTt768Plu3He"],
+        followings: ["yifT_a-gWN9-JXsJ6P7gqizKMDM", "agvvgWJmmXtji5FLTt768Plu3He"],
         lapi: useLeitherStore(),
     }),
     actions: {
+        // Load tweets of a list of followed User IDs
         async loadTweets() {
-            this.fullowings.forEach(async uid=>{
+            this.followings.forEach(async uid=>{
                 let author = await this.getUser(uid)
                 if (!author) return
-                let ts = await this.getTweetListByUserId(uid)
+                let ts = await this.getTweetListByUser(author)
                 if (!ts) return
+
+                // Each tweet does not have its author data yet.
                 ts.forEach(async t=>{
                     if (this.tweets.find(e=>{e.mid==t.mid}))
                         return
                     t.author = author
+                    t.attachments = t.attachments?.map(e=>{
+                        return this.getMediaUrl(e, "http://"+author.provider!)
+                    })
                     if (t.originalTweetId) {
                         t.originalTweet = await this.getTweet(t.originalTweetId)
-                        if (t.originalTweet)
-                            t.originalAuthor = t.originalTweet.author
                     }
                     this.tweets = this.tweets.concat(t)
                 })
             })
         },
-        async getTweetListByUserId(authorId: string): Promise<Tweet[] | undefined> {
-            // Get IP address of the provider of this user
-            let providerIp = await this.getProviderIp(this.lapi.client, authorId)
-            if (!providerIp) return
-            let providerClient = this.lapi.getClient(providerIp)
 
-            return await providerClient.RunMApp("get_tweets", {
+        async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
+            return await author.client.RunMApp("get_tweets", {
                 aid: this.lapi.appId,
                 ver: "last",
-                userid: authorId,
+                userid: author.mid,
                 start: Date.now(),
                 end: Date.now() - 2592000000
             })
         },
+
+        // Given only tweet ID, find it full data.
         async getTweet(tweetId: string): Promise<Tweet | undefined> {
-            let tweet = await this.fetchTweet(tweetId)
+            let tweet = this.tweets.find(t=>{ t.mid == tweetId})
+            if (tweet) return tweet
+
+            tweet = await this.fetchTweet(tweetId)
             if (!tweet) return
-            let orig
+
             if (tweet?.originalTweetId) {
-                orig = await this.fetchTweet(tweet.originalTweetId)
+                let orig = await this.fetchTweet(tweet.originalTweetId)
                 tweet.originalTweet = orig
                 tweet.originalAuthor = orig?.author
             }
+            console.log(tweet)
             return tweet
         },
 
@@ -58,32 +64,31 @@ export const useTweetListStore = defineStore('tweetStore', {
         // this tweet with its ID. 2nd, retrieve the tweet from the provider. Assume
         // author data is also available on the provider. Get author data too.
         async fetchTweet(tweetId: string): Promise<Tweet | undefined> {
-            let tweet = this.tweets.find(t=>{ t.mid == tweetId})
-            if (tweet) return tweet
 
             // Get IP address of the provider of this tweet
             let providerIp = await this.getProviderIp(this.lapi.client, tweetId)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
 
-            // Get tweet data from Mimei
-            let t = await providerClient.RunMApp("get_tweet", {
+            // Get tweet data from Mimei. Its definition is different from this app.
+            let tweetInDB = await providerClient.RunMApp("get_tweet", {
                 aid: this.lapi.appId,
                 ver: "last",
                 tweetId: tweetId,
                 userId: "0000000000000000000000000000000",  // just a placeholder
             })
-            // get author data of the tweet. Assume it is on the same provider.
-            let author = await this.getUser(t.authorId)
+            // get author data of the tweet.
+            let author = await this.getUser(tweetInDB.authorId)
             if (!author) return
-            tweet = {
-                mid : t.mid,
+
+            let tweet = {
+                mid : tweetInDB.mid,
                 author : author,
-                content : t.content,
-                attachments : t.attachments?.map((e:string)=>{
+                content : tweetInDB.content,
+                attachments : tweetInDB.attachments?.map((e:string)=>{
                     return this.getMediaUrl(e, "http://"+providerIp)
                 }),
-                originalTweetId : t.originalTweetId,
+                originalTweetId : tweetInDB.originalTweetId,
                 client: providerClient
             }
             this.tweets.push(tweet)
@@ -97,6 +102,7 @@ export const useTweetListStore = defineStore('tweetStore', {
 
             let providerIp = await this.getProviderIp(this.lapi.client, userId)
             if (!providerIp) return
+
             let providerClient = this.lapi.getClient(providerIp)
             author = await providerClient.RunMApp("get_user_core_data", {
                 aid: this.lapi.appId,
@@ -104,9 +110,16 @@ export const useTweetListStore = defineStore('tweetStore', {
                 userid: userId,
             })
             // cache the user data
-            if (author) this.authors.push(author)
+            if (author) {
+                author.provider = providerIp
+                author.client = providerClient
+                author.avatar = this.getMediaUrl(author.avatar, "http://"+providerIp)
+                this.authors.push(author)
+            }
             return author
         },
+
+        // Given a mimie Id, find IP of its best provider
         async getProviderIp(client: any, mid: string): Promise<string | undefined> {
             return await client.RunMApp("get_provider", {
                 aid: this.lapi.appId,
@@ -114,6 +127,7 @@ export const useTweetListStore = defineStore('tweetStore', {
                 mid: mid,
             })
         },
+
         async getComments(tweet: Tweet): Promise<Tweet[] | undefined> {
             let comments = tweet.client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
@@ -128,8 +142,12 @@ export const useTweetListStore = defineStore('tweetStore', {
             })
             return
         },
-        getMediaUrl(mid: string, baseUrl: string): string {
+
+        getMediaUrl(mid: string | undefined, baseUrl: string): string {
             let url = baseUrl
+            if (!mid) {
+                return "https://en.numista.com/catalogue/photos/essos/64a16406c47562.49601462-original.jpg"
+            }
             return mid.length>27 ? url+"/ipfs/"+mid : url+"/mm/"+mid
         },
     }

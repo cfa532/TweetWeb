@@ -2,7 +2,7 @@
     <div class="container">
         <div class="row justify-content-start align-items-start">
           <div class="col-md-12 col-lg-8">
-            <p>This text will be aligned to the top left corner.</p>
+            <router-view />
           </div>
         </div>
       </div>

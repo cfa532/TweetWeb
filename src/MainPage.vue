@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useTweetListStore } from "@/stores/tweetStore";
 import { TweetView } from "@/views"
 import { storeToRefs } from 'pinia';
 
 const tweetStore = useTweetListStore();
 const tweetStoreRefs = storeToRefs(tweetStore)
-
+const sorted = computed(()=>{
+    return tweetStoreRefs.tweets.value.slice().sort((a, b) => {
+        return (b.timestamp as number) - (a.timestamp as number);
+      });
+})
 onMounted(()=> {
     console.log("Mainpage")
     tweetStore.loadTweets()
@@ -14,7 +18,7 @@ onMounted(()=> {
 </script>
 
 <template>
-    <TweetView v-for="(tweet, index) in tweetStoreRefs.tweets.value" :tweet="tweet" :key="index" />
+    <TweetView v-for="(tweet, index) in sorted" :tweet="tweet" :key="index" />
 </template>
 
 <style scoped>

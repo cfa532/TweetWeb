@@ -16,6 +16,9 @@ interface User {
     bookmarkCount?: number;
     retweetCount?: number;
     commentCount?: number;
+
+    provider?: string;  // IP of the best provider
+    client?: any;       // Hprose client handler
 }
 
 interface Tweet {
@@ -28,7 +31,7 @@ interface Tweet {
     originalTweet?: Tweet;
     originalAuthor?: User;
     comments?: Tweet[];
-    client?: any;
+    client?: any;       // Hprose client handler
 }
 
 interface ScorePair {
