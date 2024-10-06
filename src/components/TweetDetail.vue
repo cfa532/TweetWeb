@@ -9,7 +9,7 @@ const tweetStore = useTweetListStore()
 const tweetId = route.params.tweetId as string
 const tweet = ref()
 
-onMounted(async ()=> {
+onMounted(async () => {
     // Fetch tweet if it is not in session already.
     tweet.value = sessionStorage.getItem("tweetDetail")
     if (!tweet.value) {
@@ -43,7 +43,8 @@ onMounted(async ()=> {
                             height="50">
                         <div>
                             <h5 class="mb-0">{{ tweet.author.name }}</h5>
-                            <small class="text-muted">@{{ tweet.author.username }} - {{ formatTimeDifference(tweet.timestamp as number) }}</small>
+                            <small class="text-muted">@{{ tweet.author.username }} - {{
+                                formatTimeDifference(tweet.timestamp as number) }}</small>
                         </div>
                     </div>
                     <div class="card-body">
@@ -54,30 +55,31 @@ onMounted(async ()=> {
                         </div>
                         <div class='icon-row d-flex justify-content-around mt-3'>
                             <div class='icon-item d-flex align-items-center'>
-                              <img src='/public/ic_heart.png' alt='Favorite' class='icon' />
-                              <span class='icon-number'>{{ tweet.likeCount>0 ? tweet.likeCount:null }}</span>
+                                <img src='/public/ic_heart.png' alt='Favorite' class='icon' />
+                                <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
                             </div>
                             <div class='icon-item d-flex align-items-center'>
-                              <img src='/public/ic_bookmark.png' alt='Bookmark' class='icon' />
-                              <span class='icon-number'>{{ tweet.bookmarkCount>0?tweet.bookmarkCount:null }}</span>
+                                <img src='/public/ic_bookmark.png' alt='Bookmark' class='icon' />
+                                <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
                             </div>
                             <div class='icon-item d-flex align-items-center'>
-                              <img src='/public/ic_notice.png' alt='Forward' class='icon' />
-                              <span class='icon-number'>{{ tweet.commentCount>0?tweet.commentCount:null }}</span>
+                                <img src='/public/ic_notice.png' alt='Forward' class='icon' />
+                                <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
                             </div>
-                          </div>
-                                  </div>
+                        </div>
+                    </div>
                 </div>
                 <div v-else>
                     <p>Loading tweet...</p>
                 </div>
-                <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index"  class="comment card mb-1">
+                <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index" class="comment card mb-0">
                     <div class="card-header d-flex align-items-center">
                         <img :src="comment.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="40"
                             height="40">
                         <div>
                             <h6 class="mb-0">{{ comment.author.name }}</h6>
-                            <small class="text-muted">@{{ comment.author.username }} - {{ formatTimeDifference(comment.timestamp as number) }}</small>
+                            <small class="text-muted">@{{ comment.author.username }} - {{
+                                formatTimeDifference(comment.timestamp as number) }}</small>
                         </div>
                     </div>
                     <div class="card-body">
@@ -97,39 +99,56 @@ onMounted(async ()=> {
 .media-attachments img {
     width: 100%;
 }
+
 .icon-item {
-    position: relative; /* Establishes a positioning context for the number */
+    position: relative;
+    /* Establishes a positioning context for the number */
     display: flex;
-    flex-direction: column; /* Stacks the icon and number vertically */
+    flex-direction: column;
+    /* Stacks the icon and number vertically */
     align-items: center;
 }
+
 .icon-number {
-    position: absolute; /* Positions the number on top of the icon */
-    bottom: -1px; /* Positions the number slightly below the icon */
-    right: -15px; /* Aligns the number to the right edge of the icon */
-    font-size: 15px; /* Adjust the font size for better visibility */
-    color: black; /* Change the color to ensure visibility */
-  }
+    position: absolute;
+    /* Positions the number on top of the icon */
+    bottom: -1px;
+    /* Positions the number slightly below the icon */
+    right: -15px;
+    /* Aligns the number to the right edge of the icon */
+    font-size: 15px;
+    /* Adjust the font size for better visibility */
+    color: rgba(0, 0, 0, 0.78);
+    /* Change the color to ensure visibility */
+}
+
 .icon-row {
     display: flex;
     justify-content: space-around;
 }
 
 .icon {
-    width: 18px; /* Set a uniform width for icons */
-    height: 18px; /* Set a uniform height for icons */
+    width: 18px;
+    /* Set a uniform width for icons */
+    height: 18px;
+    /* Set a uniform height for icons */
     transition: transform 0.3s;
     cursor: pointer;
 }
 
 .icon:hover {
-    transform: scale(1.1); /* Slightly enlarge the icon on hover */
+    transform: scale(1.1);
+    /* Slightly enlarge the icon on hover */
 }
 
 .icon-item span {
-    margin-top: 5px; /* Adds space between the icon and the number */
-    color: black; /* Change the color to ensure visibility */
-    font-weight: bold; /* Makes the number stand out */
-    pointer-events: none; /* Ensures the number doesn't interfere with icon hover */
+    margin-top: 5px;
+    /* Adds space between the icon and the number */
+    color: rgba(0, 0, 0, 0.775);
+    /* Change the color to ensure visibility */
+    font-weight: bold;
+    /* Makes the number stand out */
+    pointer-events: none;
+    /* Ensures the number doesn't interfere with icon hover */
 }
 </style>

@@ -98,7 +98,10 @@ export const useTweetListStore = defineStore('tweetStore', {
                 }),
                 comments: [],
                 originalTweetId: tweetInDB.originalTweetId,
-                provider: providerIp
+                provider: providerIp,
+                likeCount: tweetInDB.likeCount,
+                bookmarkCount: tweetInDB.bookmarkCount,
+                commentCount: tweetInDB.commentCount
             }
             this.tweets.push(tweet)
             return tweet
@@ -156,7 +159,7 @@ export const useTweetListStore = defineStore('tweetStore', {
                         author: author,
                         content: e.content,
                         timestamp: e.timestamp,
-                        attachments: e.attachments.map((a: string) => {
+                        attachments: e.attachments?.map((a: string) => {
                             return this.getMediaUrl(a, "http://" + tweet.provider)
                         })
                     })

@@ -12,11 +12,6 @@ interface User {
     name?: string;
     profile?: string;
 
-    likeCount?: number;
-    bookmarkCount?: number;
-    retweetCount?: number;
-    commentCount?: number;
-
     provider?: string;  // IP of the best provider
     client?: any;       // Hprose client handler
 }
@@ -31,6 +26,11 @@ interface Tweet {
     originalTweet?: Tweet;
     originalAuthor?: User;
     comments?: Tweet[];
+
+    likeCount?: number;
+    bookmarkCount?: number;
+    retweetCount?: number;
+    commentCount?: number;
 
     provider?: string;       // Hprose client handler
 }

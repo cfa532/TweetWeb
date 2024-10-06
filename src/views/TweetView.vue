@@ -32,6 +32,20 @@ function openDetailView() {
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <img v-for="(media, index) in tweet.attachments" :key="index" :src="media" class="img-fluid mb-2" />
             </div>
+            <div class='icon-row d-flex justify-content-around mt-3'>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/public/ic_heart.png' alt='Favorite' class='icon' />
+                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
+                </div>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/public/ic_bookmark.png' alt='Bookmark' class='icon' />
+                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
+                </div>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/public/ic_notice.png' alt='Forward' class='icon' />
+                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
+                </div>
+            </div>
         </div>
     </div>
 </template>
@@ -48,5 +62,40 @@ function openDetailView() {
 
 .card-wrapper {
     position: relative;
+}
+.icon-item {
+    position: relative; /* Establishes a positioning context for the number */
+    display: flex;
+    flex-direction: column; /* Stacks the icon and number vertically */
+    align-items: center;
+}
+.icon-number {
+    position: absolute; /* Positions the number on top of the icon */
+    bottom: -1px; /* Positions the number slightly below the icon */
+    right: -15px; /* Aligns the number to the right edge of the icon */
+    font-size: 15px; /* Adjust the font size for better visibility */
+    color: rgba(0, 0, 0, 0.819); /* Change the color to ensure visibility */
+  }
+.icon-row {
+    display: flex;
+    justify-content: space-around;
+}
+
+.icon {
+    width: 18px; /* Set a uniform width for icons */
+    height: 18px; /* Set a uniform height for icons */
+    transition: transform 0.3s;
+    cursor: pointer;
+}
+
+.icon:hover {
+    transform: scale(1.1); /* Slightly enlarge the icon on hover */
+}
+
+.icon-item span {
+    margin-top: 5px; /* Adds space between the icon and the number */
+    color: rgba(0, 0, 0, 0.787); /* Change the color to ensure visibility */
+    font-weight: bold; /* Makes the number stand out */
+    pointer-events: none; /* Ensures the number doesn't interfere with icon hover */
 }
 </style>
