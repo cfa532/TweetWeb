@@ -175,10 +175,29 @@ export const useTweetListStore = defineStore('tweetStore', {
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
 
-        async getDownloadLink(): Promise<string | undefined> {
-            return await this.leitherStore.client.RunMApp("download_upgrade", {
+        async downloadApk() {
+            let url = await this.leitherStore.client.RunMApp("download_upgrade", {
                 aid: this.leitherStore.appId, ver:"last"}
             )
+            if (!url) return
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.blob(); // Convert the response to a Blob
+                })
+                .then(blob => {
+                    const link = document.createElement('a');
+                    link.href = window.URL.createObjectURL(blob);
+                    link.download = 'downloaded-file.apk';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                })
+                .catch(error => {
+                    console.error('There was a problem with the fetch operation:', error);
+                });
         }
     }
 });

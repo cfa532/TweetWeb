@@ -19,28 +19,6 @@ onMounted(async () => {
     }
     await tweetStore.loadComments(tweet.value)
 });
-async function downloadApk() {
-    let url = await tweetStore.getDownloadLink()
-    if (!url) return
-    fetch(url)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
-            return response.blob(); // Convert the response to a Blob
-        })
-        .then(blob => {
-            const link = document.createElement('a');
-            link.href = window.URL.createObjectURL(blob);
-            link.download = 'downloaded-file.apk';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        })
-        .catch(error => {
-            console.error('There was a problem with the fetch operation:', error);
-        });
-}
 </script>
 
 <template>
@@ -48,11 +26,11 @@ async function downloadApk() {
         <div class="row align-items-center mb-3">
             <div class="col-lg-10 col-md-12 col-sm-12 d-flex justify-content-between">
                 <div>
-                    <img src="/public/tweet_icon.png" alt="Logo" class="rounded-circle me-2" width="60" height="60" />
+                    <img src="/src/tweet_icon.png" alt="Logo" class="rounded-circle me-2" width="60" height="60" />
                 </div>
                 <div class="d-flex align-items-center">
-                    <button class='btn btn-primary me-2' @click="downloadApk">Download</button>
-                    <img src="/public/tweet_QR.png" alt="QR Code" class="qr-code" width="80" height="80" />
+                    <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">Download</button>
+                    <img src="/src/tweet_QR.png" alt="QR Code" class="qr-code" width="80" height="80" />
                 </div>
             </div>
         </div>
@@ -76,15 +54,15 @@ async function downloadApk() {
                         </div>
                         <div class='icon-row d-flex justify-content-around mt-3'>
                             <div class='icon-item d-flex align-items-center'>
-                                <img src='/public/ic_heart.png' alt='Favorite' class='icon' />
+                                <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
                                 <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
                             </div>
                             <div class='icon-item d-flex align-items-center'>
-                                <img src='/public/ic_bookmark.png' alt='Bookmark' class='icon' />
+                                <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
                                 <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
                             </div>
                             <div class='icon-item d-flex align-items-center'>
-                                <img src='/public/ic_notice.png' alt='Forward' class='icon' />
+                                <img src='/src/ic_notice.png' alt='Forward' class='icon' />
                                 <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
                             </div>
                         </div>
