@@ -174,5 +174,11 @@ export const useTweetListStore = defineStore('tweetStore', {
             }
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
+
+        getDownloadLink(): string {
+            return this.lapi.client.RunMApp("download_upgrade", {
+                aid: this.lapi.appId, ver:"last"
+            })
+        }
     }
 });

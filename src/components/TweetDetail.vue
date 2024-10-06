@@ -19,7 +19,9 @@ onMounted(async () => {
     }
     await tweetStore.loadComments(tweet.value)
 });
-
+function downloadApk() {
+    
+}
 </script>
 
 <template>
@@ -30,7 +32,7 @@ onMounted(async () => {
                     <img src="/public/tweet_icon.png" alt="Logo" class="rounded-circle me-2" width="60" height="60" />
                 </div>
                 <div class="d-flex align-items-center">
-                    <button class='btn btn-primary me-2'>Download</button>
+                    <button class='btn btn-primary me-2' @click="downloadApk">Download</button>
                     <img src="/public/tweet_QR.png" alt="QR Code" class="qr-code" width="80" height="80" />
                 </div>
             </div>
