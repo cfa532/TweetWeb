@@ -11,7 +11,7 @@ export const useTweetListStore = defineStore('tweetStore', {
     actions: {
         // Load tweets of a list of followed User IDs
         async loadTweets() {
-            this.followings.forEach(async uid=>{
+            this.followings.forEach(async uid => {
                 console.log(uid)
                 let author = await this.getUser(uid)
                 if (!author) return
@@ -19,14 +19,16 @@ export const useTweetListStore = defineStore('tweetStore', {
                 if (!ts) return
 
                 // Each tweet does not have its author data yet.
-                ts.forEach(async t=>{
-                    if (this.tweets.find(e=>{e.mid==t.mid}))
+                ts.forEach(async t => {
+                    if (this.tweets.find(e => { e.mid == t.mid }))
                         return
                     t.author = author
                     t.provider = author.provider
-                    t.attachments = t.attachments?.map(e=>{
-                        return this.getMediaUrl(e, "http://"+author.provider)
+                    t.attachments = t.attachments?.map(e => {
+                        return this.getMediaUrl(e, "http://" + author.provider)
                     })
+                    t.comments = []
+
                     if (t.originalTweetId) {
                         t.originalTweet = await this.getTweet(t.originalTweetId)
                     }
@@ -48,7 +50,7 @@ export const useTweetListStore = defineStore('tweetStore', {
 
         // Given only tweet ID, find it full data.
         async getTweet(tweetId: string): Promise<Tweet | undefined> {
-            let tweet = this.tweets.find(t=>{ t.mid == tweetId})
+            let tweet = this.tweets.find(t => { t.mid == tweetId })
             if (tweet) return tweet
 
             tweet = await this.fetchTweet(tweetId)
@@ -87,14 +89,15 @@ export const useTweetListStore = defineStore('tweetStore', {
             if (!author) return
 
             let tweet = {
-                mid : tweetInDB.mid,
+                mid: tweetInDB.mid,
                 timestamp: tweetInDB.timestamp,
-                author : author,
-                content : tweetInDB.content,
-                attachments : tweetInDB.attachments?.map((e:string)=>{
-                    return this.getMediaUrl(e, "http://"+providerIp)
+                author: author,
+                content: tweetInDB.content,
+                attachments: tweetInDB.attachments?.map((e: string) => {
+                    return this.getMediaUrl(e, "http://" + providerIp)
                 }),
-                originalTweetId : tweetInDB.originalTweetId,
+                comments: [],
+                originalTweetId: tweetInDB.originalTweetId,
                 provider: providerIp
             }
             this.tweets.push(tweet)
@@ -103,7 +106,7 @@ export const useTweetListStore = defineStore('tweetStore', {
 
         async getUser(userId: string): Promise<User | undefined> {
             // check if the user has been retrieved.
-            let author = this.authors.find(e=>{ e.mid == userId})
+            let author = this.authors.find(e => { e.mid == userId })
             if (author) return author
 
             let providerIp = await this.getProviderIp(this.lapi.client, userId)
@@ -119,7 +122,7 @@ export const useTweetListStore = defineStore('tweetStore', {
             if (author) {
                 author.provider = providerIp
                 author.client = providerClient
-                author.avatar = this.getMediaUrl(author.avatar, "http://"+providerIp)
+                author.avatar = this.getMediaUrl(author.avatar, "http://" + providerIp)
                 this.authors.push(author)
             }
             return author
@@ -135,7 +138,6 @@ export const useTweetListStore = defineStore('tweetStore', {
         },
 
         async loadComments(tweet: Tweet) {
-            console.log(tweet)
             if (!tweet.provider) return
 
             let client = this.lapi.getClient(tweet.provider)
@@ -144,12 +146,23 @@ export const useTweetListStore = defineStore('tweetStore', {
                 ver: "last",
                 tweetid: tweet.mid,
                 userid: "00000000000000000000000000",
-            }) as Tweet[]
-            comments.forEach(async e=>{
-                let c = await this.getTweet(e.mid)
-                console.log(e, c)
-                if (c)
-                    tweet.comments?.push(c)
+            }) as any[]
+            // comment type if a different Tweet type from the definition in this app
+            comments.forEach(async e => {
+                console.log(e)
+                let author = await this.getUser(e.authorId)
+                if (author) {
+                    tweet.comments?.push({
+                        mid: e.mid,
+                        author: author,
+                        content: e.content,
+                        timestamp: e.timestamp,
+                        attachments: e.attachments.map((a: string) => {
+                            return this.getMediaUrl(a, "http://" + tweet.provider)
+                        })
+                    })
+                }
+                console.log(tweet)
             })
         },
 
@@ -158,7 +171,7 @@ export const useTweetListStore = defineStore('tweetStore', {
             if (!mid) {
                 return "https://en.numista.com/catalogue/photos/essos/64a16406c47562.49601462-original.jpg"
             }
-            return mid.length>27 ? url+"/ipfs/"+mid : url+"/mm/"+mid
+            return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
     }
 });
