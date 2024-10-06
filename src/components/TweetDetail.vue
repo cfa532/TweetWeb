@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetListStore } from '@/stores/tweetStore';
 import { formatTimeDifference } from '@/lib';
+import router from '@/router';
 
 const route = useRoute();
 const tweetStore = useTweetListStore()
@@ -26,7 +27,7 @@ onMounted(async () => {
         <div class="row align-items-center mb-3">
             <div class="col-lg-10 col-md-12 col-sm-12 d-flex justify-content-between">
                 <div>
-                    <img src="/src/tweet_icon.png" alt="Logo" class="rounded-circle me-2" width="60" height="60" />
+                    <img src="/src/tweet_icon.png" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle me-2" width="60" height="60" />
                 </div>
                 <div class="d-flex align-items-center">
                     <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">Download</button>
