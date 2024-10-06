@@ -35,15 +35,15 @@ function openDetailView() {
             <div class='icon-row d-flex justify-content-around mt-3'>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/public/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.likeCount! > 0 ? tweet.likeCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/public/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.bookmarkCount! > 0 ? tweet.bookmarkCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/public/ic_notice.png' alt='Forward' class='icon' />
-                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.commentCount! > 0 ? tweet.commentCount : null }}</span>
                 </div>
             </div>
         </div>
