@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetListStore } from '@/stores/tweetStore';
 import { formatTimeDifference } from '@/lib';
@@ -8,18 +8,38 @@ import router from '@/router';
 const route = useRoute();
 const tweetStore = useTweetListStore()
 const tweetId = route.params.tweetId as string
+const authorId = route.params.authorId as string | undefined
 const tweet = ref()
+const countdown = ref(30); 
+let countdownInterval: number | undefined;
 
 onMounted(async () => {
     // Fetch tweet if it is not in session already.
     tweet.value = sessionStorage.getItem("tweetDetail")
     if (!tweet.value) {
-        tweet.value = await tweetStore.getTweet(tweetId) as Tweet
+        tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
     } else {
         tweet.value = JSON.parse(tweet.value)
     }
     await tweetStore.loadComments(tweet.value)
+    
+    if (!tweet.value) {
+    countdownInterval = window.setInterval(() => {
+      if (countdown.value > 0) {
+        countdown.value--;
+      } else {
+        clearInterval(countdownInterval); // Clear interval when countdown reaches 0
+        location.reload(); // Reload the page
+      }
+    }, 1000);
+  }
 });
+
+onUnmounted(()=>{
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+    }
+})
 </script>
 
 <template>
@@ -70,7 +90,7 @@ onMounted(async () => {
                     </div>
                 </div>
                 <div v-else>
-                    <p>Loading tweet...</p>
+                    <p>Loading tweet... ({{ countdown }})</p> 
                 </div>
                 <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index" class="comment card mb-0">
                     <div class="card-header d-flex align-items-center">

@@ -49,7 +49,7 @@ export const useTweetListStore = defineStore('tweetStore', {
         },
 
         // Given only tweet ID, find it full data.
-        async getTweet(tweetId: string): Promise<Tweet | undefined> {
+        async getTweet(tweetId: string, authorId: string | undefined = undefined): Promise<Tweet | undefined> {
             let tweet = this.tweets.find(t => { t.mid == tweetId })
             if (tweet) return tweet
 
@@ -141,7 +141,7 @@ export const useTweetListStore = defineStore('tweetStore', {
         },
 
         async loadComments(tweet: Tweet) {
-            if (!tweet.provider) return
+            if (!tweet || !tweet.provider) return
 
             let client = this.leitherStore.getClient(tweet.provider)
             let comments = client.RunMApp("get_comments", {

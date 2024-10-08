@@ -6,7 +6,7 @@ import { useTweetListStore } from '@/stores/tweetStore';
 
 const routes = [
   { path: '/', name:"main", component: MainPage},
-  { path: '/tweet/:tweetId',
+  { path: '/tweet/:tweetId/:authorId?',
     name: 'TweetDetail',
     component: TweetDetail,
     props: true},
