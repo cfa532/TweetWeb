@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetListStore } from '@/stores/tweetStore';
 import { formatTimeDifference } from '@/lib';
+import MediaView from "@/views/MediaView.vue";
 import router from '@/router';
 
 const route = useRoute();
@@ -10,7 +11,7 @@ const tweetStore = useTweetListStore()
 const tweetId = route.params.tweetId as string
 const authorId = route.params.authorId as string | undefined
 const tweet = ref()
-const countdown = ref(30); 
+const countdown = ref(10); 
 let countdownInterval: number | undefined;
 
 onMounted(async () => {
@@ -18,6 +19,7 @@ onMounted(async () => {
     tweet.value = sessionStorage.getItem("tweetDetail")
     if (!tweet.value) {
         tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
+        console.log(tweet.value)
     } else {
         tweet.value = JSON.parse(tweet.value)
     }
@@ -47,11 +49,12 @@ onUnmounted(()=>{
         <div class="row align-items-center mb-3">
             <div class="col-lg-10 col-md-12 col-sm-12 d-flex justify-content-between">
                 <div>
-                    <img src="/src/tweet_icon.png" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle me-2" width="60" height="60" />
+                    <img src="/src/tweet_icon.png" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle me-2" width="60"
+                    height="60"/>
                 </div>
                 <div class="d-flex align-items-center">
                     <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">Download</button>
-                    <img src="/src/tweet_QR.png" alt="QR Code" class="qr-code" width="80" height="80" />
+                    <img src="/src/tweet_QR.png" alt="QR Code" class="qr-code" />
                 </div>
             </div>
         </div>
@@ -59,8 +62,7 @@ onUnmounted(()=>{
             <div class="col-lg-10 col-md-12  col-sm-12">
                 <div v-if="tweet" class="tweet card mb-3">
                     <div class="card-header d-flex align-items-center">
-                        <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="50"
-                            height="50">
+                        <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" >
                         <div>
                             <h5 class="mb-0">{{ tweet.author.name }}</h5>
                             <small class="text-muted">@{{ tweet.author.username }} - {{
@@ -70,8 +72,7 @@ onUnmounted(()=>{
                     <div class="card-body">
                         <p class="card-text">{{ tweet.content }}</p>
                         <div v-if="tweet.attachments?.length" class="media-attachments">
-                            <img v-for="(media, index) in tweet.attachments" :key="index" :src="media"
-                                class="img-fluid mb-2" />
+                            <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2"></MediaView>
                         </div>
                         <div class='icon-row d-flex justify-content-around mt-3'>
                             <div class='icon-item d-flex align-items-center'>
@@ -105,8 +106,7 @@ onUnmounted(()=>{
                     <div class="card-body">
                         <p class="card-text">{{ comment.content }}</p>
                         <div v-if="comment.attachments?.length" class="media-attachments">
-                            <img v-for="(media, index) in comment.attachments" :key="index" :src="media"
-                                class="img-fluid mb-2" />
+                            <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2"></MediaView>
                         </div>
                     </div>
                 </div>
@@ -118,6 +118,14 @@ onUnmounted(()=>{
 <style scoped>
 .media-attachments img {
     width: 100%;
+}
+.rounded-circle {
+    width: 50px;
+    height: 50px;
+}
+.qr-code {
+    width: 80px;
+    height: 80px;
 }
 
 .icon-item {

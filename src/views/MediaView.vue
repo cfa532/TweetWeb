@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowReactive } from "vue";
-import { useRoute } from 'vue-router';
-import { useLeitherStore } from '@/stores/leitherStore'
+import { computed } from "vue";
 import { Image, PDFView, VideoJS } from './index'
 
 const props = defineProps<{ mid: string, type: string }>();

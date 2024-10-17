@@ -4,7 +4,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue';
 const props = defineProps({
   mid: {type:String, required: false},
   type: {type:String, required: false},
-  autoplay: {type: Boolean, required: false, default: true},
+  autoplay: {type: Boolean, required: false, default: false},
 });
 const caption = ref()
 const vdiv = ref()  // to deal with a bug sometime player do not hide when switching components in parent Vue

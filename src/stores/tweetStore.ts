@@ -97,8 +97,9 @@ export const useTweetListStore = defineStore('tweetStore', {
                 timestamp: tweetInDB.timestamp,
                 author: author,
                 content: tweetInDB.content,
-                attachments: tweetInDB.attachments?.map((e: string) => {
-                    return this.getMediaUrl(e, "http://" + providerIp)
+                attachments: tweetInDB.attachments?.map((e: MimeiFileType) => {
+                    e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
+                    return e
                 }),
                 comments: [],
                 originalTweetId: tweetInDB.originalTweetId,
