@@ -1,1 +1,5 @@
 export { default as TweetView } from './TweetView.vue'
+export { default as MediaView } from './MediaView.vue'
+export { default as Image} from './Image.vue'
+export { default as PDFView } from './pdf.vue'
+export { default as VideoJS } from './VideoJS.vue'

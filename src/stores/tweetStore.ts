@@ -5,12 +5,13 @@ export const useTweetListStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
         authors: [] as User[],
-        followings: ["yifT_a-gWN9-JXsJ6P7gqizKMDM", "agvvgWJmmXtji5FLTt768Plu3He"],
+        followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
         leitherStore: useLeitherStore(),
     }),
     actions: {
         // Load tweets of a list of followed User IDs
         async loadTweets() {
+            this.tweets = []
             this.followings.forEach(async uid => {
                 let author = await this.getUser(uid)
                 if (!author) return
@@ -24,7 +25,10 @@ export const useTweetListStore = defineStore('tweetStore', {
                     t.author = author
                     t.provider = author.provider
                     t.attachments = t.attachments?.map(e => {
-                        return this.getMediaUrl(e, "http://" + author.provider)
+                        return {
+                            mid: this.getMediaUrl(e.mid, "http://" + author.provider),
+                            type: e.type
+                        }
                     })
                     t.comments = []
 

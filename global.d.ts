@@ -20,7 +20,7 @@ interface Tweet {
     mid: string;
     author: User;
     content?: string;
-    attachments?: string[];
+    attachments?: MimeiFileType[];
     timestamp?: string | number;
     originalTweetId?: string;
     originalTweet?: Tweet;
@@ -43,4 +43,9 @@ interface ScorePair {
 interface FVPair {
     field: string
     value: any
+}
+
+interface MimeiFileType {
+    mid: string
+    type: string
 }
