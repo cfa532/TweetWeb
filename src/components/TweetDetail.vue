@@ -11,7 +11,7 @@ const tweetStore = useTweetListStore()
 const tweetId = route.params.tweetId as string
 const authorId = route.params.authorId as string | undefined
 const tweet = ref()
-const countdown = ref(10); 
+const countdown = ref(10);
 let countdownInterval: number | undefined;
 
 onMounted(async () => {
@@ -24,17 +24,17 @@ onMounted(async () => {
         tweet.value = JSON.parse(tweet.value)
     }
     await tweetStore.loadComments(tweet.value)
-    
+
     if (!tweet.value) {
-    countdownInterval = window.setInterval(() => {
-      if (countdown.value > 0) {
-        countdown.value--;
-      } else {
-        clearInterval(countdownInterval); // Clear interval when countdown reaches 0
-        location.reload(); // Reload the page
-      }
-    }, 1000);
-  }
+        countdownInterval = window.setInterval(() => {
+            if (countdown.value > 0) {
+                countdown.value--;
+            } else {
+                clearInterval(countdownInterval);
+                location.reload();
+            }
+        }, 1000);
+    }
 });
 
 onUnmounted(()=>{
