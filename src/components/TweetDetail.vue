@@ -35,6 +35,7 @@ onMounted(async () => {
             }
         }, 1000);
     }
+    window.scrollTo(0, 0);
 });
 
 onUnmounted(()=>{
