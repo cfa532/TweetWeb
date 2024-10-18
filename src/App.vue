@@ -1,15 +1,15 @@
 <template>
-  <router-view />
   <div class="container-fluid">
         <div class="row justify-content-start align-items-start">
-          <div class="col-md-12 col-lg-8">
+          <div class="col-sm-12 col-md-12 col-lg-8">
+            <router-view />
           </div>
         </div>
       </div>
 </template>
 
 <style scoped>
-.container {
-    padding: 0px;
+.container-fluid {
+    padding: 2px 0px 0px 0px;
 }
 </style>

@@ -17,18 +17,18 @@ onMounted(async () => {
 
 <template>
   <div ref="vdiv" hidden>
-    <video v-if="props.type === 'Video'" :src="props.mid" :autoplay="props.autoplay" controls preload="auto"></video>
-    <audio v-else :src="props.mid" :autoplay="props.autoplay" controls class="audioPlayer-dimensions" preload="auto"></audio>
+    <video class="video" v-if="props.type === 'Video'" :src="props.mid" :autoplay="props.autoplay" controls preload="auto"></video>
+    <audio v-else :src="props.mid" :autoplay="props.autoplay" controls class="audio" preload="auto"></audio>
     <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 15%; position: relative;">{{ caption }}</p>
   </div>
 </template>
 
 <style>
-.video-js {
-  max-height: 95vh;
+.video {
+  max-width: 100%;
 }
 
-.audioPlayer-dimensions {
+.audio {
   width: 100%;
   max-width: 500px;
   height: 40px;

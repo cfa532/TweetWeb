@@ -46,25 +46,25 @@ onUnmounted(()=>{
 
 <template>
     <div class="container">
-        <div class="row align-items-center mb-3">
+        <div class="row align-items-center mb-1">
             <div class="col-lg-10 col-md-12 col-sm-12 d-flex justify-content-between">
                 <div>
                     <img src="/src/tweet_icon.png" @click="router.push({name:'main'})" alt="Logo" 
-                    class="rounded-circle me-2" width="60" height="60"/>
+                    class="app-icon rounded-circle me-2" />
                 </div>
                 <div class="d-flex align-items-center">
-                    <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">Download</button>
+                    <button class='btn btn-primary col-md-auto me-2' @click="tweetStore.downloadApk">下载App</button>
                     <img src="/src/tweet_QR.png" alt="QR Code" class="qr-code" />
                 </div>
             </div>
         </div>
         <div class="row">
             <div class="col-lg-10 col-md-12  col-sm-12">
-                <div v-if="tweet" class="card mb-3">
+                <div v-if="tweet" class="card mb-1">
                     <div class="card-header d-flex align-items-center">
                         <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" >
                         <div>
-                            <h5 class="mb-0">{{ tweet.author.name }}</h5>
+                            <h6 class="mb-0">{{ tweet.author.name }}</h6>
                             <small class="text-muted">@{{ tweet.author.username }} - {{
                                 formatTimeDifference(tweet.timestamp as number) }}</small>
                         </div>
@@ -74,7 +74,7 @@ onUnmounted(()=>{
                         <div v-if="tweet.attachments?.length" class="media-attachments">
                             <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2"></MediaView>
                         </div>
-                        <div class='icon-row d-flex justify-content-around mt-3'>
+                        <div class='icon-row d-flex justify-content-around mt-1'>
                             <div class='icon-item d-flex align-items-center'>
                                 <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
                                 <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
@@ -93,10 +93,9 @@ onUnmounted(()=>{
                 <div v-else>
                     <p>Loading tweet... ({{ countdown }})</p> 
                 </div>
-                <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index" class="comment card mb-0">
+                <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index" class="comment card mb-1 mt-3">
                     <div class="card-header d-flex align-items-center">
-                        <img :src="comment.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="40"
-                            height="40">
+                        <img :src="comment.author.avatar" alt="User Avatar" class="rounded-circle me-2">
                         <div>
                             <h6 class="mb-0">{{ comment.author.name }}</h6>
                             <small class="text-muted">@{{ comment.author.username }} - {{
@@ -112,13 +111,27 @@ onUnmounted(()=>{
                 </div>
             </div>
         </div>
+
+        <div class="row align-items-center mt-5">
+            <div class="col-lg-10 col-md-12 col-sm-12 d-flex justify-content-between">
+                <div class="d-flex align-items-center">
+                    <img src="/src/tweet_QR.png" alt="QR Code" class="qr-code" />
+                    <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">下载App</button>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 
 <style scoped>
+.app-icon {
+    margin: 8px 0 0 8px;
+    width: 60px !important;
+    height: 60px !important;
+}
 .card {
     width: 100%;
-    margin: 0px 0px 15px 0px;
+    margin: 0px 0px 30px 0px;
 }
 .card-header {
     margin: 0px;
@@ -127,14 +140,28 @@ onUnmounted(()=>{
 .card-body {
     margin: 0px;
     padding: auto;
+    padding-top: 0px;
+}
+.card-text {
+    text-align: left;
+    font-size: medium;
 }
 
-.media-attachments img {
-    width: 100%;
+@media (max-width: 767px) {
+    .btn {
+      font-size: 12px; /* Adjust the font size as needed */
+      padding: 6px 10px; /* Adjust the padding as needed */
+    }
+  }
+
+.media-attachments {
+    margin-top: 0px;
+    padding-top: 0px;
+    max-width: 100%;
 }
 .rounded-circle {
-    width: 50px;
-    height: 50px;
+    width: 40px;
+    height: 40px;
 }
 .qr-code {
     width: 80px;
