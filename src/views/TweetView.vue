@@ -20,10 +20,10 @@ function openDetailView() {
 <template>
     <div class="card" @click="openDetailView">
         <div class="card-header d-flex align-items-start">
-            <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="50"
-                height="50" />
+            <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="40"
+                height="40" />
             <div>
-                <h5 class="mb-0">{{ tweet.author.name }}</h5>
+                <h6 class="mb-0">{{ tweet.author.name }}</h6>
                 <small class="text-muted">@{{ tweet.author.username }} - {{ formatTimeDifference(tweet.timestamp as number) }}</small>
             </div>
         </div>
@@ -57,12 +57,17 @@ function openDetailView() {
 
 .card {
     width: 100%;
-    margin-bottom: 15px;
+    margin: 0px 0px 15px 0px;
+}
+.card-header {
+    margin: 0px;
+    padding: auto;
+}
+.card-body {
+    margin: 0px;
+    padding: auto;
 }
 
-.card-wrapper {
-    position: relative;
-}
 .icon-item {
     position: relative; /* Establishes a positioning context for the number */
     display: flex;

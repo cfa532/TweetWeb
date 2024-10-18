@@ -49,8 +49,8 @@ onUnmounted(()=>{
         <div class="row align-items-center mb-3">
             <div class="col-lg-10 col-md-12 col-sm-12 d-flex justify-content-between">
                 <div>
-                    <img src="/src/tweet_icon.png" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle me-2" width="60"
-                    height="60"/>
+                    <img src="/src/tweet_icon.png" @click="router.push({name:'main'})" alt="Logo" 
+                    class="rounded-circle me-2" width="60" height="60"/>
                 </div>
                 <div class="d-flex align-items-center">
                     <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">Download</button>
@@ -60,7 +60,7 @@ onUnmounted(()=>{
         </div>
         <div class="row">
             <div class="col-lg-10 col-md-12  col-sm-12">
-                <div v-if="tweet" class="tweet card mb-3">
+                <div v-if="tweet" class="card mb-3">
                     <div class="card-header d-flex align-items-center">
                         <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" >
                         <div>
@@ -116,6 +116,19 @@ onUnmounted(()=>{
 </template>
 
 <style scoped>
+.card {
+    width: 100%;
+    margin: 0px 0px 15px 0px;
+}
+.card-header {
+    margin: 0px;
+    padding: auto;
+}
+.card-body {
+    margin: 0px;
+    padding: auto;
+}
+
 .media-attachments img {
     width: 100%;
 }

@@ -3,7 +3,6 @@ import { computed } from "vue";
 import { Image, PDFView, VideoJS } from './index'
 
 const props = defineProps<{ mid: string, type: string }>();
-
 const userComponent = computed(() => {
     let p = props.type.toLowerCase()
     if (p.includes("image")) {
@@ -22,9 +21,7 @@ const userComponent = computed(() => {
 <template>
     <div class="container text-left topm">
         <div class="row justify-content-start">
-            <!-- Delete page function is in the Share Menu -->
             <div class="col">
-                 
                 <KeepAlive>
                     <component :is="userComponent" v-bind="props"></component>
                 </KeepAlive>
@@ -32,6 +29,7 @@ const userComponent = computed(() => {
         </div>
     </div>
 </template>
+
 <style>
 .topm {
     margin: 10px 0 0 0px;
