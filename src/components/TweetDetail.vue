@@ -11,7 +11,7 @@ const tweetStore = useTweetListStore()
 const tweetId = route.params.tweetId as string
 const authorId = route.params.authorId as string | undefined
 const tweet = ref()
-const countdown = ref(10);
+const countdown = ref(3);
 let countdownInterval: number | undefined;
 
 onMounted(async () => {
@@ -129,6 +129,7 @@ onUnmounted(()=>{
     margin: 8px 0 0 8px;
     width: 60px !important;
     height: 60px !important;
+    cursor: pointer;
 }
 .card {
     width: 100%;
