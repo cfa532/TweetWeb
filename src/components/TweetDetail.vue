@@ -31,7 +31,7 @@ onMounted(async () => {
                 countdown.value--;
             } else {
                 clearInterval(countdownInterval);
-                location.reload();
+                window.location.reload();
             }
         }, 1000);
     }
