@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive } from 'vue'
 import { Loading, Preview } from '@/views'
 import { useTweetStore } from '@/stores/tweetStore'
 import { useLeitherStore } from '@/stores/leitherStore';
@@ -18,14 +18,20 @@ const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([]) // New ref to store upload progress of each file
 const loading = ref(false)
 const selectFiles = ref()
+const isPrivate = ref(false)
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
 
 // Upload files and store them as IPFS or Mimei type
 async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
+  function getMedaiType(t: string) {
+    if (t.startsWith("image/")) return "Image"
+    if (t.startsWith("video/")) return "Video"
+    if (t.startsWith("audio/")) return "Audio"
+    return "Uknown"
+  }
   // Helper function to handle individual file uploads
   async function uploadSingleFile(file: File, index: number): Promise<MimeiFileType> {
-    // Check if the file size exceeds the limit (200MB in this example)
     if (file.size > sliceSize * 300) {
       throw new Error('Max file size exceeded')
     }
@@ -33,8 +39,8 @@ async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFile
     uploadProgress[index] = 0
 
     // Create a FileInfo object with file name, last modified time,
-    const fsid = await api.client.MFOpenTempFile(api.sid)
-    const fi = {mid: "", type: file.type, size: file.size} as MimeiFileType
+    const fsid = await tweetStore.openTempFile()
+    const fi = { mid: "", type: getMedaiType(file.type), size: file.size } as MimeiFileType
     fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // return an IPFS id actually
     console.log(fi) // never executed when there is a timeout uploading file.
     return fi
@@ -45,11 +51,12 @@ async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFile
 
 async function onSubmit() {
   loading.value = true
+  let attachments = null
   try {
     if (filesUpload.value.length > 0) {
       // with attachments to be uploaded
       // reopen the DB mimei as cur version, for writing
-      let attachments = (await uploadFile(filesUpload.value))
+      attachments = (await uploadFile(filesUpload.value))
         .filter((v) => { return v.status === 'fulfilled' })
         .map((v: any) => {
           return v.value    // get FileInfo of each attachment
@@ -58,13 +65,14 @@ async function onSubmit() {
         // uploading files failed
         throw 'Attachments uploading failed' + attachments.toString()
       }
-      // upload tweet
-      // api.client.RunMApp("")
-      let tweet = {content: textValue.value, attachments: attachments, isPrivate: false,
-        timestamp: Date.now()
-      }
-      tweetStore.uploadTweet(tweet)
     }
+    // upload tweet
+    let tweet = {
+      content: textValue.value, attachments: attachments, isPrivate: isPrivate.value,
+      timestamp: Date.now()
+    }
+    console.log(tweet)
+    tweet = await tweetStore.uploadTweet(tweet)
   } catch (err) {
     // something wrong uploading files, abort
     console.error('onSubmit err:', err)
@@ -91,7 +99,7 @@ async function readFileSlice(
     // last slice read. Convert temp to IPFS file
     const t = api.client.timeout
     api.client.timeout = 0
-    const mid =  await api.client.MFTemp2Ipfs(fsid)
+    const mid = await api.client.MFTemp2Ipfs(fsid)
     api.client.timeout = t
     return mid
   } else {
@@ -122,7 +130,6 @@ async function onSelect(e: Event) {
     dropHere.value!.hidden = true
   } else {
     // clipboard works only with HTTPS
-    // const t = await navigator.clipboard.readText()
     if ((e.target as HTMLTextAreaElement) === textArea.value) {
       // paste into text area
       document.execCommand('paste')
@@ -138,39 +145,33 @@ function removeFile(f: File) {
   var i = filesUpload.value.findIndex((e: File) => e == f)
   filesUpload.value.splice(i, 1)
 }
-watch(
-  () => textValue.value,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      localStorage.setItem('tempTextValueUploader', newVal)
-    }
-  }
-)
 </script>
 
 <template>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
-    <div class="content-wrapper">
-      <div class="input-container">
-        <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
-        <div ref="dropHere" hidden class="drop-here">
-          <p>DROP HERE</p>
-        </div>
+    <div class="input-container">
+      <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
+      <div ref="dropHere" hidden class="drop-here">
+        <p>DROP HERE</p>
       </div>
-      <form @submit.prevent="onSubmit" enctype="multipart/form-data" @paste.prevent="onSelect" class="form-container">
-        <div ref="divAttach" hidden class="preview-container">
-          <Preview @file-canceled="removeFile(file)" v-for="(file, index) in filesUpload" :key="index" v-bind:src="file"
-          v-bind:progress="uploadProgress[index]"></Preview>
-        </div>
-        <input ref="selectFiles" @change="onSelect" type="file" hidden multiple />
-        <div class="button-container">
-          <button @click.prevent="selectFiles.click()">Choose</button>
-          <button type="submit">Submit</button>
-        </div>
-        <Loading :visible="loading" />
-      </form>
     </div>
-  </div>
+    <form @submit.prevent="onSubmit" enctype="multipart/form-data" @paste.prevent="onSelect" class="form-container">
+      <input ref="selectFiles" @change="onSelect" type="file" hidden multiple />
+      <div class="button-container">
+        <button class="btn" @click.prevent="selectFiles.click()">Choose</button>
+        <span>
+          <input type="checkbox" v-model="isPrivate" id="checkbox">&nbsp;
+          <label for="checkbox">Private</label>&nbsp;&nbsp;&nbsp;
+          <button class="btn" type="submit">Submit</button>
+        </span>
+      </div>
+      <Loading :visible="loading" />
+    </form>
+</div>
+<div ref="divAttach" hidden class="preview-container">
+  <Preview @file-canceled="removeFile(file)" v-for="(file, index) in filesUpload" :key="index" v-bind:src="file"
+    v-bind:progress="uploadProgress[index]"></Preview>
+</div>
 </template>
 
 <style scoped>
@@ -179,49 +180,25 @@ watch(
   position: relative;
   display: flex;
   flex-direction: column;
-  border-radius: 5px;
+  border-radius: 10px;
   background-color: #ebf0f3;
-  padding: 10px;
   border: 1px solid #888;
-  height: 60vh;
   margin: 10px 0 0 10px;
-}
-
-.content-wrapper {
-  display: flex;
   flex-direction: column;
   flex: 1;
 }
-
 .input-container {
   flex: 1;
   margin-bottom: 10px;
   display: inline;
 }
-.input-title {
-  border: 0px;
-  height: 30px;
-  margin-bottom: 8px;
-}
-.input-caption {
-  border: 0px;
-  width: 70%;
-  height: 30px;
-  margin-bottom: 8px;
-}
-
 .input-textarea {
   margin: 5px;
-  position: absolute;
-  top: 50px;
-  left: 0;
-  bottom: 60px;
-  /* height: 150%; */
   border: 1px solid lightgrey;
   width: 99%;
-  border-radius: 3px;
+  height: 40vh;
+  border-radius: 5px;
 }
-
 .drop-here {
   border: 1px solid lightgrey;
   width: 100%;
@@ -229,29 +206,29 @@ watch(
   margin: 0px;
   text-align: center;
 }
-
-.form-container {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  height: 10px;
-}
-
 .preview-container {
+  width: 100%;
   margin: 10px;
-  position: absolute;
   left: 0;
-  bottom: 50px;
   border: 0px solid lightgray;
   border-radius: 5px;
   margin-bottom: 6px;
   padding-top: 0px;
 }
-
+.form-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
 .button-container {
   height: auto;
   display: flex;
   justify-content: space-between;
-  margin-top: auto;
+  margin: 10px
+}
+.btn {
+  border-radius: 5px;
+  border: 1px solid rgb(26, 25, 25);
+  padding: 5px 10px;
 }
 </style>

@@ -14,10 +14,18 @@ export const useTweetStore = defineStore('tweetStore', {
             let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
                 username: username, password: password, phrase: keyphrase
             })
-            console.log("Login", user)
             return user
         },
+        async openTempFile() {
+            return await this.lapi.client.RunMApp("open_temp_file", {
+                aid: this.appId, ver: "last"
+            })
+        },
         async uploadTweet(tweet: any) {
+            let u = sessionStorage.getItem("userId")
+            if (!u) return null
+            let user = JSON.parse(u) as User
+            tweet.authorId = user.mid
             let t = await this.lapi.client.RunMApp("upload_tweet", 
                 {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
             console.log("new tweet", t)

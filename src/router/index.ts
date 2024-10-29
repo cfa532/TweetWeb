@@ -12,7 +12,6 @@ export const router = createRouter({
       path: '/upload', name: "upload", component: EditorModal,
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("userId")
-        console.log(user)
         if (!user) {
           next("login")
         } else
