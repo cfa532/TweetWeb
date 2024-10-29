@@ -48,4 +48,5 @@ interface FVPair {
 interface MimeiFileType {
     mid: string
     type: string
+    size?: number
 }

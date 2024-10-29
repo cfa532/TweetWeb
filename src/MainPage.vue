@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
-import { useTweetListStore } from "@/stores/tweetStore";
+import { useTweetStore } from "@/stores/tweetStore";
 import { TweetView } from "@/views"
 import { storeToRefs } from 'pinia';
 
-const tweetStore = useTweetListStore();
+const tweetStore = useTweetStore();
 const tweetStoreRefs = storeToRefs(tweetStore)
 const sorted = computed(()=>{
     return tweetStoreRefs.tweets.value.slice().sort((a, b) => {

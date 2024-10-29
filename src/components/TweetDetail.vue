@@ -1,13 +1,13 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from 'vue';
-import { useRoute } from 'vue-router';
-import { useTweetListStore } from '@/stores/tweetStore';
+import { useRoute, useRouter } from 'vue-router';
+import { useTweetStore } from '@/stores/tweetStore';
 import { formatTimeDifference } from '@/lib';
 import MediaView from "@/views/MediaView.vue";
-import router from '@/router';
 
+const router = useRouter()
 const route = useRoute();
-const tweetStore = useTweetListStore()
+const tweetStore = useTweetStore()
 const tweetId = route.params.tweetId as string
 const authorId = route.params.authorId as string | undefined
 const tweet = ref()

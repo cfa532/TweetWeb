@@ -1,29 +1,37 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import TweetDetail from "@/components/TweetDetail.vue"
+import { TweetDetail, UserLogin as Login, EditorModal } from "@/components"
 import MainPage from '@/MainPage.vue';
-import { useTweetListStore } from '@/stores/tweetStore';
-// const tweetStore = useTweetListStore()
+import { useTweetStore } from '@/stores/tweetStore';
 
-const routes = [
-  { path: '/', name:"main", component: MainPage},
-  { path: '/tweet/:tweetId/:authorId?',
-    name: 'TweetDetail',
-    component: TweetDetail,
-    props: true},
-  { path: '/upgrade',
-    name:"upgrade",
-    beforeEnter: (to:any, from:any, next: any) => {
-      console.log("before download", to, from, next)
-      useTweetListStore().downloadApk()
-      next("main")
-    },
-    redirect: "",
-  },
-];
-
-const router = createRouter({
+export const router = createRouter({
   history: createWebHistory(),
-  routes
-});
-
-export default router;
+  routes: [
+    { path: '/', name: "main", component: MainPage },
+    { path: '/login', name: "login", component: Login },
+    {
+      path: '/upload', name: "upload", component: EditorModal,
+      beforeEnter: (to: any, from: any, next: any) => {
+        let user = sessionStorage.getItem("userId")
+        console.log(user)
+        if (!user) {
+          next("login")
+        } else
+          next()
+      },
+    },
+    {
+      path: '/tweet/:tweetId/:authorId?',
+      name: 'TweetDetail',
+      component: TweetDetail,
+      props: true,
+    },
+    { path: '/upgrade',
+      name: "upgrade",
+      beforeEnter: (to:any, from:any, next: any) => {
+        useTweetStore().downloadApk()
+        next("main")
+      },
+      redirect: ""
+    },
+  ]
+})

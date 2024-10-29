@@ -1,14 +1,28 @@
 import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 
-export const useTweetListStore = defineStore('tweetStore', {
+export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
         authors: [] as User[],
         followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
-        leitherStore: useLeitherStore(),
+        lapi: useLeitherStore(),
+        appId: import.meta.env.VITE_MIMEI_APPID,
     }),
     actions: {
+        async login(username: string, password: string, keyphrase: string) {
+            let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
+                username: username, password: password, phrase: keyphrase
+            })
+            console.log("Login", user)
+            return user
+        },
+        async uploadTweet(tweet: any) {
+            let t = await this.lapi.client.RunMApp("upload_tweet", 
+                {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
+            console.log("new tweet", t)
+            return t
+        },
         // Load tweets of a list of followed User IDs
         async loadTweets() {
             this.tweets = []
@@ -44,11 +58,12 @@ export const useTweetListStore = defineStore('tweetStore', {
 
         async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
             return await author.client.RunMApp("get_tweets", {
-                aid: this.leitherStore.appId,
+                aid: this.lapi.appId,
                 ver: "last",
                 userid: author.mid,
                 start: Date.now(),
-                end: Date.now() - 2592000000
+                end: Date.now() - 2592000000,
+                gid: "000000000000000000000000000"      // visitor's mid
             })
         },
 
@@ -76,13 +91,13 @@ export const useTweetListStore = defineStore('tweetStore', {
         async fetchTweet(tweetId: string): Promise<Tweet | undefined> {
 
             // Get IP address of the provider of this tweet
-            let providerIp = await this.getProviderIp(this.leitherStore.client, tweetId)
+            let providerIp = await this.getProviderIp(this.lapi.client, tweetId)
             if (!providerIp) return
-            let providerClient = this.leitherStore.getClient(providerIp)
+            let providerClient = this.lapi.getClient(providerIp)
 
             // Get tweet data from Mimei. Its definition is different from this app.
             let tweetInDB = await providerClient.RunMApp("get_tweet", {
-                aid: this.leitherStore.appId,
+                aid: this.lapi.appId,
                 ver: "last",
                 tweetid: tweetId,
                 userid: "0000000000000000000000000000000",  // just a placeholder
@@ -117,12 +132,12 @@ export const useTweetListStore = defineStore('tweetStore', {
             let author = this.authors.find(e => { e.mid == userId })
             if (author) return author
 
-            let providerIp = await this.getProviderIp(this.leitherStore.client, userId)
+            let providerIp = await this.getProviderIp(this.lapi.client, userId)
             if (!providerIp) return
-            let providerClient = this.leitherStore.getClient(providerIp)
+            let providerClient = this.lapi.getClient(providerIp)
 
             author = await providerClient.RunMApp("get_user_core_data", {
-                aid: this.leitherStore.appId,
+                aid: this.lapi.appId,
                 ver: "last",
                 userid: userId,
             })
@@ -139,7 +154,7 @@ export const useTweetListStore = defineStore('tweetStore', {
         // Given a mimie Id, find IP of its best provider
         async getProviderIp(client: any, mid: string): Promise<string | undefined> {
             return await client.RunMApp("get_provider", {
-                aid: this.leitherStore.appId,
+                aid: this.lapi.appId,
                 ver: "last",
                 mid: mid,
             })
@@ -148,9 +163,9 @@ export const useTweetListStore = defineStore('tweetStore', {
         async loadComments(tweet: Tweet) {
             if (!tweet || !tweet.provider) return
 
-            let client = this.leitherStore.getClient(tweet.provider)
+            let client = this.lapi.getClient(tweet.provider)
             let comments = client.RunMApp("get_comments", {
-                aid: this.leitherStore.appId,
+                aid: this.lapi.appId,
                 ver: "last",
                 tweetid: tweet.mid,
                 userid: "00000000000000000000000000",
@@ -181,8 +196,8 @@ export const useTweetListStore = defineStore('tweetStore', {
         },
 
         async downloadApk() {
-            let url = await this.leitherStore.client.RunMApp("download_upgrade", {
-                aid: this.leitherStore.appId, ver:"last"}
+            let url = await this.lapi.client.RunMApp("download_upgrade", {
+                aid: this.lapi.appId, ver:"last"}
             )
             if (!url) return
             fetch(url)
