@@ -1,13 +1,14 @@
-import { createRouter, createWebHistory } from 'vue-router';
-import { TweetDetail, UserLogin as Login, EditorModal } from "@/components"
+import { createRouter, createWebHashHistory } from 'vue-router';
+import { TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
 import MainPage from '@/MainPage.vue';
 import { useTweetStore } from '@/stores/tweetStore';
 
 export const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     { path: '/', name: "main", component: MainPage },
     { path: '/login', name: "login", component: Login },
+    { path: '/ips', name: "IPs", component: IPs },
     {
       path: '/upload', name: "upload", component: EditorModal,
       beforeEnter: (to: any, from: any, next: any) => {

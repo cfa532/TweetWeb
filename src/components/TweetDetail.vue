@@ -106,7 +106,7 @@ onUnmounted(()=>{
                     <div class="card-body">
                         <p class="card-text">{{ comment.content }}</p>
                         <div v-if="comment.attachments?.length" class="media-attachments">
-                            <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2"></MediaView>
+                            <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media class="img-fluid mb-2"></MediaView>
                         </div>
                     </div>
                 </div>

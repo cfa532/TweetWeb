@@ -78,8 +78,10 @@ export const useTweetStore = defineStore('tweetStore', {
         // Given only tweet ID, find it full data.
         async getTweet(tweetId: string, authorId: string | undefined = undefined): Promise<Tweet | undefined> {
             let tweet = this.tweets.find(t => { t.mid == tweetId })
-            if (tweet) return tweet
-
+            if (tweet) {
+                console.log(tweet)
+                return tweet
+            }
             tweet = await this.fetchTweet(tweetId)
             console.log(tweet, tweetId)
             if (!tweet) return
@@ -89,7 +91,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.originalTweet = orig
                 tweet.originalAuthor = orig?.author
             }
-            console.log(tweet)
             return tweet
         },
 
@@ -187,9 +188,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         author: author,
                         content: e.content,
                         timestamp: e.timestamp,
-                        attachments: e.attachments?.map((a: string) => {
-                            return this.getMediaUrl(a, "http://" + tweet.provider)
-                        })
+                        attachments: e.attachments?.map((a: MimeiFileType) => {
+                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider) // comments on same node with tweet.
+                            return a
+                        }),
                     })
                 }
             })

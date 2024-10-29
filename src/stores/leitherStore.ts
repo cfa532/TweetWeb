@@ -15,7 +15,6 @@ function getCurNodeIP() {
     if (window.getParam != null){
         let p=window.getParam()
         ip = p["ips"][p.CurNode]
-        console.warn("window.param", p["aid"])
         console.log(p)
     } else if (window.location.host != ""){
         ip = window.location.host
