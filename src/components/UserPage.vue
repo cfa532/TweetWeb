@@ -15,7 +15,6 @@ const sorted = computed(()=>{
       });
 })
 onMounted(()=> {
-    console.log("userpage")
     tweetStore.loadTweets(authorId)
 })
 </script>
