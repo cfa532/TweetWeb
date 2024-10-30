@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useTweetStore } from "@/stores/tweetStore";
-import { TweetView } from "@/views"
+import { TweetView, AppHeader } from "@/views"
 import { storeToRefs } from 'pinia';
 
 const tweetStore = useTweetStore();
@@ -12,7 +12,7 @@ const sorted = computed(()=>{
       });
 })
 onMounted(()=> {
-    if (!sessionStorage["isBot"]) {
+    if (sessionStorage["isBot"] != "No") {
         confirm("Download App for more.") ? sessionStorage["isBot"] = "No" : history.go(-1)
     }
     tweetStore.loadTweets()
@@ -20,6 +20,7 @@ onMounted(()=> {
 </script>
 
 <template>
+    <AppHeader />
     <TweetView v-for="(tweet, index) in sorted" :tweet="tweet" :key="index" />
 </template>
 

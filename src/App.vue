@@ -1,11 +1,11 @@
 <template>
   <div class="container-fluid">
-        <div class="row justify-content-start align-items-start">
-          <div class="col-sm-12 col-md-12 col-lg-8">
-            <router-view />
-          </div>
-        </div>
+    <div class="row justify-content-start align-items-start">
+      <div class="col-sm-12 col-md-10 col-lg-6">
+        <router-view />
       </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>

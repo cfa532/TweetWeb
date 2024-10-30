@@ -1,6 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
-import MainPage from '@/MainPage.vue';
+import { MainPage, TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
 import { useTweetStore } from '@/stores/tweetStore';
 
 /**
