@@ -1,9 +1,8 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from "@/stores/tweetStore";
-import { MediaView, AppHeader } from "@/views";
+import { MediaView, AppHeader, ItemHeader } from "@/views";
 
 const route = useRoute();
 const tweetStore = useTweetStore()
@@ -49,12 +48,7 @@ onUnmounted(() => {
     <AppHeader />
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2">
-            <div>
-                <h6 class="mb-0">{{ tweet.author.name }}</h6>
-                <small class="text-muted">@{{ tweet.author.username }} - {{
-                    formatTimeDifference(tweet.timestamp as number) }}</small>
-            </div>
+            <ItemHeader :tweet="tweet"></ItemHeader>
         </div>
         <div class="card-body">
             <p class="card-text">{{ tweet.content }}</p>
@@ -83,12 +77,7 @@ onUnmounted(() => {
     </div>
     <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index" class="comment card mb-1 mt-3">
         <div class="card-header d-flex align-items-center">
-            <img :src="comment.author.avatar" alt="User Avatar" class="rounded-circle me-2">
-            <div>
-                <h6 class="mb-0">{{ comment.author.name }}</h6>
-                <small class="text-muted">@{{ comment.author.username }} - {{
-                    formatTimeDifference(comment.timestamp as number) }}</small>
-            </div>
+            <ItemHeader :tweet="comment"></ItemHeader>
         </div>
         <div class="card-body">
             <p class="card-text">{{ comment.content }}</p>

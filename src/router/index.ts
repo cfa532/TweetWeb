@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { MainPage, TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
+import { UserPage, MainPage, TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
 import { useTweetStore } from '@/stores/tweetStore';
 
 /**
@@ -14,6 +14,12 @@ export const router = createRouter({
       path: '/tweet/:tweetId/:authorId?',
       name: 'TweetDetail',
       component: TweetDetail,
+      props: false,
+    },
+    {
+      path: '/author/:authorId',
+      name: 'UserPage',
+      component: UserPage,
       props: false,
     },
     { path: '/login', name: "login", component: Login },

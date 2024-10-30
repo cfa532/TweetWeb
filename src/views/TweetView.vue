@@ -2,7 +2,7 @@
 import { onMounted } from "vue";
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
-import MediaView from "./MediaView.vue";
+import { MediaView, ItemHeader } from "@/views";
 
 const router = useRouter()
 const props = defineProps<{ tweet: Tweet; }>();
@@ -20,12 +20,7 @@ function openDetailView() {
 <template>
     <div class="card" @click="openDetailView">
         <div class="card-header d-flex align-items-start">
-            <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2" width="40"
-                height="40" />
-            <div>
-                <h6 class="mb-0">{{ tweet.author.name }}</h6>
-                <small class="text-muted">@{{ tweet.author.username }} - {{ formatTimeDifference(tweet.timestamp as number) }}</small>
-            </div>
+            <ItemHeader :tweet="tweet"></ItemHeader>
         </div>
         <div class="card-body">
             <p class="card-text">{{ tweet.content }}</p>

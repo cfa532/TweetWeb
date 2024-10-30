@@ -33,8 +33,11 @@ export const useTweetStore = defineStore('tweetStore', {
             return t
         },
         // Load tweets of a list of followed User IDs
-        async loadTweets() {
+        async loadTweets(authorId: string | undefined = undefined) {
             this.tweets = []
+            if (authorId && !this.followings.find(e => e==authorId)) {
+                this.followings.unshift(authorId) 
+            }
             this.followings.forEach(async uid => {
                 let author = await this.getUser(uid)
                 if (!author) return
@@ -180,8 +183,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 userid: GUEST_ID,
             }) as any[]
-            comments.sort((a, b) => b.timestamp - a.timestamp)
             // comment type is a different Tweet type from the definition in this app
+            comments.sort((a, b) => b.timestamp - a.timestamp)
             comments.forEach(async e => {
                 let author = await this.getUser(e.authorId)
                 if (author) {
