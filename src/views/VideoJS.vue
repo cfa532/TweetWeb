@@ -10,7 +10,6 @@ const caption = ref()
 const vdiv = ref()  // to deal with a bug sometime player do not hide when switching components in parent Vue
 
 onMounted(async () => {
-  console.log("Videoplayer mounted", props)
   vdiv.value.hidden = false;
 })
 </script>

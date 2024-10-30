@@ -1,11 +1,21 @@
-import { createRouter, createWebHashHistory } from 'vue-router';
+import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
 import { TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
 import MainPage from '@/MainPage.vue';
 import { useTweetStore } from '@/stores/tweetStore';
 
+/**
+ * createWebHashHistory: access tweet by IP is ok, by domain not.
+ * createWebHistory works for domain base url, so is createWebHistory
+ */
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
+    {
+      path: '/tweet/:tweetId/:authorId?',
+      name: 'TweetDetail',
+      component: TweetDetail,
+      props: true,
+    },
     { path: '/', name: "main", component: MainPage },
     { path: '/login', name: "login", component: Login },
     { path: '/ips', name: "IPs", component: IPs },
@@ -19,12 +29,6 @@ export const router = createRouter({
           next()
       },
     },
-    {
-      path: '/tweet/:tweetId/:authorId?',
-      name: 'TweetDetail',
-      component: TweetDetail,
-      props: true,
-    },
     { path: '/upgrade',
       name: "upgrade",
       beforeEnter: (to:any, from:any, next: any) => {
@@ -33,5 +37,10 @@ export const router = createRouter({
       },
       redirect: ""
     },
-  ]
+  ],
 })
+
+// router.beforeEach((to: any, from: any) => {
+//   console.log("From", from)
+//   console.log("To:", to)
+// })

@@ -15,6 +15,9 @@ const countdown = ref(3);
 let countdownInterval: number | undefined;
 
 onMounted(async () => {
+    if (!sessionStorage["isBot"]) {
+        confirm("Download App for more.") ? sessionStorage["isBot"] = "No" : history.go(-1)
+    }
     // Fetch tweet if it is not in session already.
     tweet.value = sessionStorage.getItem("tweetDetail")
     if (!tweet.value) {

@@ -12,7 +12,9 @@ const sorted = computed(()=>{
       });
 })
 onMounted(()=> {
-    console.log("Mainpage")
+    if (!sessionStorage["isBot"]) {
+        confirm("Download App for more.") ? sessionStorage["isBot"] = "No" : history.go(-1)
+    }
     tweetStore.loadTweets()
 })
 </script>
