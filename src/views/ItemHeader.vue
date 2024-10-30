@@ -6,7 +6,6 @@ import { formatTimeDifference } from '@/lib';
 const props = defineProps<{ tweet: Tweet; }>();
 const router = useRouter()
 onMounted(()=>{
-    console.log(props.tweet)
 })
 function openUserPage(userId: string) {
     router.push(`/author/${userId}`)
