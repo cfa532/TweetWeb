@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia';
 const tweetStore = useTweetStore();
 const tweetStoreRefs = storeToRefs(tweetStore)
 const sorted = computed(()=>{
-    return tweetStoreRefs.tweets.value.slice().sort((a, b) => {
+    return tweetStoreRefs.tweets.value.sort((a, b) => {
         return (b.timestamp as number) - (a.timestamp as number);
       });
 })

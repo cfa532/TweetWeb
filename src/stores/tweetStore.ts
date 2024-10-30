@@ -174,13 +174,14 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!tweet || !tweet.provider) return
 
             let client = this.lapi.getClient(tweet.provider)
-            let comments = client.RunMApp("get_comments", {
+            let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
                 tweetid: tweet.mid,
                 userid: GUEST_ID,
             }) as any[]
-            // comment type if a different Tweet type from the definition in this app
+            comments.sort((a, b) => b.timestamp - a.timestamp)
+            // comment type is a different Tweet type from the definition in this app
             comments.forEach(async e => {
                 let author = await this.getUser(e.authorId)
                 if (author) {
@@ -190,7 +191,8 @@ export const useTweetStore = defineStore('tweetStore', {
                         content: e.content,
                         timestamp: e.timestamp,
                         attachments: e.attachments?.map((a: MimeiFileType) => {
-                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider) // comments on same node with tweet.
+                            // comments on same node with tweet.
+                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
                             return a
                         }),
                     })

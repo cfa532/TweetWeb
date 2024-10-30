@@ -9,13 +9,13 @@ import { useTweetStore } from '@/stores/tweetStore';
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
+    { path: '/', name: "main", component: MainPage },
     {
       path: '/tweet/:tweetId/:authorId?',
       name: 'TweetDetail',
       component: TweetDetail,
-      props: true,
+      props: false,
     },
-    { path: '/', name: "main", component: MainPage },
     { path: '/login', name: "login", component: Login },
     { path: '/ips', name: "IPs", component: IPs },
     {

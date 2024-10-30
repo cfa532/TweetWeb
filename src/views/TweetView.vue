@@ -30,7 +30,8 @@ function openDetailView() {
         <div class="card-body">
             <p class="card-text">{{ tweet.content }}</p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2"></MediaView>
+                <MediaView v-for="(media, index) in tweet.attachments" :key="index"
+                    v-bind=media class="img-fluid mb-2"></MediaView>
             </div>
             <div class='icon-row d-flex justify-content-around mt-3'>
                 <div class='icon-item d-flex align-items-center'>
