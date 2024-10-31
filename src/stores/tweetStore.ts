@@ -12,13 +12,13 @@ export const useTweetStore = defineStore('tweetStore', {
     }),
     getters: {
         user: () => {
-            let u = sessionStorage.getItem("userId")
+            let u = sessionStorage.getItem("user")
             if (u)
                 return JSON.parse(u)
             else return null
         },
         userId: () => {
-            let u = sessionStorage.getItem("userId")
+            let u = sessionStorage.getItem("user")
             if (u)
                 return JSON.parse(u).mid
             else return null
@@ -26,10 +26,22 @@ export const useTweetStore = defineStore('tweetStore', {
     },
     actions: {
         async login(username: string, password: string, keyphrase: string) {
-            let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
-                username: username, password: password, phrase: keyphrase
+            let userId = await this.lapi.client.RunMApp("get_userid", {aid: this.appId,
+                ver: "last", phrase: keyphrase
             })
-            return user
+            if (userId) {
+                let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
+                    ver: "last", mid: userId
+                })
+                console.log("IPs", ips)
+                this.lapi.client = this.lapi.getClient(ips)
+                let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
+                    username: username, password: password, phrase: keyphrase
+                })
+                sessionStorage.setItem("user", JSON.stringify(user))
+                return user
+            }
+            return null
         },
         async openTempFile() {
             return await this.lapi.client.RunMApp("open_temp_file", {
@@ -37,7 +49,7 @@ export const useTweetStore = defineStore('tweetStore', {
             })
         },
         async uploadTweet(tweet: any) {
-            let u = sessionStorage.getItem("userId")
+            let u = sessionStorage.getItem("user")
             if (!u) return null
             let user = JSON.parse(u) as User
             tweet.authorId = user.mid

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Form, Field } from 'vee-validate';
 import * as Yup from 'yup';
-import { useTweetStore } from '@/stores/tweetStore';
+import { useTweetStore, useAlertStore } from '@/stores';
 import { useRouter } from "vue-router";
 const router = useRouter()
 
@@ -16,8 +16,10 @@ async function onSubmit(values: any) {
     const { username, password, keyphrase } = values;
     let user = await tweetStore.login(username, password, keyphrase);
     if (user) {
-        sessionStorage.setItem("userId", JSON.stringify(user))
         router.push("upload")
+    } else {
+        // login failed
+        useAlertStore().error("Login failed")
     }
 }
 </script>

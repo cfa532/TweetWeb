@@ -9,3 +9,4 @@ export { default as Loading } from './BootSpinner.vue'
 export { default as MsgVue} from './Msg.vue'
 export { default as AppHeader} from './AppHeader.vue'
 export { default as ItemHeader} from './ItemHeader.vue'
+export { default as Alert } from './AlertMessage.vue';

@@ -9,10 +9,10 @@ const props = defineProps<{ tweet: Tweet; }>();
 onMounted(() => {
 });
 function openDetailView() {
-  // Route to the tweet detail page using the tweet ID
-  console.log("open detail view")
-  sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
-  router.push(`/tweet/${props.tweet.mid}`);
+    // Route to the tweet detail page using the tweet ID
+    console.log("open detail view")
+    sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
+    router.push(`/tweet/${props.tweet.mid}`);
 };
 </script>
 

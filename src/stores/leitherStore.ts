@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia';
 
-const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGetAllKeys","MFOpenByPath",
-    "DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs", "MFOpenTempFile", "MFTemp2MacFile", "MFSetData",
-    "MFGetData", "MMCreate", "MMOpen", "Hset", "Hget", "Hmset", "Hmget", "Zadd", "Zrangebyscore", "Zrange", "MFOpenMacFile",
-    "MFReaddir", "MFGetMimeType", "MFSetObject", "MFGetObject", "Zcount", "Zrevrange", "Hlen", "Hscan", "Hrevscan",
-    "MMRelease", "MMBackup", "MFStat", "Zrem", "Zremrangebyscore", "MiMeiPublish", "PullMsg", "MFTemp2Ipfs", "MFSetCid",
-    "MMSum", "MiMeiSync", "IpfsAdd", "MMAddRef", "MMDelRef", "MMDelVers", "MMRelease", "MMGetRef", "MMGetRefs", "Hdel",
-    "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight", "RunMApp",
+const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGetAllKeys",
+    "MFOpenByPath","DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs",
+    "MFOpenTempFile", "MFTemp2MacFile", "MFSetData", "MFGetData", "MMCreate", "MMOpen",
+    "Hset", "Hget", "Hmset", "Hmget", "Zadd", "Zrangebyscore", "Zrange", "MFOpenMacFile",
+    "MFReaddir", "MFGetMimeType", "MFSetObject", "MFGetObject", "Zcount", "Zrevrange",
+    "Hlen", "Hscan", "Hrevscan", "MMRelease", "MMBackup", "MFStat", "Zrem",  "RunMApp",
+    "Zremrangebyscore", "MiMeiPublish", "PullMsg", "MFTemp2Ipfs", "MFSetCid", "MMSum",
+    "MiMeiSync", "IpfsAdd", "MMAddRef", "MMDelRef", "MMDelVers", "MMRelease", "MMGetRef",
+    "MMGetRefs", "Hdel", "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight",
 ];
 
 function getCurNodeIP() {
@@ -40,9 +42,9 @@ export const useLeitherStore = defineStore({
         getClient(ip: string) {
             return window.hprose.Client.create("ws://" + ip +"/ws/", ayApi)
         },
-        login() {
-            let ppt = this.client.GetVarByContext("", "context_ppt")
-            return this.client.Login(ppt)
+        async login() {
+            let ppt = await this.client.GetVarByContext("", "context_ppt")
+            return await this.client.Login(ppt)
         }
     }
 })
