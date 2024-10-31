@@ -38,6 +38,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
                     username: username, password: password, phrase: keyphrase
                 })
+                user.avatar = this.getMediaUrl(user.avatar, "http://"+ips)
                 sessionStorage.setItem("user", JSON.stringify(user))
                 return user
             }
@@ -55,7 +56,6 @@ export const useTweetStore = defineStore('tweetStore', {
             tweet.authorId = user.mid
             let t = await this.lapi.client.RunMApp("upload_tweet", 
                 {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
-            console.log("new tweet", t)
             return t
         },
         // Load tweets of a list of followed User IDs

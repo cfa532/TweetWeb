@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
-import { Loading, Preview } from '@/views'
-import { useTweetStore } from '@/stores/tweetStore'
-import { useLeitherStore } from '@/stores/leitherStore';
+import { ref, reactive, onMounted } from 'vue'
+import { Loading, Preview, ItemHeader } from '@/views'
+import { useTweetStore, useLeitherStore } from '@/stores'
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
@@ -21,7 +20,12 @@ const selectFiles = ref()
 const isPrivate = ref(false)
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
+const tweet = ref({mid: "", author: {}} as Tweet)
 
+onMounted(() => {
+  tweet.value.author = tweetStore.user
+  tweet.value.timestamp = Date.now()
+})
 // Upload files and store them as IPFS or Mimei type
 async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
   function getMedaiType(t: string) {
@@ -71,8 +75,10 @@ async function onSubmit() {
       content: textValue.value, attachments: attachments, isPrivate: isPrivate.value,
       timestamp: Date.now()
     }
-    console.log(tweet)
-    tweet = await tweetStore.uploadTweet(tweet)
+    console.log("new tweet", tweet)
+    await tweetStore.uploadTweet(tweet)
+    textValue.value = ""
+    filesUpload.value = []
   } catch (err) {
     // something wrong uploading files, abort
     console.error('onSubmit err:', err)
@@ -148,6 +154,9 @@ function removeFile(f: File) {
 </script>
 
 <template>
+  <div class="card-header d-flex align-items-center">
+    <ItemHeader :tweet="tweet"></ItemHeader>
+  </div>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
     <div class="input-container">
       <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
@@ -175,6 +184,9 @@ function removeFile(f: File) {
 </template>
 
 <style scoped>
+.card-header {
+  margin-left: 10px;
+}
 .modal-content {
   width: 100%;
   position: relative;

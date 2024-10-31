@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
-import { useTweetStore } from '@/stores/tweetStore';
+import { useTweetStore, useAlertStore } from '@/stores';
 
 /**
  * createWebHashHistory: access tweet by IP is ok, by domain not.
@@ -45,7 +45,6 @@ export const router = createRouter({
   ],
 })
 
-// router.beforeEach((to: any, from: any) => {
-//   console.log("From", from)
-//   console.log("To:", to)
-// })
+router.beforeEach((to: any, from: any) => {
+  useAlertStore().clear()
+})
