@@ -151,11 +151,16 @@ function removeFile(f: File) {
   var i = filesUpload.value.findIndex((e: File) => e == f)
   filesUpload.value.splice(i, 1)
 }
+function logout() {
+  tweetStore.logout();
+  location.reload()
+}
 </script>
 
 <template>
   <div class="card-header d-flex align-items-center">
     <ItemHeader :tweet="tweet"></ItemHeader>
+    <button class="logout" @click.prevent="logout">Logout</button>
   </div>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
     <div class="input-container">
@@ -186,6 +191,14 @@ function removeFile(f: File) {
 <style scoped>
 .card-header {
   margin-left: 10px;
+  display: flex;
+  align-items: center;
+}
+.logout {
+  border-radius: 5px;
+  border: 1px solid rgb(143, 139, 139);
+  padding: 3px 10px;
+  margin-left: auto;
 }
 .modal-content {
   width: 100%;
@@ -241,6 +254,6 @@ function removeFile(f: File) {
 .btn {
   border-radius: 5px;
   border: 1px solid rgb(26, 25, 25);
-  padding: 5px 10px;
+  padding: 3px 10px;
 }
 </style>

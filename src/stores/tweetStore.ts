@@ -44,6 +44,9 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             return null
         },
+        logout() {
+            sessionStorage.removeItem("user")
+        },
         async openTempFile() {
             return await this.lapi.client.RunMApp("open_temp_file", {
                 aid: this.appId, ver: "last"
