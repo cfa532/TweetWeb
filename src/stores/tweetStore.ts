@@ -10,6 +10,20 @@ export const useTweetStore = defineStore('tweetStore', {
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
     }),
+    getters: {
+        user: () => {
+            let u = sessionStorage.getItem("userId")
+            if (u)
+                return JSON.parse(u)
+            else return null
+        },
+        userId: () => {
+            let u = sessionStorage.getItem("userId")
+            if (u)
+                return JSON.parse(u).mid
+            else return null
+        }
+    },
     actions: {
         async login(username: string, password: string, keyphrase: string) {
             let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
@@ -37,6 +51,9 @@ export const useTweetStore = defineStore('tweetStore', {
             this.tweets = []
             if (authorId && !this.followings.find(e => e==authorId)) {
                 this.followings.unshift(authorId) 
+            } else {
+                if (this.userId)
+                    this.followings.unshift(this.userId)
             }
             this.followings.forEach(async uid => {
                 let author = await this.getUser(uid)

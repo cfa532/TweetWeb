@@ -13,7 +13,7 @@ function openUserPage(userId: string) {
 </script>
 <template>
     <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2"
-        @click="openUserPage(tweet.author.mid)">
+        @click.stop="openUserPage(tweet.author.mid)">
     <div>
         <h6 class="mb-0">{{ tweet.author.name }}</h6>
         <small class="text-muted">@{{ tweet.author.username }} - {{

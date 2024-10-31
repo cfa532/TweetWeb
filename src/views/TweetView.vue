@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
 import { useRouter } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
 import { MediaView, ItemHeader } from "@/views";
 
 const router = useRouter()
@@ -18,7 +17,7 @@ function openDetailView() {
 </script>
 
 <template>
-    <div class="card" @click="openDetailView">
+    <div class="card" @click.prevent="openDetailView">
         <div class="card-header d-flex align-items-start">
             <ItemHeader :tweet="tweet"></ItemHeader>
         </div>
@@ -58,6 +57,7 @@ function openDetailView() {
 .card-header {
     margin: 0px;
     padding: auto;
+    cursor: pointer;
 }
 .card-body {
     margin: 0px;
