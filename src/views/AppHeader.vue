@@ -7,7 +7,7 @@ const router = useRouter()
 const tweetStore = useTweetStore()
 onMounted(()=>{
     if (sessionStorage["isBot"] != "No") {
-        confirm("Download App for more.") ? sessionStorage["isBot"] = "No" : history.go(-1)
+        confirm("芝麻，开门！") ? sessionStorage["isBot"] = "No" : history.go(-1)
     }
 })
 </script>
