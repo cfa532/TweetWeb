@@ -18,7 +18,9 @@ onMounted(async ()=> {
     }
     isLoading.value = true
     await tweetStore.loadTweets()
-    isLoading.value = false
+    window.setTimeout(()=>{
+        isLoading.value = false
+    }, 3000)
 })
 </script>
 

@@ -11,16 +11,16 @@ const props = defineProps({
     isQuoted: {type: Boolean, required: false, default: false}
 });
 const tweet = ref()
-const retweet = ref()
+const originTweet = ref()
 const isRetweet = ref(false)
 
 onMounted(async () => {
     console.log(props.tweet)
     tweet.value = props.tweet
     if (tweet.value.originalTweetId) {
-        retweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
+        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
         if (!tweet.value.content && !tweet.value.attachments) {
-            tweet.value = retweet.value
+            // tweet.value = originTweet.value
             isRetweet.value = true  // current tweet is retweet without content or attachments
         }
     }
@@ -35,7 +35,8 @@ function openDetailView() {
 <template>
     <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
-            <ItemHeader :tweet="tweet" :is-retweet="isRetweet" :by="tweet.author?.username"></ItemHeader>
+            <ItemHeader v-if="isRetweet" :tweet="originTweet" :is-retweet="isRetweet" :by="tweet.Author?.username"></ItemHeader>
+            <ItemHeader v-else :tweet="tweet"></ItemHeader>
         </div>
         <div class="card-body">
             <p class="card-text">{{ tweet.content }}</p>
@@ -46,7 +47,7 @@ function openDetailView() {
 
             <!-- quoted tweet -->
             <blockquote v-if="!isRetweet">
-                <TweetView v-if="retweet" :tweet="retweet" :is-quoted=true></TweetView>
+                <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
             <div class='icon-row d-flex justify-content-around mt-1'>

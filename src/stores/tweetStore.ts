@@ -92,6 +92,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                     if (t.originalTweetId) {
                         t.originalTweet = await this.getTweet(t.originalTweetId)
+                        console.log(t)
                     }
                     if (this.tweets.findIndex(e => e.mid === t.mid) === -1) {
                         this.tweets = this.tweets.concat(t);
@@ -111,14 +112,19 @@ export const useTweetStore = defineStore('tweetStore', {
             })
         },
 
-        // Given only tweet ID, find it full data.
+        /**
+         * Given only tweet ID, find it full data. Do NOT load comments yet. Wait until user opens
+         * detail tweet page.
+         * @param tweetId 
+         * @param authorId not used
+         * @returns a Tweet object short of comments.
+         */
         async getTweet(tweetId: string, authorId: string | undefined = undefined): Promise<Tweet | undefined> {
             let tweet = this.tweets.find(t => { t.mid == tweetId })
             if (tweet) {
                 return tweet
             }
             tweet = await this.fetchTweet(tweetId)
-            console.log(tweet, tweetId)
             if (!tweet) return
 
             if (tweet?.originalTweetId) {
@@ -147,7 +153,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweetId,
                 userid: GUEST_ID,  // just a placeholder
             })
-            console.log(tweetInDB)
             // get author data of the tweet.
             let author = await this.getUser(tweetInDB.authorId)
             if (!author) return

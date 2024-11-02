@@ -9,7 +9,7 @@ const tweetStore = useTweetStore()
 const tweetId = route.params.tweetId as string
 const authorId = route.params.authorId as string | undefined
 const tweet = ref()
-const retweet = ref()
+const originTweet = ref()
 const isRetweet = ref(false)
 let countdownInterval: number | undefined;
 const isLoading = ref(false)
@@ -22,16 +22,19 @@ onMounted(async () => {
         tweet.value = JSON.parse(s)
     if (!tweet.value) {
         tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
-        console.log(tweet.value)
     }
+    console.log(tweet.value)
     if (tweet.value.originalTweetId) {
-        retweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
+        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
         if (!tweet.value.content && !tweet.value.attachments) {
-            tweet.value = retweet.value
+            // tweet.value = originTweet.value
             isRetweet.value = true
         }
     }
-    await tweetStore.loadComments(tweet.value)
+    if (isRetweet)
+        await tweetStore.loadComments(originTweet.value)
+    else
+        await tweetStore.loadComments(tweet.value)
     isLoading.value = false
 });
 onUnmounted(() => {
@@ -45,18 +48,43 @@ onUnmounted(() => {
     <AppHeader />
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <ItemHeader :tweet="tweet" :is-retweet="isRetweet" :by="tweet.author?.username"></ItemHeader>
+            <ItemHeader v-if="isRetweet" :tweet="originTweet" :is-retweet="isRetweet" :by="tweet.author?.username">
+            </ItemHeader>
+            <ItemHeader v-else :tweet="tweet"></ItemHeader>
         </div>
-        <div class="card-body">
+        <div v-if="isRetweet" class="card-body">
+            <p class="card-text">{{ originTweet.content }}</p>
+            <div v-if="originTweet.attachments?.length" class="media-attachments">
+                <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
+                    class="img-fluid mb-2"></MediaView>
+            </div>
+            <div class='icon-row d-flex justify-content-around mt-1'>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
+                    <span class='icon-number'>{{ originTweet.likeCount > 0 ? originTweet.likeCount : null }}</span>
+                </div>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
+                    <span class='icon-number'>{{ originTweet.bookmarkCount > 0 ? originTweet.bookmarkCount : null
+                        }}</span>
+                </div>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                    <span class='icon-number'>{{ originTweet.commentCount > 0 ? originTweet.commentCount : null
+                        }}</span>
+                </div>
+            </div>
+        </div>
+        <div v-else class="card-body">
             <p class="card-text">{{ tweet.content }}</p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index"
-                    v-bind=media class="img-fluid mb-2"></MediaView>
+                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
+                </MediaView>
             </div>
 
             <!-- quoted tweet -->
             <blockquote v-if="!isRetweet">
-                <TweetView v-if="retweet" :tweet="retweet" :is-quoted=true></TweetView>
+                <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
             <div class='icon-row d-flex justify-content-around mt-1'>
@@ -76,15 +104,29 @@ onUnmounted(() => {
         </div>
     </div>
 
-    <div v-if="tweet" v-for="(comment, index) in tweet.comments" :key="index" class="comment card mb-1 mt-3">
-        <div class="card-header d-flex align-items-center">
-            <ItemHeader :tweet="comment"></ItemHeader>
+    <div v-if="tweet">
+        <div v-if="isRetweet" v-for="(comment, index) in originTweet.comments" :key="index" class="comment card mb-1 mt-3">
+            <div class="card-header d-flex align-items-center">
+                <ItemHeader :tweet="comment"></ItemHeader>
+            </div>
+            <div class="card-body">
+                <p class="card-text">{{ comment.content }}</p>
+                <div v-if="comment.attachments?.length" class="media-attachments">
+                    <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
+                        class="img-fluid mb-2"></MediaView>
+                </div>
+            </div>
         </div>
-        <div class="card-body">
-            <p class="card-text">{{ comment.content }}</p>
-            <div v-if="comment.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
-                    class="img-fluid mb-2"></MediaView>
+        <div v-else v-for="(comment, index1) in tweet.comments" :key="index1" class="comment card mb-1 mt-3">
+            <div class="card-header d-flex align-items-center">
+                <ItemHeader :tweet="comment"></ItemHeader>
+            </div>
+            <div class="card-body">
+                <p class="card-text">{{ comment.content }}</p>
+                <div v-if="comment.attachments?.length" class="media-attachments">
+                    <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
+                        class="img-fluid mb-2"></MediaView>
+                </div>
             </div>
         </div>
     </div>
@@ -105,7 +147,7 @@ onUnmounted(() => {
 <style scoped>
 .card {
     width: 100%;
-    margin: 0px 0px 30px 0px;
+    margin: 0px 0px 30px 20px;
 }
 
 .card-header {
