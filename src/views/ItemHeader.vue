@@ -1,11 +1,17 @@
-<script lang="ts" setup>
+<script setup lang="ts">
 import { onMounted } from 'vue';
+import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 
-const props = defineProps<{ tweet: Tweet; }>();
+const props = defineProps({ 
+    tweet: {type: Object as PropType<Tweet>, required: true},
+    isRetweet: {type: Boolean, required: false},
+    by: {type: String, required: false}
+})
 const router = useRouter()
 onMounted(()=>{
+    // console.log("ItemHeader", props)
 })
 function openUserPage(userId: string) {
     router.push(`/author/${userId}`)
@@ -15,6 +21,7 @@ function openUserPage(userId: string) {
     <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2"
         @click.stop="openUserPage(tweet.author.mid)">
     <div>
+        <div class="forward-font" v-if="isRetweet">Forwarded by @{{by}}</div>
         <h6 class="mb-0">{{ tweet.author.name }}</h6>
         <small class="text-muted">@{{ tweet.author.username }} - {{
             formatTimeDifference(tweet.timestamp as number) }}</small>
@@ -25,5 +32,9 @@ function openUserPage(userId: string) {
     width: 40px;
     height: 40px;
     cursor: pointer
+}
+.forward-font {
+    font-size: smaller;
+    opacity: 0.8;
 }
 </style>

@@ -1,25 +1,41 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { MediaView, ItemHeader } from "@/views";
-
+import { useTweetStore } from "@/stores";
+const tweetStore = useTweetStore()
 const router = useRouter()
-const props = defineProps<{ tweet: Tweet; }>();
+const props = defineProps({ 
+    tweet: {type: Object as PropType<Tweet>, required: true},
+    isQuoted: {type: Boolean, required: false, default: false}
+});
+const tweet = ref()
+const retweet = ref()
+const isRetweet = ref(false)
 
-onMounted(() => {
+onMounted(async () => {
+    console.log(props.tweet)
+    tweet.value = props.tweet
+    if (tweet.value.originalTweetId) {
+        retweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
+        if (!tweet.value.content && !tweet.value.attachments) {
+            tweet.value = retweet.value
+            isRetweet.value = true  // current tweet is retweet without content or attachments
+        }
+    }
 });
 function openDetailView() {
     // Route to the tweet detail page using the tweet ID
-    console.log("open detail view")
-    sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
-    router.push(`/tweet/${props.tweet.mid}`);
+    sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
+    router.push(`/tweet/${tweet.value.mid}`);
 };
 </script>
 
 <template>
-    <div class="card" @click.prevent="openDetailView">
+    <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
-            <ItemHeader :tweet="tweet"></ItemHeader>
+            <ItemHeader :tweet="tweet" :is-retweet="isRetweet" :by="tweet.author?.username"></ItemHeader>
         </div>
         <div class="card-body">
             <p class="card-text">{{ tweet.content }}</p>
@@ -27,18 +43,24 @@ function openDetailView() {
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index"
                     v-bind=media class="img-fluid mb-2"></MediaView>
             </div>
-            <div class='icon-row d-flex justify-content-around mt-3'>
+
+            <!-- quoted tweet -->
+            <blockquote v-if="!isRetweet">
+                <TweetView v-if="retweet" :tweet="retweet" :is-quoted=true></TweetView>
+            </blockquote>
+
+            <div class='icon-row d-flex justify-content-around mt-1'>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ tweet.likeCount! > 0 ? tweet.likeCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ tweet.bookmarkCount! > 0 ? tweet.bookmarkCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_notice.png' alt='Forward' class='icon' />
-                    <span class='icon-number'>{{ tweet.commentCount! > 0 ? tweet.commentCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
                 </div>
             </div>
         </div>
