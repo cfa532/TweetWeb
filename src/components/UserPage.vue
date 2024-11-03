@@ -17,6 +17,9 @@ onMounted(() => {
         isLoading.value = false
     }, 3000)
 })
+onUnmounted(() => {
+    tweetStore.tweets = []
+})
 </script>
 
 <template>
