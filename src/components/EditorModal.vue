@@ -23,7 +23,7 @@ const tweetStore = useTweetStore()
 const tweet = ref({mid: "", author: {}} as Tweet)
 
 onMounted(() => {
-  tweet.value.author = tweetStore.user
+  tweet.value.author = tweetStore.loginUser
   tweet.value.timestamp = Date.now()
 })
 // Upload files and store them as IPFS or Mimei type

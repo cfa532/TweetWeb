@@ -7,19 +7,18 @@ export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
         authors: [] as User[],
-        followings: ["q10ggWF2ElEdc5OkIpAfWp0gDF9"],
-        // followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
+        followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
     }),
     getters: {
-        user: () => {
+        loginUser: () => {
             let u = sessionStorage.getItem("user")
             if (u)
                 return JSON.parse(u)
             else return null
         },
-        userId: () => {
+        loginUserId: () => {
             let u = sessionStorage.getItem("user")
             if (u)
                 return JSON.parse(u).mid
@@ -29,51 +28,69 @@ export const useTweetStore = defineStore('tweetStore', {
     actions: {
         // Load tweets of a list of followed User IDs
         async loadTweets(authorId: string | undefined = undefined) {
+
+            // get userId list to get tweets from
             let followings = []
             if (authorId) {
-                followings.unshift(authorId)    // given userId, load its tweets
+                followings.push(authorId)
             } else {
                 followings = this.followings
-                if (this.userId && followings.findIndex(e=> e==this.userId)===-1) {
+                if (this.loginUserId && followings.findIndex(e=> e==this.loginUserId)===-1) {
                    // add login user to following list
-                    this.followings.unshift(this.userId)
+                    this.followings.unshift(this.loginUserId)
                 }
             }
+
             followings.forEach(async uid => {
                 let author = await this.getUser(uid)
                 if (!author) return
+
                 let tweetsByUser = await this.getTweetListByUser(author)
                 if (!tweetsByUser || tweetsByUser.length==0) return
 
                 // Each tweet does not have its author data yet.
-                tweetsByUser.forEach(async tit => {
+                tweetsByUser.forEach(async tweet => {
                     // skip tweet that is in tweets already.
-                    if (this.tweets.find(e => { e.mid == tit.mid }))
+                    if (this.tweets.find(e => { e.mid == tweet.mid }))
                         return
-                    tit.author = author
-                    tit.provider = author.provider
-                    tit.attachments = tit.attachments?.map(e => {
+
+                    tweet.author = author
+                    tweet.provider = author.provider
+                    tweet.attachments = tweet.attachments?.map(e => {
                         return {
                             mid: this.getMediaUrl(e.mid, "http://" + author.provider),
                             type: e.type
                         }
                     })
-                    tit.comments = []
+                    tweet.comments = []     // load comments only on detail page
 
-                    // add the tweets into cached buffer
-                    let index = this.tweets.findIndex(e => { return e.timestamp!! < tit.timestamp!! });
+                    if (tweet?.originalTweetId) {
+                        let cachedTweet = sessionStorage.getItem(tweet?.originalTweetId)
+                        if (cachedTweet) {
+                            tweet.originalTweet = JSON.parse(cachedTweet)
+                        } else {
+                            let originTweet = await this.fetchTweet(tweet.originalTweetId)
+                            tweet.originalTweet = originTweet
+                            sessionStorage.setItem(originTweet?.mid!!, JSON.stringify(originTweet))
+                        }
+                    }
+                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
+
+                    // add the tweets into right location of tweets
+                    let index = this.tweets.findIndex(e => { return e.timestamp!! < tweet.timestamp!! });
                     if (index === -1) {
                         // If no smaller timestamp is found, push to the end
-                        this.tweets.push(tit);
+                        this.tweets.push(tweet);
                     } else {
                         // Insert the tweet at the found index
-                        this.tweets.splice(index, 0, tit);
+                        this.tweets.splice(index, 0, tweet);
                     }
                 })
             })
         },
 
         async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
+            console.log(author)
             return await author.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
@@ -92,18 +109,13 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a Tweet object short of comments.
          */
         async getTweet(tweetId: string, authorId: string | undefined = undefined): Promise<Tweet | undefined> {
-            let tweet = this.tweets.find(t => { t.mid == tweetId })
-            if (tweet) {
-                return tweet
-            }
-            tweet = await this.fetchTweet(tweetId)
+            let tweet = await this.fetchTweet(tweetId)
             if (!tweet) return
 
-            if (tweet?.originalTweetId && this.tweets.findIndex(e=> e.mid==tweet?.originalTweetId)==-1) {
-                let originTweet = await this.fetchTweet(tweet.originalTweetId)
-                if (originTweet) this.tweets.push(originTweet)
+            if (tweet?.originalTweetId) {
+                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId)
             }
-            this.tweets.push(tweet)
+            sessionStorage.setItem(tweetId, JSON.stringify(tweet))
             return tweet
         },
 
@@ -113,6 +125,10 @@ export const useTweetStore = defineStore('tweetStore', {
          * author data is also available on the provider. Get author data too.
          */
         async fetchTweet(tweetId: string): Promise<Tweet | undefined> {
+            let cachedTweet = sessionStorage.getItem(tweetId)
+            if (cachedTweet) {
+                return JSON.parse(cachedTweet)
+            }
             // Get IP address of the provider of this tweet
             let providerIp = await this.getProviderIp(this.lapi.client, tweetId)
             if (!providerIp) return
@@ -140,38 +156,41 @@ export const useTweetStore = defineStore('tweetStore', {
                 }),
                 comments: [],
                 originalTweetId: tweetInDB.originalTweetId,
+                originalAuthorId: tweetInDB.originalAuthorId,
                 provider: providerIp,
                 likeCount: tweetInDB.likeCount,
                 bookmarkCount: tweetInDB.bookmarkCount,
                 commentCount: tweetInDB.commentCount
             }
+            sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
             return tweet
         },
 
         async getUser(userId: string): Promise<User | undefined> {
             // check if the user has been retrieved.
-            let author = this.authors.find(e => { e.mid == userId })
-            if (author) {
-                console.log("Cached user", author)
-                return author
+            let cachedUser = sessionStorage.getItem(userId)
+            if (cachedUser) {
+                let user = JSON.parse(cachedUser)
+                user.client = this.lapi.getClient(user.provider)
+                return user
             }
             let providerIp = await this.getProviderIp(this.lapi.client, userId)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
 
-            author = await providerClient.RunMApp("get_user_core_data", {
+            let user = await providerClient.RunMApp("get_user_core_data", {
                 aid: this.appId,
                 ver: "last",
                 userid: userId,
             })
             // cache the user data
-            if (author) {
-                author.provider = providerIp
-                author.client = providerClient
-                author.avatar = this.getMediaUrl(author.avatar, "http://" + providerIp)
-                this.authors.push(author)
+            if (user) {
+                user.provider = providerIp
+                user.client = providerClient
+                user.avatar = this.getMediaUrl(user.avatar, "http://" + providerIp)
+                sessionStorage.setItem(userId, JSON.stringify(user))
             }
-            return author
+            return user
         },
 
         // Given a mimie Id, find IP of its best provider

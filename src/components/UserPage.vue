@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetStore } from "@/stores/tweetStore";
 import { TweetView, AppHeader } from "@/views"
@@ -9,8 +9,9 @@ const authorId = route.params.authorId as string
 const tweetStore = useTweetStore();
 const isLoading = ref(false)
 
-onMounted(()=> {
+onMounted(() => {
     isLoading.value = true
+    tweetStore.tweets = []
     tweetStore.loadTweets(authorId)
     window.setTimeout(()=>{
         isLoading.value = false
@@ -20,7 +21,7 @@ onMounted(()=> {
 
 <template>
     <AppHeader />
-    <TweetView v-for="(tweet, index) in tweetStore.tweets" :tweet="tweet" :key="index" />
+    <TweetView v-for="tweet in tweetStore.tweets" :tweet="tweet" :key="tweet.mid" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">
             <span class="visually-hidden">Loading...</span>
