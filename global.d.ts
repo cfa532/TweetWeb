@@ -23,8 +23,8 @@ interface Tweet {
     attachments?: MimeiFileType[];
     timestamp?: string | number;
     originalTweetId?: string;
-    originalTweet?: Tweet;
-    originalAuthor?: User;
+    // originalTweet?: Tweet;
+    // originalAuthor?: User;
     comments?: Tweet[];
 
     likeCount?: number;

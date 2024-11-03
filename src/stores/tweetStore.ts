@@ -95,10 +95,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     })
                     tit.comments = []
 
-                    if (tit.originalTweetId) {
-                        tit.originalTweet = await this.getTweet(tit.originalTweetId)
-                        console.log(tit)
-                    }
                     // add the tweets into cached buffer
                     this.tweets.push(tit);
                 })
@@ -131,10 +127,9 @@ export const useTweetStore = defineStore('tweetStore', {
             tweet = await this.fetchTweet(tweetId)
             if (!tweet) return
 
-            if (tweet?.originalTweetId) {
-                let orig = await this.fetchTweet(tweet.originalTweetId)
-                tweet.originalTweet = orig
-                tweet.originalAuthor = orig?.author
+            if (tweet?.originalTweetId && this.tweets.findIndex(e=> e.mid==tweet?.originalTweetId)==-1) {
+                let originTweet = await this.fetchTweet(tweet.originalTweetId)
+                if (originTweet) this.tweets.push(originTweet)
             }
             this.tweets.push(tweet)
             return tweet
