@@ -31,7 +31,7 @@ onMounted(async () => {
             isRetweet.value = true
         }
     }
-    if (isRetweet)
+    if (isRetweet.value)
         await tweetStore.loadComments(originTweet.value)
     else
         await tweetStore.loadComments(tweet.value)
@@ -147,7 +147,7 @@ onUnmounted(() => {
 <style scoped>
 .card {
     width: 100%;
-    margin: 0px 0px 30px 20px;
+    margin: 0px 0px 30px 10px;
 }
 
 .card-header {

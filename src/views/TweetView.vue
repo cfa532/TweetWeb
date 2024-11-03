@@ -15,13 +15,13 @@ const originTweet = ref()
 const isRetweet = ref(false)
 
 onMounted(async () => {
-    console.log(props.tweet)
     tweet.value = props.tweet
+    console.log(tweet.value)
     if (tweet.value.originalTweetId) {
         originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
         if (!tweet.value.content && !tweet.value.attachments) {
             // tweet.value = originTweet.value
-            isRetweet.value = true  // current tweet is retweet without content or attachments
+            isRetweet.value = true
         }
     }
 });
@@ -35,14 +35,38 @@ function openDetailView() {
 <template>
     <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
-            <ItemHeader v-if="isRetweet" :tweet="originTweet" :is-retweet="isRetweet" :by="tweet.Author?.username"></ItemHeader>
+            <ItemHeader v-if="isRetweet" :tweet="originTweet" :is-retweet="isRetweet" :by="tweet.author?.username">
+            </ItemHeader>
             <ItemHeader v-else :tweet="tweet"></ItemHeader>
         </div>
-        <div class="card-body">
+        <div v-if="isRetweet" class="card-body">
+            <p class="card-text">{{ originTweet.content }}</p>
+            <div v-if="originTweet.attachments?.length" class="media-attachments">
+                <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
+                    class="img-fluid mb-2"></MediaView>
+            </div>
+            <div class='icon-row d-flex justify-content-around mt-1'>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
+                    <span class='icon-number'>{{ originTweet.likeCount > 0 ? originTweet.likeCount : null }}</span>
+                </div>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
+                    <span class='icon-number'>{{ originTweet.bookmarkCount > 0 ? originTweet.bookmarkCount : null
+                        }}</span>
+                </div>
+                <div class='icon-item d-flex align-items-center'>
+                    <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                    <span class='icon-number'>{{ originTweet.commentCount > 0 ? originTweet.commentCount : null
+                        }}</span>
+                </div>
+            </div>
+        </div>
+        <div v-else class="card-body">
             <p class="card-text">{{ tweet.content }}</p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index"
-                    v-bind=media class="img-fluid mb-2"></MediaView>
+                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
+                </MediaView>
             </div>
 
             <!-- quoted tweet -->
@@ -50,7 +74,7 @@ function openDetailView() {
                 <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
-            <div class='icon-row d-flex justify-content-around mt-1'>
+            <div v-if="!isQuoted" class='icon-row d-flex justify-content-around mt-1'>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
                     <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>

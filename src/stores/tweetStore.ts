@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 const GUEST_ID = "000000000000000000000000000"
+const THIRTY_DAYS = 25920000000
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
         authors: [] as User[],
-        followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
+        followings: ["q10ggWF2ElEdc5OkIpAfWp0gDF9"],
+        // followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
     }),
@@ -63,52 +65,54 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         // Load tweets of a list of followed User IDs
         async loadTweets(authorId: string | undefined = undefined) {
-            this.tweets = []
-            if (authorId && !this.followings.find(e => e==authorId)) {
-                this.followings.unshift(authorId) 
+            let followings = []
+            if (authorId) {
+                followings.unshift(authorId)    // given userId, load its tweets
             } else {
-                if (this.userId)
+                followings = this.followings
+                if (this.userId && followings.findIndex(e=> e==this.userId)===-1) {
+                   // add login user to following list
                     this.followings.unshift(this.userId)
+                }
             }
-            this.followings.forEach(async uid => {
+            followings.forEach(async uid => {
                 let author = await this.getUser(uid)
                 if (!author) return
-                let ts = await this.getTweetListByUser(author)
-                if (!ts) return
+                let tweetsByUser = await this.getTweetListByUser(author)
+                if (!tweetsByUser || tweetsByUser.length==0) return
 
                 // Each tweet does not have its author data yet.
-                ts.forEach(async t => {
-                    if (this.tweets.find(e => { e.mid == t.mid }))
+                tweetsByUser.forEach(async tit => {
+                    if (this.tweets.find(e => { e.mid == tit.mid }))
                         return
-                    t.author = author
-                    t.provider = author.provider
-                    t.attachments = t.attachments?.map(e => {
+                    tit.author = author
+                    tit.provider = author.provider
+                    tit.attachments = tit.attachments?.map(e => {
                         return {
                             mid: this.getMediaUrl(e.mid, "http://" + author.provider),
                             type: e.type
                         }
                     })
-                    t.comments = []
+                    tit.comments = []
 
-                    if (t.originalTweetId) {
-                        t.originalTweet = await this.getTweet(t.originalTweetId)
-                        console.log(t)
+                    if (tit.originalTweetId) {
+                        tit.originalTweet = await this.getTweet(tit.originalTweetId)
+                        console.log(tit)
                     }
-                    if (this.tweets.findIndex(e => e.mid === t.mid) === -1) {
-                        this.tweets = this.tweets.concat(t);
-                    }
+                    // add the tweets into cached buffer
+                    this.tweets.push(tit);
                 })
             })
         },
 
         async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
             return await author.client.RunMApp("get_tweets", {
-                aid: this.lapi.appId,
+                aid: this.appId,
                 ver: "last",
                 userid: author.mid,
                 start: Date.now(),
-                end: Date.now() - 2592000000,
-                gid: GUEST_ID      // visitor's mid
+                end: Date.now() - THIRTY_DAYS,
+                gid: GUEST_ID      // visitor's mid. Placeholder
             })
         },
 
@@ -132,6 +136,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.originalTweet = orig
                 tweet.originalAuthor = orig?.author
             }
+            this.tweets.push(tweet)
             return tweet
         },
 
@@ -173,21 +178,22 @@ export const useTweetStore = defineStore('tweetStore', {
                 bookmarkCount: tweetInDB.bookmarkCount,
                 commentCount: tweetInDB.commentCount
             }
-            this.tweets.push(tweet)
             return tweet
         },
 
         async getUser(userId: string): Promise<User | undefined> {
             // check if the user has been retrieved.
             let author = this.authors.find(e => { e.mid == userId })
-            if (author) return author
-
+            if (author) {
+                console.log("Cached user", author)
+                return author
+            }
             let providerIp = await this.getProviderIp(this.lapi.client, userId)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
 
             author = await providerClient.RunMApp("get_user_core_data", {
-                aid: this.lapi.appId,
+                aid: this.appId,
                 ver: "last",
                 userid: userId,
             })
@@ -220,6 +226,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 userid: GUEST_ID,
             }) as any[]
+
             // comment type is a different Tweet type from the definition in this app
             comments.sort((a, b) => b.timestamp - a.timestamp)
             comments.forEach(async e => {

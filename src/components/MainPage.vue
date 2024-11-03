@@ -26,7 +26,7 @@ onMounted(async ()=> {
 
 <template>
     <AppHeader />
-    <TweetView v-for="(tweet, index) in sorted" :tweet="tweet" :key="index" />
+    <TweetView v-for="(tweet, index) in tweetStoreRefs.tweets.value" :tweet="tweet" :key="index" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">
             <span class="visually-hidden">Loading...</span>
