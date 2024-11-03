@@ -1,27 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetStore } from "@/stores/tweetStore";
 import { TweetView, AppHeader } from "@/views"
-import { storeToRefs } from 'pinia';
 
 const route = useRoute();
 const authorId = route.params.authorId as string
 const tweetStore = useTweetStore();
-const tweetStoreRefs = storeToRefs(tweetStore)
-const sorted = computed(()=>{
-    return tweetStoreRefs.tweets.value.sort((a, b) => {
-        return (b.timestamp as number) - (a.timestamp as number);
-      });
-})
+const isLoading = ref(false)
+
 onMounted(()=> {
+    isLoading.value = true
     tweetStore.loadTweets(authorId)
+    window.setTimeout(()=>{
+        isLoading.value = false
+    }, 3000)
 })
 </script>
 
 <template>
     <AppHeader />
-    <TweetView v-for="(tweet, index) in sorted" :tweet="tweet" :key="index" />
+    <TweetView v-for="(tweet, index) in tweetStore.tweets" :tweet="tweet" :key="index" />
+    <div v-if="isLoading" class="d-flex justify-content-center my-3">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
 </template>
 
 <style scoped>

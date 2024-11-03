@@ -27,42 +27,6 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     },
     actions: {
-        async login(username: string, password: string, keyphrase: string) {
-            let userId = await this.lapi.client.RunMApp("get_userid", {aid: this.appId,
-                ver: "last", phrase: keyphrase
-            })
-            if (userId) {
-                let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
-                    ver: "last", mid: userId
-                })
-                console.log("IPs", ips)
-                this.lapi.client = this.lapi.getClient(ips)
-                let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
-                    username: username, password: password, phrase: keyphrase
-                })
-                user.avatar = this.getMediaUrl(user.avatar, "http://"+ips)
-                sessionStorage.setItem("user", JSON.stringify(user))
-                return user
-            }
-            return null
-        },
-        logout() {
-            sessionStorage.removeItem("user")
-        },
-        async openTempFile() {
-            return await this.lapi.client.RunMApp("open_temp_file", {
-                aid: this.appId, ver: "last"
-            })
-        },
-        async uploadTweet(tweet: any) {
-            let u = sessionStorage.getItem("user")
-            if (!u) return null
-            let user = JSON.parse(u) as User
-            tweet.authorId = user.mid
-            let t = await this.lapi.client.RunMApp("upload_tweet", 
-                {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
-            return t
-        },
         // Load tweets of a list of followed User IDs
         async loadTweets(authorId: string | undefined = undefined) {
             let followings = []
@@ -83,6 +47,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 // Each tweet does not have its author data yet.
                 tweetsByUser.forEach(async tit => {
+                    // skip tweet that is in tweets already.
                     if (this.tweets.find(e => { e.mid == tit.mid }))
                         return
                     tit.author = author
@@ -96,7 +61,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     tit.comments = []
 
                     // add the tweets into cached buffer
-                    this.tweets.push(tit);
+                    let index = this.tweets.findIndex(e => { return e.timestamp!! < tit.timestamp!! });
+                    if (index === -1) {
+                        // If no smaller timestamp is found, push to the end
+                        this.tweets.push(tit);
+                    } else {
+                        // Insert the tweet at the found index
+                        this.tweets.splice(index, 0, tit);
+                    }
                 })
             })
         },
@@ -250,6 +222,43 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
 
+        async login(username: string, password: string, keyphrase: string) {
+            let userId = await this.lapi.client.RunMApp("get_userid", {aid: this.appId,
+                ver: "last", phrase: keyphrase
+            })
+            if (userId) {
+                let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
+                    ver: "last", mid: userId
+                })
+                console.log("IPs", ips)
+                this.lapi.client = this.lapi.getClient(ips)
+                let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
+                    username: username, password: password, phrase: keyphrase
+                })
+                user.avatar = this.getMediaUrl(user.avatar, "http://"+ips)
+                sessionStorage.setItem("user", JSON.stringify(user))
+                return user
+            }
+            return null
+        },
+        logout() {
+            sessionStorage.removeItem("user")
+        },
+        async openTempFile() {
+            return await this.lapi.client.RunMApp("open_temp_file", {
+                aid: this.appId, ver: "last"
+            })
+        },
+        async uploadTweet(tweet: any) {
+            let u = sessionStorage.getItem("user")
+            if (!u) return null
+            let user = JSON.parse(u) as User
+            tweet.authorId = user.mid
+            let t = await this.lapi.client.RunMApp("upload_tweet", 
+                {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
+            return t
+        },
+        
         async downloadApk() {
             let url = await this.lapi.client.RunMApp("download_upgrade", {
                 aid: this.lapi.appId, ver:"last"}

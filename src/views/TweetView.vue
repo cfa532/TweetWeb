@@ -93,8 +93,11 @@ function openDetailView() {
 </template>
 
 <style scoped>
-.media-attachments img {
+.media-attachments {
     width: 100%;
+    flex-wrap: wrap;
+    gap: 10px;
+    object-fit: cover;
 }
 
 .card {
