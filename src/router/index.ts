@@ -7,7 +7,7 @@ import { useTweetStore, useAlertStore } from '@/stores';
  * createWebHistory works for domain base url, so is createWebHistory
  */
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes: [
     { path: '/', name: "main", component: MainPage },
     {

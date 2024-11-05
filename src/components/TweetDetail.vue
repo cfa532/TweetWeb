@@ -24,6 +24,9 @@ onMounted(async () => {
         tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
     }
     console.log(tweet.value)
+    if (!tweet.value)
+        window.location.reload()
+    
     if (tweet.value.originalTweetId) {
         originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
         if (!tweet.value.content && !tweet.value.attachments) {
