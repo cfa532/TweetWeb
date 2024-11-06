@@ -42,9 +42,5 @@ export const useLeitherStore = defineStore({
         getClient(ip: string) {
             return window.hprose.Client.create("ws://" + ip +"/ws/", ayApi)
         },
-        async login() {
-            let ppt = await this.client.GetVarByContext("", "context_ppt")
-            return await this.client.Login(ppt)
-        }
     }
 })
