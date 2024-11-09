@@ -245,20 +245,23 @@ export const useTweetStore = defineStore('tweetStore', {
             let userId = await this.lapi.client.RunMApp("get_userid", {aid: this.appId,
                 ver: "last", phrase: keyphrase
             })
-            if (userId) {
-                let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
-                    ver: "last", mid: userId
-                })
-                console.log("IPs", ips)
-                this.lapi.client = this.lapi.getClient(ips)
-                let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
-                    username: username, password: password, phrase: keyphrase
-                })
-                user.avatar = this.getMediaUrl(user.avatar, "http://"+ips)
-                sessionStorage.setItem("user", JSON.stringify(user))
-                return user
-            }
-            return null
+            if (!userId) return null
+ 
+            let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
+                ver: "last", mid: userId
+            })
+            if (!ips) return null
+
+            console.log("IPs", ips)
+            this.lapi.client = this.lapi.getClient(ips)
+            let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
+                username: username, password: password, phrase: keyphrase
+            })
+            if (!user) return null
+            
+            user.avatar = this.getMediaUrl(user.avatar, "http://"+ips)
+            sessionStorage.setItem("user", JSON.stringify(user))
+            return user
         },
         logout() {
             sessionStorage.removeItem("user")
