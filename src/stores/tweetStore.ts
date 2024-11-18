@@ -131,6 +131,8 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             // Get IP address of the provider of this tweet
             let providerIp = await this.getProviderIp(this.lapi.client, tweetId)
+
+            console.log("fetchTweet provider", providerIp)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
 
@@ -194,12 +196,13 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         // Given a mimie Id, find IP of its best provider
-        async getProviderIp(client: any, mid: string): Promise<string | undefined> {
-            return await client.RunMApp("get_provider", {
+        async getProviderIp(client: any, mid: string): Promise<string | null> {
+            let IPs = await client.RunMApp("get_provider", {
                 aid: this.lapi.appId,
                 ver: "last",
                 mid: mid,
             })
+            return findFirstAccessibleIP(IPs)
         },
 
         async loadComments(tweet: Tweet) {
@@ -250,9 +253,11 @@ export const useTweetStore = defineStore('tweetStore', {
             let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
                 ver: "last", mid: userId
             })
-            if (!ips) return null
+            if (!ips || ips.length<1) return null
 
             console.log("IPs", ips)
+            // ips is a list of available IP addresses, now find the best one.
+
             this.lapi.client = this.lapi.getClient(ips)
             let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
                 username: username, password: password, phrase: keyphrase
@@ -307,3 +312,19 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     }
 });
+
+async function findFirstAccessibleIP(ipList: string[]) {
+    for (let ip of ipList) {
+        try {
+            const response = await fetch(`http://${ip}`, { method: 'HEAD', mode: 'no-cors' });
+            if (response.ok || response.type === 'opaque') {
+                console.log(`First accessible IP: ${ip}`);
+                return ip;
+            }
+        } catch (error) {
+            console.log(`IP ${ip} is not accessible.`);
+        }
+    }
+    console.log('No accessible IP found.');
+    return null;
+}
