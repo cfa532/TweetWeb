@@ -91,6 +91,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
         async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
             console.log(author)
+            if (!author) return
             return await author.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
@@ -143,6 +144,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweetId,
                 userid: GUEST_ID,  // just a placeholder
             })
+            if (!tweetInDB) return
+
             // get author data of the tweet.
             let author = await this.getUser(tweetInDB.authorId)
             if (!author) return
