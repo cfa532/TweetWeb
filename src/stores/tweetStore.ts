@@ -7,7 +7,7 @@ export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
         authors: [] as User[],
-        followings: ["uTE6yhCWGLlkK6KGI9iMkOFZGGv", "q10ggWF2ElEdc5OkIpAfWp0gDF9"],
+        followings: import.meta.env.VITE_DEFAULT_FOLLOWINGS.split(","),
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
     }),
@@ -35,13 +35,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 followings.push(authorId)
             } else {
                 followings = this.followings
-                if (this.loginUserId && followings.findIndex(e=> e==this.loginUserId)===-1) {
+                if (this.loginUserId && followings.findIndex((e: string)=> e==this.loginUserId)===-1) {
                    // add login user to following list
                     this.followings.unshift(this.loginUserId)
                 }
             }
 
-            followings.forEach(async uid => {
+            followings.forEach(async (uid: string)=> {
                 let author = await this.getUser(uid)
                 if (!author) return
 
@@ -288,7 +288,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
             return t
         },
-        
+        async uploadPackage(cid: string) {
+            let mid = await this.lapi.client.RunMApp("upload_package", {
+                aid: this.lapi.appId, ver: "last", cid: cid
+            })
+            return mid
+        },
         async downloadApk() {
             let url = await this.lapi.client.RunMApp("download_upgrade", {
                 aid: this.lapi.appId, ver:"last"}

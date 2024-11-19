@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { UserPage, MainPage, TweetDetail, UserLogin as Login, EditorModal, IPs } from "@/components"
-import { useTweetStore, useAlertStore } from '@/stores';
+import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, IPs, UploadPackage } from "@/components"
+import { useAlertStore } from '@/stores';
 
 /**
  * createWebHashHistory: access tweet by IP is ok, by domain not.
@@ -25,7 +25,7 @@ export const router = createRouter({
     { path: '/login', name: "login", component: Login },
     { path: '/ips', name: "IPs", component: IPs },
     {
-      path: '/upload', name: "upload", component: EditorModal,
+      path: '/post', name: "post", component: AddPost,
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("user")
         if (!user) {
@@ -34,13 +34,16 @@ export const router = createRouter({
           next()
       },
     },
-    { path: '/upgrade',
-      name: "upgrade",
-      beforeEnter: (to:any, from:any, next: any) => {
-        useTweetStore().downloadApk()
-        next("main")
+    { path: '/upload',
+      name: "upload",
+      component: UploadPackage,
+      beforeEnter: (to: any, from: any, next: any) => {
+        let user = sessionStorage.getItem("user")
+        if (!user || JSON.parse(user)["username"]!="developer") {
+          next("login")
+        } else
+          next()
       },
-      redirect: ""
     },
   ],
 })
