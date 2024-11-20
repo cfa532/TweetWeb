@@ -16,7 +16,7 @@ async function onSubmit(values: any) {
     const { username, password, keyphrase } = values;
     let user = await tweetStore.login(username, password, keyphrase);
     if (user) {
-        router.push("upload")
+        router.push("post")
     } else {
         // login failed
         useAlertStore().error("Login failed")

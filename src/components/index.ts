@@ -1,6 +1,7 @@
 export { default as TweetDetail } from './TweetDetail.vue'
 export { default as UserLogin } from './UserLogin.vue'
-export { default as EditorModal } from './EditorModal.vue'
+export { default as AddPost } from './EditorModal.vue'
 export { default as IPs } from './IPs.vue'
 export { default as MainPage } from './MainPage.vue'
 export { default as UserPage } from './UserPage.vue'
+export { default as UploadPackage } from './UploadPackage.vue'
