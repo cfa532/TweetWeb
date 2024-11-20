@@ -320,24 +320,31 @@ export const useTweetStore = defineStore('tweetStore', {
 });
 
 async function findFirstAccessibleIP(ipList: string[], mid: string) {
-    const fetchPromises = ipList.map(ip => 
-        fetch(`http://${ip}/getvar?name=mmversions&arg0=${mid}`)
-            .then(response => response.json()) // Assuming the response is JSON
+    const fetchWithTimeout = (url: string, timeout = 3000) => {
+        return Promise.race([
+            fetch(url).then(response => response.json()),
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Request timed out')), timeout)
+            )
+        ]);
+    };
+
+    const fetchPromises = ipList.map(ip =>
+        fetchWithTimeout(`http://${ip}/getvar?name=mmversions&arg0=${mid}`)
             .then(data => {
                 if (Array.isArray(data) && data.length > 0) {
-                    console.log(`First accessible IP: ${ip}`);
                     return ip;
                 }
-                throw new Error(`IP ${ip} returned an empty array.`);
-            })
-            .catch(error => {
-                console.log(error.message);
                 return null;
             })
+            .catch(() => null) // Return null if there's an error or timeout
     );
 
-    const firstAccessibleIP = await Promise.race(fetchPromises.filter(p => p !== null));
+    const results = await Promise.all(fetchPromises);
+    const firstAccessibleIP = results.find(ip => ip !== null);
+
     if (firstAccessibleIP) {
+        console.log(`First accessible IP: ${firstAccessibleIP}`);
         return firstAccessibleIP;
     } else {
         console.log('No accessible IP found.');
