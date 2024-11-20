@@ -130,7 +130,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return JSON.parse(cachedTweet)
             }
             // Get IP address of the provider of this tweet
-            let providerIp = await this.getProviderIp(this.lapi.client, tweetId)
+            let providerIp = await this.getProviderIp(tweetId)
 
             console.log("fetchTweet provider", providerIp)
             if (!providerIp) return
@@ -178,7 +178,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 user.client = this.lapi.getClient(user.provider)
                 return user
             }
-            let providerIp = await this.getProviderIp(this.lapi.client, userId)
+            let providerIp = await this.getProviderIp(userId)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
 
@@ -198,13 +198,13 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         // Given a mimie Id, find IP of its best provider
-        async getProviderIp(client: any, mid: string): Promise<string | null> {
-            let IPs = await client.RunMApp("get_provider", {
+        async getProviderIp(mid: string): Promise<string | null> {
+            let IPs = await this.lapi.client.RunMApp("get_provider", {
                 aid: this.lapi.appId,
                 ver: "last",
                 mid: mid,
             })
-            return findFirstAccessibleIP(IPs)
+            return findFirstAccessibleIP(IPs, this.lapi.appId)
         },
 
         async loadComments(tweet: Tweet) {
@@ -252,7 +252,7 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             if (!userId) return null
 
-            let providerIp = await this.getProviderIp(this.lapi.client, userId)
+            let providerIp = await this.getProviderIp(userId)
             if (!providerIp) return
 
             this.lapi.client = this.lapi.getClient(providerIp)
@@ -289,10 +289,14 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid
         },
         async downloadApk() {
-            let url = await this.lapi.client.RunMApp("download_upgrade", {
+            let mid = await this.lapi.client.RunMApp("download_upgrade", {
                 aid: this.lapi.appId, ver:"last"}
             )
-            if (!url) return
+            if (!mid) return
+            let ip = await this.getProviderIp(mid)
+            if (!ip) return
+            let url = mid.length>27 ? "http://"+ip+"/ipfs/"+mid : "http://"+ip+"/mm/"+mid
+            console.log(url)
             fetch(url)
                 .then(response => {
                     if (!response.ok) {
@@ -315,18 +319,28 @@ export const useTweetStore = defineStore('tweetStore', {
     }
 });
 
-async function findFirstAccessibleIP(ipList: string[]) {
-    for (let ip of ipList) {
-        try {
-            const response = await fetch(`http://${ip}`, { method: 'HEAD', mode: 'no-cors' });
-            if (response.ok || response.type === 'opaque') {
-                console.log(`First accessible IP: ${ip}`);
-                return ip;
-            }
-        } catch (error) {
-            console.log(`IP ${ip} is not accessible.`);
-        }
+async function findFirstAccessibleIP(ipList: string[], mid: string) {
+    const fetchPromises = ipList.map(ip => 
+        fetch(`http://${ip}/getvar?name=mmversions&arg0=${mid}`)
+            .then(response => response.json()) // Assuming the response is JSON
+            .then(data => {
+                if (Array.isArray(data) && data.length > 0) {
+                    console.log(`First accessible IP: ${ip}`);
+                    return ip;
+                }
+                throw new Error(`IP ${ip} returned an empty array.`);
+            })
+            .catch(error => {
+                console.log(error.message);
+                return null;
+            })
+    );
+
+    const firstAccessibleIP = await Promise.race(fetchPromises.filter(p => p !== null));
+    if (firstAccessibleIP) {
+        return firstAccessibleIP;
+    } else {
+        console.log('No accessible IP found.');
+        return null;
     }
-    console.log('No accessible IP found.');
-    return null;
 }
