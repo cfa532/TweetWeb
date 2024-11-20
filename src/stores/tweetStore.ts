@@ -320,7 +320,7 @@ export const useTweetStore = defineStore('tweetStore', {
 });
 
 async function findFirstAccessibleIP(ipList: string[], mid: string) {
-    const fetchWithTimeout = (url: string, timeout = 3000) => {
+    const fetchWithTimeout = (url: string, timeout = 1000) => {
         return Promise.race([
             fetch(url).then(response => response.json()),
             new Promise((_, reject) =>
