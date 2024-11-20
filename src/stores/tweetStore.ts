@@ -40,7 +40,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     this.followings.unshift(this.loginUserId)
                 }
             }
-
             followings.forEach(async (uid: string)=> {
                 let author = await this.getUser(uid)
                 if (!author) return
@@ -252,22 +251,17 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last", phrase: keyphrase
             })
             if (!userId) return null
- 
-            let ips = await this.lapi.client.RunMApp("get_provider", {aid: this.appId,
-                ver: "last", mid: userId
-            })
-            if (!ips || ips.length<1) return null
 
-            console.log("IPs", ips)
-            // ips is a list of available IP addresses, now find the best one.
+            let providerIp = await this.getProviderIp(this.lapi.client, userId)
+            if (!providerIp) return
 
-            this.lapi.client = this.lapi.getClient(ips)
+            this.lapi.client = this.lapi.getClient(providerIp)
             let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
                 username: username, password: password, phrase: keyphrase
             })
             if (!user) return null
             
-            user.avatar = this.getMediaUrl(user.avatar, "http://"+ips)
+            user.avatar = this.getMediaUrl(user.avatar, "http://"+providerIp)
             sessionStorage.setItem("user", JSON.stringify(user))
             return user
         },
