@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
+import { useAlertStore } from './alert.store';
 const GUEST_ID = "000000000000000000000000000"
 const THIRTY_DAYS = 25920000000
 
@@ -246,24 +247,32 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
 
-        async login(username: string, password: string, keyphrase: string) {
+        async login(username: string, password: string) {
             let userId = await this.lapi.client.RunMApp("get_userid", {aid: this.appId,
-                ver: "last", phrase: keyphrase
+                ver: "last", username: username
             })
-            if (!userId) return null
 
             let providerIp = await this.getProviderIp(userId)
-            if (!providerIp) return
-
+            if (!providerIp) {
+                useAlertStore().error("Unknown username or no provider")
+                return
+            }
             this.lapi.client = this.lapi.getClient(providerIp)
-            let user = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
-                username: username, password: password, phrase: keyphrase
+            let ret = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
+                username: username, password: password
             })
-            if (!user) return null
-            
-            user.avatar = this.getMediaUrl(user.avatar, "http://"+providerIp)
-            sessionStorage.setItem("user", JSON.stringify(user))
-            return user
+            if (!ret) {
+                useAlertStore().error("Login failed")
+                return
+            }
+            if (ret["status"] == "success") {
+                let user = JSON.parse(ret["user"])
+                user.avatar = this.getMediaUrl(user.avatar, "http://"+providerIp)
+                sessionStorage.setItem("user", JSON.stringify(user))
+                return user
+            } else {
+                useAlertStore().error(ret["reason"])
+            }
         },
         logout() {
             sessionStorage.removeItem("user")

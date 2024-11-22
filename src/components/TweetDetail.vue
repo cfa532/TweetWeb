@@ -140,13 +140,6 @@ onUnmounted(() => {
             <span class="visually-hidden">Loading...</span>
         </div>
     </div>
-
-    <div class="row align-items-center mt-5">
-        <div class="d-flex align-items-center">
-            <img src="/src/tweet_QR.png" alt="QR Code" class="qr-code" />
-            <button class='btn btn-primary me-2' @click="tweetStore.downloadApk">下载App</button>
-        </div>
-    </div>
 </template>
 
 <style scoped>

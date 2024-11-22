@@ -8,18 +8,14 @@ const router = useRouter()
 const schema = Yup.object().shape({
     username: Yup.string().required('Username is required'),
     password: Yup.string().required('Password is required'),
-    keyphrase: Yup.string().required('Key phrase is required'),
 });
 
 async function onSubmit(values: any) {
     const tweetStore = useTweetStore();
-    const { username, password, keyphrase } = values;
-    let user = await tweetStore.login(username, password, keyphrase);
+    const { username, password } = values;
+    let user = await tweetStore.login(username, password);
     if (user) {
         router.push("post")
-    } else {
-        // login failed
-        useAlertStore().error("Login failed")
     }
 }
 </script>
@@ -38,11 +34,6 @@ async function onSubmit(values: any) {
                     <label>Password</label>
                     <Field name="password" type="password" class="form-control" :class="{ 'is-invalid': errors.password }" />
                     <div class="invalid-feedback">{{ errors.password }}</div>
-                </div>
-                <div class="form-group">
-                    <label>Key phrase</label>
-                    <Field name="keyphrase" type="text" class="form-control" :class="{ 'is-invalid': errors.keyphrase }" />
-                    <div class="invalid-feedback">{{ errors.keyphrase }}</div>
                 </div>
                 <div class="form-group">
                     <button class="btn btn-primary" :disabled="isSubmitting">
