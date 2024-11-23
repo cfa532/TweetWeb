@@ -30,6 +30,10 @@ function openDetailView() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
     router.push(`/tweet/${tweet.value.mid}`);
 };
+function linkify(text: string) {
+    const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+    return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
+}
 </script>
 
 <template>
@@ -40,7 +44,7 @@ function openDetailView() {
             <ItemHeader v-else :tweet="tweet"></ItemHeader>
         </div>
         <div v-if="isRetweet" class="card-body">
-            <p class="card-text">{{ originTweet.content }}</p>
+            <p class="card-text" v-html="linkify(originTweet.content)"></p>
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
                     class="img-fluid mb-2"></MediaView>
@@ -63,7 +67,7 @@ function openDetailView() {
             </div>
         </div>
         <div v-else class="card-body">
-            <p class="card-text">{{ tweet.content }}</p>
+            <p class="card-text" v-html="linkify(tweet.content)"></p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
                 </MediaView>
@@ -114,6 +118,15 @@ function openDetailView() {
     padding: auto;
 }
 
+.card-text {
+    text-align: left;
+    font-size: medium;
+    white-space: pre-wrap;
+}
+.card-text a {
+    color: blue;
+    text-decoration: underline;
+}
 .icon-item {
     position: relative; /* Establishes a positioning context for the number */
     display: flex;

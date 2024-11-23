@@ -15,6 +15,16 @@ let countdownInterval: number | undefined;
 const isLoading = ref(false)
 
 onMounted(async () => {
+    document.addEventListener("DOMContentLoaded", function() {
+        const contentElement = document.getElementById('content');
+        const paragraphs = contentElement?.getElementsByClassName('card-text');
+        if (paragraphs)
+            for (let i = 0; i < paragraphs.length; i++) {
+                const paragraph = paragraphs[i];
+                paragraph.innerHTML = linkify(paragraph.innerHTML);
+            }
+    });
+    
     // Fetch tweet if it is not in session already.
     isLoading.value = true
     let s = sessionStorage.getItem("tweetDetail")
@@ -46,7 +56,11 @@ onUnmounted(() => {
     if (countdownInterval) {
         clearInterval(countdownInterval);
     }
-})
+});
+function linkify(text: string) {
+    const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+    return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
+}
 </script>
 
 <template>
@@ -57,8 +71,8 @@ onUnmounted(() => {
             </ItemHeader>
             <ItemHeader v-else :tweet="tweet"></ItemHeader>
         </div>
-        <div v-if="isRetweet" class="card-body">
-            <p class="card-text">{{ originTweet.content }}</p>
+        <div v-if="isRetweet" class="card-body" id="content">
+            <p class="card-text" v-html="linkify(originTweet.content)"></p>
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
                     class="img-fluid mb-2"></MediaView>
@@ -81,7 +95,7 @@ onUnmounted(() => {
             </div>
         </div>
         <div v-else class="card-body">
-            <p class="card-text">{{ tweet.content }}</p>
+            <p class="card-text" v-html="linkify(tweet.content)"></p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
                 </MediaView>
@@ -162,6 +176,11 @@ onUnmounted(() => {
 .card-text {
     text-align: left;
     font-size: medium;
+    white-space: pre-wrap;
+}
+.card-text a {
+    color: blue;
+    text-decoration: underline;
 }
 
 @media (max-width: 767px) {
