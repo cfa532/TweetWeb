@@ -205,7 +205,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid,
             })
-            return findFirstAccessibleIP(IPs, this.lapi.appId)
+            console.log("providers IPs", mid, IPs)
+            // return import.meta.env.VITE_LEITHER_NODE
+            return await findFirstAccessibleIP(IPs, this.lapi.appId)
         },
 
         async loadComments(tweet: Tweet) {
