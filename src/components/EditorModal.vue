@@ -12,7 +12,7 @@ const textValue = ref('')
 const divAttach = ref()
 const dropHere = ref()
 const textArea = ref<HTMLTextAreaElement>()
-const sliceSize = 1024 * 1024 * 10 // 10MB per slice of file
+const sliceSize = 1024 * 1024 * 1 // 10MB per slice of file
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([]) // New ref to store upload progress of each file
 const loading = ref(false)
@@ -45,7 +45,10 @@ async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFile
     // Create a FileInfo object with file name, last modified time,
     const fsid = await tweetStore.openTempFile()
     const fi = { mid: "", type: getMedaiType(file.type), size: file.size } as MimeiFileType
+    const t = api.client.timeout
+    api.client.timeout = 0
     fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // return an IPFS id actually
+    api.client.timeout = t
     console.log(fi) // never executed when there is a timeout uploading file.
     return fi
   }
