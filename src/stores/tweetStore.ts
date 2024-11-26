@@ -36,17 +36,17 @@ export const useTweetStore = defineStore('tweetStore', {
                 followings.push(authorId)
             } else {
                 followings = this.followings
-                if (this.loginUserId && followings.findIndex((e: string)=> e==this.loginUserId)===-1) {
-                   // add login user to following list
+                if (this.loginUserId && followings.findIndex((e: string) => e == this.loginUserId) === -1) {
+                    // add login user to following list
                     this.followings.unshift(this.loginUserId)
                 }
             }
-            followings.forEach(async (uid: string)=> {
+            followings.forEach(async (uid: string) => {
                 let author = await this.getUser(uid)
                 if (!author) return
 
                 let tweetsByUser = await this.getTweetListByUser(author)
-                if (!tweetsByUser || tweetsByUser.length==0) return
+                if (!tweetsByUser || tweetsByUser.length == 0) return
 
                 // Each tweet does not have its author data yet.
                 tweetsByUser.forEach(async tweet => {
@@ -250,7 +250,8 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async login(username: string, password: string) {
-            let userId = await this.lapi.client.RunMApp("get_userid", {aid: this.appId,
+            let userId = await this.lapi.client.RunMApp("get_userid", {
+                aid: this.appId,
                 ver: "last", username: username
             })
 
@@ -260,7 +261,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
             this.lapi.client = this.lapi.getClient(providerIp)
-            let ret = await this.lapi.client.RunMApp("login", {aid: this.appId, ver: "last",
+            let ret = await this.lapi.client.RunMApp("login", {
+                aid: this.appId, ver: "last",
                 username: username, password: password
             })
             if (!ret) {
@@ -269,7 +271,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             if (ret["status"] == "success") {
                 let user = JSON.parse(ret["user"])
-                user.avatar = this.getMediaUrl(user.avatar, "http://"+providerIp)
+                user.avatar = this.getMediaUrl(user.avatar, "http://" + providerIp)
                 sessionStorage.setItem("user", JSON.stringify(user))
                 return user
             } else {
@@ -289,8 +291,8 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!u) return null
             let user = JSON.parse(u) as User
             tweet.authorId = user.mid
-            let t = await this.lapi.client.RunMApp("upload_tweet", 
-                {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
+            let t = await this.lapi.client.RunMApp("upload_tweet",
+                { aid: this.appId, ver: "last", tweet: JSON.stringify(tweet) })
             return t
         },
         async uploadPackage(cid: string) {
@@ -301,12 +303,13 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         async downloadApk() {
             let mid = await this.lapi.client.RunMApp("download_upgrade", {
-                aid: this.lapi.appId, ver:"last"}
+                aid: this.lapi.appId, ver: "last"
+            }
             )
             if (!mid) return
             let ip = await this.getProviderIp(mid)
             if (!ip) return
-            let url = mid.length>27 ? "http://"+ip+"/ipfs/"+mid : "http://"+ip+"/mm/"+mid
+            let url = mid.length > 27 ? "http://" + ip + "/ipfs/" + mid : "http://" + ip + "/mm/" + mid
             console.log(url)
             fetch(url)
                 .then(response => {
@@ -340,19 +343,17 @@ async function findFirstAccessibleIP(ipList: string[], mid: string) {
         ]);
     };
 
-    const fetchPromises = ipList.map(ip =>
-        fetchWithTimeout(`http://${ip}/getvar?name=mmversions&arg0=${mid}`)
-            .then(data => {
-                if (Array.isArray(data) && data.length > 0) {
-                    return ip;
-                }
-                return null;
-            })
+    const promises = ipList.map(ip => {
+        let url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`
+        console.log(`trying ${url}`)
+        return fetchWithTimeout(url)
+            .then(data => (Array.isArray(data) && data.length > 0) ? ip : null)
             .catch(() => null) // Return null if there's an error or timeout
+    }
     );
 
-    const results = await Promise.all(fetchPromises);
-    const firstAccessibleIP = results.find(ip => ip !== null);
+    // Use Promise.race to find the first resolved promise (i.e., first responding IP)
+    const firstAccessibleIP = await Promise.race(promises);
 
     if (firstAccessibleIP) {
         console.log(`First accessible IP: ${firstAccessibleIP}`);
