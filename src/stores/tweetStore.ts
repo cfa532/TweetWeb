@@ -334,26 +334,55 @@ export const useTweetStore = defineStore('tweetStore', {
 });
 
 async function findFirstAccessibleIP(ipList: string[], mid: string) {
+    if (!ipList || ipList.length < 1) {
+        return null; // Return null immediately if the list is empty
+    }
+
     const fetchWithTimeout = (url: string, timeout = 1000) => {
-      return Promise.race([
-        fetch(url).then(response => response.json()),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), timeout))
-      ]);
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    clearTimeout(timer);
+                    resolve(data);
+                })
+                .catch(error => {
+                    clearTimeout(timer);
+                    reject(error);
+                });
+        });
     };
-  
+
     const promises = ipList.map(async ip => {
-      const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
-      console.log(`trying ${url}`);
-      return fetchWithTimeout(url)
-        .then(data => ({ ip, data }))
-        .catch(() => null);
+        const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
+        console.log(`trying ${url}`);
+        return fetchWithTimeout(url)
+            .then(data => ({ ip, data }))
+            .catch(error => {
+                console.warn(`Error fetching from ${ip}`, error);
+                return null;
+            });
     });
-  
-    const firstResult = await Promise.race(promises);
-  
-    if (firstResult && firstResult.data) {
-        return firstResult.ip;
-      } else {
-        return null;
-      }
-  }
+
+    while (promises.length > 0) {
+        try {
+            const result = await Promise.race(promises);
+            if (result && result.data) {
+                return result.ip;
+            }
+            // Remove the resolved promise from the array
+            promises.splice(promises.indexOf(Promise.resolve(result)), 1);
+        } catch (error) {
+            // Remove the rejected promise from the array
+            promises.splice(promises.indexOf(Promise.reject(error)), 1);
+        }
+    }
+
+    return null; // No accessible IP found
+}
