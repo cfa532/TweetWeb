@@ -335,31 +335,25 @@ export const useTweetStore = defineStore('tweetStore', {
 
 async function findFirstAccessibleIP(ipList: string[], mid: string) {
     const fetchWithTimeout = (url: string, timeout = 1000) => {
-        return Promise.race([
-            fetch(url).then(response => response.json()),
-            new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Request timed out')), timeout)
-            )
-        ]);
+      return Promise.race([
+        fetch(url).then(response => response.json()),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), timeout))
+      ]);
     };
-
-    const promises = ipList.map(ip => {
-        let url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`
-        console.log(`trying ${url}`)
-        return fetchWithTimeout(url)
-            .then(data => (Array.isArray(data) && data.length > 0) ? ip : null)
-            .catch(() => null) // Return null if there's an error or timeout
-    }
-    );
-
-    // Use Promise.race to find the first resolved promise (i.e., first responding IP)
-    const firstAccessibleIP = await Promise.race(promises);
-
-    if (firstAccessibleIP) {
-        console.log(`First accessible IP: ${firstAccessibleIP}`);
-        return firstAccessibleIP;
-    } else {
-        console.log('No accessible IP found.');
+  
+    const promises = ipList.map(async ip => {
+      const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
+      console.log(`trying ${url}`);
+      return fetchWithTimeout(url)
+        .then(data => ({ ip, data }))
+        .catch(() => null);
+    });
+  
+    const firstResult = await Promise.race(promises);
+  
+    if (firstResult && firstResult.data) {
+        return firstResult.ip;
+      } else {
         return null;
-    }
-}
+      }
+  }
