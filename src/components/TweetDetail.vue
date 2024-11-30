@@ -21,7 +21,7 @@ onMounted(async () => {
         if (paragraphs)
             for (let i = 0; i < paragraphs.length; i++) {
                 const paragraph = paragraphs[i];
-                paragraph.innerHTML = linkify(paragraph.innerHTML);
+                paragraph.innerHTML = linkify(paragraph.innerHTML); // display url as link
             }
     });
     

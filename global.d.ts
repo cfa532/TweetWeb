@@ -20,6 +20,7 @@ interface Tweet {
     mid: string;
     author: User;
     content?: string;
+    title?: string;
     attachments?: MimeiFileType[];
     timestamp?: string | number;
     originalTweetId?: string;

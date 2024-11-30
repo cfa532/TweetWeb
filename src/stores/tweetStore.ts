@@ -133,9 +133,9 @@ export const useTweetStore = defineStore('tweetStore', {
             // Get IP address of the provider of this tweet
             let providerIp = await this.getProviderIp(tweetId)
 
-            console.log("fetchTweet provider", providerIp)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
+            console.log("fetchTweet provider", providerIp)
 
             // Get tweet data from Mimei. Its definition is different from this app.
             let tweetInDB = await providerClient.RunMApp("get_tweet", {
@@ -220,7 +220,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 userid: GUEST_ID,
             }) as any[]
-
+            
+            console.log(comments)
             // comment type is a different Tweet type from the definition in this app
             comments.sort((a, b) => b.timestamp - a.timestamp)
             comments.forEach(async e => {

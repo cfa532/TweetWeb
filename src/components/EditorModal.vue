@@ -7,7 +7,7 @@ interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
 const emit = defineEmits(['uploaded', 'hide'])
-const inpCaption = ref()
+const tweetTitle = ref()
 const textValue = ref('')
 const divAttach = ref()
 const dropHere = ref()
@@ -128,8 +128,8 @@ async function onSelect(e: Event) {
         }) === -1
       ) {
         // remove duplication
-        if (!inpCaption.value || inpCaption.value.trim() === '') {
-          inpCaption.value = f.name
+        if (!tweetTitle.value || tweetTitle.value.trim() === '') {
+          tweetTitle.value = f.name
         }
         filesUpload.value.push(f)
       }
@@ -166,6 +166,9 @@ function logout() {
     <button class="logout" @click.prevent="logout">Logout</button>
   </div>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
+    <div>
+    <input type="text" placeholder="Title..." v-model="tweetTitle" class="input-caption"/>
+    </div>
     <div class="input-container">
       <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
       <div ref="dropHere" hidden class="drop-here">
@@ -192,6 +195,11 @@ function logout() {
 </template>
 
 <style scoped>
+.input-caption {
+  border: 0px;
+  width: 98%;
+  margin: 8px 8px 8px 8px;
+}
 .card-header {
   margin-left: 10px;
   display: flex;
