@@ -75,7 +75,10 @@ async function onSubmit() {
     }
     // upload tweet
     let tweet = {
-      content: textValue.value, attachments: attachments, isPrivate: isPrivate.value,
+      title: tweetTitle.value,
+      content: textValue.value,
+      attachments: attachments,
+      isPrivate: isPrivate.value,
       timestamp: Date.now()
     }
     console.log("new tweet", tweet)
@@ -127,9 +130,11 @@ async function onSelect(e: Event) {
           return e.size === f.size && e.name === f.name
         }) === -1
       ) {
-        // remove duplication
+        // assign a title
         if (!tweetTitle.value || tweetTitle.value.trim() === '') {
-          tweetTitle.value = f.name
+          filesUpload.value.forEach(e => {
+            tweetTitle.value += "[" + e.type + "]"
+          })
         }
         filesUpload.value.push(f)
       }
