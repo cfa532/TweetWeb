@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-// import QRCodeVue3 from "qrcode-vue3";
 import QRCodeStyling from 'qr-code-styling';
 
 const props = defineProps({
@@ -13,7 +12,7 @@ const qrCode = new QRCodeStyling({
         height: props.size,
         type: "svg",
         data: props.url,
-        // image: icon.value,
+        // image: "/src/ic_splash.png",
         dotsOptions: {
             color: "#4267b2",
             type: "rounded"
@@ -33,5 +32,4 @@ const qrCode = new QRCodeStyling({
 
 <template>
   <div id="canvas"></div>
-
-  </template>
+</template>

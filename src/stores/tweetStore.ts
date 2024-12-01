@@ -207,7 +207,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 mid: mid,
             })
             // return import.meta.env.VITE_LEITHER_NODE
-            let ip = await findFirstAccessibleIP(IPs,  this.lapi.appId)
+            let ip = await this.findFirstAccessibleIP(IPs,  this.lapi.appId)
             return ip
         },
 
@@ -285,7 +285,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         aid: this.appId, ver: "last", nodeid: user.hostIds[0]
                     })
                     console.log("hostIps=", hostIps)
-                    let ip = await findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
+                    let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
                     if (!ip) return
                     user.avatar = this.getMediaUrl(user.avatar, "http://" + ip)
                     this.lapi.setClient(ip)
@@ -348,75 +348,75 @@ export const useTweetStore = defineStore('tweetStore', {
                 .catch(error => {
                     console.error('There was a problem with the fetch operation:', error);
                 });
+        },
+
+        isLocalIP(ip: string) {
+            const localPatterns = [
+                /^127\./, // Loopback
+                /^10\./, // Class A private
+                /^192\.168\./, // Class C private
+                /^172\.(1[6-9]|2[0-9]|3[0-1])\./ // Class B private
+            ];
+
+            return localPatterns.some(pattern => pattern.test(ip));
+        },
+
+        isEmptyString(str: String) {
+            return str == null || str == undefined || str.trim() == '';
+        },
+        async findFirstAccessibleIP(ipList: string[], mid: string) {
+            if (!ipList || ipList.length < 1) {
+                return null; // Return null immediately if the list is empty
+            }
+            const fetchWithTimeout = (url: string, timeout = 1000) => {
+                return new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
+                    fetch(url)
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('Network response was not ok');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            clearTimeout(timer);
+                            resolve(data);
+                        })
+                        .catch(error => {
+                            clearTimeout(timer);
+                            reject(error);
+                        });
+                });
+            };
+            const promises = [] as any[]
+            ipList.forEach(async ip => {
+                if (this.isEmptyString(ip) || this.isLocalIP(ip))
+                    return
+                const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
+                console.log(`trying ${url}`);
+                promises.push( fetchWithTimeout(url)
+                    .then(data => ({ ip, data }))
+                    .catch(error => {
+                        console.log(`Error fetching from ${ip}`, error);
+                        return null;
+                    })
+                );
+            });
+            while (promises.length > 0) {
+                try {
+                    const result = await Promise.race(promises);
+                    if (result && result.data) {
+                        return result.ip;
+                    }
+                    // Remove the resolved promise from the array
+                    promises.splice(promises.indexOf(Promise.resolve(result)), 1);
+                } catch (error) {
+                    // Remove the rejected promise from the array
+                    promises.splice(promises.indexOf(Promise.reject(error)), 1);
+                }
+            }
+            return null; // No accessible IP found
         }
-    }
+    },
 });
 
-async function findFirstAccessibleIP(ipList: string[], mid: string) {
-    if (!ipList || ipList.length < 1) {
-        return null; // Return null immediately if the list is empty
-    }
-    const fetchWithTimeout = (url: string, timeout = 1000) => {
-        return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
-            fetch(url)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    clearTimeout(timer);
-                    resolve(data);
-                })
-                .catch(error => {
-                    clearTimeout(timer);
-                    reject(error);
-                });
-        });
-    };
-    const promises = [] as any[]
-    ipList.forEach(async ip => {
-        if (isEmptyString(ip) || isLocalIP(ip))
-            return
-        const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
-        console.log(`trying ${url}`);
-        promises.push( fetchWithTimeout(url)
-            .then(data => ({ ip, data }))
-            .catch(error => {
-                console.log(`Error fetching from ${ip}`, error);
-                return null;
-            })
-        );
-    });
-    while (promises.length > 0) {
-        try {
-            const result = await Promise.race(promises);
-            if (result && result.data) {
-                return result.ip;
-            }
-            // Remove the resolved promise from the array
-            promises.splice(promises.indexOf(Promise.resolve(result)), 1);
-        } catch (error) {
-            // Remove the rejected promise from the array
-            promises.splice(promises.indexOf(Promise.reject(error)), 1);
-        }
-    }
-    return null; // No accessible IP found
-}
-
-function isLocalIP(ip: string) {
-    const localPatterns = [
-        /^127\./, // Loopback
-        /^10\./, // Class A private
-        /^192\.168\./, // Class C private
-        /^172\.(1[6-9]|2[0-9]|3[0-1])\./ // Class B private
-    ];
-
-    return localPatterns.some(pattern => pattern.test(ip));
-}
-
-function isEmptyString(str: String) {
-    return str == null || str == undefined || str.trim() == '';
-}

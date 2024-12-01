@@ -39,7 +39,26 @@ onMounted(async () => {
             window.location.reload()
         }, 5000)
     }
-    document.title = tweet.value.title
+    document.title = tweet.value.title ? tweet.value.title : ""
+    if (tweetStore.isEmptyString(document.title)) {
+        if (!tweetStore.isEmptyString(tweet.value.content)) {
+            document.title = tweet.value.content.substring(20)
+        } else {
+            if (tweet.value.originalTweetId) {
+                if (!tweetStore.isEmptyString(tweet.value.originTweet.content)) {
+                    document.title = tweet.value.originTweet.content.substring(20)
+                } else {
+                    tweet.value.originTweet.attachments.forEach((element: any) => {
+                        document.title += '['+ element.type +']'
+                    });
+                }
+            } else {
+                tweet.value.attachments.forEach((element: any) => {
+                    document.title += '['+ element.type +']'
+                });
+            }
+        }
+    }
 
     if (tweet.value.originalTweetId) {
         originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
