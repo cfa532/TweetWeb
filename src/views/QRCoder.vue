@@ -6,7 +6,7 @@ const props = defineProps({
   url: {type: String, required: true},
   size: {type: Number, required: false, default: 200}
 })
-const icon = ref("/src/assets/ic_splash.png")
+const icon = ref("/src/ic_splash.png")
 </script>
 
 <template>
@@ -18,7 +18,7 @@ const icon = ref("/src/assets/ic_splash.png")
       :imageOptions="{ hideBackgroundDots: true, imageSize: 0.4, margin: 0 }"
       :dotsOptions="{
         type: 'dots',
-        color: '#26249a',
+        color: '##26249a',
         gradient: {
           type: 'linear',
           rotation: 0,
@@ -29,7 +29,6 @@ const icon = ref("/src/assets/ic_splash.png")
         },
       }"
       :backgroundOptions="{ color: '#ffffff' }"
-      :image=icon
       :cornersSquareOptions="{ type: 'dot', color: '#000000' }"
       :cornersDotOptions="{ type: undefined, color: '#000000' }"
 

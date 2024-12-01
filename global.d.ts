@@ -11,7 +11,7 @@ interface User {
     username: string;
     name?: string;
     profile?: string;
-
+    hostIds?: string[];
     provider?: string;  // IP of the best provider
     client?: any;       // Hprose client handler
 }

@@ -154,6 +154,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 mid: tweetInDB.mid,
                 timestamp: tweetInDB.timestamp,
                 author: author,
+                title: tweetInDB.title,
                 content: tweetInDB.content,
                 attachments: tweetInDB.attachments?.map((e: MimeiFileType) => {
                     e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
@@ -205,9 +206,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid,
             })
-            console.log("providers IPs", mid, IPs)
             // return import.meta.env.VITE_LEITHER_NODE
-            return await findFirstAccessibleIP(IPs, this.lapi.appId)
+            let ip = await findFirstAccessibleIP(IPs,  this.lapi.appId)
+            return ip
         },
 
         async loadComments(tweet: Tweet) {
@@ -251,30 +252,47 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async login(username: string, password: string) {
+            // given username, get UserId
             let userId = await this.lapi.client.RunMApp("get_userid", {
                 aid: this.appId,
                 ver: "last", username: username
             })
-
+            // find providers' IP addresses for the userId
             let providerIp = await this.getProviderIp(userId)
             if (!providerIp) {
                 useAlertStore().error("Unknown username or no provider")
                 return
             }
+            console.log("provider IP", providerIp, userId)
+
             this.lapi.client = this.lapi.getClient(providerIp)
             let ret = await this.lapi.client.RunMApp("login", {
                 aid: this.appId, ver: "last",
                 username: username, password: password
             })
+            console.log("ret=", ret)
             if (!ret) {
                 useAlertStore().error("Login failed")
                 return
             }
             if (ret["status"] == "success") {
                 let user = JSON.parse(ret["user"])
-                user.avatar = this.getMediaUrl(user.avatar, "http://" + providerIp)
-                sessionStorage.setItem("user", JSON.stringify(user))
-                return user
+                console.log("user=", user)
+
+                // now find the IP of a host where user has write permission
+                if (user.hostIds && user.hostIds.length>0) {
+                    let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
+                        aid: this.appId, ver: "last", nodeid: user.hostIds[0]
+                    })
+                    console.log("hostIps=", hostIps)
+                    let ip = await findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
+                    if (!ip) return
+                    user.avatar = this.getMediaUrl(user.avatar, "http://" + ip)
+                    this.lapi.setClient(ip)
+                    sessionStorage.setItem("user", JSON.stringify(user))
+                    console.log("user", user)
+                    return user                        
+                }
             } else {
                 useAlertStore().error(ret["reason"])
             }
@@ -338,7 +356,6 @@ async function findFirstAccessibleIP(ipList: string[], mid: string) {
     if (!ipList || ipList.length < 1) {
         return null; // Return null immediately if the list is empty
     }
-
     const fetchWithTimeout = (url: string, timeout = 1000) => {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
@@ -359,18 +376,20 @@ async function findFirstAccessibleIP(ipList: string[], mid: string) {
                 });
         });
     };
-
-    const promises = ipList.map(async ip => {
+    const promises = [] as any[]
+    ipList.forEach(async ip => {
+        if (isEmptyString(ip) || isLocalIP(ip))
+            return
         const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
         console.log(`trying ${url}`);
-        return fetchWithTimeout(url)
+        promises.push( fetchWithTimeout(url)
             .then(data => ({ ip, data }))
             .catch(error => {
-                console.warn(`Error fetching from ${ip}`, error);
+                console.log(`Error fetching from ${ip}`, error);
                 return null;
-            });
+            })
+        );
     });
-
     while (promises.length > 0) {
         try {
             const result = await Promise.race(promises);
@@ -384,6 +403,20 @@ async function findFirstAccessibleIP(ipList: string[], mid: string) {
             promises.splice(promises.indexOf(Promise.reject(error)), 1);
         }
     }
-
     return null; // No accessible IP found
+}
+
+function isLocalIP(ip: string) {
+    const localPatterns = [
+        /^127\./, // Loopback
+        /^10\./, // Class A private
+        /^192\.168\./, // Class C private
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./ // Class B private
+    ];
+
+    return localPatterns.some(pattern => pattern.test(ip));
+}
+
+function isEmptyString(str: String) {
+    return str == null || str == undefined || str.trim() == '';
 }

@@ -37,15 +37,18 @@ onMounted(async () => {
     if (!tweet.value) {
         window.setInterval(()=>{
             window.location.reload()
-        }, 10000)
+        }, 5000)
     }
+    document.title = tweet.value.title
+
     if (tweet.value.originalTweetId) {
         originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
         if (!tweet.value.content && !tweet.value.attachments) {
-            // tweet.value = originTweet.value
             isRetweet.value = true
+            document.title = originTweet.value.title
         }
     }
+
     if (isRetweet.value)
         await tweetStore.loadComments(originTweet.value)
     else
