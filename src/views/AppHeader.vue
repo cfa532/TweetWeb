@@ -2,29 +2,21 @@
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores/tweetStore";
-import QRCode from 'qrcode';
+import { default as qrCoder } from "./QRCoder.vue"
 
 const router = useRouter()
 const tweetStore = useTweetStore()
-const qrcodeCanvas = ref<HTMLCanvasElement>()
 const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
+const dlUrl = ref()
+const qrSize = 120
 
 onMounted(async ()=>{
     if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
     }
     let host = await tweetStore.getProviderIp(downloadApk)
-    let dlUrl = "http://" + host + "/mm/" + downloadApk
-    QRCode.toCanvas(qrcodeCanvas.value, dlUrl, {
-         width: 128,
-         color: {
-           dark: '#000000',
-           light: '#ffffff'
-         }
-       }, function (error) {
-         if (error) console.error(error);
-         console.log('QR code generated!');
-       });
+    dlUrl.value = downloadApk.length>27? "http://" + host + "/ipfs/" + downloadApk 
+        : "http://" + host + "/mm/" + downloadApk
 })
 </script>
 <template>
@@ -35,17 +27,26 @@ onMounted(async ()=>{
                 class="app-icon rounded-circle" />
             </div>
             <div class="d-flex align-items-center">
-                <button class='btn btn-primary col-md-auto me-2' @click="tweetStore.downloadApk">下载App</button>
-                <canvas ref="qrcodeCanvas"></canvas>
+                <button class='btn btn-link' @click="tweetStore.downloadApk">⬇️ App
+                </button>
+                <qrCoder v-if="dlUrl" :url="dlUrl" :size="qrSize"></qrCoder>
             </div>
         </div>
     </div>
 </template>
 <style scoped>
-canvas {
-    margin: 0px;
+.d-flex.align-items-center {
+    position: relative;
+    height: 100px; /* Adjust the height as needed */
 }
 
+.btn {
+    position: absolute;
+    bottom: 0;
+    right: 100px;
+    width: 100px;
+    vertical-align: bottom;
+}
 .app-icon {
     margin: 16px 0 0 16px;
     width: 80px !important;

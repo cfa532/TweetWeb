@@ -15,7 +15,8 @@
   "dependencies": {
     "bootstrap": "^5.3.3",
     "pinia": "^2.1.7",
-    "qrcode": "^1.5.4",
+    "qr-code-styling": "^1.8.4",
+    "qrcode-vue3": "^1.7.1",
     "vee-validate": "^4.14.6",
     "vite-plugin-singlefile": "^2.0.2",
     "vue": "^3.4.29",
@@ -26,7 +27,6 @@
     "@tsconfig/node20": "^20.1.4",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^20.14.5",
-    "@types/qrcode": "^1.5.5",
     "@vitejs/plugin-vue": "^5.0.5",
     "@vue/test-utils": "^2.4.6",
     "@vue/tsconfig": "^0.5.1",
