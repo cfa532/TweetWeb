@@ -270,7 +270,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 aid: this.appId, ver: "last",
                 username: username, password: password
             })
-            console.log("ret=", ret)
+
             if (!ret) {
                 useAlertStore().error("Login failed")
                 return
