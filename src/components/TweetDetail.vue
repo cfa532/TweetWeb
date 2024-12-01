@@ -40,7 +40,7 @@ onMounted(async () => {
         }, 5000)
     }
     document.title = tweet.value.title ? tweet.value.title : ""
-    if (tweetStore.isEmptyString(document.title)) {
+    if (document.title == "") {
         if (!tweetStore.isEmptyString(tweet.value.content)) {
             document.title = tweet.value.content.substring(20)
         } else {
