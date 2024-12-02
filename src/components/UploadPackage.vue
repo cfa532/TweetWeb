@@ -17,7 +17,6 @@ const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([]) // New ref to store upload progress of each file
 const loading = ref(false)
 const selectFiles = ref()
-const isPrivate = ref(false)
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
 const tweet = ref({ mid: "", author: {} } as Tweet)
@@ -27,7 +26,7 @@ onMounted(() => {
     tweet.value.timestamp = Date.now()
 })
 // Helper function to handle individual file uploads
-async function uploadFile(file: File, index: number): Promise<string> {
+async function uploadFile(file: File, index: number = 0): Promise<string> {
     if (file.size > sliceSize * 300) {
         throw new Error('Max file size exceeded')
     }
@@ -45,7 +44,7 @@ async function onSubmit() {
     loading.value = true
     try {
         if (filesUpload.value.length < 1) return
-        let mid = await uploadFile(filesUpload.value[0], 0)
+        let mid = await uploadFile(filesUpload.value[0])
         textValue.value = ""
         filesUpload.value = []
         useAlertStore().success("App package mimei: " + mid)
@@ -83,7 +82,7 @@ async function readFileSlice(
         api.client.timeout = 0      // do Not timeout
         const cid = await api.client.MFTemp2Ipfs(fsid)
         api.client.timeout = t
-        return tweetStore.uploadPackage(cid)
+        return await tweetStore.uploadPackage(cid)
     } else {
         return await readFileSlice(fsid, arr, start + count, index)
     }

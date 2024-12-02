@@ -287,8 +287,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.log("hostIps=", hostIps)
                     let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
                     if (!ip) return
+                    
                     user.avatar = this.getMediaUrl(user.avatar, "http://" + ip)
+                    user.provider = ip
                     this.lapi.setClient(ip)
+                    user.client = this.lapi.client
                     sessionStorage.setItem("user", JSON.stringify(user))
                     console.log("user", user)
                     return user                        
@@ -314,6 +317,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 { aid: this.appId, ver: "last", tweet: JSON.stringify(tweet) })
             return t
         },
+        /**
+         * 
+         * @param cid IPFS id of the package
+         * @returns Mimei id of the package
+         */
         async uploadPackage(cid: string) {
             let mid = await this.lapi.client.RunMApp("upload_package", {
                 aid: this.lapi.appId, ver: "last", cid: cid
