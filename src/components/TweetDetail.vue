@@ -76,7 +76,7 @@ async function showTweet(tweet: Tweet) {
             document.title = originTweet.value.title
         }
     }
-    if (isRetweet)
+    if (isRetweet.value)
         await tweetStore.loadComments(originTweet.value)
     else
         await tweetStore.loadComments(tweet)
