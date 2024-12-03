@@ -375,7 +375,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return localPatterns.some(pattern => pattern.test(ip));
         },
 
-        isEmptyString(str: String) {
+        isEmptyString(str?: String) {
             return str == null || str == undefined || str.trim() == '';
         },
         async findFirstAccessibleIP(ipList: string[], mid: string) {
