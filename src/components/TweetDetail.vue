@@ -14,65 +14,67 @@ const isRetweet = ref(false)
 let countdownInterval: number | undefined;
 const isLoading = ref(false)
 
-onMounted(async () => {
+onMounted(async () => {    
+    isLoading.value = true
+    let s = sessionStorage.getItem("tweetDetail")
+    if (s)
+        tweet.value = JSON.parse(s)
+    let intervalId
+
+    if (!tweet.value) {
+        // Fetch tweet if it is not in session already.
+        tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
+        intervalId = window.setInterval(()=>{
+            window.location.reload()
+        }, 5000)    // wait 5s before reload
+    } else {
+        window.clearInterval(intervalId)
+        document.title = tweet.value.title ? tweet.value.title : ""
+        if (document.title == "") {
+            if (!tweetStore.isEmptyString(tweet.value.content)) {
+                document.title = tweet.value.content.substring(0, 20)
+            } else {
+                if (tweet.value.originalTweetId) {
+                    if (!tweetStore.isEmptyString(tweet.value.originTweet.content)) {
+                        document.title = tweet.value.originTweet.content.substring(0, 20)
+                    } else {
+                        tweet.value.originTweet.attachments.forEach((element: any) => {
+                            document.title += '['+ element.type +']'
+                        });
+                    }
+                } else {
+                    tweet.value.attachments.forEach((element: any) => {
+                        document.title += '['+ element.type +']'
+                    });
+                }
+            }
+        }
+
+        if (tweet.value.originalTweetId) {
+            originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
+            if (!tweet.value.content && !tweet.value.attachments) {
+                isRetweet.value = true
+                document.title = originTweet.value.title
+            }
+        }
+        if (isRetweet.value)
+            await tweetStore.loadComments(originTweet.value)
+        else
+            await tweetStore.loadComments(tweet.value)
+        isLoading.value = false
+    }
+    console.log("Tweet=", tweet.value)
+
+    // display url as link
     document.addEventListener("DOMContentLoaded", function() {
         const contentElement = document.getElementById('content');
         const paragraphs = contentElement?.getElementsByClassName('card-text');
         if (paragraphs)
             for (let i = 0; i < paragraphs.length; i++) {
                 const paragraph = paragraphs[i];
-                paragraph.innerHTML = linkify(paragraph.innerHTML); // display url as link
+                paragraph.innerHTML = linkify(paragraph.innerHTML);
             }
     });
-    
-    // Fetch tweet if it is not in session already.
-    isLoading.value = true
-    let s = sessionStorage.getItem("tweetDetail")
-    if (s)
-        tweet.value = JSON.parse(s)
-    if (!tweet.value) {
-        tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
-    }
-    console.log(tweet.value)
-    if (!tweet.value) {
-        window.setInterval(()=>{
-            window.location.reload()
-        }, 5000)
-    }
-    document.title = tweet.value.title ? tweet.value.title : ""
-    if (document.title == "") {
-        if (!tweetStore.isEmptyString(tweet.value.content)) {
-            document.title = tweet.value.content.substring(20)
-        } else {
-            if (tweet.value.originalTweetId) {
-                if (!tweetStore.isEmptyString(tweet.value.originTweet.content)) {
-                    document.title = tweet.value.originTweet.content.substring(20)
-                } else {
-                    tweet.value.originTweet.attachments.forEach((element: any) => {
-                        document.title += '['+ element.type +']'
-                    });
-                }
-            } else {
-                tweet.value.attachments.forEach((element: any) => {
-                    document.title += '['+ element.type +']'
-                });
-            }
-        }
-    }
-
-    if (tweet.value.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
-        if (!tweet.value.content && !tweet.value.attachments) {
-            isRetweet.value = true
-            document.title = originTweet.value.title
-        }
-    }
-
-    if (isRetweet.value)
-        await tweetStore.loadComments(originTweet.value)
-    else
-        await tweetStore.loadComments(tweet.value)
-    isLoading.value = false
 });
 onUnmounted(() => {
     if (countdownInterval) {

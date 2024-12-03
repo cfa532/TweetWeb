@@ -222,7 +222,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 userid: GUEST_ID,
             }) as any[]
             
-            console.log(comments)
             // comment type is a different Tweet type from the definition in this app
             comments.sort((a, b) => b.timestamp - a.timestamp)
             comments.forEach(async e => {
@@ -319,12 +318,19 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         /**
          * 
-         * @param cid IPFS id of the package
-         * @returns Mimei id of the package
+         * @param cid IPFS id of the install package
+         * @returns Mimei id of the install package
          */
         async uploadPackage(cid: string) {
             let mid = await this.lapi.client.RunMApp("upload_package", {
                 aid: this.lapi.appId, ver: "last", cid: cid
+            })
+            return mid
+        },
+        async uploadAttachment(cid: string, filename: string) {
+            let mid = await this.lapi.client.RunMApp("upload_attachment", {
+                aid: this.lapi.appId, ver: "last", cid: cid,
+                userid: this.followings[0], filename: filename
             })
             return mid
         },
@@ -348,7 +354,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 .then(blob => {
                     const link = document.createElement('a');
                     link.href = window.URL.createObjectURL(blob);
-                    link.download = 'downloaded-file.apk';
+                    link.download = 'tweet_install.apk';
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);

@@ -20,6 +20,7 @@ const selectFiles = ref()
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
 const tweet = ref({ mid: "", author: {} } as Tweet)
+const isAppPackage = ref(false)
 
 onMounted(() => {
     tweet.value.author = tweetStore.loginUser
@@ -82,7 +83,10 @@ async function readFileSlice(
         api.client.timeout = 0      // do Not timeout
         const cid = await api.client.MFTemp2Ipfs(fsid)
         api.client.timeout = t
-        return await tweetStore.uploadPackage(cid)
+        if (isAppPackage.value)
+            return await tweetStore.uploadPackage(cid)
+        else
+            return await tweetStore.uploadAttachment(cid, filesUpload.value[0].name)
     } else {
         return await readFileSlice(fsid, arr, start + count, index)
     }
@@ -131,7 +135,7 @@ function removeFile(f: File) {
 
 <template>
     <div class="card-header d-flex align-items-center">
-        Upload App package
+        <input v-model="isAppPackage" type="checkbox" unchecked>&nbsp;Upload App package</input>
     </div>
     <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
         <div class="input-container">

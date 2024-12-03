@@ -14,7 +14,23 @@ onMounted(async ()=> {
     await tweetStore.loadTweets()
     window.setTimeout(()=>{
         isLoading.value = false
-    }, 3000)
+    }, 2000)
+
+    // Get the current host and protocol
+    const host = window.location.host;
+    const protocol = window.location.protocol;
+
+    // Construct the full URL for the icon
+    const iconPath = '/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW'; // Your relative path
+    const fullIconUrl = `${protocol}//${host}${iconPath}`;
+
+    // Set the href attribute of the link tag
+    document.addEventListener('DOMContentLoaded', () => {
+      const linkElement = document.querySelector("link[rel='icon']");
+      if (linkElement) {
+        (linkElement as HTMLLinkElement).href = fullIconUrl;
+      }
+    });
 })
 </script>
 

@@ -8,7 +8,7 @@ const router = useRouter()
 const tweetStore = useTweetStore()
 const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
 const dlUrl = ref()
-const qrSize = 120
+const qrSize = 100
 
 onMounted(async ()=>{
     if (sessionStorage["isBot"] != "No") {
