@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
@@ -11,13 +11,15 @@ const props = defineProps({
     by: {type: String, required: false}
 })
 const router = useRouter()
-const avatar = ref()
-
-onMounted(()=>{
+const avatar = computed(()=>{
     let url = "http://" + props.tweet.author.providerIp
     let mid = props.tweet.author.avatar
     if (mid)
-        avatar.value = mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
+        return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
+})
+
+onMounted(()=>{
+    console.log(avatar.value, props.tweet)
 })
 function openUserPage(userId: string) {
     useTweetStore().addFollowing(userId)

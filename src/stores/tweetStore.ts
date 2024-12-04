@@ -11,7 +11,7 @@ export const useTweetStore = defineStore('tweetStore', {
         _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
-        _user: null as unknown
+        _user: null as User | null
     }),
     getters: {
         loginUser: (state) => {
