@@ -27,7 +27,7 @@ onMounted(async ()=>{
                 class="app-icon rounded-circle" />
             </div>
             <div class="d-flex align-items-center">
-                <button class='btn btn-link' @click="tweetStore.downloadApk">⬇️ App
+                <button class='btn btn-link' @click="tweetStore.downloadApk">App ⬇️
                 </button>
                 <qrCoder v-if="dlUrl" :url="dlUrl" :size="qrSize"></qrCoder>
             </div>
@@ -43,8 +43,8 @@ onMounted(async ()=>{
 .btn {
     position: absolute;
     bottom: 0;
-    right: 100px;
-    width: 100px;
+    right: 90px;
+    width: 50px;
     vertical-align: bottom;
 }
 .app-icon {
