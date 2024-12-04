@@ -3,6 +3,7 @@ import { onMounted } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
+import TweetDetail from '@/components/TweetDetail.vue';
 
 const props = defineProps({ 
     tweet: {type: Object as PropType<Tweet>, required: true},
@@ -16,9 +17,14 @@ onMounted(()=>{
 function openUserPage(userId: string) {
     router.push(`/author/${userId}`)
 }
+function imageUrl(mid?: MimeiId) {
+    if (!mid) return
+    let url = "http://" + props.tweet.author.providerIp
+    return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
+}
 </script>
 <template>
-    <img :src="tweet.author.avatar" alt="User Avatar" class="rounded-circle me-2"
+    <img :src="imageUrl(tweet.author.avatar)" alt="User Avatar" class="rounded-circle me-2"
         @click.stop="openUserPage(tweet.author.mid)">
     <div>
         <div class="forward-font" v-if="isRetweet">Forwarded by @{{by}}</div>

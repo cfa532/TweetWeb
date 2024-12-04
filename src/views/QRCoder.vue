@@ -8,7 +8,6 @@ const props = defineProps({
   size: {type: Number, required: false, default: 200}
 })
 const icon = ref("http://"+useTweetStore().lapi.hostIP+"/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW")
-console.log(icon.value)
 
 const qrCode = new QRCodeStyling({
         width: props.size,
@@ -25,7 +24,7 @@ const qrCode = new QRCodeStyling({
         },
         imageOptions: {
             crossOrigin: "anonymous",
-            margin: 0
+            margin: -1
         }
     });
   onMounted(()=> {

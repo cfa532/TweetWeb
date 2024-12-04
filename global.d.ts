@@ -1,9 +1,11 @@
+type MimeiId = string;
+
 interface Window {
     mmInfo: any       // add to window obj for testing convenience
     getParam: any
     hprose: any
     lapi: any         // Leither api handler
-}
+};
 
 interface User {
     mid: string;
@@ -12,9 +14,9 @@ interface User {
     name?: string;
     profile?: string;
     hostIds?: string[];
-    provider?: string;  // IP of the best provider
+    providerIp?: string;  // IP of the best provider for the author's data
     client?: any;       // Hprose client handler
-}
+};
 
 interface Tweet {
     mid: string;
@@ -34,20 +36,20 @@ interface Tweet {
     commentCount?: number;
 
     provider?: string;       // Hprose client handler
-}
+};
 
 interface ScorePair {
     score: number
     member: string
-}
+};
 
 interface FVPair {
     field: string
     value: any
-}
+};
 
 interface MimeiFileType {
     mid: string
     type: string
     size?: number
-}
+};

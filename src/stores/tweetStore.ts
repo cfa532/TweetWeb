@@ -7,58 +7,65 @@ const THIRTY_DAYS = 25920000000
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],
-        authors: [] as User[],
-        followings: import.meta.env.VITE_DEFAULT_FOLLOWINGS.split(","),
+        users: new Map<MimeiId, User>(),
+        _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
+        _user: null as unknown
     }),
     getters: {
-        loginUser: () => {
-            let u = sessionStorage.getItem("user")
-            if (u)
-                return JSON.parse(u)
-            else return null
+        loginUser: (state) => {
+            if (state._user)
+                return state._user
+            if (sessionStorage.getItem("user")) {
+                let usr = JSON.parse(sessionStorage.getItem("user")!)
+                usr.client = state.lapi.getClient(usr.providerIp)
+                state._user = usr
+                return usr
+            }
+            return null
         },
-        loginUserId: () => {
-            let u = sessionStorage.getItem("user")
-            if (u)
-                return JSON.parse(u).mid
-            else return null
+        followings: (state)=> {
+            if (state._followings.length > 0)
+                return state._followings
+            if (sessionStorage.getItem("followings")) {
+                state._followings = JSON.parse(sessionStorage.getItem("followings")!)
+            } else {
+                state._followings = import.meta.env.VITE_DEFAULT_FOLLOWINGS.split(",")
+            }
+            return state._followings
         }
     },
     actions: {
+        addFollowing(mid: string) {
+            if (this.followings.indexOf(mid) == -1) {
+                this._followings.push(mid)
+                sessionStorage.setItem("followings", JSON.stringify(this._followings))
+            }
+        },
+
         // Load tweets of a list of followed User IDs
         async loadTweets(authorId: string | undefined = undefined) {
-
-            // get userId list to get tweets from
-            let followings = []
-            if (authorId) {
-                followings.push(authorId)
-            } else {
-                followings = this.followings
-                if (this.loginUserId && followings.findIndex((e: string) => e == this.loginUserId) === -1) {
-                    // add login user to following list
-                    this.followings.unshift(this.loginUserId)
-                }
-            }
+            let followings = authorId? [authorId] : this.followings
             followings.forEach(async (uid: string) => {
                 let author = await this.getUser(uid)
                 if (!author) return
 
                 let tweetsByUser = await this.getTweetListByUser(author)
+                console.log(tweetsByUser)
                 if (!tweetsByUser || tweetsByUser.length == 0) return
 
-                // Each tweet does not have its author data yet.
+                // Tweet may not have its author data yet.
                 tweetsByUser.forEach(async tweet => {
                     // skip tweet that is in tweets already.
                     if (this.tweets.find(e => { e.mid == tweet.mid }))
                         return
 
                     tweet.author = author
-                    tweet.provider = author.provider
+                    tweet.provider = author.providerIp
                     tweet.attachments = tweet.attachments?.map(e => {
                         return {
-                            mid: this.getMediaUrl(e.mid, "http://" + author.provider),
+                            mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
                             type: e.type
                         }
                     })
@@ -89,13 +96,13 @@ export const useTweetStore = defineStore('tweetStore', {
             })
         },
 
-        async getTweetListByUser(author: User): Promise<Tweet[] | undefined> {
-            console.log(author)
-            if (!author) return
-            return await author.client.RunMApp("get_tweets", {
+        async getTweetListByUser(user: User): Promise<Tweet[] | undefined> {
+            console.log(user, this.appId)
+            if (!user) return
+            return await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
-                userid: author.mid,
+                userid: user.mid,
                 start: Date.now(),
                 end: Date.now() - THIRTY_DAYS,
                 gid: GUEST_ID      // visitor's mid. Placeholder
@@ -132,7 +139,6 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             // Get IP address of the provider of this tweet
             let providerIp = await this.getProviderIp(tweetId)
-
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
             console.log("fetchTweet provider", providerIp)
@@ -174,16 +180,16 @@ export const useTweetStore = defineStore('tweetStore', {
 
         async getUser(userId: string): Promise<User | undefined> {
             // check if the user has been retrieved.
-            let cachedUser = sessionStorage.getItem(userId)
-            if (cachedUser) {
-                let user = JSON.parse(cachedUser)
-                user.client = this.lapi.getClient(user.provider)
-                return user
-            }
-            let providerIp = await this.getProviderIp(userId)
-            if (!providerIp) return
-            let providerClient = this.lapi.getClient(providerIp)
+            if (this.loginUser && this.loginUser.mid == userId)
+                return this.loginUser
+            if (this.users.get(userId))
+                return this.users.get(userId)
 
+            let providerIp = await this.getProviderIp(userId)
+            if (!providerIp)
+                return
+            let providerClient = this.lapi.getClient(providerIp)
+            console.log("getUser() provider", providerIp)
             let user = await providerClient.RunMApp("get_user_core_data", {
                 aid: this.appId,
                 ver: "last",
@@ -191,10 +197,13 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             // cache the user data
             if (user) {
-                user.provider = providerIp
-                user.client = providerClient
-                user.avatar = this.getMediaUrl(user.avatar, "http://" + providerIp)
+                user.providerIp = providerIp
+                // user.avatar = this.getMediaUrl(user.avatar, "http://" + providerIp)
                 sessionStorage.setItem(userId, JSON.stringify(user))
+                user.client = providerClient
+                delete user.baseUrl
+                delete user.writableUrl
+                this.users.set(userId, user)
             }
             return user
         },
@@ -253,55 +262,45 @@ export const useTweetStore = defineStore('tweetStore', {
         async login(username: string, password: string) {
             // given username, get UserId
             let userId = await this.lapi.client.RunMApp("get_userid", {
-                aid: this.appId,
-                ver: "last", username: username
+                aid: this.appId, ver: "last", username: username
             })
-            // find providers' IP addresses for the userId
-            let providerIp = await this.getProviderIp(userId)
-            if (!providerIp) {
-                useAlertStore().error("Unknown username or no provider")
+            let user = await this.getUser(userId)
+            if (!user)
                 return
-            }
-            console.log("provider IP", providerIp, userId)
-
-            this.lapi.client = this.lapi.getClient(providerIp)
-            let ret = await this.lapi.client.RunMApp("login", {
-                aid: this.appId, ver: "last",
-                username: username, password: password
+            let ret = await user.client.RunMApp("login", {
+                aid: this.appId, ver: "last", username: username, password: password
             })
-
             if (!ret) {
                 useAlertStore().error("Login failed")
                 return
             }
             if (ret["status"] == "success") {
-                let user = JSON.parse(ret["user"])
-                console.log("user=", user)
-
                 // now find the IP of a host where user has write permission
                 if (user.hostIds && user.hostIds.length>0) {
                     let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
                         aid: this.appId, ver: "last", nodeid: user.hostIds[0]
                     })
-                    console.log("hostIps=", hostIps)
                     let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
                     if (!ip) return
                     
-                    user.avatar = this.getMediaUrl(user.avatar, "http://" + ip)
-                    user.provider = ip
-                    this.lapi.setClient(ip)
-                    user.client = this.lapi.client
+                    user.providerIp = ip
                     sessionStorage.setItem("user", JSON.stringify(user))
+                    user.client = this.lapi.getClient(ip)
                     console.log("user", user)
-                    return user                        
+                    this._user = user
+                    this.addFollowing(userId)
+                    return user
                 }
             } else {
                 useAlertStore().error(ret["reason"])
             }
         },
+
         logout() {
-            sessionStorage.removeItem("user")
+            sessionStorage.clear()
+            this.$reset
         },
+
         async openTempFile() {
             return await this.lapi.client.RunMApp("open_temp_file", {
                 aid: this.appId, ver: "last"
@@ -407,7 +406,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (this.isEmptyString(ip) || this.isLocalIP(ip))
                     return
                 const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
-                console.log(`trying ${url}`);
+                // console.log(`trying ${url}`);
                 promises.push( fetchWithTimeout(url)
                     .then(data => ({ ip, data }))
                     .catch(error => {
