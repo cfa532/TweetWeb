@@ -28,7 +28,7 @@ onMounted(async () => {
 function openDetailView() {
     // Route to the tweet detail page using the tweet ID
     sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-    router.push(`/tweet/${tweet.value.mid}`);
+    router.push(`/tweet/${tweet.value.mid}/${tweet.value.author.mid}`);
 };
 function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;

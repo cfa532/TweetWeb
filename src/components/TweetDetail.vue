@@ -6,8 +6,8 @@ import { MediaView, AppHeader, ItemHeader, TweetView } from "@/views";
 
 const route = useRoute();
 const tweetStore = useTweetStore()
-const tweetId = route.params.tweetId as string
-const authorId = route.params.authorId as string | undefined
+const tweetId = route.params.tweetId as MimeiId
+const authorId = route.params.authorId as MimeiId | undefined
 const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
@@ -24,9 +24,9 @@ onMounted(async () => {
         // Fetch tweet if it is not in session already.
         tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
         if (!tweet.value) {
-            window.setTimeout(()=>{
+            window.setTimeout(()=> {
                 window.location.reload()
-            }, 5000)    // wait 5s before reload
+            }, 5000)                        // wait 5s before reload
         } else {
             showTweet(tweet.value)
         }
@@ -70,7 +70,7 @@ async function showTweet(tweet: Tweet) {
     }
     // load orginalTweet
     if (tweet.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.originalTweetId)
+        originTweet.value = await tweetStore.getTweet(tweet.originalTweetId, tweet.originalAuthorId!)
         if (!tweet.content && !tweet.attachments) {
             isRetweet.value = true
             document.title = originTweet.value.title

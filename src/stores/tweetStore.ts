@@ -113,15 +113,15 @@ export const useTweetStore = defineStore('tweetStore', {
          * Given only tweet ID, find it full data. Do NOT load comments yet. Wait until user opens
          * detail tweet page.
          * @param tweetId 
-         * @param authorId not used
+         * @param authorId must be used to find the right node for the tweet, which refers to authorId
          * @returns a Tweet object short of comments.
          */
-        async getTweet(tweetId: string, authorId: string | undefined = undefined): Promise<Tweet | undefined> {
-            let tweet = await this.fetchTweet(tweetId)
+        async getTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
+            let tweet = await this.fetchTweet(tweetId, authorId)
             if (!tweet) return
 
             if (tweet?.originalTweetId) {
-                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId)
+                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
             }
             sessionStorage.setItem(tweetId, JSON.stringify(tweet))
             return tweet
@@ -132,13 +132,13 @@ export const useTweetStore = defineStore('tweetStore', {
          * this tweet with its ID. 2nd, retrieve the tweet from the provider. Assume
          * author data is also available on the provider. Get author data too.
          */
-        async fetchTweet(tweetId: string): Promise<Tweet | undefined> {
+        async fetchTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
             let cachedTweet = sessionStorage.getItem(tweetId)
             if (cachedTweet) {
                 return JSON.parse(cachedTweet)
             }
             // Get IP address of the provider of this tweet
-            let providerIp = await this.getProviderIp(tweetId)
+            let providerIp = await this.getProviderIp(authorId ? authorId : tweetId)
             if (!providerIp) return
             let providerClient = this.lapi.getClient(providerIp)
             console.log("fetchTweet provider", providerIp)
