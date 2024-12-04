@@ -189,7 +189,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!providerIp)
                 return
             let providerClient = this.lapi.getClient(providerIp)
-            console.log("getUser() provider", providerIp)
+            console.log("getUser() provider", providerIp, userId)
             let user = await providerClient.RunMApp("get_user_core_data", {
                 aid: this.appId,
                 ver: "last",

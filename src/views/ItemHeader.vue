@@ -19,7 +19,6 @@ const avatar = computed(()=>{
 })
 
 onMounted(()=>{
-    console.log(avatar.value, props.tweet)
 })
 function openUserPage(userId: string) {
     useTweetStore().addFollowing(userId)

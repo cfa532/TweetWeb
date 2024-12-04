@@ -80,6 +80,8 @@ async function showTweet(tweet: Tweet) {
         await tweetStore.loadComments(originTweet.value)
     else
         await tweetStore.loadComments(tweet)
+
+    tweetStore.addFollowing(tweet.author.mid)
     isLoading.value = false
 }
 
