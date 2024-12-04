@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
-import TweetDetail from '@/components/TweetDetail.vue';
+import { useTweetStore } from '@/stores';
 
 const props = defineProps({ 
     tweet: {type: Object as PropType<Tweet>, required: true},
@@ -11,20 +11,21 @@ const props = defineProps({
     by: {type: String, required: false}
 })
 const router = useRouter()
+const avatar = ref()
+
 onMounted(()=>{
-    // console.log("ItemHeader", props)
+    let url = "http://" + props.tweet.author.providerIp
+    let mid = props.tweet.author.avatar
+    if (mid)
+        avatar.value = mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
 })
 function openUserPage(userId: string) {
+    useTweetStore().addFollowing(userId)
     router.push(`/author/${userId}`)
-}
-function imageUrl(mid?: MimeiId) {
-    if (!mid) return
-    let url = "http://" + props.tweet.author.providerIp
-    return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
 }
 </script>
 <template>
-    <img :src="imageUrl(tweet.author.avatar)" alt="User Avatar" class="rounded-circle me-2"
+    <img :src="avatar" alt="User Avatar" class="rounded-circle me-2"
         @click.stop="openUserPage(tweet.author.mid)">
     <div>
         <div class="forward-font" v-if="isRetweet">Forwarded by @{{by}}</div>
