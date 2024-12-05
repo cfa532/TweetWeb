@@ -9,21 +9,22 @@ const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
 const followers = ref([] as User[])
 const isLoading = ref(false)
+const user = ref<User>()
 
 onMounted(async () => {
     isLoading.value = true
     let ids = await tweetStore.getFollowings(userId)
     isLoading.value = false
     ids.forEach(async (mid :MimeiId) => {
-        let user = await tweetStore.getUser(mid)
-        if (user) {
-            followers.value.push(user)
+        user.value = await tweetStore.getUser(mid)
+        if (user.value) {
+            followers.value.push(user.value)
         }
     });
 })
 </script>
 <template>
-    <AppHeader />
+    <AppHeader v-if="user" :user="user"/>
     <UserRow v-for="user in followers" :user="user" :key="user.mid" class="user-row" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">

@@ -32,6 +32,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 state._followings = JSON.parse(sessionStorage.getItem("followings")!)
             } else {
                 state._followings = import.meta.env.VITE_DEFAULT_FOLLOWINGS.split(",")
+                sessionStorage.setItem("followings", JSON.stringify(state._followings))
             }
             return state._followings
         }
@@ -333,9 +334,8 @@ export const useTweetStore = defineStore('tweetStore', {
             return t
         },
         /**
-         * 
          * @param cid IPFS id of the install package
-         * @returns Mimei id of the install package
+         * @returns MimeiId of the install package
          */
         async uploadPackage(cid: string) {
             let mid = await this.lapi.client.RunMApp("upload_package", {
@@ -343,10 +343,14 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return mid
         },
+        /**
+         * @param filename 
+         * @returns 
+         */
         async uploadAttachment(cid: string, filename: string) {
             let mid = await this.lapi.client.RunMApp("upload_attachment", {
-                aid: this.lapi.appId, ver: "last", cid: cid,
-                userid: this.followings[0], filename: filename
+                aid: this.lapi.appId, ver: "last", cid: cid, filename: filename,
+                userid: this.followings[0]  // always the developer's mid
             })
             return mid
         },

@@ -167,7 +167,7 @@ function logout() {
 
 <template>
   <div class="card-header d-flex align-items-center">
-    <ItemHeader :tweet="tweet"></ItemHeader>
+    <ItemHeader :author="tweet.author"></ItemHeader>
     <button class="logout" @click.prevent="logout">Logout</button>
   </div>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
-import { useTweetStore } from "@/stores/tweetStore";
+import { useTweetStore, useLeitherStore } from "@/stores";
 import { default as qrCoder } from "./QRCoder.vue"
 import { formatTimeDifference } from '@/lib';
 
@@ -20,7 +20,7 @@ const iconUrl = computed(()=>{
         let mid = props.user.avatar!
         return "http://"+props.user.providerIp+ (mid.length > 27 ? "/ipfs/" + mid : "/mm/" + mid)
     } else {
-        return "/src/tweet_icon.png"
+        return "http://" + useLeitherStore().hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW"
     }
 })
 onMounted(async ()=>{
@@ -76,11 +76,8 @@ onMounted(async ()=>{
 .d-flex {
     display: flex;
     align-items: center; /* Aligns items vertically centered */
-}
-
-.avatar {
-    display: flex;
-    align-items: center; /* Ensures the avatar is vertically centered */
+    justify-content: space-between; /* Ensures space between elements */
+    flex-wrap: wrap; /* Allows items to wrap on smaller screens */
 }
 
 .avatar img {
@@ -88,26 +85,66 @@ onMounted(async ()=>{
     width: 80px;
     height: 80px;
     cursor: pointer;
+    transition: width 0.3s, height 0.3s; /* Smooth transition for size changes */
 }
 
 .user-info {
     line-height: 1.2;
     flex-grow: 1; /* Allows the user info to take up remaining space */
+    margin-left: 10px; /* Adds some space between avatar and user info */
 }
 
 .username-alias-time {
     display: flex;
     align-items: center;
     gap: 5px;
+    flex-wrap: wrap; /* Allows text to wrap on smaller screens */
 }
 
 .links a {
     color: #3d5563;
     text-decoration: none;
     font-size: 0.9rem;
+    margin-right: 10px; /* Adds space between links */
 }
 
 .links a:hover {
     text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+    .avatar img {
+        width: 50px;
+        height: 50px;
+    }
+
+    .user-info {
+        line-height: 1.2;
+        flex-grow: 1;
+        margin-left: 5px; /* Adjusts margin for smaller screens */
+    }
+
+    .username-alias-time {
+        gap: 3px; /* Reduces gap for smaller screens */
+    }
+
+    .links a {
+        font-size: 0.8rem; /* Reduces font size for smaller screens */
+    }
+}
+
+@media (min-width: 1200px) {
+    .avatar img {
+        width: 80px;
+        height: 80px;
+    }
+
+    .user-info {
+        margin-left: 15px; /* Increases margin for larger screens */
+    }
+
+    .links a {
+        font-size: 1rem; /* Increases font size for larger screens */
+    }
 }
 </style>

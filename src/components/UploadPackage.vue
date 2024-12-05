@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { Loading, Preview, ItemHeader } from '@/views'
+import { Loading, Preview } from '@/views'
 import { useTweetStore, useLeitherStore, useAlertStore } from '@/stores'
 
 interface HTMLInputEvent extends Event {
@@ -44,7 +44,8 @@ async function uploadFile(file: File, index: number = 0): Promise<string> {
 async function onSubmit() {
     loading.value = true
     try {
-        if (filesUpload.value.length < 1) return
+        if (filesUpload.value.length < 1)
+            return
         let mid = await uploadFile(filesUpload.value[0])
         textValue.value = ""
         filesUpload.value = []
@@ -82,8 +83,10 @@ async function readFileSlice(
         const t = api.client.timeout
         api.client.timeout = 0      // do Not timeout
         const cid = await api.client.MFTemp2Ipfs(fsid)
+        console.log("file cid=", cid)
         api.client.timeout = t
         if (isAppPackage.value)
+            // upload app installation package.
             return await tweetStore.uploadPackage(cid)
         else
             return await tweetStore.uploadAttachment(cid, filesUpload.value[0].name)
@@ -130,7 +133,6 @@ function removeFile(f: File) {
     var i = filesUpload.value.findIndex((e: File) => e == f)
     filesUpload.value.splice(i, 1)
 }
-
 </script>
 
 <template>
