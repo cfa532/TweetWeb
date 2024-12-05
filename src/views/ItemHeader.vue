@@ -54,40 +54,40 @@ function openUserPage(userId: string) {
   </div>
 </template>
 <style>
+.username {
+  font-size: 0.9rem; /* Adjust the size as needed */
+}
+.alias {
+  font-size: 0.9rem; /* Adjust the size as needed */
+}
 .tweet-header {
   display: flex;
   align-items: center; /* Vertically centers the content within the header */
 }
-
 .avatar {
   display: flex;
   align-items: center; /* Ensures the avatar is vertically centered */
 }
-
 .avatar img {
   object-fit: cover;
   width: 40px;
   height: 40px;
   cursor: pointer;
 }
-
 .user-info {
-  line-height: 1.2;
+  font-size: 0.8rem;
   flex-grow: 1; /* Allows the user info to take up remaining space */
 }
-
 .username-alias-time {
   display: flex;
   align-items: center;
   gap: 5px;
 }
-
 .links a {
   color: #3d5563;
   text-decoration: none;
   font-size: 0.9rem;
 }
-
 .links a:hover {
   text-decoration: underline;
 }

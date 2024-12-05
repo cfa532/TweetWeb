@@ -6,15 +6,18 @@ import { TweetView, AppHeader } from "@/views"
 
 const route = useRoute();
 const authorId = route.params.authorId as string
+const author = ref<User>()
 const tweetStore = useTweetStore();
 const isLoading = ref(false)
 
-onMounted(() => {
+onMounted(async () => {
     isLoading.value = true
     tweetStore.tweets = []
-    tweetStore.loadTweets(authorId)
+    author.value = await tweetStore.getUser(authorId)
+    await tweetStore.loadTweets(authorId)
+    isLoading.value = false
+
     window.setTimeout(()=>{
-        isLoading.value = false
     }, 3000)
 })
 onUnmounted(() => {
@@ -23,7 +26,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <AppHeader />
+    <AppHeader v-if="author" :user=author  />
     <TweetView v-for="tweet in tweetStore.tweets" :tweet="tweet" :key="tweet.mid" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">

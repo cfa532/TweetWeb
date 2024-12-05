@@ -2,7 +2,7 @@
 import { ref, onMounted, watchEffect } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetStore } from "@/stores";
-import { MediaView, AppHeader, ItemHeader, TweetView } from "@/views";
+import { MediaView, DetailHeader, ItemHeader, TweetView } from "@/views";
 
 const route = useRoute();
 const tweetStore = useTweetStore()
@@ -97,12 +97,11 @@ function linkify(text: string) {
 </script>
 
 <template>
-    <AppHeader v-if="author" :user=author  />
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <ItemHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
-            </ItemHeader>
-            <ItemHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></ItemHeader>
+            <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
+            </DetailHeader>
+            <DetailHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
         </div>
         <div v-if="isRetweet" class="card-body" id="content">
             <p class="card-text" v-html="linkify(originTweet.content)"></p>
@@ -197,13 +196,12 @@ function linkify(text: string) {
 
 .card-header {
     margin: 0px;
-    padding: auto;
+    padding: 0px 8px;
 }
 
 .card-body {
     margin: 0px;
-    padding: auto;
-    padding-top: 0px;
+    padding: 0px 4px;
 }
 
 .card-text {
