@@ -42,8 +42,7 @@ function openUserPage(userId: string) {
 
       <!-- Followers and Friends Links -->
       <div v-if="showDetail" class="links mt-1">
-        <a :href="`/followers/${user.mid}`" class="me-3">{{ tweet.bookmarkCount }} fans</a>
-        <a :href="`/followings/${user.mid}`">{{ tweet.commentCount }} following</a>
+        <span class="alias text-muted">{{ user.profile }}</span>
       </div>
     </div>
   </div>
