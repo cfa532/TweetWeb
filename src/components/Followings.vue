@@ -7,25 +7,26 @@ import { ItemHeader, AppHeader, UserRow } from "@/views";
 const route = useRoute();
 const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
-const followers = ref([] as User[])
+const following = ref([] as User[])
 const isLoading = ref(false)
 const user = ref<User>()
 
 onMounted(async () => {
     isLoading.value = true
     let ids = await tweetStore.getFollowings(userId)
+    user.value = await tweetStore.getUser(userId)
     isLoading.value = false
     ids.forEach(async (mid :MimeiId) => {
-        user.value = await tweetStore.getUser(mid)
-        if (user.value) {
-            followers.value.push(user.value)
+        let user = await tweetStore.getUser(mid)
+        if (user) {
+            following.value.push(user)
         }
     });
 })
 </script>
 <template>
     <AppHeader v-if="user" :user="user"/>
-    <UserRow v-for="user in followers" :user="user" :key="user.mid" class="user-row" />
+    <UserRow v-for="user in following" :user="user" :key="user.mid" class="user-row" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">
             <span class="visually-hidden">Loading...</span>

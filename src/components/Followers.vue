@@ -14,12 +14,12 @@ const user = ref<User>()
 onMounted(async () => {
     isLoading.value = true
     let ids = await tweetStore.getFollowers(userId)
+    user.value = await tweetStore.getUser(userId)
     isLoading.value = false
     ids.forEach(async (mid :MimeiId) => {
-        user.value = await tweetStore.getUser(mid)
-        if (user.value) {
-            // await tweetStore.getFollowCount(user)
-            followers.value.push(user.value)
+        let user = await tweetStore.getUser(mid)
+        if (user) {
+            followers.value.push(user)
         }
     });
 })
