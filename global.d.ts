@@ -16,6 +16,9 @@ interface User {
     hostIds?: string[];
     providerIp?: string;  // IP of the best provider for the author's data
     client?: any;       // Hprose client handler
+    timestamp: string | number = Date.now();
+    followingCount?: number;
+    followerCount?: number;
 };
 
 interface Tweet {
@@ -24,7 +27,7 @@ interface Tweet {
     content?: string;
     title?: string;
     attachments?: MimeiFileType[];
-    timestamp?: string | number;
+    timestamp: string | number = Date.now();
     originalTweetId?: string;
     originalTweet?: Tweet;
     originalAuthorId?: string;

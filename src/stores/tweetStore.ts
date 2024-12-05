@@ -178,7 +178,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return tweet
         },
 
-        async getUser(userId: string): Promise<User | undefined> {
+        async getUser(userId: MimeiId): Promise<User | undefined> {
             // check if the user has been retrieved.
             if (this.loginUser && this.loginUser.mid == userId)
                 return this.loginUser
@@ -190,15 +190,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             let providerClient = this.lapi.getClient(providerIp)
             console.log("getUser() provider", providerIp, userId)
+
             let user = await providerClient.RunMApp("get_user_core_data", {
-                aid: this.appId,
-                ver: "last",
-                userid: userId,
+                aid: this.appId, ver: "last", userid: userId,
             })
             // cache the user data
             if (user) {
                 user.providerIp = providerIp
-                // user.avatar = this.getMediaUrl(user.avatar, "http://" + providerIp)
                 sessionStorage.setItem(userId, JSON.stringify(user))
                 user.client = providerClient
                 delete user.baseUrl
@@ -206,6 +204,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.users.set(userId, user)
             }
             return user
+        },
+        async getFollowCount(user: User) {
+            let f = await user.client.RunMApp("get_follow_count", {
+                aid: this.appId, ver: "last", userid: user.mid,
+            })
+            console.log(user, f)
+            user.followingCount = f["followingCount"]
+            user.followerCount = f["followersCount"]
         },
 
         // Given a mimie Id, find IP of its best provider
@@ -299,6 +305,18 @@ export const useTweetStore = defineStore('tweetStore', {
         logout() {
             sessionStorage.clear()
             this.$reset
+        },
+        async getFollowers(userId: MimeiId) {
+            let user = await this.getUser(userId)
+            if (!user)
+                return []
+            return await user.client.RunMApp("get_followers", {aid: this.appId, ver: "last", userid: userId})
+        },
+        async getFollowings(userId: MimeiId) {
+            let user = await this.getUser(userId)
+            if (!user)
+                return []
+            return await user.client.RunMApp("get_followings", {aid: this.appId, ver: "last", userid: userId})
         },
 
         async openTempFile() {

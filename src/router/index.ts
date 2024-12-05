@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, IPs, UploadPackage } from "@/components"
+import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, IPs, UploadPackage, Followings, Followers } from "@/components"
 import { useAlertStore } from '@/stores';
 
 /**
@@ -22,6 +22,8 @@ export const router = createRouter({
       component: UserPage,
       props: false,
     },
+    { path: '/followings/:userId', name: "followings", component: Followings },
+    { path: '/followers/:userId', name: "followers", component: Followers },
     { path: '/login', name: "login", component: Login },
     { path: '/ips', name: "IPs", component: IPs },
     {

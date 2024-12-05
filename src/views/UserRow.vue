@@ -6,15 +6,13 @@ import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
 
 const props = defineProps({ 
-    author: {type: Object as PropType<User>, required: true},
-    timestamp: {type: Number, required: false },
-    isRetweet: {type: Boolean, required: false, default: false},
-    by: {type: String, required: false}
+    user: {type: Object as PropType<User>, required: true},
+    showDetail: {type: Boolean, required: false, default: true},
 })
 const router = useRouter()
 const avatar = computed(()=>{
-    let url = "http://" + props.author.providerIp
-    let mid = props.author.avatar
+    let url = "http://" + props.user.providerIp
+    let mid = props.user.avatar
     if (mid)
         return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
 })
@@ -30,25 +28,22 @@ function openUserPage(userId: string) {
   <div class="tweet-header d-flex align-items-start">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(author.mid)">
+      <img :src="avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(user.mid)">
     </div>
 
     <!-- User Info -->
     <div class="user-info flex-grow-1">
-      <!-- Optional Label -->
-      <div v-if="isRetweet" class="label text-muted small">
-        Forwarded by @{{ by }}
-      </div>
-
       <!-- Username, Alias, and Time -->
       <div class="username-alias-time">
-        <span class="username fw-bold">{{ author.name }}</span>
+        <span class="username fw-bold">{{ user.name }}</span>
+        <span class="alias text-muted">@{{ user.username }}</span>
+        <span class="time text-muted">- {{ formatTimeDifference(user.timestamp as number) }}</span>
       </div>
 
       <!-- Followers and Friends Links -->
-      <div class="mt-1">
-        <span class="alias text-muted">@{{ author.username }}</span>
-        <span v-if="props.timestamp" class="time text-muted"> - {{ formatTimeDifference(props.timestamp as number) }}</span>
+      <div v-if="showDetail" class="links mt-1">
+        <a :href="`/followers/${user.mid}`" class="me-3">{{ tweet.bookmarkCount }} fans</a>
+        <a :href="`/followings/${user.mid}`">{{ tweet.commentCount }} following</a>
       </div>
     </div>
   </div>

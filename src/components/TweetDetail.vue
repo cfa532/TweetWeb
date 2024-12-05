@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, watchEffect } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, AppHeader, ItemHeader, TweetView } from "@/views";
@@ -11,8 +11,8 @@ const authorId = route.params.authorId as MimeiId | undefined
 const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
-let countdownInterval: number | undefined;
 const isLoading = ref(false)
+const author = ref<User>();
 
 onMounted(async () => {    
     isLoading.value = true
@@ -33,7 +33,6 @@ onMounted(async () => {
     } else {
         showTweet(tweet.value)
     }
-
     // display url as link
     document.addEventListener("DOMContentLoaded", function() {
         const contentElement = document.getElementById('content');
@@ -76,6 +75,12 @@ async function showTweet(tweet: Tweet) {
             document.title = originTweet.value.title
         }
     }
+    if (authorId) {
+        author.value = await tweetStore.getUser(authorId);
+    } else if (tweet) {
+        author.value = await tweetStore.getUser(tweet.author.mid);
+    }
+
     if (isRetweet.value)
         await tweetStore.loadComments(originTweet.value)
     else
@@ -85,11 +90,6 @@ async function showTweet(tweet: Tweet) {
     isLoading.value = false
 }
 
-onUnmounted(() => {
-    if (countdownInterval) {
-        clearInterval(countdownInterval);
-    }
-});
 function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
@@ -97,12 +97,12 @@ function linkify(text: string) {
 </script>
 
 <template>
-    <AppHeader />
+    <AppHeader v-if="author" :user=author  />
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <ItemHeader v-if="isRetweet" :tweet="originTweet" :is-retweet="isRetweet" :by="tweet.author?.username">
+            <ItemHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
             </ItemHeader>
-            <ItemHeader v-else :tweet="tweet"></ItemHeader>
+            <ItemHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></ItemHeader>
         </div>
         <div v-if="isRetweet" class="card-body" id="content">
             <p class="card-text" v-html="linkify(originTweet.content)"></p>
@@ -159,7 +159,7 @@ function linkify(text: string) {
     <div v-if="tweet">
         <div v-if="isRetweet" v-for="(comment, index) in originTweet.comments" :key="index" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
-                <ItemHeader :tweet="comment"></ItemHeader>
+                <ItemHeader :author="comment.author" :timestamp="comment.timestamp"></ItemHeader>
             </div>
             <div class="card-body">
                 <p class="card-text">{{ comment.content }}</p>
@@ -171,7 +171,7 @@ function linkify(text: string) {
         </div>
         <div v-else v-for="(comment, index1) in tweet.comments" :key="index1" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
-                <ItemHeader :tweet="comment"></ItemHeader>
+                <ItemHeader :author="comment.author" :timestamp="comment.timestamp"></ItemHeader>
             </div>
             <div class="card-body">
                 <p class="card-text">{{ comment.content }}</p>
