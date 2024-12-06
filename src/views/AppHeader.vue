@@ -81,7 +81,9 @@ onMounted(async ()=>{
     justify-content: center;
     align-items: center;
   }
-
+.btn {
+    font-size: 0.9rem;
+}
 .d-flex {
     display: flex;
     align-items: center; /* Aligns items vertically centered */

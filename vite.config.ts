@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [vue({
     template: {
       compilerOptions: {
-        isCustomElement: (tag) => ['video-js'].includes(tag)    // video-js is custom component
+        isCustomElement: (tag) => ['video-js', 'qr-code'].includes(tag)    // video-js is custom component
       }
     }
   }),
