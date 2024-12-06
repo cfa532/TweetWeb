@@ -13,22 +13,22 @@ const props = defineProps({
 const level = ref<Level>('M')
 const renderAs = ref<RenderAs>('svg')
 const background = ref('#ffffff')
-const foreground = ref('#088df8')
+const foreground = ref('#604060')
 const margin = ref(0)
 
 const imageSettings = ref<ImageSettings>({
   src: "http://" + useTweetStore().lapi.hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW",
   width: props.logoSize,
   height: props.logoSize,
-  // x: 10,
+  // x: 10,   // x-position of the logo
   // y: 10,
   excavate: false,
 })
 
 const gradient = ref(false)
 const gradientType = ref<GradientType>('radial')
-const gradientStartColor = ref('#000000')
-const gradientEndColor = ref('#38bdf8')
+const gradientStartColor = ref('#6a4b6f')
+const gradientEndColor = ref('#000000')
 onMounted(() => {
 });
 </script>
@@ -56,7 +56,7 @@ onMounted(() => {
 }
 
 .logo {
-  background-color: rgb(85, 137, 234);
+  background-color: rgb(72, 76, 84);
   position: absolute;
   top: 50%;
   left: 50%;
