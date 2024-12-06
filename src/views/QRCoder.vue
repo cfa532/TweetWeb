@@ -7,7 +7,7 @@ import type { Level, RenderAs, GradientType, ImageSettings } from 'qrcode.vue'
 const props = defineProps({
   url: { type: String, required: true },
   size: { type: Number, required: false },
-  logoSize: { type: Number, required: false, default: 30 },
+  logoSize: { type: Number, required: false, default: 20 },
 })
 
 const level = ref<Level>('M')
@@ -36,6 +36,7 @@ onMounted(() => {
 <template>
   <qrcode-vue
     :value=props.url
+    :size=props.size
     :level="level"
     :render-as="renderAs"
     :background="background"

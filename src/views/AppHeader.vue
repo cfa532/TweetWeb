@@ -51,18 +51,18 @@ onMounted(async ()=>{
                     <span class="alias text-muted">@{{ user.username }}</span>
                     <span class="time text-muted"> - {{ formatTimeDifference(user.timestamp as number) }}</span>
                 </div>
-
-                <div class="mt-1">
-                    <span class="alias text-muted">{{ user.profile }}</span>
-                </div>
                 <!-- Followers and Friends Links -->
                 <div class="links mt-1">
                     <a :href="`/followers/${user.mid}`" class="me-3">{{ user.followerCount }} fans</a>
                     <a :href="`/followings/${user.mid}`">{{ user.followingCount }} following</a>
                 </div>
+
+                <div class="mt-1">
+                    <span class="alias text-muted">{{ user.profile }}</span>
+                </div>
             </div>
         </div>
-        <div class="d-flex align-items-end">
+        <div class="d-flex align-items-start">
             <button class='btn btn-link' @click="tweetStore.downloadApk">APP ⬇️
             </button>
             <div class="qr-code-container">

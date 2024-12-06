@@ -402,7 +402,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!ipList || ipList.length < 1) {
                 return null; // Return null immediately if the list is empty
             }
-            const fetchWithTimeout = (url: string, timeout = 1000) => {
+            const fetchWithTimeout = (url: string, timeout = 5000) => {
                 return new Promise((resolve, reject) => {
                     const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
                     fetch(url)

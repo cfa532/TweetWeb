@@ -105,7 +105,7 @@ function linkify(text: string) {
         </div>
         <div v-if="isRetweet" class="card-body" id="content">
 
-            <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
+            <p v-if="originTweet.content" class="card-text ms-1" v-html="linkify(originTweet.content)"></p>
 
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
@@ -129,7 +129,7 @@ function linkify(text: string) {
             </div>
         </div>
         <div v-else class="card-body">
-            <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
+            <p v-if="tweet.content" class="card-text ms-1" v-html="linkify(tweet.content)"></p>
 
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
