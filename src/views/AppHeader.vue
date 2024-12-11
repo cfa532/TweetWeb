@@ -62,7 +62,7 @@ onMounted(async ()=>{
                 </div>
             </div>
         </div>
-        <div class="d-flex align-items-start">
+        <div class="d-flex align-items-start qr-container">
             <button class='btn btn-link' @click="tweetStore.downloadApk">APP ⬇️
             </button>
             <div class="qr-code-container">
@@ -74,21 +74,26 @@ onMounted(async ()=>{
 </template>
 
 <style scoped>
+.qr-container {
+    display: flex;
+    align-items: flex-end; /* Aligns items to the right */
+}
+.btn {
+    font-size: 0.8rem;
+}
 .qr-code-container {
     display: flex;
     justify-content: center;
     align-items: center;
 }
 
-.btn {
-    font-size: 0.9rem;
-}
 .d-flex {
     display: flex;
     align-items: center; /* Aligns items vertically centered */
     justify-content: space-between; /* Ensures space between elements */
-    flex-wrap: wrap; /* Allows items to wrap on smaller screens */
+    flex-wrap: nowrap; /* Prevents wrapping of the QR code */
 }
+
 .avatar img {
     object-fit: cover;
     width: 60px;
@@ -100,12 +105,13 @@ onMounted(async ()=>{
 .user-info {
     flex-grow: 1; /* Allows the user info to take up remaining space */
     margin-left: 10px; /* Adds some space between avatar and user info */
+    flex-wrap: wrap; /* Allows text to wrap on smaller screens */
 }
 
 .username-alias-time {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 1px;
     flex-wrap: wrap; /* Allows text to wrap on smaller screens */
 }
 
@@ -119,7 +125,17 @@ onMounted(async ()=>{
 .links a:hover {
     text-decoration: underline;
 }
+
 @media (max-width: 600px) {
+    .qr-container {
+        flex-direction: column; /* Changes direction to column on small screens */
+        align-items: center; /* Centers items horizontally */
+    }
+
+    .btn {
+        font-size: 0.7rem;
+    }
+
     .avatar img {
         width: 50px;
         height: 50px;
@@ -128,7 +144,7 @@ onMounted(async ()=>{
     .user-info {
         line-height: 1.2;
         flex-grow: 1;
-        margin-left: 2px; /* Adjusts margin for smaller screens */
+        margin-left: 1px; /* Adjusts margin for smaller screens */
     }
 
     .username-alias-time {
@@ -145,9 +161,9 @@ onMounted(async ()=>{
         width: 60px;
         height: 60px;
     }
-    .user-info {
-        margin-left: 5px; /* Increases margin for larger screens */
-    }
 
+    .user-info {
+        margin-left: 1px; /* Increases margin for larger screens */
+    }
 }
 </style>
