@@ -172,6 +172,21 @@ function linkify(text: string) {
                     <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
                         class="img-fluid mb-2"></MediaView>
                 </div>
+
+                <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
+                    <div class='icon-item d-flex align-items-center'>
+                        <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
+                        <span class='icon-number'>{{ comment.likeCount > 0 ? comment.likeCount : null }}</span>
+                    </div>
+                    <div class='icon-item d-flex align-items-center'>
+                        <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
+                        <span class='icon-number'>{{ comment.bookmarkCount > 0 ? comment.bookmarkCount : null }}</span>
+                    </div>
+                    <div class='icon-item d-flex align-items-center'>
+                        <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                        <span class='icon-number'>{{ comment.commentCount > 0 ? comment.commentCount : null }}</span>
+                    </div>
+                </div>
             </div>
         </div>
         <!-- Show comments of the tweet -->
