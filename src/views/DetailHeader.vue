@@ -15,9 +15,9 @@ const props = defineProps({
 
 const tweetStore = useTweetStore();
 const router = useRouter();
-const downloadApk = '9OCLYP-SXzen3e171-Ei_6N3Gwl';
+const downloadApk = import.meta.env.VITE_APP_PKG
 const dlUrl = ref();
-const qrSize = 60;
+const qrSize = 80;
 const showModal = ref(false);
 
 function toggleModal() {
@@ -70,9 +70,10 @@ function openUserPage(userId: string) {
       </div>
     </div>
   </div>
+  <!-- modal window to show large QR code -->
   <div v-if='showModal' class='modal-overlay' @click='toggleModal'>
     <div class='modal-content' @click.stop>
-      <QRCoder :url='dlUrl' :size='qrSize * 3' :logoSize="40"></QRCoder>
+      <QRCoder :url='dlUrl' :size='190' :logoSize="40"></QRCoder>
     </div>
   </div>
 </template>
