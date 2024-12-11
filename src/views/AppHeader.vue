@@ -10,7 +10,7 @@ const router = useRouter()
 const tweetStore = useTweetStore()
 const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
 const dlUrl = ref()
-const qrSize = 80
+const qrSize = 60
 const props = defineProps({
     user: {type: Object as PropType<User>, required: false},
 })
@@ -75,8 +75,6 @@ onMounted(async ()=>{
 
 <style scoped>
 .qr-code-container {
-    width: 80px; /* Set the desired fixed width */
-    height: 80px; /* Set the desired fixed height */
     display: flex;
     justify-content: center;
     align-items: center;
