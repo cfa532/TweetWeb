@@ -37,7 +37,7 @@ onMounted(async ()=>{
 </script>
 
 <template>
-<div class="row align-items-center mb-1">
+<div class="row align-items-center mb-2">
     <div class="d-flex justify-content-between">
         <div class="d-flex">
             <div class="avatar me-2 ms-2 mt-1">

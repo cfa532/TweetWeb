@@ -25,10 +25,10 @@ function openUserPage(userId: string) {
 }
 </script>
 <template>
-  <div class="tweet-header d-flex align-items-start">
+  <div class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(user.mid)">
+      <img :src="avatar" alt="User Avatar" class="rounded-circle">
     </div>
 
     <!-- User Info -->
@@ -51,6 +51,7 @@ function openUserPage(userId: string) {
 .tweet-header {
   display: flex;
   align-items: center; /* Vertically centers the content within the header */
+  cursor: pointer;
 }
 
 .avatar {
