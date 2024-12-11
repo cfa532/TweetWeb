@@ -110,7 +110,7 @@ function linkify(text: string) {
 }
 .card-header {
     margin: 0px;
-    padding: 8px 8px;
+    padding: 0px 8px;
     cursor: pointer;
 }
 .card-body {

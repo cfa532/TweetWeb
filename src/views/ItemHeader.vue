@@ -61,6 +61,7 @@ function openUserPage(userId: string) {
   font-size: 0.9rem; /* Adjust the size as needed */
 }
 .tweet-header {
+  margin: 8px 0 8px 0;
   display: flex;
   align-items: center; /* Vertically centers the content within the header */
 }

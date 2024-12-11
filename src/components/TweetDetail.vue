@@ -105,7 +105,7 @@ function linkify(text: string) {
         </div>
         <div v-if="isRetweet" class="card-body" id="content">
 
-            <p v-if="originTweet.content" class="card-text ms-1" v-html="linkify(originTweet.content)"></p>
+            <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
 
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
@@ -129,7 +129,7 @@ function linkify(text: string) {
             </div>
         </div>
         <div v-else class="card-body">
-            <p v-if="tweet.content" class="card-text ms-1" v-html="linkify(tweet.content)"></p>
+            <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
 
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
@@ -159,18 +159,22 @@ function linkify(text: string) {
     </div>
 
     <div v-if="tweet">
+        <!-- Show comments of the original tweet if it is a retweet -->
         <div v-if="isRetweet" v-for="(comment, index) in originTweet.comments" :key="index" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
                 <ItemHeader :author="comment.author" :timestamp="comment.timestamp"></ItemHeader>
             </div>
             <div class="card-body">
+
                 <p class="card-text">{{ comment.content }}</p>
+
                 <div v-if="comment.attachments?.length" class="media-attachments">
                     <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
                         class="img-fluid mb-2"></MediaView>
                 </div>
             </div>
         </div>
+        <!-- Show comments of the tweet -->
         <div v-else v-for="(comment, index1) in tweet.comments" :key="index1" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
                 <ItemHeader :author="comment.author" :timestamp="comment.timestamp"></ItemHeader>
@@ -181,9 +185,26 @@ function linkify(text: string) {
                     <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
                         class="img-fluid mb-2"></MediaView>
                 </div>
+
+                <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
+                    <div class='icon-item d-flex align-items-center'>
+                        <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
+                        <span class='icon-number'>{{ comment.likeCount > 0 ? comment.likeCount : null }}</span>
+                    </div>
+                    <div class='icon-item d-flex align-items-center'>
+                        <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
+                        <span class='icon-number'>{{ comment.bookmarkCount > 0 ? comment.bookmarkCount : null }}</span>
+                    </div>
+                    <div class='icon-item d-flex align-items-center'>
+                        <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                        <span class='icon-number'>{{ comment.commentCount > 0 ? comment.commentCount : null }}</span>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
+
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -211,6 +232,7 @@ function linkify(text: string) {
     text-align: left;
     font-size: medium;
     white-space: pre-wrap;
+    padding: 0px 8px;
 }
 .card-text a {
     color: blue;
