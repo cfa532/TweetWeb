@@ -26,6 +26,9 @@ const avatar = computed(() => {
 });
 
 onMounted(async () => {
+  if (sessionStorage["isBot"] != "No") {
+        confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
+    }
   let host = await tweetStore.getProviderIp(downloadApk);
   dlUrl.value = downloadApk.length > 27 ? 'http://' + host + '/ipfs/' + downloadApk : 'http://' + host + '/mm/' + downloadApk;
 });
@@ -73,12 +76,14 @@ function openUserPage(userId: string) {
   justify-content: center;
   align-items: center;
 }
-
+.text-muted {
+  font-size: 0.95rem;
+}
 .username {
   font-size: 0.9rem;
 }
 .alias {
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 .avatar {
   display: flex;
@@ -91,7 +96,7 @@ function openUserPage(userId: string) {
   cursor: pointer;
 }
 .user-info {
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   flex-grow: 1;
 }
 .links a {

@@ -53,8 +53,8 @@ onMounted(async ()=>{
                 </div>
                 <!-- Followers and Friends Links -->
                 <div class="links mt-1">
-                    <a :href="`/followers/${user.mid}`" class="me-3">{{ user.followerCount }} fans</a>
-                    <a :href="`/followings/${user.mid}`">{{ user.followingCount }} following</a>
+                    <a :href="`/followers/${user.mid}`" class="me-2 text-muted">{{ user.followerCount }} fans</a>
+                    <a :href="`/followings/${user.mid}`" class="text-muted">{{ user.followingCount }} following</a>
                 </div>
 
                 <div class="mt-1">
@@ -63,8 +63,7 @@ onMounted(async ()=>{
             </div>
         </div>
         <div class="d-flex align-items-start qr-container">
-            <button class='btn btn-link' @click="tweetStore.downloadApk">APP ⬇️
-            </button>
+            <button class='btn btn-link' @click="tweetStore.downloadApk">APP ⬇️</button>
             <div class="qr-code-container">
                 <qrCoder v-if="dlUrl" :url="dlUrl" :size="qrSize"></qrCoder>
             </div>
@@ -86,14 +85,12 @@ onMounted(async ()=>{
     justify-content: center;
     align-items: center;
 }
-
 .d-flex {
     display: flex;
     align-items: center; /* Aligns items vertically centered */
     justify-content: space-between; /* Ensures space between elements */
     flex-wrap: nowrap; /* Prevents wrapping of the QR code */
 }
-
 .avatar img {
     object-fit: cover;
     width: 60px;
@@ -101,27 +98,27 @@ onMounted(async ()=>{
     cursor: pointer;
     transition: width 0.3s, height 0.3s; /* Smooth transition for size changes */
 }
-
 .user-info {
     flex-grow: 1; /* Allows the user info to take up remaining space */
     margin-left: 10px; /* Adds some space between avatar and user info */
     flex-wrap: wrap; /* Allows text to wrap on smaller screens */
 }
-
 .username-alias-time {
     display: flex;
     align-items: center;
     gap: 1px;
     flex-wrap: wrap; /* Allows text to wrap on smaller screens */
+    font-size: 0.95rem;
 }
-
+.text-muted {
+    font-size: 0.95rem;
+}
 .links a {
     color: #3d5563;
     text-decoration: none;
     font-size: 0.9rem;
     margin-right: 10px; /* Adds space between links */
 }
-
 .links a:hover {
     text-decoration: underline;
 }
@@ -131,26 +128,21 @@ onMounted(async ()=>{
         flex-direction: column; /* Changes direction to column on small screens */
         align-items: center; /* Centers items horizontally */
     }
-
     .btn {
         font-size: 0.7rem;
     }
-
     .avatar img {
         width: 50px;
         height: 50px;
     }
-
     .user-info {
         line-height: 1.2;
         flex-grow: 1;
         margin-left: 1px; /* Adjusts margin for smaller screens */
     }
-
     .username-alias-time {
         gap: 2px; /* Reduces gap for smaller screens */
     }
-
     .links a {
         font-size: 0.9rem; /* Reduces font size for smaller screens */
     }
@@ -161,7 +153,6 @@ onMounted(async ()=>{
         width: 60px;
         height: 60px;
     }
-
     .user-info {
         margin-left: 1px; /* Increases margin for larger screens */
     }
