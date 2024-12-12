@@ -21,9 +21,12 @@ function openUserPage(userId: string) {
     router.push(`/author/${userId}`)
 }
 function openDetailView() {
-    // Route to the tweet detail page using the tweet ID
     sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
-    router.push(`/tweet/${props.tweet?.mid}/${props.author.mid}`);
+    /**
+     * Try to open a comment as Tweet detail page. The comment is stored with the tweet,
+     * so it cannot be find by the authorId of the comment. Have to seach for the commentId (tweetId)
+    */
+    router.push(`/tweet/${props.tweet?.mid}`);
 };
 </script>
 

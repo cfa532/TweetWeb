@@ -15,15 +15,19 @@ const originTweet = ref()
 const isRetweet = ref(false)
 
 onMounted(async () => {
+    console.log(props.tweet)
     if (tweet.value.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId)
+        originTweet.value = await tweetStore.fetchTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId)
         if (originTweet.value) {
             console.log(tweet.value, originTweet.value)
             tweet.value.originalTweet = originTweet.value
             if (!tweet.value.content && !tweet.value.attachments) {
-                tweet.value = originTweet.value
+                tweet.value = originTweet.value     // rendering original tweet in the place of tweet.
                 isRetweet.value = true
             }
+        } else {
+            // we are retweeting a non-exist tweet. Exit
+            return
         }
     }
 });
@@ -84,15 +88,15 @@ function linkify(text: string) {
             <div v-if="!isQuoted" class='icon-row d-flex justify-content-around mb-2'>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.likeCount }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.bookmarkCount }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_notice.png' alt='Forward' class='icon' />
-                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.commentCount }}</span>
                 </div>
             </div>
         </div>

@@ -54,17 +54,17 @@ export const useTweetStore = defineStore('tweetStore', {
             let followings = authorId? [authorId] : this.followings
             followings.forEach(async (uid: string) => {
                 let author = await this.getUser(uid)
-                if (!author) return
-
+                if (!author)
+                    return
                 let tweetsByUser = await this.getTweetListByUser(author)
-                if (!tweetsByUser) return
+                if (!tweetsByUser)
+                    return
 
                 // Tweet may not have its author data yet.
                 tweetsByUser.forEach(async tweet => {
                     // skip tweet that is in tweets already.
-                    if (this.tweets.find(e => { e.mid == tweet.mid }))
+                    if (this.tweets.find(e => e.mid == tweet.mid))
                         return
-
                     tweet.author = author
                     tweet.provider = author.providerIp
                     tweet.attachments = tweet.attachments?.map(e => {
@@ -76,22 +76,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweet.comments = []     // load comments only on detail page
 
                     if (tweet?.originalTweetId) {
-                        if (sessionStorage.getItem(tweet?.originalTweetId)) {
-                            tweet.originalTweet = JSON.parse(sessionStorage.getItem(tweet?.originalTweetId)!)
-                        } else {
-                            let originTweet = await this.fetchTweet(tweet.originalTweetId)
-                            if (originTweet) {
-                                tweet.originalTweet = originTweet
-                                sessionStorage.setItem(originTweet.mid, JSON.stringify(originTweet))
-                            } else {
-                                return
-                            }
+                        tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                        if (!tweet.originalTweet) {
+                            return  // failed to find original tweet, exit.
                         }
                     }
                     sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
 
                     // add the tweets into right location of tweets
-                    let index = this.tweets.findIndex(e => { return e.timestamp!! < tweet.timestamp!! });
+                    let index = this.tweets.findIndex(e => e.timestamp < tweet.timestamp);
                     if (index === -1) {
                         // If no smaller timestamp is found, push to the end
                         this.tweets.push(tweet);
@@ -104,7 +97,6 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async getTweetListByUser(user: User): Promise<Tweet[] | undefined> {
-            if (!user) return
             return await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
@@ -123,16 +115,15 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a Tweet object short of comments.
          */
         async getTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
-            // check if the tweet has been retrieved
-            let tweet = this.tweets.find(e => e.mid == tweetId)
-            if (tweet)
-                return tweet
-
-            tweet = await this.fetchTweet(tweetId, authorId)
+            let tweet = await this.fetchTweet(tweetId, authorId)
             if (!tweet) return
 
             if (tweet?.originalTweetId) {
                 tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                if (!tweet.originalTweet) {
+                    console.info("Missing originalTweet", tweet)
+                    return
+                }
             }
             sessionStorage.setItem(tweetId, JSON.stringify(tweet))
             return tweet
@@ -144,13 +135,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * author data is also available on the provider. Get author data too.
          */
         async fetchTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
-            let cachedTweet = sessionStorage.getItem(tweetId)
-            if (cachedTweet) {
-                let t = JSON.parse(cachedTweet)
+            // check if the tweet has been retrieved
+            let cachedTweet = this.tweets.find(e => e.mid == tweetId)
+            if (cachedTweet)
+                return cachedTweet
+
+            if (sessionStorage.getItem(tweetId)) {
+                let t = JSON.parse(sessionStorage.getItem(tweetId)!)
                 t.author.client = this.lapi.getClient(t.author.providerIp)  // hprose client cannot be serielized.
                 return t
             }
-
             // Get IP address of the provider of this tweet
             let author, providerClient, providerIp
             if (authorId) {
@@ -172,6 +166,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweetId,
                 userid: GUEST_ID,  // just a placeholder
             })
+            console.log(tweetInDB, providerIp, author)
             if (!tweetInDB)
                 return
             author = await this.getUser(tweetInDB.authorId)
@@ -244,6 +239,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid,
             })
+            console.log(IPs)
             // return import.meta.env.VITE_LEITHER_NODE
             let ip = await this.findFirstAccessibleIP(IPs,  this.lapi.appId)
             return ip
@@ -269,6 +265,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (author) {
                     tweet.comments?.push({
                         mid: e.mid,
+                        authorId: e.authorId,
                         author: author,
                         content: e.content,
                         timestamp: e.timestamp,

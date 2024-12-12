@@ -1,11 +1,10 @@
 <script lang="ts" setup>
 import { ref, onMounted, watch, computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, ItemHeader, TweetView } from "@/views";
 
 const route = useRoute();
-const router = useRouter()
 const tweetStore = useTweetStore()
 const tweetId = computed(()=>route.params.tweetId as MimeiId)
 const authorId = computed(()=>route.params.authorId as MimeiId | undefined)
@@ -92,7 +91,7 @@ const formattedTitle = computed(() => {
 
 watch(tweetId, async (newValue, oldValue)=>{
     if (newValue && oldValue !== newValue) {
-        let t = await tweetStore.getTweet(tweetId.value, authorId.value)
+        let t = await tweetStore.getTweet(newValue, authorId.value)
         if (t) {
             console.log(t)
             tweet.value = t
