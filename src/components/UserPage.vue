@@ -26,7 +26,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <AppHeader v-if="author" :user=author  />
+    <AppHeader v-if="author" :user=author />
     <TweetView v-for="tweet in tweetStore.tweets" :tweet="tweet" :key="tweet.mid" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">

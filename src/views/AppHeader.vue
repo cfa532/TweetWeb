@@ -86,6 +86,7 @@ onMounted(async ()=>{
     align-items: center;
 }
 .d-flex {
+    margin: 2px 0px;
     display: flex;
     align-items: center; /* Aligns items vertically centered */
     justify-content: space-between; /* Ensures space between elements */

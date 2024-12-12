@@ -1,13 +1,14 @@
 <script lang="ts" setup>
-import { ref, onMounted, watchEffect } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, onMounted, watch, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, ItemHeader, TweetView } from "@/views";
 
 const route = useRoute();
+const router = useRouter()
 const tweetStore = useTweetStore()
-const tweetId = route.params.tweetId as MimeiId
-const authorId = route.params.authorId as MimeiId | undefined
+const tweetId = computed(()=>route.params.tweetId as MimeiId)
+const authorId = computed(()=>route.params.authorId as MimeiId | undefined)
 const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
@@ -22,7 +23,7 @@ onMounted(async () => {
 
     if (!tweet.value) {
         // Fetch tweet if it is not in session already.
-        tweet.value = await tweetStore.getTweet(tweetId, authorId) as Tweet
+        tweet.value = await tweetStore.getTweet(tweetId.value as MimeiId, authorId.value as MimeiId) as Tweet
         if (!tweet.value) {
             window.setTimeout(()=> {
                 window.location.reload()
@@ -48,6 +49,22 @@ async function showTweet(tweet: Tweet) {
     console.log("Tweet=", tweet)
     sessionStorage.setItem("tweetDetail", JSON.stringify(tweet))
     document.title = tweet.title ? tweet.title : ""
+    if (authorId.value) {
+        author.value = await tweetStore.getUser(authorId.value);
+    } else if (tweet) {
+        author.value = await tweetStore.getUser(tweet.author.mid);
+    }
+    // load orginalTweet
+    if (tweet.originalTweetId) {
+        originTweet.value = await tweetStore.getTweet(tweet.originalTweetId, tweet.originalAuthorId!)
+        if (!tweet.content && !tweet.attachments) {
+            isRetweet.value = true
+            await tweetStore.loadComments(originTweet.value)
+        }
+    } else {
+        await tweetStore.loadComments(tweet)
+    }
+
     if (document.title == "") {
         if (!tweetStore.isEmptyString(tweet.content)) {
             document.title = tweet.content!.substring(0, 20)
@@ -67,29 +84,21 @@ async function showTweet(tweet: Tweet) {
             }
         }
     }
-    // load orginalTweet
-    if (tweet.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.originalTweetId, tweet.originalAuthorId!)
-        if (!tweet.content && !tweet.attachments) {
-            isRetweet.value = true
-            document.title = originTweet.value.title
-        }
-    }
-    if (authorId) {
-        author.value = await tweetStore.getUser(authorId);
-    } else if (tweet) {
-        author.value = await tweetStore.getUser(tweet.author.mid);
-    }
-
-    if (isRetweet.value)
-        await tweetStore.loadComments(originTweet.value)
-    else
-        await tweetStore.loadComments(tweet)
-
     tweetStore.addFollowing(tweet.author.mid)
     isLoading.value = false
-}
-
+};
+watch(tweetId, async (newValue, oldValue)=>{
+    if (newValue && oldValue !== newValue) {
+        let t = await tweetStore.getTweet(tweetId.value, authorId.value)
+        if (t) {
+            console.log(tweetId.value, authorId.value)
+            sessionStorage.setItem("tweetDetail", JSON.stringify(t))
+            // location.reload()
+            router.go(0)
+        }
+        // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
+    }
+});
 function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
@@ -162,7 +171,7 @@ function linkify(text: string) {
         <!-- Show comments of the original tweet if it is a retweet -->
         <div v-if="isRetweet" v-for="(comment, index) in originTweet.comments" :key="index" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
-                <ItemHeader :author="comment.author" :timestamp="comment.timestamp"></ItemHeader>
+                <ItemHeader :author="comment.author" :tweet="comment" :timestamp="comment.timestamp"></ItemHeader>
             </div>
             <div class="card-body">
 
@@ -192,7 +201,7 @@ function linkify(text: string) {
         <!-- Show comments of the tweet -->
         <div v-else v-for="(comment, index1) in tweet.comments" :key="index1" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
-                <ItemHeader :author="comment.author" :timestamp="comment.timestamp"></ItemHeader>
+                <ItemHeader :author="comment.author" :tweet="comment" :timestamp="comment.timestamp"></ItemHeader>
             </div>
             <div class="card-body">
                 <p class="card-text">{{ comment.content }}</p>
@@ -230,7 +239,7 @@ function linkify(text: string) {
 <style scoped>
 .card {
     width: 100%;
-    margin: 0px 0px 30px 10px;
+    margin: 0px 0px 30px 5px;
 }
 
 .card-header {

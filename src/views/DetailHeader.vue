@@ -40,7 +40,7 @@ function openUserPage(userId: string) {
 </script>
 
 <template>
-  <div class='d-flex justify-content-between align-items-center' style='width: 100%;'>
+  <div class='d-flex justify-content-between align-items-center' style='width: 100%; margin: 2px 0px'>
     <div class='d-flex align-items-center'>
       <div class='avatar me-2'>
         <img :src='avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>

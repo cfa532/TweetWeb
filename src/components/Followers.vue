@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
-import { ItemHeader, AppHeader, UserRow } from "@/views";
+import { AppHeader, UserRow } from "@/views";
 
 const route = useRoute();
 const userId = route.params.userId as MimeiId

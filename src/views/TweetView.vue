@@ -39,9 +39,9 @@ function linkify(text: string) {
 <template>
     <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
-            <ItemHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
+            <ItemHeader v-if="isRetweet" :tweet="originTweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
             </ItemHeader>
-            <ItemHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></ItemHeader>
+            <ItemHeader v-else :author="tweet.author" :tweet="tweet" :timestamp="tweet.timestamp"></ItemHeader>
         </div>
         <div v-if="isRetweet" class="card-body">
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>

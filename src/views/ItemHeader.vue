@@ -9,7 +9,8 @@ const props = defineProps({
     author: {type: Object as PropType<User>, required: true},
     timestamp: {type: Number, required: false },
     isRetweet: {type: Boolean, required: false, default: false},
-    by: {type: String, required: false}
+    by: {type: String, required: false},
+    tweet: {type: Object as PropType<Tweet>, required: false}
 })
 const router = useRouter()
 const avatar = computed(()=>{
@@ -25,9 +26,14 @@ function openUserPage(userId: string) {
     useTweetStore().addFollowing(userId)
     router.push(`/author/${userId}`)
 }
+function openDetailView() {
+    // Route to the tweet detail page using the tweet ID
+    sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
+    router.push(`/tweet/${props.tweet?.mid}/${props.author.mid}`);
+};
 </script>
 <template>
-  <div class="tweet-header d-flex align-items-start">
+  <div class="tweet-header d-flex align-items-start" @click.prevent="openDetailView">
     <!-- User Avatar -->
     <div class="avatar me-2">
       <img :src="avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(author.mid)">
@@ -61,6 +67,8 @@ function openUserPage(userId: string) {
   font-size: 0.9rem; /* Adjust the size as needed */
 }
 .tweet-header {
+  width: 100%;
+  cursor: pointer;
   margin: 8px 0 8px 0;
   display: flex;
   align-items: center; /* Vertically centers the content within the header */
