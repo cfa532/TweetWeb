@@ -13,12 +13,6 @@ const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false}
 })
 const router = useRouter()
-const avatar = computed(()=>{
-    let url = "http://" + props.author.providerIp
-    let mid = props.author.avatar
-    if (mid)
-        return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
-})
 
 onMounted(()=>{
 })
@@ -32,11 +26,12 @@ function openDetailView() {
     router.push(`/tweet/${props.tweet?.mid}/${props.author.mid}`);
 };
 </script>
+
 <template>
   <div class="tweet-header d-flex align-items-start" @click.prevent="openDetailView">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(author.mid)">
+      <img :src="author.avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(author.mid)">
     </div>
 
     <!-- User Info -->

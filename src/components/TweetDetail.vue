@@ -18,21 +18,21 @@ const author = ref<User>();
 onMounted(async () => {    
     isLoading.value = true
     let s = sessionStorage.getItem("tweetDetail")
-    if (s)
+    if (s) {
         tweet.value = JSON.parse(s)
-
-    if (!tweet.value) {
+        tweet.value.author = await tweetStore.getUser(tweet.value.author.mid)
+        showTweet()
+    }
+    else {
         // Fetch tweet if it is not in session already.
-        tweet.value = await tweetStore.getTweet(tweetId.value as MimeiId, authorId.value as MimeiId) as Tweet
+        tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value) as Tweet
         if (!tweet.value) {
             window.setTimeout(()=> {
                 window.location.reload()
             }, 5000)                        // wait 5s before reload
         } else {
-            showTweet(tweet.value)
+            showTweet()
         }
-    } else {
-        showTweet(tweet.value)
     }
     // display url as link
     document.addEventListener("DOMContentLoaded", function() {
@@ -45,60 +45,64 @@ onMounted(async () => {
             }
     });
 });
-async function showTweet(tweet: Tweet) {
-    console.log("Tweet=", tweet)
-    sessionStorage.setItem("tweetDetail", JSON.stringify(tweet))
-    document.title = tweet.title ? tweet.title : ""
+
+async function showTweet() {
+    sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
     if (authorId.value) {
         author.value = await tweetStore.getUser(authorId.value);
     } else if (tweet) {
-        author.value = await tweetStore.getUser(tweet.author.mid);
+        author.value = await tweetStore.getUser(tweet.value.author.mid);
     }
     // load orginalTweet
-    if (tweet.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.originalTweetId, tweet.originalAuthorId!)
-        if (!tweet.content && !tweet.attachments) {
+    if (tweet.value.originalTweetId) {
+        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+        if (!tweet.value.content && !tweet.value.attachments) {
             isRetweet.value = true
             await tweetStore.loadComments(originTweet.value)
         }
     } else {
-        await tweetStore.loadComments(tweet)
+        await tweetStore.loadComments(tweet.value)
     }
-
-    if (document.title == "") {
-        if (!tweetStore.isEmptyString(tweet.content)) {
-            document.title = tweet.content!.substring(0, 20)
-        } else {
-            if (tweet.originalTweetId) {
-                if (!tweetStore.isEmptyString(tweet.originalTweet!.content)) {
-                    document.title = tweet.originalTweet!.content!.substring(0, 20)
-                } else {
-                    tweet.originalTweet!.attachments?.forEach((element: any) => {
-                        document.title += '['+ element.type +']'
-                    });
-                }
-            } else {
-                tweet.attachments?.forEach((element: any) => {
-                    document.title += '['+ element.type +']'
-                });
-            }
-        }
-    }
-    tweetStore.addFollowing(tweet.author.mid)
+    document.title = formattedTitle.value
+    tweetStore.addFollowing(tweet.value.author.mid)
     isLoading.value = false
 };
+
+const formattedTitle = computed(() => {
+    let title = ""
+    if (!tweetStore.isEmptyString(tweet.value.content)) {
+        title = tweet.value.content!.substring(0, 20)
+    } else {
+        if (tweet.value.originalTweetId) {
+            if (!tweetStore.isEmptyString(tweet.value.originalTweet.content)) {
+                title = tweet.value.originalTweet!.content!.substring(0, 20)
+            } else {
+                tweet.value.originalTweet!.attachments?.forEach((element: any) => {
+                    title += '[' + element.type + ']'
+                });
+            }
+        } else {
+            tweet.value.attachments?.forEach((element: any) => {
+                title += '[' + element.type + ']'
+            });
+        }
+    }
+    return title
+})
+
 watch(tweetId, async (newValue, oldValue)=>{
     if (newValue && oldValue !== newValue) {
         let t = await tweetStore.getTweet(tweetId.value, authorId.value)
         if (t) {
-            console.log(tweetId.value, authorId.value)
-            sessionStorage.setItem("tweetDetail", JSON.stringify(t))
-            // location.reload()
-            router.go(0)
+            console.log(t)
+            tweet.value = t
+            sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
+            showTweet()
+            // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
         }
-        // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
     }
 });
+
 function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
@@ -108,7 +112,8 @@ function linkify(text: string) {
 <template>
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
+            <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
+                :is-retweet="isRetweet" :by="tweet.author?.username">
             </DetailHeader>
             <DetailHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
         </div>

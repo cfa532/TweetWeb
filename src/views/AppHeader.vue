@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from 'vue';
+import { watch, onMounted, ref, computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { useTweetStore, useLeitherStore } from "@/stores";
@@ -12,16 +12,12 @@ const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
 const dlUrl = ref()
 const qrSize = 60
 const props = defineProps({
-    user: {type: Object as PropType<User>, required: false},
+    userId: {type: String, required: false},
 })
-const iconUrl = computed(()=>{
-    if (props.user) {
-        let mid = props.user.avatar!
-        return "http://"+props.user.providerIp+ (mid.length > 27 ? "/ipfs/" + mid : "/mm/" + mid)
-    } else {
-        return "http://" + useLeitherStore().hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW"
-    }
-})
+const userId = computed(()=>props.userId)
+const avatarUrl = ref("http://" + useLeitherStore().hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW")
+const user = ref<User>()
+
 onMounted(async ()=>{
     if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
@@ -30,8 +26,21 @@ onMounted(async ()=>{
     dlUrl.value = downloadApk.length>27? "http://" + host + "/ipfs/" + downloadApk 
         : "http://" + host + "/mm/" + downloadApk
 
-    if (props.user) {
-        tweetStore.getFollowCount(props.user)
+    if (props.userId) {
+        user.value = await tweetStore.getUser(props.userId)
+        tweetStore.getFollowCount(props.userId)   // No need to await here.
+    }
+})
+watch(userId, async (nv, ov)=>{
+    if (nv !== ov) {
+        if (nv) {
+            user.value = await tweetStore.getUser(nv)
+            tweetStore.getFollowCount(nv)
+            console.log(user.value)
+        }
+        else {
+            user.value = undefined
+        }
     }
 })
 </script>
@@ -41,7 +50,8 @@ onMounted(async ()=>{
     <div class="d-flex justify-content-between">
         <div class="d-flex">
             <div class="avatar me-2 ms-2 mt-1">
-                <img :src="iconUrl" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle" />
+                <img v-if="user" :src="user.avatar" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle" />
+                <img v-else :src="avatarUrl" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle" />
             </div>
             <!-- User Info -->
             <div v-if="user" class="user-info flex-grow-1">

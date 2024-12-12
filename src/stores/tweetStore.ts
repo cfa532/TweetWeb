@@ -45,7 +45,11 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
 
-        // Load tweets of a list of followed User IDs
+        /**
+         * If an userId is given, load tweets of the given user.
+         * Otherwise load tweets from all the followings.
+         * @param authorId 
+         */
         async loadTweets(authorId: string | undefined = undefined) {
             let followings = authorId? [authorId] : this.followings
             followings.forEach(async (uid: string) => {
@@ -53,8 +57,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!author) return
 
                 let tweetsByUser = await this.getTweetListByUser(author)
-                console.log(tweetsByUser)
-                if (!tweetsByUser || tweetsByUser.length == 0) return
+                if (!tweetsByUser) return
 
                 // Tweet may not have its author data yet.
                 tweetsByUser.forEach(async tweet => {
@@ -73,13 +76,16 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweet.comments = []     // load comments only on detail page
 
                     if (tweet?.originalTweetId) {
-                        let cachedTweet = sessionStorage.getItem(tweet?.originalTweetId)
-                        if (cachedTweet) {
-                            tweet.originalTweet = JSON.parse(cachedTweet)
+                        if (sessionStorage.getItem(tweet?.originalTweetId)) {
+                            tweet.originalTweet = JSON.parse(sessionStorage.getItem(tweet?.originalTweetId)!)
                         } else {
                             let originTweet = await this.fetchTweet(tweet.originalTweetId)
-                            tweet.originalTweet = originTweet
-                            sessionStorage.setItem(originTweet?.mid!!, JSON.stringify(originTweet))
+                            if (originTweet) {
+                                tweet.originalTweet = originTweet
+                                sessionStorage.setItem(originTweet.mid, JSON.stringify(originTweet))
+                            } else {
+                                return
+                            }
                         }
                     }
                     sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
@@ -98,7 +104,6 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async getTweetListByUser(user: User): Promise<Tweet[] | undefined> {
-            console.log(user, this.appId)
             if (!user) return
             return await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
@@ -118,7 +123,12 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a Tweet object short of comments.
          */
         async getTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
-            let tweet = await this.fetchTweet(tweetId, authorId)
+            // check if the tweet has been retrieved
+            let tweet = this.tweets.find(e => e.mid == tweetId)
+            if (tweet)
+                return tweet
+
+            tweet = await this.fetchTweet(tweetId, authorId)
             if (!tweet) return
 
             if (tweet?.originalTweetId) {
@@ -136,35 +146,45 @@ export const useTweetStore = defineStore('tweetStore', {
         async fetchTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
             let cachedTweet = sessionStorage.getItem(tweetId)
             if (cachedTweet) {
-                return JSON.parse(cachedTweet)
+                let t = JSON.parse(cachedTweet)
+                t.author.client = this.lapi.getClient(t.author.providerIp)  // hprose client cannot be serielized.
+                return t
             }
-            // Get IP address of the provider of this tweet
-            let providerIp = await this.getProviderIp(authorId ? authorId : tweetId)
-            if (!providerIp) return
-            let providerClient = this.lapi.getClient(providerIp)
-            console.log("fetchTweet provider", providerIp)
 
-            // Get tweet data from Mimei. Its definition is different from this app.
+            // Get IP address of the provider of this tweet
+            let author, providerClient, providerIp
+            if (authorId) {
+                author = await this.getUser(authorId)
+                if (!author)
+                    return
+                providerIp = author?.providerIp
+                providerClient = author?.client
+            } else {
+                providerIp = await this.getProviderIp(tweetId)
+                if (!providerIp)
+                    return
+                providerClient = this.lapi.getClient(providerIp)
+            }
+            // Get tweet data from Tweet App Mimei. Its definition is different from this app.
             let tweetInDB = await providerClient.RunMApp("get_tweet", {
                 aid: this.lapi.appId,
                 ver: "last",
                 tweetid: tweetId,
                 userid: GUEST_ID,  // just a placeholder
             })
-            if (!tweetInDB) return
-
-            // get author data of the tweet.
-            let author = await this.getUser(tweetInDB.authorId)
-            if (!author) return
+            if (!tweetInDB)
+                return
+            author = await this.getUser(tweetInDB.authorId)
 
             let tweet = {
                 mid: tweetInDB.mid,
+                authorId: author!.mid,
                 timestamp: tweetInDB.timestamp,
-                author: author,
+                author: author!,
                 title: tweetInDB.title,
                 content: tweetInDB.content,
                 attachments: tweetInDB.attachments?.map((e: MimeiFileType) => {
-                    e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
+                    e.mid = this.getMediaUrl(e.mid, "http://" + author?.providerIp)
                     return e
                 }),
                 comments: [],
@@ -199,17 +219,20 @@ export const useTweetStore = defineStore('tweetStore', {
                 user.providerIp = providerIp
                 sessionStorage.setItem(userId, JSON.stringify(user))
                 user.client = providerClient
+                user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
                 delete user.baseUrl
                 delete user.writableUrl
                 this.users.set(userId, user)
             }
             return user
         },
-        async getFollowCount(user: User) {
+
+        async getFollowCount(userId: MimeiId) {
+            let user = await this.getUser(userId)
+            if (!user) return
             let f = await user.client.RunMApp("get_follow_count", {
                 aid: this.appId, ver: "last", userid: user.mid,
             })
-            console.log(user, f)
             user.followingCount = f["followingCount"]
             user.followerCount = f["followersCount"]
         },
@@ -225,11 +248,14 @@ export const useTweetStore = defineStore('tweetStore', {
             let ip = await this.findFirstAccessibleIP(IPs,  this.lapi.appId)
             return ip
         },
-
+        /**
+         * Load comments of a tweet into its comments attribute. 
+         * Comments are on the same node with the tweet.
+         * @param tweet 
+         */
         async loadComments(tweet: Tweet) {
             if (!tweet || !tweet.provider) return
-
-            let client = this.lapi.getClient(tweet.provider)
+            let client = tweet.author.client
             let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -238,7 +264,6 @@ export const useTweetStore = defineStore('tweetStore', {
             }) as any[]
             
             // comment type is a different Tweet type from the definition in this app
-            comments.sort((a, b) => b.timestamp - a.timestamp)
             comments.forEach(async e => {
                 let author = await this.getUser(e.authorId)
                 if (author) {
@@ -255,6 +280,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     })
                 }
             })
+            tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },
 
         getMediaUrl(mid: string | undefined, baseUrl: string): string {

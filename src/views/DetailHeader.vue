@@ -19,12 +19,6 @@ const downloadApk = import.meta.env.VITE_APP_PKG
 const dlUrl = ref();
 const qrSize = ref(60);
 
-const avatar = computed(() => {
-  let url = 'http://' + props.author.providerIp;
-  let mid = props.author.avatar;
-  if (mid) return mid.length > 27 ? url + '/ipfs/' + mid : url + '/mm/' + mid;
-});
-
 onMounted(async () => {
   if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
@@ -43,7 +37,7 @@ function openUserPage(userId: string) {
   <div class='d-flex justify-content-between align-items-center' style='width: 100%; margin: 2px 0px'>
     <div class='d-flex align-items-center'>
       <div class='avatar me-2'>
-        <img :src='avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
+        <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
       </div>
       <div class='user-info flex-grow-1'>
         <div v-if='isRetweet' class='label text-muted small'>

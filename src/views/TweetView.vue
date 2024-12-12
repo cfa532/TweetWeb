@@ -10,18 +10,20 @@ const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: true},
     isQuoted: {type: Boolean, required: false, default: false}
 });
-const tweet = ref()
+const tweet = ref(props.tweet)
 const originTweet = ref()
 const isRetweet = ref(false)
 
 onMounted(async () => {
-    tweet.value = props.tweet
-    console.log(tweet.value)
     if (tweet.value.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
-        if (!tweet.value.content && !tweet.value.attachments) {
-            // tweet.value = originTweet.value
-            isRetweet.value = true
+        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId)
+        if (originTweet.value) {
+            console.log(tweet.value, originTweet.value)
+            tweet.value.originalTweet = originTweet.value
+            if (!tweet.value.content && !tweet.value.attachments) {
+                tweet.value = originTweet.value
+                isRetweet.value = true
+            }
         }
     }
 });
@@ -39,9 +41,10 @@ function linkify(text: string) {
 <template>
     <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
-            <ItemHeader v-if="isRetweet" :tweet="originTweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
+            <ItemHeader v-if="isRetweet" :tweet="originTweet" :author="originTweet.author" :timestamp="tweet.timestamp as number"
+                :is-retweet="isRetweet" :by="tweet.author?.username">
             </ItemHeader>
-            <ItemHeader v-else :author="tweet.author" :tweet="tweet" :timestamp="tweet.timestamp"></ItemHeader>
+            <ItemHeader v-else :author="tweet.author" :tweet="tweet" :timestamp="tweet.timestamp as number"></ItemHeader>
         </div>
         <div v-if="isRetweet" class="card-body">
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>

@@ -10,12 +10,6 @@ const props = defineProps({
     showDetail: {type: Boolean, required: false, default: true},
 })
 const router = useRouter()
-const avatar = computed(()=>{
-    let url = "http://" + props.user.providerIp
-    let mid = props.user.avatar
-    if (mid)
-        return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
-})
 
 onMounted(()=>{
 })
@@ -28,7 +22,7 @@ function openUserPage(userId: string) {
   <div class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="avatar" alt="User Avatar" class="rounded-circle">
+      <img :src="user.avatar" alt="User Avatar" class="rounded-circle">
     </div>
 
     <!-- User Info -->
