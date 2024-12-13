@@ -33,6 +33,8 @@ onMounted(async () => {
             showTweet()
         }
     }
+    console.log(tweet.value)
+
     // display url as link
     document.addEventListener("DOMContentLoaded", function() {
         const contentElement = document.getElementById('content');
@@ -68,7 +70,9 @@ async function showTweet() {
 };
 
 const formattedTitle = computed(() => {
-    let title = ""
+    let title = tweet.value.title
+    if (title)
+        return title
     if (!tweetStore.isEmptyString(tweet.value.content)) {
         title = tweet.value.content!.substring(0, 20)
     } else {

@@ -59,6 +59,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 let tweetsByUser = await this.getTweetListByUser(author)
                 if (!tweetsByUser)
                     return
+                console.log("Tweets of user", tweetsByUser)
 
                 // Tweet may not have its author data yet.
                 tweetsByUser.forEach(async tweet => {
@@ -239,7 +240,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid,
             })
-            console.log(IPs)
             // return import.meta.env.VITE_LEITHER_NODE
             let ip = await this.findFirstAccessibleIP(IPs,  this.lapi.appId)
             return ip

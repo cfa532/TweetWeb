@@ -7,7 +7,7 @@ interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
 const emit = defineEmits(['uploaded', 'hide'])
-const tweetTitle = ref()
+const tweetTitle = ref("")
 const textValue = ref('')
 const divAttach = ref()
 const dropHere = ref()
@@ -84,6 +84,7 @@ async function onSubmit() {
     console.log("new tweet", tweet)
     await tweetStore.uploadTweet(tweet)
     textValue.value = ""
+    tweetTitle.value = ""
     filesUpload.value = []
   } catch (err) {
     // something wrong uploading files, abort
