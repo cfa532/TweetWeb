@@ -11,10 +11,10 @@ export const useTweetStore = defineStore('tweetStore', {
         _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
-        _user: null as User | null
+        _user: null as User | null      // login user data
     }),
     getters: {
-        loginUser: (state) => {
+        loginUser: (state): User | null => {
             if (state._user)
                 return state._user
             if (sessionStorage.getItem("user")) {
@@ -324,7 +324,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 useAlertStore().error(ret["reason"])
             }
         },
-
+        async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
+            this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
+            let user = await this.getUser(authorId)
+            if (user) {
+                await user.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
+                    tweetid: tweetId, authorid: authorId
+                })
+            }
+        },
         logout() {
             sessionStorage.clear()
             this.$reset

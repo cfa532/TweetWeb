@@ -20,11 +20,11 @@ const selectFiles = ref()
 const isPrivate = ref(false)
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
-const tweet = ref({mid: "", author: {}} as Tweet)
+const tweet = ref<Tweet>()
+const author = tweetStore.loginUser!  // the page is accessible only by login user.
 
 onMounted(() => {
-  tweet.value.author = tweetStore.loginUser
-  tweet.value.timestamp = Date.now()
+  tweet.value = {mid: "dfdfd", authorId: author.mid, author: author, timestamp: Date.now()}
 })
 // Upload files and store them as IPFS or Mimei type
 async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
@@ -168,7 +168,7 @@ function logout() {
 
 <template>
   <div class="card-header d-flex align-items-center">
-    <ItemHeader :author="tweet.author"></ItemHeader>
+    <ItemHeader :author="author"></ItemHeader>
     <button class="logout" @click.prevent="logout">Logout</button>
   </div>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">

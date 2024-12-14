@@ -19,12 +19,9 @@ const loading = ref(false)
 const selectFiles = ref()
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
-const tweet = ref({ mid: "", author: {} } as Tweet)
 const isAppPackage = ref(false)
 
 onMounted(() => {
-    tweet.value.author = tweetStore.loginUser
-    tweet.value.timestamp = Date.now()
 })
 // Helper function to handle individual file uploads
 async function uploadFile(file: File, index: number = 0): Promise<string> {

@@ -4,6 +4,7 @@ import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
+import { CornerMenu } from '@/views';
 
 const props = defineProps({ 
     author: {type: Object as PropType<User>, required: true},
@@ -13,11 +14,12 @@ const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false}
 })
 const router = useRouter()
+const tweetStore = useTweetStore()
 
 onMounted(()=>{
 })
 function openUserPage(userId: string) {
-    useTweetStore().addFollowing(userId)
+  tweetStore.addFollowing(userId)
     router.push(`/author/${userId}`)
 }
 function openDetailView() {
@@ -28,35 +30,38 @@ function openDetailView() {
     */
     router.push(`/tweet/${props.tweet?.mid}`);
 };
+
 </script>
 
 <template>
-  <div class="tweet-header d-flex align-items-start" @click.prevent="openDetailView">
+  <div class='tweet-header d-flex'>
     <!-- User Avatar -->
-    <div class="avatar me-2">
-      <img :src="author.avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(author.mid)">
+    <div class='avatar me-2'>
+      <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
     </div>
-
     <!-- User Info -->
-    <div class="user-info flex-grow-1">
+    <div class='user-info flex-grow-1' @click.prevent='openDetailView'>
       <!-- Optional Label -->
-      <div v-if="isRetweet" class="label text-muted small">
+      <div v-if='isRetweet' class='label text-muted small'>
         Forwarded by @{{ by }}
       </div>
-
       <!-- Username, Alias, and Time -->
-      <div class="username-alias-time">
-        <span class="username fw-bold">{{ author.name }}</span>
+      <div class='username-alias-time'>
+        <span class='username fw-bold'>{{ author.name }}</span>
       </div>
-
       <!-- Followers and Friends Links -->
-      <div class="mt-1">
-        <span class="alias text-muted">@{{ author.username }}</span>
-        <span v-if="props.timestamp" class="time text-muted"> - {{ formatTimeDifference(props.timestamp as number) }}</span>
+      <div class='mt-1'>
+        <span class='alias text-muted'>@{{ author.username }}</span>
+        <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
+          }}</span>
       </div>
     </div>
   </div>
+  <div class='corner-menu-container'>
+    <CornerMenu :tweet="tweet" />
+  </div>
 </template>
+
 <style>
 .username {
   font-size: 0.9rem; /* Adjust the size as needed */
@@ -69,11 +74,18 @@ function openDetailView() {
   cursor: pointer;
   margin: 8px 0 8px 0;
   display: flex;
-  align-items: center; /* Vertically centers the content within the header */
+  align-items: center;
+  justify-content: space-between;
+  align-items: stretch;
 }
+.corner-menu-container {
+  height: 100%;
+  display: flex;
+}
+
 .avatar {
   display: flex;
-  align-items: center; /* Ensures the avatar is vertically centered */
+  align-items: center;
 }
 .avatar img {
   object-fit: cover;
@@ -82,6 +94,7 @@ function openDetailView() {
   cursor: pointer;
 }
 .user-info {
+  width: 100%;
   font-size: 0.8rem;
   flex-grow: 1; /* Allows the user info to take up remaining space */
 }
