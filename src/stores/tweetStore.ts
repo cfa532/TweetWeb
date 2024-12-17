@@ -235,7 +235,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
         // Given a mimie Id, find IP of its best provider
         async getProviderIp(mid: string): Promise<string | null> {
-            let IPs = await this.lapi.client.RunMApp("get_provider", {
+            let IPs = await this.lapi.client.RunMApp("get_providers", {
                 aid: this.lapi.appId,
                 ver: "last",
                 mid: mid,
