@@ -33,3 +33,7 @@ We use the collected data for various purposes:
 
 The security of your data is important to us, but remember that no method of transmission over the Internet is 100% secure. While we
 try our best to protect you data, there is always potential leakholes. Do not disclose sensitive personal information on this App.
+
+
+http://tweet2.fireshare.uk/
+http://tweet1.sharefire.store/

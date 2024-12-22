@@ -43,7 +43,7 @@ function linkify(text: string) {
 </script>
 
 <template>
-    <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
+    <div @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
             <ItemHeader v-if="isRetweet" :tweet="originTweet" :author="originTweet.author" :timestamp="tweet.timestamp as number"
                 :is-retweet="isRetweet" :by="tweet.author?.username">
@@ -54,7 +54,7 @@ function linkify(text: string) {
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
-                    class="img-fluid mb-2"></MediaView>
+                    class="img-fluid"></MediaView>
             </div>
             <div class='icon-row d-flex justify-content-around mb-2'>
                 <div class='icon-item d-flex align-items-center'>
@@ -76,7 +76,7 @@ function linkify(text: string) {
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
+                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid">
                 </MediaView>
             </div>
 
