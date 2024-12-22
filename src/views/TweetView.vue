@@ -10,18 +10,24 @@ const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: true},
     isQuoted: {type: Boolean, required: false, default: false}
 });
-const tweet = ref()
+const tweet = ref(props.tweet)
 const originTweet = ref()
 const isRetweet = ref(false)
 
 onMounted(async () => {
-    tweet.value = props.tweet
-    console.log(tweet.value)
+    console.log(props.tweet)
     if (tweet.value.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId)
-        if (!tweet.value.content && !tweet.value.attachments) {
-            // tweet.value = originTweet.value
-            isRetweet.value = true
+        originTweet.value = await tweetStore.fetchTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId)
+        if (originTweet.value) {
+            console.log(tweet.value, originTweet.value)
+            tweet.value.originalTweet = originTweet.value
+            if (!tweet.value.content && !tweet.value.attachments) {
+                tweet.value = originTweet.value     // rendering original tweet in the place of tweet.
+                isRetweet.value = true
+            }
+        } else {
+            // we are retweeting a non-exist tweet. Exit
+            return
         }
     }
 });
@@ -37,17 +43,18 @@ function linkify(text: string) {
 </script>
 
 <template>
-    <div v-if="tweet" @click.prevent="openDetailView" class="card ms-1">
+    <div @click.prevent="openDetailView" class="card ms-1">
         <div class="card-header d-flex align-items-start">
-            <ItemHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp" :is-retweet="isRetweet" :by="tweet.author?.username">
+            <ItemHeader v-if="isRetweet" :tweet="originTweet" :author="originTweet.author" :timestamp="tweet.timestamp as number"
+                :is-retweet="isRetweet" :by="tweet.author?.username">
             </ItemHeader>
-            <ItemHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></ItemHeader>
+            <ItemHeader v-else :author="tweet.author" :tweet="tweet" :timestamp="tweet.timestamp as number"></ItemHeader>
         </div>
         <div v-if="isRetweet" class="card-body">
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
-                    class="img-fluid mb-2"></MediaView>
+                    class="img-fluid"></MediaView>
             </div>
             <div class='icon-row d-flex justify-content-around mb-2'>
                 <div class='icon-item d-flex align-items-center'>
@@ -69,7 +76,7 @@ function linkify(text: string) {
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid mb-2">
+                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid">
                 </MediaView>
             </div>
 
@@ -81,15 +88,15 @@ function linkify(text: string) {
             <div v-if="!isQuoted" class='icon-row d-flex justify-content-around mb-2'>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.likeCount }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.bookmarkCount }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
                     <img src='/src/ic_notice.png' alt='Forward' class='icon' />
-                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
+                    <span class='icon-number'>{{ tweet.commentCount }}</span>
                 </div>
             </div>
         </div>

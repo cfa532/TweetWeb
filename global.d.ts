@@ -8,12 +8,12 @@ interface Window {
 };
 
 interface User {
-    mid: string;
+    mid: MimeiId;
     avatar?: string;
     username: string;
     name?: string;
     profile?: string;
-    hostIds?: string[];
+    hostIds?: MimeiId[];
     providerIp?: string;  // IP of the best provider for the author's data
     client?: any;       // Hprose client handler
     timestamp: string | number = Date.now();
@@ -22,15 +22,16 @@ interface User {
 };
 
 interface Tweet {
-    mid: string;
+    mid: MimeiId;
+    authorId: MimeiId;
     author: User;
     content?: string;
     title?: string;
     attachments?: MimeiFileType[];
     timestamp: string | number = Date.now();
-    originalTweetId?: string;
+    originalTweetId?: MimeiId;
     originalTweet?: Tweet;
-    originalAuthorId?: string;
+    originalAuthorId?: MimeiId;
     comments?: Tweet[];
 
     likeCount?: number;

@@ -2,19 +2,17 @@
 import { ref, onMounted } from 'vue'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
-import { ItemHeader, AppHeader, UserRow } from "@/views";
+import { AppHeader, UserRow } from "@/views";
 
 const route = useRoute();
 const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
 const followers = ref([] as User[])
 const isLoading = ref(false)
-const user = ref<User>()
 
 onMounted(async () => {
     isLoading.value = true
     let ids = await tweetStore.getFollowers(userId)
-    user.value = await tweetStore.getUser(userId)
     isLoading.value = false
     ids.forEach(async (mid :MimeiId) => {
         let user = await tweetStore.getUser(mid)
@@ -25,7 +23,7 @@ onMounted(async () => {
 })
 </script>
 <template>
-    <AppHeader v-if="user" :user="user"/>
+    <AppHeader :userId="userId"/>
     <UserRow v-for="user in followers" :user="user" :key="user.mid" class="user-row" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">

@@ -6,7 +6,7 @@ import { Alert } from './views';
   <div class="container-fluid">
     <Alert/>
     <div class="row justify-content-start align-items-start">
-      <div class="col-sm-12 col-md-10 col-lg-6">
+      <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
         <router-view />
       </div>
     </div>
@@ -15,6 +15,6 @@ import { Alert } from './views';
 
 <style scoped>
 .container-fluid {
-    padding: 2px 0px 0px 0px;
+    padding: 0px;
 }
 </style>

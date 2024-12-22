@@ -24,7 +24,7 @@ onMounted(async ()=> {
     const iconPath = '/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW'; // Your relative path
     const fullIconUrl = `${protocol}//${host}${iconPath}`;
 
-    // Set the href attribute of the link tag
+    // Set Icon for the webpage
     document.addEventListener('DOMContentLoaded', () => {
       const linkElement = document.querySelector("link[rel='icon']");
       if (linkElement) {

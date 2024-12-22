@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref } from 'vue';
+import { watch, onMounted, ref, computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { useTweetStore, useLeitherStore } from "@/stores";
@@ -10,18 +10,14 @@ const router = useRouter()
 const tweetStore = useTweetStore()
 const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
 const dlUrl = ref()
-const qrSize = 80
+const qrSize = 60
 const props = defineProps({
-    user: {type: Object as PropType<User>, required: false},
+    userId: {type: String, required: false},
 })
-const iconUrl = computed(()=>{
-    if (props.user) {
-        let mid = props.user.avatar!
-        return "http://"+props.user.providerIp+ (mid.length > 27 ? "/ipfs/" + mid : "/mm/" + mid)
-    } else {
-        return "http://" + useLeitherStore().hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW"
-    }
-})
+const userId = computed(()=>props.userId)
+const avatarUrl = ref("http://" + useLeitherStore().hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW")
+const user = ref<User>()
+
 onMounted(async ()=>{
     if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
@@ -30,18 +26,32 @@ onMounted(async ()=>{
     dlUrl.value = downloadApk.length>27? "http://" + host + "/ipfs/" + downloadApk 
         : "http://" + host + "/mm/" + downloadApk
 
-    if (props.user) {
-        tweetStore.getFollowCount(props.user)
+    if (props.userId) {
+        user.value = await tweetStore.getUser(props.userId)
+        tweetStore.getFollowCount(props.userId)   // No need to await here.
+    }
+})
+watch(userId, async (nv, ov)=>{
+    if (nv !== ov) {
+        if (nv) {
+            user.value = await tweetStore.getUser(nv)
+            tweetStore.getFollowCount(nv)
+            console.log(user.value)
+        }
+        else {
+            user.value = undefined
+        }
     }
 })
 </script>
 
 <template>
-<div class="row align-items-center mb-1">
+<div class="row mb-2">
     <div class="d-flex justify-content-between">
         <div class="d-flex">
             <div class="avatar me-2 ms-2 mt-1">
-                <img :src="iconUrl" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle" />
+                <img v-if="user" :src="user.avatar" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle" />
+                <img v-else :src="avatarUrl" @click="router.push({name:'main'})" alt="Logo" class="rounded-circle" />
             </div>
             <!-- User Info -->
             <div v-if="user" class="user-info flex-grow-1">
@@ -53,8 +63,8 @@ onMounted(async ()=>{
                 </div>
                 <!-- Followers and Friends Links -->
                 <div class="links mt-1">
-                    <a :href="`/followers/${user.mid}`" class="me-3">{{ user.followerCount }} fans</a>
-                    <a :href="`/followings/${user.mid}`">{{ user.followingCount }} following</a>
+                    <a :href="`/followers/${user.mid}`" class="me-2 text-muted">{{ user.followerCount }} fans</a>
+                    <a :href="`/followings/${user.mid}`" class="text-muted">{{ user.followingCount }} following</a>
                 </div>
 
                 <div class="mt-1">
@@ -62,9 +72,8 @@ onMounted(async ()=>{
                 </div>
             </div>
         </div>
-        <div class="d-flex align-items-start">
-            <button class='btn btn-link' @click="tweetStore.downloadApk">APP ⬇️
-            </button>
+        <div class="d-flex align-items-start qr-container">
+            <button class='btn btn-link' @click="tweetStore.downloadApk">APP ⬇️</button>
             <div class="qr-code-container">
                 <qrCoder v-if="dlUrl" :url="dlUrl" :size="qrSize"></qrCoder>
             </div>
@@ -74,22 +83,24 @@ onMounted(async ()=>{
 </template>
 
 <style scoped>
+.qr-container {
+    display: flex;
+    align-items: flex-end; /* Aligns items to the right */
+}
+.btn {
+    font-size: 0.8rem;
+}
 .qr-code-container {
-    width: 80px; /* Set the desired fixed width */
-    height: 80px; /* Set the desired fixed height */
     display: flex;
     justify-content: center;
     align-items: center;
 }
-
-.btn {
-    font-size: 0.9rem;
-}
 .d-flex {
+    margin: 2px 0px;
     display: flex;
     align-items: center; /* Aligns items vertically centered */
     justify-content: space-between; /* Ensures space between elements */
-    flex-wrap: wrap; /* Allows items to wrap on smaller screens */
+    flex-wrap: nowrap; /* Prevents wrapping of the QR code */
 }
 .avatar img {
     object-fit: cover;
@@ -98,45 +109,51 @@ onMounted(async ()=>{
     cursor: pointer;
     transition: width 0.3s, height 0.3s; /* Smooth transition for size changes */
 }
-
 .user-info {
     flex-grow: 1; /* Allows the user info to take up remaining space */
     margin-left: 10px; /* Adds some space between avatar and user info */
+    flex-wrap: wrap; /* Allows text to wrap on smaller screens */
 }
-
 .username-alias-time {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 1px;
     flex-wrap: wrap; /* Allows text to wrap on smaller screens */
+    font-size: 0.95rem;
 }
-
+.text-muted {
+    font-size: 0.95rem;
+}
 .links a {
     color: #3d5563;
     text-decoration: none;
     font-size: 0.9rem;
     margin-right: 10px; /* Adds space between links */
 }
-
 .links a:hover {
     text-decoration: underline;
 }
+
 @media (max-width: 600px) {
+    .qr-container {
+        flex-direction: column; /* Changes direction to column on small screens */
+        align-items: center; /* Centers items horizontally */
+    }
+    .btn {
+        font-size: 0.7rem;
+    }
     .avatar img {
         width: 50px;
         height: 50px;
     }
-
     .user-info {
         line-height: 1.2;
         flex-grow: 1;
-        margin-left: 2px; /* Adjusts margin for smaller screens */
+        margin-left: 1px; /* Adjusts margin for smaller screens */
     }
-
     .username-alias-time {
         gap: 2px; /* Reduces gap for smaller screens */
     }
-
     .links a {
         font-size: 0.9rem; /* Reduces font size for smaller screens */
     }
@@ -148,8 +165,7 @@ onMounted(async ()=>{
         height: 60px;
     }
     .user-info {
-        margin-left: 5px; /* Increases margin for larger screens */
+        margin-left: 1px; /* Increases margin for larger screens */
     }
-
 }
 </style>

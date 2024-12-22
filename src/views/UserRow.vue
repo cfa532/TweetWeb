@@ -10,12 +10,6 @@ const props = defineProps({
     showDetail: {type: Boolean, required: false, default: true},
 })
 const router = useRouter()
-const avatar = computed(()=>{
-    let url = "http://" + props.user.providerIp
-    let mid = props.user.avatar
-    if (mid)
-        return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
-})
 
 onMounted(()=>{
 })
@@ -25,10 +19,10 @@ function openUserPage(userId: string) {
 }
 </script>
 <template>
-  <div class="tweet-header d-flex align-items-start">
+  <div class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="avatar" alt="User Avatar" class="rounded-circle" @click.stop="openUserPage(user.mid)">
+      <img :src="user.avatar" alt="User Avatar" class="rounded-circle">
     </div>
 
     <!-- User Info -->
@@ -50,12 +44,13 @@ function openUserPage(userId: string) {
 <style>
 .tweet-header {
   display: flex;
-  align-items: center; /* Vertically centers the content within the header */
+  align-items: center;
+  cursor: pointer;
 }
 
 .avatar {
   display: flex;
-  align-items: center; /* Ensures the avatar is vertically centered */
+  align-items: center;
 }
 
 .avatar img {
@@ -64,10 +59,12 @@ function openUserPage(userId: string) {
   height: 40px;
   cursor: pointer;
 }
-
+.text-muted {
+  font-size: 0.9rem;
+}
 .user-info {
   line-height: 1.2;
-  flex-grow: 1; /* Allows the user info to take up remaining space */
+  flex-grow: 1;
 }
 
 .username-alias-time {
