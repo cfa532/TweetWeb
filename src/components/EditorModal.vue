@@ -7,7 +7,7 @@ interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
 const emit = defineEmits(['uploaded', 'hide'])
-const tweetTitle = ref("")
+const tweetTitle = ref()
 const textValue = ref('')
 const divAttach = ref()
 const dropHere = ref()
@@ -26,6 +26,7 @@ const author = tweetStore.loginUser!  // the page is accessible only by login us
 onMounted(() => {
   tweet.value = {mid: "dfdfd", authorId: author.mid, author: author, timestamp: Date.now()}
 })
+
 // Upload files and store them as IPFS or Mimei type
 async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
   function getMedaiType(t: string) {
@@ -34,6 +35,7 @@ async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFile
     if (t.startsWith("audio/")) return "Audio"
     return "Uknown"
   }
+
   // Helper function to handle individual file uploads
   async function uploadSingleFile(file: File, index: number): Promise<MimeiFileType> {
     if (file.size > sliceSize * 300) {
@@ -120,46 +122,51 @@ async function readFileSlice(
   }
 }
 async function onSelect(e: Event) {
-  const files =
+  let files =
     (e as HTMLInputEvent).target.files ||       // select input file
     (e as DragEvent).dataTransfer?.files ||     // drag and drop
     (e as ClipboardEvent).clipboardData?.files  // copy and paste
-  if (files?.length! > 0) {
-    Array.from(files!).forEach((f) => {
+
+  if (files && files.length > 0) {
+    // Assign a title if it's not already set
+    if (!tweetTitle.value || tweetTitle.value.trim() === '') {
+      tweetTitle.value = files[0].name;
+    }
+
+    // Remove duplication and add files to the upload list
+    Array.from(files).forEach((f) => {
       if (
         filesUpload.value.findIndex((e: File) => {
           return e.size === f.size && e.name === f.name
         }) === -1
       ) {
-        // assign a title
-        if (!tweetTitle.value || tweetTitle.value.trim() === '') {
-          filesUpload.value.forEach(e => {
-            tweetTitle.value += "[" + e.type + "]"
-          })
-        }
         filesUpload.value.push(f)
       }
-    })
-    divAttach.value!.hidden = false
-    textArea.value!.hidden = false
-    dropHere.value!.hidden = true
+    });
+
+    divAttach.value!.hidden = false;
+    textArea.value!.hidden = false;
+    dropHere.value!.hidden = true;
   } else {
-    // clipboard works only with HTTPS
+    // Clipboard works only with HTTPS
     if ((e.target as HTMLTextAreaElement) === textArea.value) {
-      // paste into text area
-      document.execCommand('paste')
+      // Paste into text area
+      document.execCommand('paste');
     }
   }
 }
+
 function dragOver() {
   textArea!.value!.hidden = true
   dropHere!.value!.hidden = false
 }
+
 function removeFile(f: File) {
   // removed file from preview list
   var i = filesUpload.value.findIndex((e: File) => e == f)
   filesUpload.value.splice(i, 1)
 }
+
 function logout() {
   tweetStore.logout();
   location.reload()
@@ -244,7 +251,7 @@ function logout() {
 .drop-here {
   border: 1px solid lightgrey;
   width: 100%;
-  height: 200px;
+  height: 400px;
   margin: 0px;
   text-align: center;
 }
