@@ -63,8 +63,8 @@ watch(userId, async (nv, ov)=>{
                 </div>
                 <!-- Followers and Friends Links -->
                 <div class="links mt-1">
-                    <a :href="`/followers/${user.mid}`" class="me-2 text-muted">{{ user.followerCount }} fans</a>
-                    <a :href="`/followings/${user.mid}`" class="text-muted">{{ user.followingCount }} following</a>
+                    <a href="#" @click.prevent="router.push(`/followers/${user.mid}`)" class="me-2 text-muted">{{ user.followerCount }} fans</a>
+                    <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{ user.followingCount }} following</a>
                 </div>
 
                 <div class="mt-1">
