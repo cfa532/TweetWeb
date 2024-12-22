@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import QrcodeVue from 'qrcode.vue';
-import { useTweetStore } from "@/stores";
+import { useLeitherStore } from "@/stores";
 import type { Level, RenderAs, GradientType, ImageSettings } from 'qrcode.vue';
 
 const props = defineProps({
@@ -15,20 +15,10 @@ const renderAs = ref<RenderAs>('svg');
 const background = ref('#ffffff');
 const foreground = ref('#604060');
 const margin = ref(0);
-const logoUrl = ref("http://" + useTweetStore().lapi.hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW")
+const logoUrl = ref()
 
-const logoSettings = ref<ImageSettings>({
-  src: logoUrl.value,
-  width: props.logoSize,
-  height: props.logoSize,
-  excavate: false,
-});
-const largeLogoSettings = ref<ImageSettings>({
-  src: logoUrl.value,
-  width: props.logoSize *2,
-  height: props.logoSize *2,
-  excavate: false,
-});
+const logoSettings = ref<ImageSettings>();
+const largeLogoSettings = ref<ImageSettings>();
 
 const gradient = ref(false);
 const gradientType = ref<GradientType>('radial');
@@ -37,10 +27,27 @@ const gradientEndColor = ref('#000000');
 
 const showModal = ref(false);
 const largeQRSize = ref(200)
+
+onMounted(async () => {
+  logoUrl.value = await useLeitherStore().logoUrl
+
+  logoSettings.value = {
+    src: logoUrl.value,
+    width: props.logoSize,
+    height: props.logoSize,
+    excavate: false,
+  };
+  largeLogoSettings.value = {
+    src: logoUrl.value,
+    width: props.logoSize * 2,
+    height: props.logoSize * 2,
+    excavate: false,
+  }
+})
 </script>
 
 <template>
-  <div class="qrcode-container" @click="showModal = true">
+  <div v-if="logoUrl" class="qrcode-container" @click="showModal = true">
     <qrcode-vue
       :value="props.url"
       :size="props.size"

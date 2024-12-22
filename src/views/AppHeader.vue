@@ -15,7 +15,7 @@ const props = defineProps({
     userId: {type: String, required: false},
 })
 const userId = computed(()=>props.userId)
-const avatarUrl = ref("http://" + useLeitherStore().hostIP + "/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW")
+const avatarUrl = ref()
 const user = ref<User>()
 
 onMounted(async ()=>{
@@ -25,6 +25,7 @@ onMounted(async ()=>{
     let host = await tweetStore.getProviderIp(downloadApk)
     dlUrl.value = downloadApk.length>27? "http://" + host + "/ipfs/" + downloadApk 
         : "http://" + host + "/mm/" + downloadApk
+    avatarUrl.value = await useLeitherStore().logoUrl
 
     if (props.userId) {
         user.value = await tweetStore.getUser(props.userId)
