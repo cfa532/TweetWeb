@@ -30,6 +30,7 @@ onMounted(async () => {
     padding: 0px;
     /* float: left; */
     display: inline-block;
+    background-color: rgba(0, 0, 0, 0.06); /* Semi-transparent background */
 }
 .container img {
     /* position:relative; */
@@ -37,14 +38,5 @@ onMounted(async () => {
     max-width: 100%;
     width: 100%;
     height: auto;
-}
-.container p {
-    /* display: block; */
-    text-align: center;
-    position: relative;
-    margin-top: 5px; 
-    margin-bottom: 10px; 
-    font-size: small; 
-    color:darkslategray; 
 }
 </style>

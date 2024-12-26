@@ -15,17 +15,17 @@ function formatTimeDifference(t: number) {
     if (diffInSeconds < 60) {
         return `${diffInSeconds} seconds ago`;
     } else if (diffInMinutes < 60) {
-        return `${diffInMinutes} minutes ago`;
+        return `${diffInMinutes+1} minutes ago`;
     } else if (diffInHours < 24) {
-        return `${diffInHours} hours ago`;
+        return `${diffInHours+1} hours ago`;
     } else if (diffInDays < 7) {
-        return `${diffInDays} days ago`;
+        return `${diffInDays+1} days ago`;
     } else if (diffInWeeks < 4) {
-        return `${diffInWeeks} weeks ago`;
+        return `${diffInWeeks+1} weeks ago`;
     } else if (diffInMonths < 12) {
-        return `${diffInMonths} months ago`;
+        return `${diffInMonths+1} months ago`;
     } else {
-        return `${diffInYears} years ago`;
+        return `${diffInYears+1} years ago`;
     }
 }
 
