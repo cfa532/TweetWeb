@@ -11,6 +11,7 @@ const caption = ref();
 const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
+const isPortrait = ref(false);
 
 onMounted(() => {
   vdiv.value.hidden = false;
@@ -25,16 +26,37 @@ function togglePlay() {
     isPlaying.value = false;
   }
 }
+
+function checkVideoOrientation() {
+  const videoElement = video.value;
+  if (videoElement.videoWidth < videoElement.videoHeight) {
+    isPortrait.value = true;
+  } else {
+    isPortrait.value = false;
+  }
+}
 </script>
 
 <template>
   <div ref="vdiv" hidden class="video-container">
-    <div class="custom-controls">
-      <button @click.stop="togglePlay">{{ isPlaying ? 'Pause' : 'Play' }}</button>
+    <div v-if="isPortrait" class="custom-controls">
+      <button @click.stop="togglePlay">
+        <font-awesome-icon :icon='isPlaying ? "pause" : "play"' />
+      </button>
       <!-- Add more custom control buttons as needed -->
     </div>
-    <video ref="video" class="video" :src="props.mid" :autoplay="props.autoplay" preload="auto"></video>
-    <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 15%; position: relative;">{{ caption }}</p>
+    <video
+      ref="video"
+      class="video"
+      :src="props.mid"
+      :autoplay="props.autoplay"
+      controls
+      preload="auto"
+      @loadedmetadata="checkVideoOrientation"
+    ></video>
+    <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 15%; position: relative;">
+      {{ caption }}
+    </p>
   </div>
 </template>
 
@@ -56,7 +78,7 @@ function togglePlay() {
   width: 100%;
   display: flex;
   justify-content: flex-start;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.2);
   color: white;
   padding: 5px;
   z-index: 10;
