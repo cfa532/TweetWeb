@@ -16,8 +16,6 @@ const props = defineProps({
 const router = useRouter()
 const tweetStore = useTweetStore()
 
-onMounted(()=>{
-})
 function openUserPage(userId: string) {
   tweetStore.addFollowing(userId)
     router.push(`/author/${userId}`)
