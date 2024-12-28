@@ -47,7 +47,7 @@ watch(userId, async (nv, ov) => {
 </script>
 
 <template>
-    <div class="row mb-2">
+    <div class="row mb-1">
         <div class="d-flex justify-content-between">
             <div class="d-flex">
                 <div class="avatar me-2 ms-2 mt-1">
@@ -121,7 +121,7 @@ watch(userId, async (nv, ov) => {
     /* Ensures space between elements */
     flex-wrap: nowrap;
     /* Prevents wrapping of the QR code */
-    height: 60px;
+    min-height: 60px;
     /* Added height to the parent */
 }
 
@@ -213,7 +213,7 @@ watch(userId, async (nv, ov) => {
     }
 
     .d-flex {
-        height: 50px;
+        min-height: 50px;
         /* Adjust height for smaller screens */
     }
 }
@@ -230,7 +230,7 @@ watch(userId, async (nv, ov) => {
     }
 
     .d-flex {
-        height: 60px;
+        min-height: 60px;
     }
 }
 </style>
