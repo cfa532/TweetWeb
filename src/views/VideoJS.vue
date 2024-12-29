@@ -35,6 +35,10 @@ function checkVideoOrientation() {
     isPortrait.value = false;
   }
 }
+
+function disableRightClick(event: MouseEvent) {
+  event.preventDefault();
+}
 </script>
 
 <template>
@@ -51,8 +55,10 @@ function checkVideoOrientation() {
       :src="props.mid"
       :autoplay="props.autoplay"
       controls
+      controlslist="nodownload" 
       preload="auto"
       @loadedmetadata="checkVideoOrientation"
+      @contextmenu="disableRightClick"
     ></video>
     <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 15%; position: relative;">
       {{ caption }}
