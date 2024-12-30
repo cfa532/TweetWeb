@@ -73,6 +73,7 @@ const formattedTitle = computed(() => {
     let title = tweet.value.title
     if (title)
         return title
+    title = ""
     if (!tweetStore.isEmptyString(tweet.value.content)) {
         title = tweet.value.content!.substring(0, 20)
     } else {
