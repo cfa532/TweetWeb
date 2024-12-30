@@ -26,22 +26,11 @@ onMounted(async () => {
                 forwardBy.value = tweet.value.author.username
                 tweet.value = originTweet.value
                 isRetweet.value = true
-                attachmentsDownloadable(tweet.value)
-            } else {
-                attachmentsDownloadable(originTweet.value)
             }
         }
-    } else {
-        attachmentsDownloadable(tweet.value)
     }
 });
-function attachmentsDownloadable(tweet: Tweet) {
-    tweet.attachments?.forEach(e=>{
-        if (tweet.downloadable === false) {
-            e.downloadable = "nodownload"
-        }
-    })
-}
+
 function openDetailView() {
     // Route to the tweet detail page using the tweet ID
     sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))

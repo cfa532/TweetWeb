@@ -86,7 +86,7 @@ async function readFileSlice(
             // upload app installation package.
             return await tweetStore.uploadPackage(cid)
         else
-            return await tweetStore.uploadAttachment(cid, filesUpload.value[0].name)
+            return await tweetStore.uploadFile(cid, filesUpload.value[0].name)
     } else {
         return await readFileSlice(fsid, arr, start + count, index)
     }

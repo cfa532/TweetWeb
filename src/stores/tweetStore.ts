@@ -71,7 +71,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweet.attachments = tweet.attachments?.map(e => {
                         return {
                             mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
-                            type: e.type
+                            type: e.type,
+                            timestamp: e.timestamp,
+                            fileName: e.fileName,
+                            downloadable: tweet.downloadable,
+                            size: e.size
                         }
                     })
                     tweet.comments = []     // load comments only on detail page
@@ -181,6 +185,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 content: tweetInDB.content,
                 attachments: tweetInDB.attachments?.map((e: MimeiFileType) => {
                     e.mid = this.getMediaUrl(e.mid, "http://" + author?.providerIp)
+                    e.downloadable = tweetInDB.downloadable
                     return e
                 }),
                 comments: [],
@@ -189,7 +194,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 provider: providerIp,
                 likeCount: tweetInDB.likeCount,
                 bookmarkCount: tweetInDB.bookmarkCount,
-                commentCount: tweetInDB.commentCount
+                commentCount: tweetInDB.commentCount,
             }
             sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
             return tweet
@@ -365,6 +370,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return t
         },
         /**
+         * Upload App upgrade package file.
          * @param cid IPFS id of the install package
          * @returns MimeiId of the install package
          */
@@ -378,13 +384,18 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param filename 
          * @returns 
          */
-        async uploadAttachment(cid: string, filename: string) {
-            let mid = await this.lapi.client.RunMApp("upload_attachment", {
-                aid: this.lapi.appId, ver: "last", cid: cid, filename: filename,
-                userid: this.followings[0]  // always the developer's mid
+        async uploadFile(cid: string, filename: string) {
+            let mid = await this.lapi.client.RunMApp("upload_file", {
+                aid: this.lapi.appId,
+                ver: "last", 
+                cid: cid,
+                userid: this.loginUser?.mid
             })
             return mid
         },
+        /**
+         * Download a downloadable App package and return the data blob to web client.
+         */
         async downloadApk() {
             let mid = await this.lapi.client.RunMApp("download_upgrade", {
                 aid: this.lapi.appId, ver: "last"

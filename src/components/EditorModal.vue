@@ -14,22 +14,23 @@ const dropHere = ref()
 const textArea = ref<HTMLTextAreaElement>()
 const sliceSize = 1024 * 1024 * 1 // 10MB per slice of file
 const filesUpload = ref<File[]>([])
-const uploadProgress = reactive<number[]>([]) // New ref to store upload progress of each file
+const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const loading = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
-const controlsInContextMenu = ref(false)
+const downloadable = ref(true)
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
 
 onMounted(() => {
-  tweet.value = {mid: "dfdfd", authorId: author.mid, author: author, timestamp: Date.now()}
+  tweet.value = { mid: "dfdfd", authorId: author.mid, author: author, timestamp: Date.now() }
 })
 
 // Upload files and store them as IPFS or Mimei type
-async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
+async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
+  
   function getMedaiType(t: string) {
     if (t.startsWith("image/")) return "Image"
     if (t.startsWith("video/")) return "Video"
@@ -47,14 +48,16 @@ async function uploadFile(files: File[]): Promise<PromiseSettledResult<MimeiFile
 
     // Create a FileInfo object with file name, last modified time,
     const fsid = await tweetStore.openTempFile()
-    const fi = { mid: "", type: getMedaiType(file.type), size: file.size } as MimeiFileType
+    const fi = { mid: "", type: getMedaiType(file.type), size: file.size, fileName: file.name, timestamp: file.lastModified } as MimeiFileType
+
     const t = api.client.timeout
-    api.client.timeout = 0
-    fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // return an IPFS id actually
-    api.client.timeout = t
+    api.client.timeout = 0    // never timeout
+    fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // returned an IPFS id actually
+    api.client.timeout = t    // restore default timeout
     console.log(fi) // never executed when there is a timeout uploading file.
     return fi
   }
+
   // Use Promise.allSettled to wait for all file upload operations to complete
   return Promise.allSettled(files.map((file, i) => uploadSingleFile(file, i)))
 }
@@ -66,7 +69,7 @@ async function onSubmit() {
     if (filesUpload.value.length > 0) {
       // with attachments to be uploaded
       // reopen the DB mimei as cur version, for writing
-      attachments = (await uploadFile(filesUpload.value))
+      attachments = (await uploadAttachedFiles(filesUpload.value))
         .filter((v) => { return v.status === 'fulfilled' })
         .map((v: any) => {
           return v.value    // get FileInfo of each attachment
@@ -80,8 +83,9 @@ async function onSubmit() {
     let tweet = {
       title: tweetTitle.value,
       content: textValue.value,
-      attachments: attachments,
+      attachments: attachments as MimeiFileType[],
       isPrivate: isPrivate.value,
+      downloadable: downloadable.value,
       timestamp: Date.now()
     }
     console.log("new tweet", tweet)
@@ -115,10 +119,11 @@ async function readFileSlice(
     // last slice read. Convert temp to IPFS file
     const t = api.client.timeout
     api.client.timeout = 0
-    const mid = await api.client.MFTemp2Ipfs(fsid)
+    const cid = await api.client.MFTemp2Ipfs(fsid)
     api.client.timeout = t
-    return mid
+    return cid
   } else {
+    // recursive call
     return await readFileSlice(fsid, arr, start + count, index)
   }
 }
@@ -181,7 +186,7 @@ function logout() {
   </div>
   <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
     <div>
-    <input type="text" placeholder="Title..." v-model="tweetTitle" class="input-caption"/>
+      <input type="text" placeholder="Title..." v-model="tweetTitle" class="input-caption" />
     </div>
     <div class="input-container">
       <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
@@ -194,7 +199,7 @@ function logout() {
       <div class="button-container">
         <button class="btn" @click.prevent="selectFiles.click()">Choose</button>
         <span>
-          <input type="checkbox" v-model="controlsInContextMenu" id="checkbox">&nbsp;
+          <input type="checkbox" v-model="downloadable" id="checkbox">&nbsp;
           <label for="checkbox">Downloadable</label>&nbsp;&nbsp;&nbsp;
           <input type="checkbox" v-model="isPrivate" id="checkbox">&nbsp;
           <label for="checkbox">Private</label>&nbsp;&nbsp;&nbsp;
@@ -203,11 +208,11 @@ function logout() {
       </div>
       <Loading :visible="loading" />
     </form>
-</div>
-<div ref="divAttach" hidden class="preview-container">
-  <Preview @file-canceled="removeFile(file)" v-for="(file, index) in filesUpload" :key="index" v-bind:src="file"
-    v-bind:progress="uploadProgress[index]"></Preview>
-</div>
+  </div>
+  <div ref="divAttach" hidden class="preview-container">
+    <Preview @file-canceled="removeFile(file)" v-for="(file, index) in filesUpload" :key="index" v-bind:src="file"
+      v-bind:progress="uploadProgress[index]"></Preview>
+  </div>
 </template>
 
 <style scoped>
@@ -216,17 +221,20 @@ function logout() {
   width: 98%;
   margin: 8px 8px 8px 8px;
 }
+
 .card-header {
   margin-left: 10px;
   display: flex;
   align-items: center;
 }
+
 .logout {
   border-radius: 5px;
   border: 1px solid rgb(143, 139, 139);
   padding: 3px 10px;
   margin-left: auto;
 }
+
 .modal-content {
   width: 100%;
   position: relative;
@@ -239,11 +247,13 @@ function logout() {
   flex-direction: column;
   flex: 1;
 }
+
 .input-container {
   flex: 1;
   margin-bottom: 10px;
   display: inline;
 }
+
 .input-textarea {
   margin: 5px;
   border: 1px solid lightgrey;
@@ -251,6 +261,7 @@ function logout() {
   height: 40vh;
   border-radius: 5px;
 }
+
 .drop-here {
   border: 1px solid lightgrey;
   width: 100%;
@@ -258,6 +269,7 @@ function logout() {
   margin: 0px;
   text-align: center;
 }
+
 .preview-container {
   width: 100%;
   margin: 10px;
@@ -267,17 +279,20 @@ function logout() {
   margin-bottom: 6px;
   padding-top: 0px;
 }
+
 .form-container {
   display: flex;
   flex-direction: column;
   flex: 1;
 }
+
 .button-container {
   height: auto;
   display: flex;
   justify-content: space-between;
   margin: 10px
 }
+
 .btn {
   border-radius: 5px;
   border: 1px solid rgb(26, 25, 25);
