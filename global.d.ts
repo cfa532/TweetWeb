@@ -41,6 +41,7 @@ interface Tweet {
 
     provider?: string;       // Hprose client handler
     downloadable?: boolean;
+    isPrivate?: boolean;
 };
 
 interface ScorePair {

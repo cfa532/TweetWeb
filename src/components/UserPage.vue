@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTweetStore } from "@/stores/tweetStore";
 import { TweetView, AppHeader } from "@/views"
@@ -17,12 +17,19 @@ onMounted(async () => {
     window.setTimeout(()=>{
     }, 3000)
 })
-
+const tweetFeed = computed(()=>{
+    return tweetStore.tweets.filter(e => {
+    if (e.isPrivate) {
+        return tweetStore.loginUser?.mid == e.authorId
+    } else {
+        return true
+    }
+})})
 </script>
 
 <template>
     <AppHeader :userId=authorId />
-    <TweetView v-for="tweet in tweetStore.tweets.filter(e=>e.authorId==authorId)" :tweet="tweet" :key="tweet.mid" />
+    <TweetView v-for="tweet in tweetFeed" :tweet="tweet" :key="tweet.mid" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">
             <span class="visually-hidden">Loading...</span>
