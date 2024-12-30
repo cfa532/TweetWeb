@@ -125,7 +125,7 @@ function linkify(text: string) {
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
 
             <div v-if="originTweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in originTweet.attachments" :key="index" v-bind=media
+                <MediaView v-for="(media, index) in originTweet.attachments" :key="index" :media=media
                     class="img-fluid mb-1"></MediaView>
             </div>
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
@@ -149,7 +149,7 @@ function linkify(text: string) {
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
 
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index" v-bind=media class="img-fluid">
+                <MediaView v-for="(media, index) in tweet.attachments" :key="index" :media=media class="img-fluid">
                 </MediaView>
             </div>
 

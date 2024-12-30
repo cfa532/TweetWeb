@@ -40,6 +40,7 @@ interface Tweet {
     commentCount?: number;
 
     provider?: string;       // Hprose client handler
+    downloadable?: boolean;
 };
 
 interface ScorePair {
@@ -56,4 +57,7 @@ interface MimeiFileType {
     mid: string
     type: string
     size?: number
+    fileName?: string
+    timestamp: string | number = Date.now()
+    downloadable?: string
 };

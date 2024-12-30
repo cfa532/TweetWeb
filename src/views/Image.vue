@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
+import type { PropType } from 'vue'
 import { useLeitherStore } from '@/stores/leitherStore';
-const api = useLeitherStore();    // Leither api handler
 
 const props = defineProps({
-    mid : {type: String, required: false},      // undefined when showing local files
-    type: {type: String, required: true},
+    media: {type: Object as PropType<MimeiFileType>, required: true },
     title: {type: String, required: false},
-    fileName: {type: String, required: false},
-    name: {type: String, required: false},
     index: {type: Number, required: false},
-    autoplay: {type: Boolean, required: false},
 })
 
 onMounted(async () => {
@@ -19,7 +15,7 @@ onMounted(async () => {
 
 <template>
     <div>
-        <img :src="props.mid"/>
+        <img :src="props.media.mid"/>
     </div>
 </template>
 

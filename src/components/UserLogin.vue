@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Form, Field } from 'vee-validate';
 import * as Yup from 'yup';
-import { useTweetStore, useAlertStore } from '@/stores';
+import { useTweetStore } from '@/stores';
 import { useRouter } from "vue-router";
 const router = useRouter()
 

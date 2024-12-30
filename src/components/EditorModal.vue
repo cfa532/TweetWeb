@@ -18,6 +18,7 @@ const uploadProgress = reactive<number[]>([]) // New ref to store upload progres
 const loading = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
+const controlsInContextMenu = ref(false)
 const api = useLeitherStore()
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
@@ -193,6 +194,8 @@ function logout() {
       <div class="button-container">
         <button class="btn" @click.prevent="selectFiles.click()">Choose</button>
         <span>
+          <input type="checkbox" v-model="controlsInContextMenu" id="checkbox">&nbsp;
+          <label for="checkbox">Downloadable</label>&nbsp;&nbsp;&nbsp;
           <input type="checkbox" v-model="isPrivate" id="checkbox">&nbsp;
           <label for="checkbox">Private</label>&nbsp;&nbsp;&nbsp;
           <button class="btn" type="submit">Submit</button>

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import type { PropType } from 'vue'
 
 const props = defineProps({
-  mid: { type: String, required: false },
-  type: { type: String, required: false },
-  autoplay: { type: Boolean, required: false, default: false },
-});
+  media: { type: Object as PropType<MimeiFileType>, required: true },
+  autoplay: { type: Boolean, required: false },
+  controls: { type: String, required: false },
+})
 
 const caption = ref();
 const vdiv = ref();
@@ -37,7 +38,8 @@ function checkVideoOrientation() {
 }
 
 function disableRightClick(event: MouseEvent) {
-  event.preventDefault();
+  if (props.controls)
+    event.preventDefault();
 }
 </script>
 
@@ -52,10 +54,10 @@ function disableRightClick(event: MouseEvent) {
     <video
       ref="video"
       class="video"
-      :src="props.mid"
-      :autoplay="props.autoplay"
+      :src=props.media.mid
+      :autoplay=props.autoplay
       controls
-      controlslist="nodownload" 
+      :controlslist=props.controls 
       preload="auto"
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"

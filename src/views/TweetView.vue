@@ -26,13 +26,22 @@ onMounted(async () => {
                 forwardBy.value = tweet.value.author.username
                 tweet.value = originTweet.value
                 isRetweet.value = true
+                attachmentsDownloadable(tweet.value)
+            } else {
+                attachmentsDownloadable(originTweet.value)
             }
-        } else {
-            // we are retweeting a non-exist tweet. Exit
-            return
         }
+    } else {
+        attachmentsDownloadable(tweet.value)
     }
 });
+function attachmentsDownloadable(tweet: Tweet) {
+    tweet.attachments?.forEach(e=>{
+        if (tweet.downloadable === false) {
+            e.downloadable = "nodownload"
+        }
+    })
+}
 function openDetailView() {
     // Route to the tweet detail page using the tweet ID
     sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
@@ -57,11 +66,11 @@ function linkify(text: string) {
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <div v-if="originTweet.attachments.length === 1" class="single-attachment">
-                    <MediaView v-bind="originTweet.attachments[0]" class="img-fluid"></MediaView>
+                    <MediaView :media="originTweet.attachments[0]" class="img-fluid"></MediaView>
                 </div>
                 <div v-else class="multiple-attachments">
-                    <MediaView v-for='(media, index) in originTweet.attachments.slice(0, 4)' v-bind='media' :key='index' class='img-fluid' 
-                        v-bind:addtional-items="index === 3 && originTweet.attachments.length > 4 ? originTweet.attachments.length-4 : undefined">
+                    <MediaView v-for='(media, index) in originTweet.attachments.slice(0, 4)' :media='media' :key='index' class='img-fluid' 
+                        :addtional-items="index === 3 && originTweet.attachments.length > 4 ? originTweet.attachments.length-4 : undefined">
                     </MediaView>
                 </div>
             </div>
@@ -70,10 +79,12 @@ function linkify(text: string) {
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-bind="tweet.attachments[0]" class="img-fluid" v-if="tweet.attachments.length === 1"/>
+                <div v-if="tweet.attachments.length === 1" class="single-attachment">
+                    <MediaView :media="tweet.attachments[0]" class="img-fluid"></MediaView>
+                </div>
                 <div v-else class="multiple-attachments">
-                    <MediaView v-for="(media, index) in tweet.attachments.slice(0, 4)" :key="index" v-bind="media" class='img-fluid'
-                        v-bind:addtional-items="index === 3 && tweet.attachments.length > 4 ? tweet.attachments.length-4 : undefined">
+                    <MediaView v-for='(media, index) in tweet.attachments.slice(0, 4)' :media='media' :key='index' class='img-fluid' 
+                        :addtional-items="index === 3 && tweet.attachments.length > 4 ? tweet.attachments.length-4 : undefined">
                     </MediaView>
                 </div>
             </div>

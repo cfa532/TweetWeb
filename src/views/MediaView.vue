@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import type { PropType } from 'vue'
 import { Image, PDFView, VideoJS } from './index'
 
 const props = defineProps({ 
-    mid: {type: String, required: true},
-    type: {type: String, required: true},
-    addtionalItems: {type: Number, required: false},
+    media: {type: Object as PropType<MimeiFileType>, required: true },
+    addtionalItems: {type: Number, required: false},    // show PLUS sign over last item in preview grid
 });
 console.log(props)
 
 const userComponent = computed(() => {
-    let p = props.type.toLowerCase()
+    let p = props.media.type.toLowerCase()
     if (p.includes("image")) {
         return Image
     } else if (p.includes("pdf")) {
