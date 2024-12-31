@@ -5,6 +5,7 @@ import { Image, PDFView, VideoJS } from './index'
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
+    autoplay: {type: Boolean, required: false},
     addtionalItems: {type: Number, required: false},    // show PLUS sign over last item in preview grid
 });
 console.log(props)

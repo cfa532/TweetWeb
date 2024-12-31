@@ -13,6 +13,7 @@ const isPlaying = ref(false);
 const isPortrait = ref(false);
 
 onMounted(() => {
+  console.log(props)
   vdiv.value.hidden = false;
 });
 
@@ -63,7 +64,7 @@ const controls = computed(()=>{
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
     ></video>
-    <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 15%; position: relative;">
+    <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 1%; position: relative;">
       {{ media.fileName }}
     </p>
   </div>
