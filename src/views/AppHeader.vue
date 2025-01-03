@@ -8,7 +8,7 @@ import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const tweetStore = useTweetStore()
-const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
+const downloadApk = tweetStore.installApk
 const dlUrl = ref()
 const qrSize = 60
 const props = defineProps({
@@ -53,8 +53,9 @@ watch(userId, async (nv, ov) => {
                 <div class="avatar me-2 ms-2 mt-1">
                     <img v-if="user" :src="user.avatar" @click="router.push({ name: 'main' })" alt="Logo"
                         class="rounded-circle" />
-                    <img v-else :src="avatarUrl" @click="router.push({ name: 'main' })" alt="Logo"
-                        class="rounded-circle" />
+                    <a v-else href="http://tweet.fireshare.us">
+                        <img :src="avatarUrl" alt="Logo" class="rounded-circle" />
+                    </a>
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
