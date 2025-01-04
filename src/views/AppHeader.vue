@@ -8,8 +8,6 @@ import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const tweetStore = useTweetStore()
-const downloadApk = tweetStore.installApk
-const dlUrl = ref()
 const qrSize = 60
 const props = defineProps({
     userId: { type: String, required: false },
@@ -22,9 +20,6 @@ onMounted(async () => {
     if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
     }
-    let host = await tweetStore.getProviderIp(downloadApk)
-    dlUrl.value = downloadApk.length > 27 ? "http://" + host + "/ipfs/" + downloadApk
-        : "http://" + host + "/mm/" + downloadApk
     avatarUrl.value = await useLeitherStore().logoUrl
 
     if (props.userId) {
@@ -89,7 +84,7 @@ watch(userId, async (nv, ov) => {
                     APP ⬇️
                 </button>
                 <div class="qr-code-container">
-                    <qrCoder v-if="dlUrl" :url="dlUrl" :size="qrSize"></qrCoder>
+                    <qrCoder :url="tweetStore.installApk" :size="qrSize"></qrCoder>
                 </div>
             </div>
         </div>
