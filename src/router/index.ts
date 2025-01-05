@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, IPs, UploadPackage, Followings, Followers } from "@/components"
+import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, IPs, UploadPackage, DownloadPackage, Followings, Followers } from "@/components"
 import { useAlertStore } from '@/stores';
 
 /**
@@ -46,6 +46,11 @@ export const router = createRouter({
         } else
           next()
       },
+    },
+    {
+      path: '/download',
+      name: "download",
+      component: DownloadPackage,
     },
   ],
 })
