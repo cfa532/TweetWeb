@@ -11,6 +11,7 @@ export const useTweetStore = defineStore('tweetStore', {
         _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
+        installApk: import.meta.env.VITE_APP_PKG,
         _user: null as User | null      // login user data
     }),
     getters: {
@@ -397,16 +398,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * Download a downloadable App package and return the data blob to web client.
          */
         async downloadApk() {
-            let mid = await this.lapi.client.RunMApp("download_upgrade", {
-                aid: this.lapi.appId, ver: "last"
-            }
-            )
-            if (!mid) return
-            let ip = await this.getProviderIp(mid)
-            if (!ip) return
-            let url = mid.length > 27 ? "http://" + ip + "/ipfs/" + mid : "http://" + ip + "/mm/" + mid
-            console.log(url)
-            fetch(url)
+            return fetch(this.installApk) // Return the promise from fetch
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('Network response was not ok');
@@ -425,7 +417,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error('There was a problem with the fetch operation:', error);
                 });
         },
-
         isLocalIP(ip: string) {
             const localPatterns = [
                 /^127\./, // Loopback

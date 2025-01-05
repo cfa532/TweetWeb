@@ -8,8 +8,6 @@ import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const tweetStore = useTweetStore()
-const downloadApk = "9OCLYP-SXzen3e171-Ei_6N3Gwl"
-const dlUrl = ref()
 const qrSize = 60
 const props = defineProps({
     userId: { type: String, required: false },
@@ -22,9 +20,6 @@ onMounted(async () => {
     if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
     }
-    let host = await tweetStore.getProviderIp(downloadApk)
-    dlUrl.value = downloadApk.length > 27 ? "http://" + host + "/ipfs/" + downloadApk
-        : "http://" + host + "/mm/" + downloadApk
     avatarUrl.value = await useLeitherStore().logoUrl
 
     if (props.userId) {
@@ -53,8 +48,9 @@ watch(userId, async (nv, ov) => {
                 <div class="avatar me-2 ms-2 mt-1">
                     <img v-if="user" :src="user.avatar" @click="router.push({ name: 'main' })" alt="Logo"
                         class="rounded-circle" />
-                    <img v-else :src="avatarUrl" @click="router.push({ name: 'main' })" alt="Logo"
-                        class="rounded-circle" />
+                    <a v-else href="http://tweet.fireshare.us">
+                        <img :src="avatarUrl" alt="Logo" class="rounded-circle" />
+                    </a>
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
@@ -84,11 +80,9 @@ watch(userId, async (nv, ov) => {
                 </div>
             </div>
             <div class="d-flex align-items-start qr-container">
-                <button class="btn btn-link" @click="tweetStore.downloadApk">
-                    APP ⬇️
-                </button>
+                <button class="btn btn-link" @click="tweetStore.downloadApk">APP ⬇️</button>
                 <div class="qr-code-container">
-                    <qrCoder v-if="dlUrl" :url="dlUrl" :size="qrSize"></qrCoder>
+                    <qrCoder :url="tweetStore.installApk" :size="qrSize"></qrCoder>
                 </div>
             </div>
         </div>

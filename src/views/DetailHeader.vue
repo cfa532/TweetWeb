@@ -15,16 +15,12 @@ const props = defineProps({
 
 const tweetStore = useTweetStore();
 const router = useRouter();
-const downloadApk = import.meta.env.VITE_APP_PKG
-const dlUrl = ref();
 const qrSize = ref(60);
 
 onMounted(async () => {
   if (sessionStorage["isBot"] != "No") {
         confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
     }
-  let host = await tweetStore.getProviderIp(downloadApk);
-  dlUrl.value = downloadApk.length > 27 ? 'http://' + host + '/ipfs/' + downloadApk : 'http://' + host + '/mm/' + downloadApk;
 });
 
 function openUserPage(userId: string) {
@@ -55,7 +51,7 @@ function openUserPage(userId: string) {
     <div class='d-flex align-items-end'>
       <button class='btn btn-link' @click='tweetStore.downloadApk'>APP ⬇️</button>
       <div class='qr-code-container'>
-        <QRCoder v-if='dlUrl' :url='dlUrl' :size='qrSize'></QRCoder>
+        <QRCoder :url='tweetStore.installApk' :size='qrSize'></QRCoder>
       </div>
     </div>
   </div>
