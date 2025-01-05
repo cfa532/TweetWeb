@@ -398,7 +398,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * Download a downloadable App package and return the data blob to web client.
          */
         async downloadApk() {
-            fetch(this.installApk)
+            return fetch(this.installApk) // Return the promise from fetch
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('Network response was not ok');
@@ -417,7 +417,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error('There was a problem with the fetch operation:', error);
                 });
         },
-
         isLocalIP(ip: string) {
             const localPatterns = [
                 /^127\./, // Loopback

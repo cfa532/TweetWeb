@@ -80,9 +80,7 @@ watch(userId, async (nv, ov) => {
                 </div>
             </div>
             <div class="d-flex align-items-start qr-container">
-                <button class="btn btn-link" @click="tweetStore.downloadApk">
-                    APP ⬇️
-                </button>
+                <button class="btn btn-link" @click="tweetStore.downloadApk">APP ⬇️</button>
                 <div class="qr-code-container">
                     <qrCoder :url="tweetStore.installApk" :size="qrSize"></qrCoder>
                 </div>
