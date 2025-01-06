@@ -14,7 +14,19 @@ const isRetweet = ref(false)
 const isLoading = ref(false)
 const author = ref<User>();
 
-onMounted(async () => {    
+onMounted(async () => {
+    if (sessionStorage["isBot"] != "No") {
+        if (confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!")) {
+            sessionStorage["isBot"] = "No"
+            loadDetail()
+        } else {
+            history.go(-1)
+        }
+    } else {
+        loadDetail()
+    }
+});
+async function loadDetail() {
     isLoading.value = true
     let s = sessionStorage.getItem("tweetDetail")
     if (s) {
@@ -26,7 +38,7 @@ onMounted(async () => {
         // Fetch tweet if it is not in session already.
         tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value) as Tweet
         if (!tweet.value) {
-            window.setTimeout(()=> {
+            window.setTimeout(() => {
                 window.location.reload()
             }, 5000)                        // wait 5s before reload
         } else {
@@ -36,7 +48,7 @@ onMounted(async () => {
     console.log(tweet.value)
 
     // display url as link
-    document.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("DOMContentLoaded", function () {
         const contentElement = document.getElementById('content');
         const paragraphs = contentElement?.getElementsByClassName('card-text');
         if (paragraphs)
@@ -45,8 +57,7 @@ onMounted(async () => {
                 paragraph.innerHTML = linkify(paragraph.innerHTML);
             }
     });
-});
-
+}
 async function showTweet() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
     if (authorId.value) {

@@ -6,32 +6,25 @@ import { TweetView, AppHeader } from "@/views"
 const tweetStore = useTweetStore();
 const isLoading = ref(false)
 
-onMounted(async ()=> {
+onMounted(async () => {
     if (sessionStorage["isBot"] != "No") {
-        confirm("Download App for more.") ? sessionStorage["isBot"] = "No" : history.go(-1)
+        if (confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!")) {
+            sessionStorage["isBot"] = "No"
+            loadTweets()
+        } else {
+            history.go(-1)
+        }
+    } else {
+        loadTweets()
     }
+})
+async function loadTweets() {
     isLoading.value = true
     await tweetStore.loadTweets()
-    window.setTimeout(()=>{
+    window.setTimeout(() => {
         isLoading.value = false
     }, 2000)
-
-    // Get the current host and protocol
-    const host = window.location.host;
-    const protocol = window.location.protocol;
-
-    // Construct the full URL for the icon
-    const iconPath = '/mm/xmzaZPI_0CHL4hWGJukqC6yyGyW'; // Your relative path
-    const fullIconUrl = `${protocol}//${host}${iconPath}`;
-
-    // Set Icon for the webpage
-    document.addEventListener('DOMContentLoaded', () => {
-      const linkElement = document.querySelector("link[rel='icon']");
-      if (linkElement) {
-        (linkElement as HTMLLinkElement).href = fullIconUrl;
-      }
-    });
-})
+}
 const tweetFeed = computed(()=>{
     return tweetStore.tweets.filter(e => !e.isPrivate)
 })

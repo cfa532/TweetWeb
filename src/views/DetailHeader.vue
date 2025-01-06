@@ -17,12 +17,6 @@ const tweetStore = useTweetStore();
 const router = useRouter();
 const qrSize = ref(60);
 
-onMounted(async () => {
-  if (sessionStorage["isBot"] != "No") {
-        confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!") ? sessionStorage["isBot"] = "No" : history.go(-1)
-    }
-});
-
 function openUserPage(userId: string) {
   tweetStore.addFollowing(userId);
   router.push(`/author/${userId}`);
