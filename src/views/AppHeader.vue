@@ -43,11 +43,7 @@ watch(userId, async (nv, ov) => {
         <div class="d-flex justify-content-between">
             <div class="d-flex">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img v-if="user" :src="user.avatar" @click="router.push({ name: 'main' })" alt="Logo"
-                        class="rounded-circle" />
-                    <a v-else href="http://tweet.fireshare.us">
-                        <img :src="avatarUrl" alt="Logo" class="rounded-circle" />
-                    </a>
+                    <img :src="user? user.avatar : avatarUrl" @click="router.push({ name: 'main' })" alt="Logo" class="rounded-circle" />
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
