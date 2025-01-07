@@ -10,13 +10,22 @@ const tweetStore = useTweetStore();
 const isLoading = ref(false)
 
 onMounted(async () => {
+    if (sessionStorage["isBot"] != "No") {
+        if (confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!")) {
+            sessionStorage["isBot"] = "No"
+            loadTweets()
+        } else {
+            history.go(-1)
+        }
+    } else {
+        loadTweets()
+    }
+})
+async function loadTweets() {
     isLoading.value = true
     await tweetStore.loadTweets(authorId.value)
     isLoading.value = false
-
-    window.setTimeout(()=>{
-    }, 3000)
-})
+}
 const tweetFeed = computed(()=>{
     return tweetStore.tweets.filter(e => {
     if (e.isPrivate) {
