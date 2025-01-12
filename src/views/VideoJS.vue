@@ -6,11 +6,13 @@ const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
   autoplay: { type: Boolean, required: false },
 })
-
 const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
+const controls = computed(()=>{
+  return props.media.downloadable==false ? "nodownload" : undefined
+})
 
 onMounted(() => {
   console.log(props)
@@ -40,9 +42,6 @@ function disableRightClick(event: MouseEvent) {
   if (props.media.downloadable == false)
     event.preventDefault();
 }
-const controls = computed(()=>{
-  return props.media.downloadable==false ? "nodownload" : undefined
-})
 </script>
 
 <template>
@@ -56,14 +55,15 @@ const controls = computed(()=>{
     <video
       ref="video"
       class="video"
-      :src=props.media.mid
       :autoplay=props.autoplay
       controls
       :controlslist=controls
       preload="auto"
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
-    ></video>
+    >
+      <source :src=props.media.mid type="video/mp4" />
+    </video>
     <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 1%; position: relative;">
       {{ media.fileName }}
     </p>

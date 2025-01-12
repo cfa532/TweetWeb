@@ -8,7 +8,7 @@ interface HTMLInputEvent extends Event {
 }
 const emit = defineEmits(['uploaded', 'hide'])
 const tweetTitle = ref()
-const textValue = ref('')
+const txtConent = ref('')
 const divAttach = ref()
 const dropHere = ref()
 const textArea = ref<HTMLTextAreaElement>()
@@ -82,7 +82,7 @@ async function onSubmit() {
     // upload tweet
     let tweet = {
       title: tweetTitle.value,
-      content: textValue.value,
+      content: txtConent.value,
       attachments: attachments as MimeiFileType[],
       isPrivate: isPrivate.value,
       downloadable: downloadable.value,
@@ -90,7 +90,7 @@ async function onSubmit() {
     }
     console.log("new tweet", tweet)
     await tweetStore.uploadTweet(tweet)
-    textValue.value = ""
+    txtConent.value = ""
     tweetTitle.value = ""
     filesUpload.value = []
   } catch (err) {
@@ -135,7 +135,7 @@ async function onSelect(e: Event) {
 
   if (files && files.length > 0) {
     // Assign a title if it's not already set
-    if (!tweetTitle.value || tweetTitle.value.trim() === '') {
+    if (!tweetTitle.value || tweetTitle.value.trim() === '' && txtConent.value.trim() === '') {
       tweetTitle.value = files[0].name;
     }
 
@@ -189,7 +189,7 @@ function logout() {
       <input type="text" placeholder="Title..." v-model="tweetTitle" class="input-caption" />
     </div>
     <div class="input-container">
-      <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
+      <textarea ref="textArea" v-model="txtConent" placeholder="Input......" class="input-textarea"></textarea>
       <div ref="dropHere" hidden class="drop-here">
         <p>DROP HERE</p>
       </div>
