@@ -8,7 +8,7 @@ interface HTMLInputEvent extends Event {
 }
 const emit = defineEmits(['uploaded', 'hide'])
 const tweetTitle = ref()
-const txtConent = ref('')
+const txtConent = ref()
 const divAttach = ref()
 const dropHere = ref()
 const textArea = ref<HTMLTextAreaElement>()
@@ -90,8 +90,8 @@ async function onSubmit() {
     }
     console.log("new tweet", tweet)
     await tweetStore.uploadTweet(tweet)
-    txtConent.value = ""
-    tweetTitle.value = ""
+    txtConent.value = null
+    tweetTitle.value = null
     filesUpload.value = []
   } catch (err) {
     // something wrong uploading files, abort
@@ -135,7 +135,7 @@ async function onSelect(e: Event) {
 
   if (files && files.length > 0) {
     // Assign a title if it's not already set
-    if (!tweetTitle.value || tweetTitle.value.trim() === '' && txtConent.value.trim() === '') {
+    if (!tweetTitle.value && !txtConent.value) {
       tweetTitle.value = files[0].name;
     }
 
