@@ -58,3 +58,10 @@ export const router = createRouter({
 router.beforeEach((to: any, from: any) => {
   useAlertStore().clear()
 })
+
+router.afterEach((to) => {
+  // This will send a page view event to Google Analytics
+  window.gtag('config', 'G-JHJH70L32W', {
+    page_path: to.fullPath,
+  });
+});

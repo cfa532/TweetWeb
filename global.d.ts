@@ -1,10 +1,16 @@
 type MimeiId = string;
 
+interface Gtag {
+    (...args: any[]): void;
+}
+
 interface Window {
     mmInfo: any       // add to window obj for testing convenience
     getParam: any
     hprose: any
     lapi: any         // Leither api handler
+    dataLayer: any[];
+    gtag: Gtag;
 };
 
 interface User {
