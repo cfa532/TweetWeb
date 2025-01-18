@@ -347,13 +347,15 @@ export const useTweetStore = defineStore('tweetStore', {
             let user = await this.getUser(userId)
             if (!user)
                 return []
-            return await user.client.RunMApp("get_followers", {aid: this.appId, ver: "last", userid: userId})
+            let list = await user.client.RunMApp("get_followers_sorted", {aid: this.appId, ver: "last", userid: userId})
+            return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
         },
         async getFollowings(userId: MimeiId) {
             let user = await this.getUser(userId)
             if (!user)
                 return []
-            return await user.client.RunMApp("get_followings", {aid: this.appId, ver: "last", userid: userId})
+            let list = await user.client.RunMApp("get_followings_sorted", {aid: this.appId, ver: "last", userid: userId})
+            return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
         },
 
         async openTempFile() {
