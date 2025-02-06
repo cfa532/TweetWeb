@@ -19,8 +19,8 @@ const loading = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)
-const api = useLeitherStore()
 const tweetStore = useTweetStore()
+const hproseClient = tweetStore.loginUser?.client
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
 
@@ -49,12 +49,11 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
     // Create a FileInfo object with file name, last modified time,
     const fsid = await tweetStore.openTempFile()
     const fi = { mid: "", type: getMedaiType(file.type), size: file.size, fileName: file.name, timestamp: file.lastModified } as MimeiFileType
-
-    const t = api.client.timeout
-    api.client.timeout = 0    // never timeout
+    const t = hproseClient.timeout
+    hproseClient.timeout = 0    // never timeout
     fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // returned an IPFS id actually
-    api.client.timeout = t    // restore default timeout
-    console.log(fi) // never executed when there is a timeout uploading file.
+    hproseClient.timeout = t    // restore default timeout
+    console.log(fi)    // never executed when there is a timeout uploading file.
     return fi
   }
 
@@ -109,23 +108,24 @@ async function readFileSlice(
 ): Promise<string> {
   // reading file slice by slice, start at given position
   var end = Math.min(start + sliceSize, arr.byteLength)
-  let count = await api.client.MFSetData(fsid, arr.slice(start, end), start)
+  let count = await hproseClient.MFSetData(fsid, arr.slice(start, end), start)
   // Calculate progress
   uploadProgress[index] = Math.floor(((start + count) / arr.byteLength) * 100)
   console.log('Uploading...', uploadProgress[index] + '%', end, arr.byteLength)
 
   if (end === arr.byteLength) {
     // last slice read. Convert temp to IPFS file
-    const t = api.client.timeout
-    api.client.timeout = 0
-    const cid = await api.client.MFTemp2Ipfs(fsid)
-    api.client.timeout = t
+    const t = hproseClient.timeout
+    hproseClient.timeout = 0
+    const cid = await hproseClient.MFTemp2Ipfs(fsid)
+    hproseClient.timeout = t
     return cid
   } else {
     // recursive call
     return await readFileSlice(fsid, arr, start + count, index)
   }
 }
+
 async function onSelect(e: Event) {
   let files =
     (e as HTMLInputEvent).target.files ||       // select input file

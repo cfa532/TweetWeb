@@ -16,8 +16,9 @@ export const useTweetStore = defineStore('tweetStore', {
     }),
     getters: {
         loginUser: (state): User | null => {
-            if (state._user)
+            if (state._user) {
                 return state._user
+            }
             if (sessionStorage.getItem("user")) {
                 let usr = JSON.parse(sessionStorage.getItem("user")!)
                 usr.client = state.lapi.getClient(usr.providerIp)
@@ -374,21 +375,16 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async openTempFile() {
-            return await this.lapi.client.RunMApp("open_temp_file", {
+            console.log("Open temp file", this.loginUser)
+            return await this.loginUser?.client.RunMApp("open_temp_file", {
                 aid: this.appId, ver: "last"
             })
         },
         async uploadTweet(tweet: any) {
-            let u = sessionStorage.getItem("user")
-            if (!u) {
-                console.error("No user logged in.")
-                return null
-            }
-            let user = JSON.parse(u) as User
-            tweet.authorId = user.mid
-            let t = await this.lapi.client.RunMApp("upload_tweet",
+            tweet.authorId = this.loginUser?.mid
+            let t = await this.loginUser?.client.RunMApp("upload_tweet",
                 {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
-            console.log("New tweet", t, user, this.lapi.client)
+            console.log("New tweet", t, this.loginUser, this.lapi.client)
             return t
         },
         /**
@@ -397,7 +393,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns MimeiId of the install package
          */
         async uploadPackage(cid: string) {
-            let mid = await this.lapi.client.RunMApp("upload_package", {
+            let mid = await this.loginUser?.client.RunMApp("upload_package", {
                 aid: this.lapi.appId, ver: "last", cid: cid
             })
             return mid
@@ -407,7 +403,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns 
          */
         async uploadFile(cid: string, filename: string) {
-            let mid = await this.lapi.client.RunMApp("upload_file", {
+            let mid = await this.loginUser?.client.RunMApp("upload_file", {
                 aid: this.lapi.appId,
                 ver: "last", 
                 cid: cid,
