@@ -294,7 +294,7 @@ export const useTweetStore = defineStore('tweetStore', {
         getMediaUrl(mid: string | undefined, baseUrl: string): string {
             let url = baseUrl
             if (!mid) {
-                return "http://125.229.161.122:8080/49601462-original.jpg"
+                return "http://tweet1.fireshare.us/avatar.jpg"
             }
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
