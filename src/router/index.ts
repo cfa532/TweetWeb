@@ -31,7 +31,7 @@ export const router = createRouter({
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("user")
         if (!user) {
-          next("login")
+          next("/login")
         } else
           next()
       },
@@ -42,7 +42,7 @@ export const router = createRouter({
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("user")
         if (!user || JSON.parse(user)["username"]!="developer") {
-          next("login")
+          next("/login")
         } else
           next()
       },

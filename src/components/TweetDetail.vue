@@ -124,8 +124,23 @@ function linkify(text: string) {
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
 
-function addComment(tweet: Tweet) {
-    router.push(`/post/${tweet.mid}`)
+function addComment(tweetId: MimeiId) {
+    router.push({ name: 'post', params: { tweetId: tweetId } })
+}
+
+async function toggleLike(t: Tweet) {
+    if (!tweetStore.loginUser) {
+        router.push({ name: 'login' })
+        return
+    }
+    tweet.value = await tweetStore.toggleLike(t.mid)
+}
+async function toggleBookmark(t: Tweet) {
+    if (!tweetStore.loginUser) {
+        router.push({ name: 'login' })
+        return
+    }
+    tweet.value  = await tweetStore.toggleBookmark(t.mid)
 }
 </script>
 
@@ -147,16 +162,16 @@ function addComment(tweet: Tweet) {
             </div>
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
                 <div class='icon-item d-flex align-items-center'>
-                    <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
+                    <img @click="toggleLike(originTweet)" src='/src/ic_heart.png' alt='Favorite' class='icon' />
                     <span class='icon-number'>{{ originTweet.likeCount > 0 ? originTweet.likeCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
-                    <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
+                    <img @click="toggleBookmark(originTweet)" src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
                     <span class='icon-number'>{{ originTweet.bookmarkCount > 0 ? originTweet.bookmarkCount : null
                         }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
-                    <img @click="addComment(originTweet)" src='/src/ic_notice.png' alt='Comment' class='icon' />
+                    <img @click="addComment(originTweet.mid)" src='/src/ic_notice.png' alt='Comment' class='icon' />
                     <span class='icon-number'>{{ originTweet.commentCount > 0 ? originTweet.commentCount : null
                         }}</span>
                 </div>
@@ -178,15 +193,15 @@ function addComment(tweet: Tweet) {
 
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
                 <div class='icon-item d-flex align-items-center'>
-                    <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
+                    <img @click="toggleLike(tweet)" src='/src/ic_heart.png' alt='Favorite' class='icon' />
                     <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
-                    <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
+                    <img @click="toggleBookmark(tweet)" src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
                     <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
-                    <img @click="addComment(tweet)" src='/src/ic_notice.png' alt='Comment' class='icon' />
+                    <img @click="addComment(tweet.mid)" src='/src/ic_notice.png' alt='Comment' class='icon' />
                     <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
                 </div>
             </div>

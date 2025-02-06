@@ -46,7 +46,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 sessionStorage.setItem("followings", JSON.stringify(this._followings))
             }
         },
-
         /**
          * If an userId is given, load tweets of the given user.
          * Otherwise load tweets from all the followings.
@@ -346,15 +345,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 useAlertStore().error(ret["reason"])
             }
         },
-        async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
-            this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
-            let user = await this.getUser(authorId)
-            if (user) {
-                await user.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
-                    tweetid: tweetId, authorid: authorId
-                })
-            }
-        },
         logout() {
             sessionStorage.clear()
             this.$reset
@@ -374,6 +364,15 @@ export const useTweetStore = defineStore('tweetStore', {
             return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
         },
 
+        async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
+            this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
+            let user = await this.getUser(authorId)
+            if (user) {
+                await this.loginUser?.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
+                    tweetid: tweetId, authorid: authorId
+                })
+            }
+        },
         async openTempFile() {
             console.log("Open temp file", this.loginUser)
             return await this.loginUser?.client.RunMApp("open_temp_file", {
@@ -417,6 +416,25 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return mid
         },
+        async toggleLike(tweetId: MimeiId) {
+            var ret = await this.loginUser?.client.RunMApp("toggle_likes", {
+                aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
+            })
+            var tweet = this.tweets.find(e => e.mid == tweetId)
+            tweet!.likeCount = ret["count"]
+            localStorage.setItem(tweetId, JSON.stringify(tweet))
+            return tweet
+        },
+        async toggleBookmark(tweetId: MimeiId) {
+            var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
+                aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
+            })
+            var tweet = this.tweets.find(e => e.mid == tweetId)
+            tweet!.bookmarkCount = ret["count"]
+            localStorage.setItem(tweetId, JSON.stringify(tweet))
+            return tweet
+        },
+
         /**
          * Download a downloadable App package and return the data blob to web client.
          */
