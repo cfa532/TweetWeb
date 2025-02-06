@@ -88,7 +88,6 @@ async function onSubmit() {
       downloadable: downloadable.value,
       timestamp: Date.now()
     }
-    console.log("new tweet", tweet)
     await tweetStore.uploadTweet(tweet)
     txtConent.value = null
     tweetTitle.value = null

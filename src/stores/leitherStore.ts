@@ -34,7 +34,7 @@ export const useLeitherStore = defineStore({
         appId: import.meta.env.VITE_MIMEI_APPID,
         returnUrl: "",
         hostIP: curIP,    // IP address of node to write
-        baseUrl: window.location.protocol+'//'+curIP+'/' ,
+        baseUrl: window.location.protocol+'//'+curIP+'/',
         client: window.hprose.Client.create("ws://" + curIP +"/ws/", ayApi),
     }),
     getters: {

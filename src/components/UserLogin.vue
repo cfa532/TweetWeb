@@ -15,6 +15,7 @@ async function onSubmit(values: any) {
     const { username, password } = values;
     let user = await tweetStore.login(username, password);
     if (user) {
+        console.log("Login successful", user);
         router.push("post")
     }
 }

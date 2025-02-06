@@ -202,15 +202,17 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async getUser(userId: MimeiId): Promise<User | undefined> {
-            // check if the user has been retrieved.
+            // check if the user has been cached.
             if (this.loginUser && this.loginUser.mid == userId)
                 return this.loginUser
             if (this.users.get(userId))
                 return this.users.get(userId)
 
             let providerIp = await this.getProviderIp(userId)
-            if (!providerIp)
+            if (!providerIp) {
+                console.error("No provider found for user", userId)
                 return
+            }
             let providerClient = this.lapi.getClient(providerIp)
 
             let user = await providerClient.RunMApp("get_user_core_data", {
@@ -246,8 +248,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid,
             })
-            // return import.meta.env.VITE_LEITHER_NODE
-            let ip = await this.findFirstAccessibleIP(IPs,  this.lapi.appId)
+            if (!IPs) {
+                console.error("No provider found for", mid)
+                return null
+            }
+            let ip = await this.findFirstAccessibleIP(IPs, this.lapi.appId)
             return ip
         },
         /**
@@ -289,7 +294,7 @@ export const useTweetStore = defineStore('tweetStore', {
         getMediaUrl(mid: string | undefined, baseUrl: string): string {
             let url = baseUrl
             if (!mid) {
-                return "https://en.numista.com/catalogue/photos/essos/64a16406c47562.49601462-original.jpg"
+                return "http://125.229.161.122:8080/49601462-original.jpg"
             }
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
@@ -300,33 +305,43 @@ export const useTweetStore = defineStore('tweetStore', {
                 aid: this.appId, ver: "last", username: username
             })
             let user = await this.getUser(userId)
-            if (!user)
+            if (!user) {
+                console.error("Login failed", userId, user)
                 return
+            }
+            console.log("User", user)
             let ret = await user.client.RunMApp("login", {
                 aid: this.appId, ver: "last", username: username, password: password
             })
             if (!ret) {
+                console.error("Login failed", userId)
                 useAlertStore().error("Login failed")
                 return
             }
-            if (ret["status"] == "success") {
-                // now find the IP of a host where user has write permission
+            if (ret["status"] === 'success') {
+                /**
+                 * Now find the IP of a host where user has write permission
+                 */
                 if (user.hostIds && user.hostIds.length>0) {
                     let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
                         aid: this.appId, ver: "last", nodeid: user.hostIds[0]
                     })
                     let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
-                    if (!ip) return
-                    
+                    console.log("Host IPs", hostIps, ip)
+                    if (!ip) {
+                        console.error("No writable host found for user", hostIps, user)
+                        useAlertStore().error(`No writable host found for user. ${hostIps} ${JSON.stringify(user)}`)
+                        return
+                    }
                     user.providerIp = ip
                     sessionStorage.setItem("user", JSON.stringify(user))
                     user.client = this.lapi.getClient(ip)
-                    console.log("user", user)
                     this._user = user
                     this.addFollowing(userId)
                     return user
                 }
             } else {
+                console.error("Login failed", ret["reason"])
                 useAlertStore().error(ret["reason"])
             }
         },
@@ -365,11 +380,15 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         async uploadTweet(tweet: any) {
             let u = sessionStorage.getItem("user")
-            if (!u) return null
+            if (!u) {
+                console.error("No user logged in.")
+                return null
+            }
             let user = JSON.parse(u) as User
             tweet.authorId = user.mid
             let t = await this.lapi.client.RunMApp("upload_tweet",
-                { aid: this.appId, ver: "last", tweet: JSON.stringify(tweet) })
+                {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
+            console.log("New tweet", t, user, this.lapi.client)
             return t
         },
         /**
@@ -433,11 +452,14 @@ export const useTweetStore = defineStore('tweetStore', {
         isEmptyString(str?: String) {
             return str == null || str == undefined || str.trim() == '';
         },
+
         async findFirstAccessibleIP(ipList: string[], mid: string) {
             if (!ipList || ipList.length < 1) {
+                console.error('No IP addresses provided in findFirstAccessibleIP()');
                 return null; // Return null immediately if the list is empty
             }
-            const fetchWithTimeout = (url: string, timeout = 5000) => {
+        
+            const fetchWithTimeout = (url: string, timeout = 30000) => {
                 return new Promise((resolve, reject) => {
                     const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
                     fetch(url)
@@ -457,34 +479,43 @@ export const useTweetStore = defineStore('tweetStore', {
                         });
                 });
             };
-            const promises = [] as any[]
-            ipList.forEach(async ip => {
-                if (this.isEmptyString(ip) || this.isLocalIP(ip))
-                    return
-                const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
-                // console.log(`trying ${url}`);
-                promises.push( fetchWithTimeout(url)
-                    .then(data => ({ ip, data }))
-                    .catch(error => {
-                        console.log(`Error fetching from ${ip}`, error);
-                        return null;
-                    })
-                );
-            });
-            while (promises.length > 0) {
-                try {
-                    const result = await Promise.race(promises);
-                    if (result && result.data) {
-                        return result.ip;
-                    }
-                    // Remove the resolved promise from the array
-                    promises.splice(promises.indexOf(Promise.resolve(result)), 1);
-                } catch (error) {
-                    // Remove the rejected promise from the array
-                    promises.splice(promises.indexOf(Promise.reject(error)), 1);
+        
+            return new Promise<string | null>((resolve) => {
+                if (!ipList || ipList.length === 0) {
+                    resolve(null);
+                    return;
                 }
-            }
-            return null; // No accessible IP found
+        
+                let resolved = false; // Flag to prevent multiple resolutions
+        
+                ipList.forEach(ip => {
+                    if (this.isEmptyString(ip) || this.isLocalIP(ip)) {
+                        return;
+                    }
+        
+                    const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
+        
+                    fetchWithTimeout(url)
+                        .then(data => {
+                            if (!resolved) {
+                                resolved = true;
+                                resolve(ip); // Resolve with the IP immediately
+                            }
+                        })
+                        .catch(error => {
+                            console.log(`Error fetching from ${ip}`, error);
+                            // Do nothing, let other promises continue
+                        });
+                });
+        
+                // Set a timeout to resolve with null if no IP responds within a reasonable time
+                setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        resolve(null); // Resolve with null if no IP responds in time
+                    }
+                }, 30000); // Adjust timeout as needed
+            });
         }
     },
 });
