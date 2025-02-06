@@ -31,7 +31,7 @@ function togglePlay() {
 
 function checkVideoOrientation() {
   const videoElement = video.value;
-  if (videoElement.videoWidth < videoElement.videoHeight) {
+  if (videoElement && (videoElement.videoWidth < videoElement.videoHeight)) {
     isPortrait.value = true;
   } else {
     isPortrait.value = false;
