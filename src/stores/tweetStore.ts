@@ -380,12 +380,18 @@ export const useTweetStore = defineStore('tweetStore', {
                 aid: this.appId, ver: "last"
             })
         },
-        async uploadTweet(tweet: any) {
+        async uploadTweet(tweet: any, tweetId: MimeiId) {
+            console.log("Upload tweet", tweetId, tweet)
             tweet.authorId = this.loginUser?.mid
-            let t = await this.loginUser?.client.RunMApp("upload_tweet",
-                {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
-            console.log("New tweet", t, this.loginUser, this.lapi.client)
-            return t
+            if (tweetId) {
+                await this.loginUser?.client.RunMApp("add_comment",
+                    {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet)})
+            } else {
+                let t = await this.loginUser?.client.RunMApp("upload_tweet",
+                    {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
+                console.log("New tweet mid", t)
+                return t
+            }
         },
         /**
          * Upload App upgrade package file.

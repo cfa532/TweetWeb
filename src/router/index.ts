@@ -27,7 +27,7 @@ export const router = createRouter({
     { path: '/login', name: "login", component: Login },
     { path: '/ips', name: "IPs", component: IPs },
     {
-      path: '/post', name: "post", component: AddPost,
+      path: '/post/:tweetId?', name: "post", component: AddPost,
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("user")
         if (!user) {

@@ -1,10 +1,11 @@
 <script lang="ts" setup>
 import { ref, onMounted, watch, computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, ItemHeader, TweetView } from "@/views";
 
 const route = useRoute();
+const router = useRouter();
 const tweetStore = useTweetStore()
 const tweetId = computed(()=>route.params.tweetId as MimeiId)
 const authorId = computed(()=>route.params.authorId as MimeiId | undefined)
@@ -122,6 +123,10 @@ function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
+
+function addComment(tweet: Tweet) {
+    router.push(`/post/${tweet.mid}`)
+}
 </script>
 
 <template>
@@ -151,7 +156,7 @@ function linkify(text: string) {
                         }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
-                    <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                    <img @click="addComment(originTweet)" src='/src/ic_notice.png' alt='Comment' class='icon' />
                     <span class='icon-number'>{{ originTweet.commentCount > 0 ? originTweet.commentCount : null
                         }}</span>
                 </div>
@@ -181,15 +186,15 @@ function linkify(text: string) {
                     <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
                 </div>
                 <div class='icon-item d-flex align-items-center'>
-                    <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                    <img @click="addComment(tweet)" src='/src/ic_notice.png' alt='Comment' class='icon' />
                     <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Show comments of the original tweet if it is a retweet -->
     <div v-if="tweet">
-        <!-- Show comments of the original tweet if it is a retweet -->
         <div v-if="isRetweet" v-for="(comment, index) in originTweet.comments" :key="index" class="comment card mb-1 mt-3">
             <div class="card-header d-flex align-items-center">
                 <ItemHeader :author="comment.author" :tweet="comment" :timestamp="comment.timestamp"></ItemHeader>
@@ -213,7 +218,7 @@ function linkify(text: string) {
                         <span class='icon-number'>{{ comment.bookmarkCount > 0 ? comment.bookmarkCount : null }}</span>
                     </div>
                     <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_notice.png' alt='Forward' class='icon' />
+                        <img src='/src/ic_notice.png' alt='Comment' class='icon' />
                         <span class='icon-number'>{{ comment.commentCount > 0 ? comment.commentCount : null }}</span>
                     </div>
                 </div>

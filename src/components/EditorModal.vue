@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { Loading, Preview, ItemHeader } from '@/views'
-import { useTweetStore, useLeitherStore } from '@/stores'
+import { useTweetStore } from '@/stores'
+import { useRoute, useRouter } from 'vue-router';
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
 const emit = defineEmits(['uploaded', 'hide'])
+const tweetId = useRoute().params.tweetId
 const tweetTitle = ref()
 const txtConent = ref()
 const divAttach = ref()
@@ -18,7 +20,7 @@ const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const loading = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
-const downloadable = ref(true)
+const downloadable = ref(true)  // whether the attachment is downloadable
 const tweetStore = useTweetStore()
 const hproseClient = tweetStore.loginUser?.client
 const tweet = ref<Tweet>()
@@ -87,7 +89,7 @@ async function onSubmit() {
       downloadable: downloadable.value,
       timestamp: Date.now()
     }
-    await tweetStore.uploadTweet(tweet)
+    await tweetStore.uploadTweet(tweet, tweetId as MimeiId)
     txtConent.value = null
     tweetTitle.value = null
     filesUpload.value = []
