@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { ref } from 'vue';
 import { QRCoder } from "@/views"
+
+// Showing large QR code in a modal
 
 const props = defineProps({
   url: { type: String, required: true },

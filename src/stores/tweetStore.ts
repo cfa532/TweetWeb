@@ -437,10 +437,11 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Download a downloadable App package and return the data blob to web client.
+         * Download file and return the data blob to web client.
          */
-        async downloadApk() {
-            return fetch(this.installApk) // Return the promise from fetch
+        async downloadBlob(url: string) {
+            console.log("Download", url)
+            return fetch(url) // Return the promise from fetch
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('Network response was not ok');

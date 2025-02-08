@@ -5,8 +5,8 @@ import type { Level, RenderAs, GradientType, ImageSettings } from 'qrcode.vue';
 
 const props = defineProps({
   url: { type: String, required: true },  // QR data url
-  size: { type: Number, required: false, default: 100 },
-  logoSize: { type: Number, required: false, default: 20 },
+  size: { type: Number, required: false, default: 100 },  // QR size in pixels
+  logoSize: { type: Number, required: false, default: 20 }, // logo size in pixels
 });
 
 const level = ref<Level>('M');
@@ -32,7 +32,7 @@ onMounted(async () => {
     src: logoUrl.value,
     width: props.logoSize,
     height: props.logoSize,
-    excavate: false,
+    excavate: true,
   };
   largeLogoSettings.value = {
     src: logoUrl.value,
@@ -44,7 +44,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="logoUrl" class="qrcode-container" @click="showModal = true">
+  <div class="qrcode-container" @click="showModal = true">
     <qrcode-vue
       :value="props.url"
       :size="props.size"

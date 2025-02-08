@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, computed, ref } from 'vue';
+import { ref } from 'vue';
 import type { PropType } from 'vue';
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
@@ -43,7 +43,7 @@ function openUserPage(userId: string) {
       </div>
     </div>
     <div class='d-flex align-items-end'>
-      <button class='btn btn-link' @click='tweetStore.downloadApk'>APP ⬇️</button>
+      <button class='btn btn-link' @click='tweetStore.downloadBlob(tweetStore.installApk)'>APP ⬇️</button>
       <div class='qr-code-container'>
         <QRCoder :url='tweetStore.installApk' :size='qrSize'></QRCoder>
       </div>

@@ -158,7 +158,7 @@ async function toggleBookmark(t: Tweet) {
 
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" :media=media
-                    :autoplay="index==0" class="img-fluid mb-1"></MediaView>
+                    v-bind:tweet="tweet" :autoplay="index==0" class="img-fluid mb-1"></MediaView>
             </div>
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
                 <div class='icon-item d-flex align-items-center'>
@@ -182,7 +182,7 @@ async function toggleBookmark(t: Tweet) {
 
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index" :media=media
-                    :autoplay="index==0" class="img-fluid">
+                    v-bind:tweet="tweet" :autoplay="index==0" class="img-fluid">
                 </MediaView>
             </div>
 
@@ -220,7 +220,7 @@ async function toggleBookmark(t: Tweet) {
 
                 <div v-if="comment.attachments?.length" class="media-attachments">
                     <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
-                        :autoplay="index==0" class="img-fluid"></MediaView>
+                        v-bind:tweet="tweet" :autoplay="index==0" class="img-fluid"></MediaView>
                 </div>
 
                 <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
@@ -248,7 +248,7 @@ async function toggleBookmark(t: Tweet) {
                 <p class="card-text">{{ comment.content }}</p>
                 <div v-if="comment.attachments?.length" class="media-attachments">
                     <MediaView v-for="(media, index) in comment.attachments" :key="index" :media=media
-                        :autoplay="index==0" class="img-fluid mb-2"></MediaView>
+                        v-bind:tweet="tweet" :autoplay="index==0" class="img-fluid mb-2"></MediaView>
                 </div>
 
                 <div class='icon-row d-flex justify-content-around mt-1 mb-2'>

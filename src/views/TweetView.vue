@@ -55,10 +55,10 @@ function linkify(text: string) {
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <div v-if="originTweet.attachments.length === 1" class="single-attachment">
-                    <MediaView :media="originTweet.attachments[0]" class="img-fluid"></MediaView>
+                    <MediaView :media="originTweet.attachments[0]" :tweet="tweet" class="img-fluid"></MediaView>
                 </div>
                 <div v-else class="multiple-attachments">
-                    <MediaView v-for='(media, index) in originTweet.attachments.slice(0, 4)' :media='media' :key='index' class='img-fluid' 
+                    <MediaView v-for='(media, index) in originTweet.attachments.slice(0, 4)' :media='media' :tweet="tweet" :key='index' class='img-fluid' 
                         :addtional-items="index === 3 && originTweet.attachments.length > 4 ? originTweet.attachments.length-4 : undefined">
                     </MediaView>
                 </div>
@@ -69,10 +69,10 @@ function linkify(text: string) {
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <div v-if="tweet.attachments.length === 1" class="single-attachment">
-                    <MediaView :media="tweet.attachments[0]" class="img-fluid"></MediaView>
+                    <MediaView :media="tweet.attachments[0]" :tweet="tweet" class="img-fluid"></MediaView>
                 </div>
                 <div v-else class="multiple-attachments">
-                    <MediaView v-for='(media, index) in tweet.attachments.slice(0, 4)' :media='media' :key='index' class='img-fluid' 
+                    <MediaView v-for='(media, index) in tweet.attachments.slice(0, 4)' :media='media' :tweet="tweet" :key='index' class='img-fluid' 
                         :addtional-items="index === 3 && tweet.attachments.length > 4 ? tweet.attachments.length-4 : undefined">
                     </MediaView>
                 </div>

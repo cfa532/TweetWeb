@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { PropType } from 'vue'
-import { Image, PDFView, VideoJS } from './index'
+import { Image, PDFView, VideoJS, BlobData } from './index'
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
+    tweet: {type: Object as PropType<Tweet>, required: false},
     autoplay: {type: Boolean, required: false},
     addtionalItems: {type: Number, required: false},    // show PLUS sign over last item in preview grid
 });
-console.log(props)
 
 const userComponent = computed(() => {
     let p = props.media.type.toLowerCase()
@@ -19,8 +19,7 @@ const userComponent = computed(() => {
     } else if (p.includes("video") || p.includes("audio") ) {
         return VideoJS
     } else {
-        console.warn("Unknown file type:", p)
-        return "<p>Unkonwn file type</P>"
+        return BlobData
     }
 })
 </script>

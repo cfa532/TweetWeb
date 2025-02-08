@@ -1,9 +1,8 @@
 <script lang="ts" setup>
 import { watch, onMounted, ref, computed } from 'vue';
-import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
-import { useTweetStore, useLeitherStore } from "@/stores";
-import { default as qrCoder } from "./QRCoder.vue"
+import { useTweetStore } from "@/stores";
+import { QRCoder } from '@/views';
 import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
@@ -13,12 +12,10 @@ const props = defineProps({
     userId: { type: String, required: false },
 })
 const userId = computed(() => props.userId)
-const avatarUrl = ref()
+const avatarUrl = ref(import.meta.env.VITE_APP_LOGO)
 const user = ref<User>()
 
 onMounted(async () => {
-    avatarUrl.value = await useLeitherStore().logoUrl
-
     if (props.userId) {
         user.value = await tweetStore.getUser(props.userId)
         tweetStore.getFollowCount(props.userId)   // No need to await here.
@@ -73,9 +70,9 @@ watch(userId, async (nv, ov) => {
                 </div>
             </div>
             <div class="d-flex align-items-start qr-container">
-                <button class="btn btn-link" @click="tweetStore.downloadApk">APP ⬇️</button>
+                <button class="btn btn-link" @click="tweetStore.downloadBlob(tweetStore.installApk)">APP ⬇️</button>
                 <div class="qr-code-container">
-                    <qrCoder :url="tweetStore.installApk" :size="qrSize"></qrCoder>
+                    <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize=20></QRCoder>
                 </div>
             </div>
         </div>
