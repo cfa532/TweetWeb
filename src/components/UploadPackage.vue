@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { Loading, Preview } from '@/views'
-import { useTweetStore, useLeitherStore, useAlertStore } from '@/stores'
+import { useTweetStore, useAlertStore } from '@/stores'
 
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
@@ -19,7 +19,7 @@ const loading = ref(false)
 const selectFiles = ref()
 const tweetStore = useTweetStore()
 const hproseClient = tweetStore.loginUser?.client
-const isAppPackage = ref(false)
+const isAppPackage = ref(true)
 
 onMounted(() => {
 })
