@@ -17,8 +17,8 @@ const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([]) // New ref to store upload progress of each file
 const loading = ref(false)
 const selectFiles = ref()
-const api = useLeitherStore()
 const tweetStore = useTweetStore()
+const hproseClient = tweetStore.loginUser?.client
 const isAppPackage = ref(false)
 
 onMounted(() => {
@@ -44,6 +44,7 @@ async function onSubmit() {
         if (filesUpload.value.length < 1)
             return
         let mid = await uploadFile(filesUpload.value[0])
+        console.log('mid:', mid)
         textValue.value = ""
         filesUpload.value = []
         useAlertStore().success("App package mimei: " + mid)
@@ -55,12 +56,7 @@ async function onSubmit() {
         loading.value = false
     }
 }
-function getMedaiType(t: string) {
-    if (t.startsWith("image/")) return "Image"
-    if (t.startsWith("video/")) return "Video"
-    if (t.startsWith("audio/")) return "Audio"
-    return "Uknown"
-}
+
 // upload file to Mimei database and return a IPFS cid.
 async function readFileSlice(
     fsid: string,
@@ -70,18 +66,18 @@ async function readFileSlice(
 ): Promise<string> {
     // reading file slice by slice, start at given position
     var end = Math.min(start + sliceSize, arr.byteLength)
-    let count = await api.client.MFSetData(fsid, arr.slice(start, end), start)
+    let count = await hproseClient.MFSetData(fsid, arr.slice(start, end), start)
     // Calculate progress
     uploadProgress[index] = Math.floor(((start + count) / arr.byteLength) * 100)
     console.log('Uploading...', uploadProgress[index] + '%', end, arr.byteLength)
 
     if (end === arr.byteLength) {
         // last slice read. Convert temp to IPFS file
-        const t = api.client.timeout
-        api.client.timeout = 0      // do Not timeout
-        const cid = await api.client.MFTemp2Ipfs(fsid)
+        const t = hproseClient.timeout
+        hproseClient.timeout = 0      // do Not timeout
+        const cid = await hproseClient.MFTemp2Ipfs(fsid)
         console.log("file cid=", cid)
-        api.client.timeout = t
+        hproseClient.timeout = t
         if (isAppPackage.value)
             // upload app installation package.
             return await tweetStore.uploadPackage(cid)

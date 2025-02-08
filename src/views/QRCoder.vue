@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import QrcodeVue from 'qrcode.vue';
-import { useLeitherStore } from "@/stores";
 import type { Level, RenderAs, GradientType, ImageSettings } from 'qrcode.vue';
 
 const props = defineProps({
@@ -15,7 +14,7 @@ const renderAs = ref<RenderAs>('svg');
 const background = ref('#ffffff');
 const foreground = ref('#604060');
 const margin = ref(0);
-const logoUrl = ref()
+const logoUrl = ref(import.meta.env.VITE_APP_LOGO)
 
 const logoSettings = ref<ImageSettings>();
 const largeLogoSettings = ref<ImageSettings>();
@@ -29,8 +28,6 @@ const showModal = ref(false);
 const largeQRSize = ref(200)
 
 onMounted(async () => {
-  logoUrl.value = await useLeitherStore().logoUrl
-
   logoSettings.value = {
     src: logoUrl.value,
     width: props.logoSize,

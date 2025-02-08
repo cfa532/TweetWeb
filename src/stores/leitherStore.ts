@@ -36,15 +36,16 @@ export const useLeitherStore = defineStore({
         hostIP: curIP,    // IP address of node to write
         baseUrl: window.location.protocol+'//'+curIP+'/',
         client: window.hprose.Client.create("ws://" + curIP +"/ws/", ayApi),
+        logoUrl: import.meta.env.VITE_APP_LOGO,
     }),
     getters: {
-        logoUrl: async (state)=>{
-            let arr = new Uint8Array(await state.client.RunMApp("open_mac", {
-                aid: state.appId, ver: "last", mac: import.meta.env.VITE_TWEET_LOGO
-            }))
-            const blob = new Blob([arr], { type: 'image/jpeg' })
-            return URL.createObjectURL(blob)
-        }
+        // logoUrl: async (state)=>{
+        //     let arr = new Uint8Array(await state.client.RunMApp("open_mac", {
+        //         aid: state.appId, ver: "last", mac: import.meta.env.VITE_TWEET_LOGO
+        //     }))
+        //     const blob = new Blob([arr], { type: 'image/jpeg' })
+        //     return URL.createObjectURL(blob)
+        // }
     },
     actions: {
         getClient(ip: string) {

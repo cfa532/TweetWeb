@@ -294,7 +294,7 @@ export const useTweetStore = defineStore('tweetStore', {
         getMediaUrl(mid: string | undefined, baseUrl: string): string {
             let url = baseUrl
             if (!mid) {
-                return "http://tweet1.fireshare.us/avatar.jpg"
+                return import.meta.env.VITE_APP_LOGO
             }
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
@@ -374,10 +374,11 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
         async openTempFile() {
-            console.log("Open temp file", this.loginUser)
-            return await this.loginUser?.client.RunMApp("open_temp_file", {
+            var fsid = await this.loginUser?.client.RunMApp("open_temp_file", {
                 aid: this.appId, ver: "last"
             })
+            console.log("Open temp file", fsid, this.loginUser)
+            return fsid
         },
         async uploadTweet(tweet: any, tweetId: MimeiId) {
             console.log("Upload tweet", tweetId, tweet)
