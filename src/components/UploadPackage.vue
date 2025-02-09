@@ -34,7 +34,6 @@ async function uploadFile(file: File, index: number = 0): Promise<string> {
     // Create a FileInfo object with file name, last modified time,
     const fsid = await tweetStore.openTempFile()
     let mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // return an IPFS cid
-    console.log(mid) // never executed when there is a timeout uploading file.
     return mid
 }
 
@@ -44,7 +43,7 @@ async function onSubmit() {
         if (filesUpload.value.length < 1)
             return
         let mid = await uploadFile(filesUpload.value[0])
-        console.log('mid:', mid)
+        console.log('Package mid:', mid)
         textValue.value = ""
         filesUpload.value = []
         useAlertStore().success("App package mimei: " + mid)
