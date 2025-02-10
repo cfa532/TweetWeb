@@ -103,7 +103,6 @@ function linkify(text: string) {
     justify-content: center;
     align-items: center;
     max-height: 50vh;
-    /* Limit the height to 50% of the viewport height */
 }
 
 .media-attachments {
@@ -112,7 +111,6 @@ function linkify(text: string) {
     flex-wrap: wrap;
     gap: 2px;
     position: relative;
-    /* Positioning context for overlay */
 }
 
 .multiple-attachments {
@@ -121,36 +119,25 @@ function linkify(text: string) {
     grid-template-rows: repeat(2, 1fr);
     gap: 2px;
     position: relative;
-    /* Positioning context for overlay */
     counter-increment: item-counter;
-    /* Add counter */
 }
 
 .multiple-attachments .img-fluid {
     width: 100%;
     height: 0;
     padding-bottom: 100%;
-    /* This creates a square aspect ratio */
     object-fit: cover;
-    /* Ensures the image covers the entire square */
     object-position: center;
-    /* Centers the image within the square */
     display: block;
-    /* Ensures the element is treated as a block-level element */
     overflow: hidden;
-    /* Ensures no overflow is visible */
     position: relative;
-    /* Positioning context for overlay */
 }
 
 .portrait-center {
     object-fit: contain;
-    /* Changed from cover to contain */
     object-position: top;
     max-height: 100%;
-    /* Ensure it doesn't exceed the container's height */
     max-width: 100%;
-    /* Ensure it doesn't exceed the container's width */
 }
 
 .overlay {
@@ -161,7 +148,6 @@ function linkify(text: string) {
     width: 100%;
     height: 100%;
     background-color: rgba(0, 0, 0, 0.5);
-    /* Semi-transparent background */
     display: flex;
     justify-content: center;
     align-items: center;
@@ -169,30 +155,29 @@ function linkify(text: string) {
     font-size: 48px;
     font-weight: bold;
     pointer-events: none;
-    /* Ensures the overlay doesn't interfere with clicks */
 }
 
 .card {
     width: 100%;
-    margin: 0px 0px 15px 0px;
+    margin: 0 0 15px 0;
 }
 
 .card-header {
-    margin: 0px;
-    padding: 0px 8px;
+    margin: 0;
+    padding: 0 8px;
     cursor: pointer;
 }
 
 .card-body {
-    margin: 0px;
-    padding: 0px;
+    margin: 0;
+    padding: 0;
 }
 
 .card-text {
     text-align: left;
     font-size: medium;
     white-space: pre-wrap;
-    padding: 4px 0px 0px 8px;
+    padding: 4px 0 0 8px;
 }
 
 .card-text a {
@@ -202,24 +187,17 @@ function linkify(text: string) {
 
 .icon-item {
     position: relative;
-    /* Establishes a positioning context for the number */
     display: flex;
     flex-direction: column;
-    /* Stacks the icon and number vertically */
     align-items: center;
 }
 
 .icon-number {
     position: absolute;
-    /* Positions the number on top of the icon */
     bottom: -1px;
-    /* Positions the number slightly below the icon */
     right: -15px;
-    /* Aligns the number to the right edge of the icon */
     font-size: 15px;
-    /* Adjust the font size for better visibility */
     color: rgba(0, 0, 0, 0.819);
-    /* Change the color to ensure visibility */
 }
 
 .icon-row {
@@ -229,26 +207,19 @@ function linkify(text: string) {
 
 .icon {
     width: 18px;
-    /* Set a uniform width for icons */
     height: 18px;
-    /* Set a uniform height for icons */
     transition: transform 0.3s;
     cursor: pointer;
 }
 
 .icon:hover {
     transform: scale(1.1);
-    /* Slightly enlarge the icon on hover */
 }
 
 .icon-item span {
     margin-top: 5px;
-    /* Adds space between the icon and the number */
     color: rgba(0, 0, 0, 0.787);
-    /* Change the color to ensure visibility */
     font-weight: bold;
-    /* Makes the number stand out */
     pointer-events: none;
-    /* Ensures the number doesn't interfere with icon hover */
 }
 </style>
