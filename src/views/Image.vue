@@ -16,8 +16,8 @@ const props = defineProps({
 <style>
 .container {
     /* text-align: left; */
-    margin: 5px;
-    padding: 5px;
+    margin: 2px;
+    padding: 2px;
     /* float: left; */
     display: inline-block;
     background-color: rgba(0, 0, 0, 0.06); /* Semi-transparent background */

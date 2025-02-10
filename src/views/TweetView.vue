@@ -22,9 +22,9 @@ const props = defineProps({
 
 const originalTweet = ref<Tweet | null>();
 const isRetweet = ref(false);
-const forwardBy = ref<string | undefined>(undefined);
+const retweetedBy = ref<string | undefined>(undefined);
 const currentTweet = ref(props.tweet);
-const isTextOverflowing = ref(false);
+const isContentClipped = ref(false);
 
 const MAX_LINES = 10;
 const MAX_CHARS_CHINESE = 300;
@@ -39,20 +39,20 @@ onMounted(async () => {
     if (originalTweet.value) {
       if (!currentTweet.value.content && !currentTweet.value.attachments) {
         // A retweet.
-        forwardBy.value = currentTweet.value.author.username;
+        retweetedBy.value = currentTweet.value.author.username;
         isRetweet.value = true;
       }
     }
   }
 });
 
-const displayTweet = computed(() => {
+const displayedTweet = computed(() => {
   return isRetweet.value && originalTweet.value ? originalTweet.value : currentTweet.value;
 });
 
 function openDetailView() {
-  sessionStorage.setItem('tweetDetail', JSON.stringify(displayTweet.value));
-  router.push(`/tweet/${displayTweet.value.mid}/${displayTweet.value.author.mid}`);
+  sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
+  router.push(`/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`);
 }
 
 function linkify(text: string) {
@@ -60,16 +60,16 @@ function linkify(text: string) {
   return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
 
-const displayedContent = computed(() => {
-  if (!displayTweet.value.content) {
+const processedContent = computed(() => {
+  if (!displayedTweet.value.content) {
     return '';
   }
 
-  const linkedText = linkify(displayTweet.value.content);
+  const linkedText = linkify(displayedTweet.value.content);
   const isChinese = /[\u4e00-\u9fa5]/.test(linkedText); // Basic check for Chinese characters
 
   if ((isChinese && linkedText.length > MAX_CHARS_CHINESE) || (!isChinese && linkedText.split('\n').length > MAX_LINES)) {
-    isTextOverflowing.value = true;
+    isContentClipped.value = true;
     if (isChinese) {
       return linkedText.substring(0, MAX_CHARS_CHINESE) + '...';
     } else {
@@ -77,39 +77,19 @@ const displayedContent = computed(() => {
       return lines.slice(0, MAX_LINES).join('\n') + '...';
     }
   } else {
-    isTextOverflowing.value = false;
+    isContentClipped.value = false;
     return linkedText;
   }
 });
 
-const attachmentLayout = computed(() => {
-  const attachmentCount = displayTweet.value.attachments?.length || 0;
-  if (attachmentCount === 1) {
-    return 'single-attachment';
-  } else if (attachmentCount > 1) {
-    return 'multiple-attachments';
-  }
-  return '';
+const attachmentGridColumns = computed(() => {
+  const attachmentCount = displayedTweet.value.attachments?.length || 0;
+  return (attachmentCount === 2 || attachmentCount >= 3) ? 'repeat(2, 1fr)' : '';
 });
 
-const gridTemplateColumns = computed(() => {
-  const attachmentCount = displayTweet.value.attachments?.length || 0;
-  if (attachmentCount === 2) {
-    return 'repeat(2, 1fr)'; // Two columns for 2 attachments
-  } else if (attachmentCount >= 3) {
-    return 'repeat(2, 1fr)'; // Default to 2 columns for 3 or 4 attachments
-  }
-  return '';
-});
-
-const gridTemplateRows = computed(() => {
-  const attachmentCount = displayTweet.value.attachments?.length || 0;
-  if (attachmentCount <= 2) {
-    return '1fr'; // One row for 2 attachments
-  } else if (attachmentCount >= 3) {
-    return 'repeat(2, 1fr)'; // Default to 2 rows for 3 or 4 attachments
-  }
-  return '';
+const attachmentGridRows = computed(() => {
+  const attachmentCount = displayedTweet.value.attachments?.length || 0;
+  return attachmentCount <= 2 ? '1fr' : (attachmentCount >= 3 ? 'repeat(2, 1fr)' : '');
 });
 
 </script>
@@ -120,38 +100,38 @@ const gridTemplateRows = computed(() => {
       <ItemHeader
         :tweet='originalTweet'
         :author='originalTweet?.author'
-        :timestamp='displayTweet.timestamp as number'
+        :timestamp='displayedTweet.timestamp as number'
         :is-retweet='isRetweet'
-        :by='forwardBy'
+        :by='retweetedBy'
         v-if='isRetweet && originalTweet'
       />
       <ItemHeader
         v-else
-        :tweet='displayTweet'
-        :author='displayTweet.author'
-        :timestamp='displayTweet.timestamp as number'
+        :tweet='displayedTweet'
+        :author='displayedTweet.author'
+        :timestamp='displayedTweet.timestamp as number'
       />
     </div>
     <div class='card-body'>
-      <p v-if='displayTweet.content' class='card-text' v-html='displayedContent'></p>
-      <div v-if='displayTweet.attachments?.length' class='media-attachments'>
-        <div v-if='displayTweet.attachments.length === 1' class='single-attachment'>
+      <p v-if='displayedTweet.content' class='card-text' v-html='processedContent'></p>
+      <div v-if='displayedTweet.attachments?.length' class='media-attachments'>
+        <div v-if='displayedTweet.attachments.length === 1' class='single-attachment'>
           <MediaView
-            :media='displayTweet.attachments[0]'
-            :tweet='displayTweet'
+            :media='displayedTweet.attachments[0]'
+            :tweet='displayedTweet'
             class='img-fluid portrait-center'
           ></MediaView>
         </div>
-        <div v-else-if='displayTweet.attachments.length > 1' :class="['multiple-attachments']" :style="{ 'grid-template-columns': gridTemplateColumns, 'grid-template-rows': gridTemplateRows }">
+        <div v-else-if='displayedTweet.attachments.length > 1' :class='["multiple-attachments"]' :style='{ "grid-template-columns": attachmentGridColumns, "grid-template-rows": attachmentGridRows }'>
           <MediaView
-            v-for='(media, index) in displayTweet.attachments.slice(0, 4)'
+            v-for='(media, index) in displayedTweet.attachments.slice(0, 4)'
             :media='media'
-            :tweet='displayTweet'
+            :tweet='displayedTweet'
             :key='index'
             class='img-fluid'
             :addtional-items='
-              index === 3 && displayTweet.attachments.length > 4
-                ? displayTweet.attachments.length - 4
+              index === 3 && displayedTweet.attachments.length > 4
+                ? displayedTweet.attachments.length - 4
                 : undefined
             '
           ></MediaView>
@@ -185,8 +165,6 @@ const gridTemplateRows = computed(() => {
 
 .multiple-attachments {
   display: grid;
-  /* grid-template-columns: repeat(2, 1fr); */ /* Dynamic based on attachment count */
-  /* grid-template-rows: repeat(2, 1fr); */    /* Dynamic based on attachment count */
   gap: 2px;
   position: relative;
   counter-increment: item-counter;
@@ -210,33 +188,16 @@ const gridTemplateRows = computed(() => {
   max-width: 100%;
 }
 
-.overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  color: white;
-  font-size: 48px;
-  font-weight: bold;
-  pointer-events: none;
-}
-
 .card {
   width: 100%;
   margin: 0 0 15px 0;
 }
-
 .card-header {
   margin: 0;
   padding: 0 8px;
   cursor: pointer;
+  background-color: solid #888;
 }
-
 .card-body {
   margin: 0;
   padding: 0;
@@ -247,10 +208,9 @@ const gridTemplateRows = computed(() => {
   font-size: medium;
   white-space: pre-wrap;
   padding: 4px 0 0 8px;
-  /* Add these lines */
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: v-bind('isTextOverflowing ? MAX_LINES : undefined'); /* Fallback for non-webkit */
+  -webkit-line-clamp: v-bind('isContentClipped ? MAX_LINES : undefined');
   -webkit-box-orient: vertical;
 }
 
