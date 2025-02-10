@@ -69,7 +69,6 @@ function openDetailView() {
 .tweet-title {
   font-size: 0.9rem; /* Adjust the size as needed */
   cursor: pointer;
-  /* width: 100%;  Remove this line */
   white-space: nowrap; /* Prevent text from wrapping */
   overflow: hidden;       /* Hide overflowing text */
   text-overflow: ellipsis; /* Add ellipsis (...) for overflow */
@@ -78,7 +77,7 @@ function openDetailView() {
 .tweet-title-container {
   display: flex;
   justify-content: flex-end; /* Align to the right */
-  width: 100%;
+  width: 60%;
   margin: 4px 0 8px 0;
 }
 .username {
