@@ -43,7 +43,7 @@ function linkify(text: string) {
 </script>
 
 <template>
-    <div @click.prevent="openDetailView" class="card ms-1">
+    <div @click.prevent="openDetailView" class="card ms-1 tweet-container">
         <div class="card-header d-flex align-items-start">
             <ItemHeader v-if="isRetweet" :tweet="originTweet" :author="originTweet.author"
                 :timestamp="tweet.timestamp as number" :is-retweet="isRetweet" :by="forwardBy">
@@ -82,6 +82,11 @@ function linkify(text: string) {
 </template>
 
 <style scoped>
+.tweet-container {
+    max-height: 50vh; /* Limits the height to one-third of the viewport height */
+    overflow: hidden; /* Hides any content that overflows the container */
+}
+
 .single-attachment {
     width: 100%;
     display: flex;

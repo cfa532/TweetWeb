@@ -28,5 +28,7 @@ const props = defineProps({
     max-width: 100%;
     width: 100%;
     height: auto;
+    max-height: 80vh; /* Add this line */
+    object-fit: contain; /* Add this line to maintain aspect ratio */
 }
 </style>
