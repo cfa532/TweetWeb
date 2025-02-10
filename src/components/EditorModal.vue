@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { Loading, Preview, ItemHeader } from '@/views'
-import { useTweetStore } from '@/stores'
+import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 
 interface HTMLInputEvent extends Event {
@@ -51,10 +51,8 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
     // Create a FileInfo object with file name, last modified time,
     const fsid = await tweetStore.openTempFile()
     const fi = { mid: "", type: getMedaiType(file.type), size: file.size, fileName: file.name, timestamp: file.lastModified } as MimeiFileType
-    const t = hproseClient.timeout
-    hproseClient.timeout = 0    // never timeout
     fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // returned an IPFS id actually
-    hproseClient.timeout = t    // restore default timeout
+
     console.log(fi)    // never executed when there is a timeout uploading file.
     return fi
   }
@@ -75,7 +73,7 @@ async function onSubmit() {
         .map((v: any) => {
           return v.value    // get FileInfo of each attachment
         })
-      if (!attachments || attachments.length < filesUpload.value.length) {
+      if (attachments?.length < filesUpload.value.length) {
         // uploading files failed
         throw 'Attachments uploading failed' + attachments.toString()
       }
@@ -96,7 +94,7 @@ async function onSubmit() {
   } catch (err) {
     // something wrong uploading files, abort
     console.error('onSubmit err:', err)
-    window.alert(err)
+    useAlertStore().error(err)
   } finally {
     loading.value = false
   }
@@ -117,10 +115,10 @@ async function readFileSlice(
 
   if (end === arr.byteLength) {
     // last slice read. Convert temp to IPFS file
-    const t = hproseClient.timeout
+    const defaultTimeout = hproseClient.timeout
     hproseClient.timeout = 0
     const cid = await hproseClient.MFTemp2Ipfs(fsid)
-    hproseClient.timeout = t
+    hproseClient.timeout = defaultTimeout
     return cid
   } else {
     // recursive call

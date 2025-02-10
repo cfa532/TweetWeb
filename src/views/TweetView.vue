@@ -154,7 +154,7 @@ function linkify(text: string) {
     text-align: left;
     font-size: medium;
     white-space: pre-wrap;
-    padding: 4px 8px;
+    padding: 4px 0px 0px 8px;
 }
 
 .card-text a {

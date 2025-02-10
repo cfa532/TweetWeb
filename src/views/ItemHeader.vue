@@ -55,12 +55,32 @@ function openDetailView() {
       </div>
     </div>
   </div>
+  <div class='tweet-title-container'>
+    <div class='tweet-title' @click.prevent='openDetailView'>
+      {{ tweet?.title }}
+    </div>
+  </div>
   <div class='corner-menu-container'>
     <CornerMenu :tweet="tweet" />
   </div>
 </template>
 
 <style>
+.tweet-title {
+  font-size: 0.9rem; /* Adjust the size as needed */
+  cursor: pointer;
+  /* width: 100%;  Remove this line */
+  white-space: nowrap; /* Prevent text from wrapping */
+  overflow: hidden;       /* Hide overflowing text */
+  text-overflow: ellipsis; /* Add ellipsis (...) for overflow */
+}
+
+.tweet-title-container {
+  display: flex;
+  justify-content: flex-end; /* Align to the right */
+  width: 100%;
+  margin: 4px 0 8px 0;
+}
 .username {
   font-size: 0.9rem; /* Adjust the size as needed */
 }

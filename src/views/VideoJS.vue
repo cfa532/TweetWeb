@@ -62,7 +62,7 @@ function disableRightClick(event: MouseEvent) {
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
     >
-      <source :src=props.media.mid type="video/mp4" />
+      <source :src="props.media.mid + '#t=3'" type="video/mp4" />
     </video>
     <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 1%; position: relative;">
       {{ media.fileName }}
