@@ -55,6 +55,7 @@ function disableRightClick(event: MouseEvent) {
     <video
       ref="video"
       class="video"
+      :class="{'video-portrait': isPortrait}"
       :autoplay=props.autoplay
       controls
       :controlslist=controls
@@ -79,6 +80,12 @@ function disableRightClick(event: MouseEvent) {
 .video {
   width: 100%;
   display: block;
+}
+
+/* Add this style */
+.video-portrait {
+  max-height: 80vh; /* Adjust this value as needed */
+  object-fit: contain; /*  Prevent the video from being cropped */
 }
 
 .custom-controls {
