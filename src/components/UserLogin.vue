@@ -22,6 +22,7 @@ async function onSubmit(values: any) {
 </script>
 
 <template>
+<div class="col-sm-12 col-md-8 col-lg-6" >
     <div class="card m-3">
         <h4 class="card-header">Login</h4>
         <div class="card-body">
@@ -45,6 +46,7 @@ async function onSubmit(values: any) {
             </Form>
         </div>
     </div>
+</div>
 </template>
 
 <style>

@@ -31,13 +31,17 @@ const tweetFeed = computed(()=>{
 </script>
 
 <template>
-    <AppHeader />
-    <TweetView v-for="tweet in tweetFeed" :tweet="tweet" :key="tweet.mid" />
-    <div v-if="isLoading" class="d-flex justify-content-center my-3">
-        <div class="spinner-border" role="status">
-            <span class="visually-hidden">Loading...</span>
+<div class="row justify-content-start align-items-start">
+    <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
+        <AppHeader />
+        <TweetView v-for="tweet in tweetFeed" :tweet="tweet" :key="tweet.mid" />
+        <div v-if="isLoading" class="d-flex justify-content-center my-3">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
         </div>
     </div>
+</div>
 </template>
 
 <style scoped>

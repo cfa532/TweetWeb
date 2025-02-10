@@ -5,9 +5,9 @@ import { Alert } from './views';
 <template>
   <div class="container-fluid">
     <Alert/>
+    <router-view />
     <div class="row justify-content-start align-items-start">
-      <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
-        <router-view />
+      <div class="col-sm-12 col-md-10 col-lg-8" style="background-color:aliceblue;">
       </div>
     </div>
   </div>

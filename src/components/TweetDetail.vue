@@ -145,6 +145,8 @@ async function toggleBookmark(t: Tweet) {
 </script>
 
 <template>
+<div class="row justify-content-start align-items-start">
+<div class="col-sm-12 col-md-10 col-lg-10" style="background-color:aliceblue;">
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
             <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
@@ -275,6 +277,8 @@ async function toggleBookmark(t: Tweet) {
             <span class="visually-hidden">Loading...</span>
         </div>
     </div>
+</div>
+</div>
 </template>
 
 <style scoped>

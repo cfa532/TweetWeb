@@ -128,6 +128,8 @@ function removeFile(f: File) {
 </script>
 
 <template>
+<div class="row justify-content-start align-items-start">
+    <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
     <div class="card-header d-flex align-items-center">
         <input v-model="isAppPackage" type="checkbox" unchecked>&nbsp;Upload App package</input>
     </div>
@@ -151,6 +153,8 @@ function removeFile(f: File) {
         <Preview @file-canceled="removeFile(file)" v-for="(file, index) in filesUpload" :key="index" v-bind:src="file"
             v-bind:progress="uploadProgress[index]"></Preview>
     </div>
+</div>
+</div>
 </template>
 
 <style scoped>

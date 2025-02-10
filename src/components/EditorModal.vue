@@ -179,6 +179,8 @@ function logout() {
 </script>
 
 <template>
+<div class="row justify-content-start align-items-start">
+<div class="col-sm-12 col-md-10 col-lg-8" style="background-color:aliceblue;">
   <div class="card-header d-flex align-items-center">
     <ItemHeader :author="author"></ItemHeader>
     <button class="logout" @click.prevent="logout">Logout</button>
@@ -212,6 +214,8 @@ function logout() {
     <Preview @file-canceled="removeFile(file)" v-for="(file, index) in filesUpload" :key="index" v-bind:src="file"
       v-bind:progress="uploadProgress[index]"></Preview>
   </div>
+</div>
+</div>
 </template>
 
 <style scoped>
