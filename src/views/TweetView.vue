@@ -82,6 +82,36 @@ const displayedContent = computed(() => {
   }
 });
 
+const attachmentLayout = computed(() => {
+  const attachmentCount = displayTweet.value.attachments?.length || 0;
+  if (attachmentCount === 1) {
+    return 'single-attachment';
+  } else if (attachmentCount > 1) {
+    return 'multiple-attachments';
+  }
+  return '';
+});
+
+const gridTemplateColumns = computed(() => {
+  const attachmentCount = displayTweet.value.attachments?.length || 0;
+  if (attachmentCount === 2) {
+    return 'repeat(2, 1fr)'; // Two columns for 2 attachments
+  } else if (attachmentCount >= 3) {
+    return 'repeat(2, 1fr)'; // Default to 2 columns for 3 or 4 attachments
+  }
+  return '';
+});
+
+const gridTemplateRows = computed(() => {
+  const attachmentCount = displayTweet.value.attachments?.length || 0;
+  if (attachmentCount <= 2) {
+    return '1fr'; // One row for 2 attachments
+  } else if (attachmentCount >= 3) {
+    return 'repeat(2, 1fr)'; // Default to 2 rows for 3 or 4 attachments
+  }
+  return '';
+});
+
 </script>
 
 <template>
@@ -112,7 +142,7 @@ const displayedContent = computed(() => {
             class='img-fluid portrait-center'
           ></MediaView>
         </div>
-        <div v-else class='multiple-attachments'>
+        <div v-else-if='displayTweet.attachments.length > 1' :class="['multiple-attachments']" :style="{ 'grid-template-columns': gridTemplateColumns, 'grid-template-rows': gridTemplateRows }">
           <MediaView
             v-for='(media, index) in displayTweet.attachments.slice(0, 4)'
             :media='media'
@@ -155,8 +185,8 @@ const displayedContent = computed(() => {
 
 .multiple-attachments {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
+  /* grid-template-columns: repeat(2, 1fr); */ /* Dynamic based on attachment count */
+  /* grid-template-rows: repeat(2, 1fr); */    /* Dynamic based on attachment count */
   gap: 2px;
   position: relative;
   counter-increment: item-counter;
