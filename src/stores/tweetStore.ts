@@ -122,7 +122,11 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async getTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
             let tweet = await this.fetchTweet(tweetId, authorId)
-            if (!tweet) return
+            if (!tweet) {
+                // try to load the tweet by Id alone.
+                tweet = await this.fetchTweet(tweetId)
+                if (!tweet) return
+            }
 
             if (tweet?.originalTweetId) {
                 tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
