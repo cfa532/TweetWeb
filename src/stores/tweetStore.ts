@@ -131,8 +131,11 @@ export const useTweetStore = defineStore('tweetStore', {
             if (tweet?.originalTweetId) {
                 tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
                 if (!tweet.originalTweet) {
-                    console.info("Missing originalTweet", tweet)
-                    return
+                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId)
+                    if (!tweet.originalTweet) { 
+                        console.info("Missing originalTweet", tweet)
+                        return
+                    }
                 }
             }
             sessionStorage.setItem(tweetId, JSON.stringify(tweet))
