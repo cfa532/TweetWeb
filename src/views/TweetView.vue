@@ -9,15 +9,8 @@ const tweetStore = useTweetStore()
 const router = useRouter()
 
 const props = defineProps({
-  tweet: {
-    type: Object as PropType<Tweet>,
-    required: true
-  },
-  isQuoted: {
-    type: Boolean,
-    required: false,
-    default: false
-  }
+  tweet: { type: Object as PropType<Tweet>, required: true },
+  isQuoted: { type: Boolean, required: false, default: false }
 });
 
 const originalTweet = ref<Tweet | null>();

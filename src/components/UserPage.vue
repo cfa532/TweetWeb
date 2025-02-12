@@ -8,6 +8,7 @@ const route = useRoute();
 const authorId = computed(()=>route.params.authorId as MimeiId)
 const tweetStore = useTweetStore();
 const isLoading = ref(false)
+const pinnedTweets = ref<Tweet[]>()
 
 onMounted(async () => {
     if (sessionStorage["isBot"] != "No") {
@@ -24,8 +25,13 @@ onMounted(async () => {
 async function loadTweets() {
     isLoading.value = true
     await tweetStore.loadTweets(authorId.value)
+
+    // load pinned tweets and sort by timestamp
+    pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId.value)
+    pinnedTweets.value?.sort((a :any, b :any) => (b.timestamp as number) - (a.timestamp as number))
     isLoading.value = false
 }
+
 const tweetFeed = computed(()=>{
     return tweetStore.tweets.filter(e => {
     if (e.isPrivate) {
@@ -47,6 +53,9 @@ watch(authorId, async (nv, ov)=>{
 <div class="row justify-content-start align-items-start">
 <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
     <AppHeader :userId=authorId />
+    <b v-if="pinnedTweets">&nbsp;&nbsp;Pinned</b>
+    <TweetView v-for="tweet in pinnedTweets" :tweet="tweet" :key="tweet.mid" />
+    <hr />
     <TweetView v-for="tweet in tweetFeed" :tweet="tweet" :key="tweet.mid" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <div class="spinner-border" role="status">

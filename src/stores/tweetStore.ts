@@ -58,12 +58,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!author)
                     return
                 let tweetsByUser = await this.getTweetListByUser(author)
-                if (!tweetsByUser)
-                    return
-                console.log("Tweets of user", tweetsByUser)
+                console.log("Tweets of user", tweetsByUser, author)
 
                 // Tweet may not have its author data yet.
-                tweetsByUser.forEach(async tweet => {
+                tweetsByUser?.forEach(async tweet => {
                     // skip tweet that is in tweets already.
                     if (this.tweets.find(e => e.mid == tweet.mid))
                         return
@@ -101,7 +99,32 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             })
         },
-
+        /**
+         * @returns get MimeiId list of pinned tweets of the user, then load the tweets.
+         */
+        async loadPinnedTweets(userId: string) {
+            let pinnedTweets = [] as Tweet[]
+            let user = await this.getUser(userId)
+            if (!user)
+                return
+            let pinned = await user.client.RunMApp("get_top_tweets", {aid: this.appId, ver: "last", userid: userId})
+            console.log("Pinned tweets", pinned)
+            pinned?.forEach(async (e: any) => {
+                let tweet = this.tweets.find(t => t.mid == e.tweetId)
+                if (tweet) {
+                    tweet.timestamp = Number(e.timestamp)
+                    pinnedTweets.push(tweet)
+                } else {
+                    let t = await this.getTweet(e.tweetId, userId)
+                    if (t) {
+                        this.tweets.push(t)
+                        t.timestamp = Number(e.timestamp)
+                        pinnedTweets.push(t)
+                    }
+                }
+            })
+            return pinnedTweets
+        },
         async getTweetListByUser(user: User): Promise<Tweet[] | undefined> {
             return await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
@@ -122,8 +145,9 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async getTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
             let tweet = await this.fetchTweet(tweetId, authorId)
-            if (!tweet) {
-                // try to load the tweet by Id alone.
+            console.log("Get tweet", tweet)
+            if (!tweet ) {
+                // Author node has not data, try to load the tweet by id alone from some other provider.
                 tweet = await this.fetchTweet(tweetId)
                 if (!tweet) return
             }
