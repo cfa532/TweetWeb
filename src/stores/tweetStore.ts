@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 const GUEST_ID = "000000000000000000000000000"
-const THIRTY_DAYS = 25920000000
+const THIRTY_DAYS = 2592000000
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({

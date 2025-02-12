@@ -74,6 +74,7 @@ async function readFileSlice(
         // last slice read. Convert temp to IPFS file
         const t = hproseClient.timeout
         hproseClient.timeout = 0      // do Not timeout
+        console.log("convert to ipfs", fsid)
         const cid = await hproseClient.MFTemp2Ipfs(fsid)
         console.log("file cid=", cid)
         hproseClient.timeout = t
@@ -86,6 +87,7 @@ async function readFileSlice(
         return await readFileSlice(fsid, arr, start + count, index)
     }
 }
+
 async function onSelect(e: Event) {
     const files =
         (e as HTMLInputEvent).target.files ||       // select input file
