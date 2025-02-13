@@ -68,7 +68,7 @@ async function loadTweets() {
 
     await tweetStore.loadTweets(undefined, lastLoadTime.value, endTime.value);
     lastLoadTime.value = endTime.value;
-    endTime.value -= SEVEN_DAYS;
+    endTime.value -= SEVEN_DAYS;    // go back 7 days
 
     while (tweetFeed.value.length < 4 && attempts < maxAttempts && initialLoad.value) 
     {

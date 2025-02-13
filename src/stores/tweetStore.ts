@@ -103,6 +103,59 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             })
         },
+        async loadTweetsByRank(
+            authorId: string | undefined = undefined,
+            startRank: number = 0,
+            count: number = 10
+        ) {
+            let followings = authorId? [authorId] : this.followings
+            followings.forEach(async (uid: string) => {
+                let author = await this.getUser(uid)
+                if (!author)
+                    return
+                let tweetsByUser = await this.getTweetListByRank(author, startRank, count)  
+                console.log("Tweets of user", tweetsByUser, startRank, count)
+
+                // Tweet may not have its author data yet.
+                tweetsByUser?.forEach(async tweet => {
+                    // skip tweet that is in tweets already.
+                    if (this.tweets.find(e => e.mid == tweet.mid))
+                        return
+                    
+                    tweet.author = author
+                    tweet.provider = author.providerIp
+                    tweet.attachments = tweet.attachments?.map(e => {
+                        return {
+                            mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
+                            type: e.type,
+                            timestamp: e.timestamp,
+                            fileName: e.fileName,
+                            downloadable: tweet.downloadable,
+                            size: e.size
+                        }
+                    })
+                    tweet.comments = []     // load comments only on detail page
+
+                    if (tweet?.originalTweetId) {
+                        tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                        if (!tweet.originalTweet) {
+                            return  // failed to find original tweet, exit.
+                        }
+                    }
+                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
+
+                    // add the tweets into right location of tweets
+                    let index = this.tweets.findIndex(e => e.timestamp < tweet.timestamp);
+                    if (index === -1) {
+                        // If no smaller timestamp is found, push to the end
+                        this.tweets.push(tweet);
+                    } else {
+                        // Insert the tweet at the found index
+                        this.tweets.splice(index, 0, tweet);
+                    }
+                })
+            })
+        },
         /**
          * @returns get MimeiId list of pinned tweets of the user, then load the tweets.
          */
@@ -143,7 +196,20 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return tweets
         },
-
+        async getTweetListByRank(user: User,
+            startRank: number,
+            count: number
+        ): Promise<Tweet[] | undefined> {
+            let tweets = await user.client.RunMApp("get_tweets_by_rank", {
+                aid: this.appId,
+                ver: "last",
+                userid: user.mid,
+                start: startRank,
+                end: startRank + count,
+                gid: this.loginUser?.mid ? this.loginUser?.mid : "000000000000000000000000000",
+            })
+            return tweets
+        },
         /**
          * Given only tweet ID, find it full data. Do NOT load comments yet. Wait until user opens
          * detail tweet page.
