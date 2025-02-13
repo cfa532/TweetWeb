@@ -62,7 +62,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!author)
                     return
                 let tweetsByUser = await this.getTweetListByUser(author, startTimestamp, endTimestamp)  
-                console.log("Tweets of user", tweetsByUser, author)
+                console.log("Tweets of user", tweetsByUser, startTimestamp, endTimestamp)
 
                 // Tweet may not have its author data yet.
                 tweetsByUser?.forEach(async tweet => {
@@ -133,14 +133,15 @@ export const useTweetStore = defineStore('tweetStore', {
             startTimestamp: number = Date.now(),
             endTimestamp: number = Date.now() - THIRTY_DAYS
         ): Promise<Tweet[] | undefined> {
-            return await user.client.RunMApp("get_tweets", {
+            let tweets = await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
                 userid: user.mid,
                 start: startTimestamp,
                 end: endTimestamp,
-                gid: GUEST_ID      // visitor's mid. Placeholder
+                gid: this.loginUser?.mid ? this.loginUser?.mid : "000000000000000000000000000",
             })
+            return tweets
         },
 
         /**
