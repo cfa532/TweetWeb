@@ -66,6 +66,7 @@ async function loadTweets(authorId: MimeiId) {
     isLoading.value = true;
 
     await tweetStore.loadTweetsByRank(authorId, startRank.value, 10);
+    tweetStore.tweets.sort((a: any, b: any) => b.timestamp - a.timestamp);
     startRank.value += 10;
     initialLoad.value = false;
 

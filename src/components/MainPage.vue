@@ -80,6 +80,7 @@ async function loadTweets() {
     initialLoad.value = false;
 
     window.setTimeout(() => {
+        tweetStore.tweets.sort((a: any, b: any) => b.timestamp - a.timestamp);
         isLoading.value = false;
     }, 2000);
 }

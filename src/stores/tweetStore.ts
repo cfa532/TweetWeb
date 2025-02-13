@@ -90,16 +90,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                     }
                     sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
-
-                    // add the tweets into right location of tweets
-                    let index = this.tweets.findIndex(e => e.timestamp < tweet.timestamp);
-                    if (index === -1) {
-                        // If no smaller timestamp is found, push to the end
-                        this.tweets.push(tweet);
-                    } else {
-                        // Insert the tweet at the found index
-                        this.tweets.splice(index, 0, tweet);
-                    }
+                    this.tweets.push(tweet);
                 })
             })
         },
@@ -143,16 +134,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                     }
                     sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
-
-                    // add the tweets into right location of tweets
-                    let index = this.tweets.findIndex(e => e.timestamp < tweet.timestamp);
-                    if (index === -1) {
-                        // If no smaller timestamp is found, push to the end
-                        this.tweets.push(tweet);
-                    } else {
-                        // Insert the tweet at the found index
-                        this.tweets.splice(index, 0, tweet);
-                    }
+                    this.tweets.push(tweet);
                 })
             })
         },
