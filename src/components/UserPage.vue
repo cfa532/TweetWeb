@@ -53,7 +53,7 @@ watch(authorId, async (nv, ov)=>{
 <div class="row justify-content-start align-items-start">
 <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
     <AppHeader :userId=authorId />
-    <b v-if="pinnedTweets">&nbsp;&nbsp;Pinned</b>
+    <b v-if="pinnedTweets?.length!>0">&nbsp;&nbsp;Pinned</b>
     <TweetView v-for="tweet in pinnedTweets" :tweet="tweet" :key="tweet.mid" />
     <hr />
     <TweetView v-for="tweet in tweetFeed" :tweet="tweet" :key="tweet.mid" />

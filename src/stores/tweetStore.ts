@@ -51,13 +51,17 @@ export const useTweetStore = defineStore('tweetStore', {
          * Otherwise load tweets from all the followings.
          * @param authorId 
          */
-        async loadTweets(authorId: string | undefined = undefined) {
+        async loadTweets(
+            authorId: string | undefined = undefined,
+            startTimestamp: number = Date.now(),
+            endTimestamp: number = Date.now() - THIRTY_DAYS
+        ) {
             let followings = authorId? [authorId] : this.followings
             followings.forEach(async (uid: string) => {
                 let author = await this.getUser(uid)
                 if (!author)
                     return
-                let tweetsByUser = await this.getTweetListByUser(author)
+                let tweetsByUser = await this.getTweetListByUser(author, startTimestamp, endTimestamp)  
                 console.log("Tweets of user", tweetsByUser, author)
 
                 // Tweet may not have its author data yet.
@@ -125,13 +129,16 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return pinnedTweets
         },
-        async getTweetListByUser(user: User): Promise<Tweet[] | undefined> {
+        async getTweetListByUser(user: User,
+            startTimestamp: number = Date.now(),
+            endTimestamp: number = Date.now() - THIRTY_DAYS
+        ): Promise<Tweet[] | undefined> {
             return await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
                 userid: user.mid,
-                start: Date.now(),
-                end: Date.now() - THIRTY_DAYS,
+                start: startTimestamp,
+                end: endTimestamp,
                 gid: GUEST_ID      // visitor's mid. Placeholder
             })
         },
