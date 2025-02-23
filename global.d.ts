@@ -66,6 +66,7 @@ interface MimeiFileType {
     size?: number
     fileName?: string
     timestamp: string | number = Date.now()
+    aspectRatio?: number
 
     // not saved in Mimei DB, for display only. The value is assigned from Tweet's downloadable
     // upload render the attachment.

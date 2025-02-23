@@ -368,7 +368,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         content: e.content,
                         timestamp: e.timestamp,
                         attachments: e.attachments?.map((a: MimeiFileType) => {
-                            // comments on same node with tweet.
+                            // comments on the same node as tweet.
                             a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
                             return a
                         }),
