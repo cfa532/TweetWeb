@@ -29,7 +29,7 @@ async function loadMoreTweets() {
         return; // Prevent multiple loads
     isLoading.value = true;
     await tweetStore.loadTweetsByRank(authorId.value, startRank.value, 10);
-    startRank.value += 10;
+    startRank.value = tweetStore.tweets.length;
     isLoading.value = false;
 }
 
@@ -67,7 +67,7 @@ async function loadTweets(authorId: MimeiId) {
 
     await tweetStore.loadTweetsByRank(authorId, startRank.value, 10);
     tweetStore.tweets.sort((a: any, b: any) => b.timestamp - a.timestamp);
-    startRank.value += 10;
+    startRank.value = tweetStore.tweets.length;
     initialLoad.value = false;
 
     // load pinned tweets and sort by timestamp
