@@ -262,7 +262,7 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log(tweetInDB, providerIp, author)
             if (!tweetInDB)
                 return
-            author = await this.getUser(tweetInDB.authorId)
+            author = author ? author : await this.getUser(tweetInDB.authorId)
 
             let tweet = {
                 mid: tweetInDB.mid,
@@ -285,6 +285,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 commentCount: tweetInDB.commentCount,
             }
             sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
+
+            console.log("Get tweet node", author?.hostIds?.[0], author?.nodeId, tweetId)
+            if  (author?.hostIds?.[0] && author?.nodeId && (author?.hostIds?.[0] !== author?.nodeId)) {
+                // get tweet from a node different from author's host.
+                this.lapi.client.RunMApp("node_check_score", {aid: this.appId, ver:"last",
+                    hostid: author?.hostIds?.[0], userid: author?.nodeId, mid: tweetId}, [])
+            }
             return tweet
         },
 
