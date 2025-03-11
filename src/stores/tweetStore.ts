@@ -174,7 +174,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 userid: user.mid,
                 start: startTimestamp,
                 end: endTimestamp,
-                gid: this.loginUser?.mid ? this.loginUser?.mid : "000000000000000000000000000",
+                gid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
             })
             return tweets
         },
@@ -188,7 +188,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 userid: user.mid,
                 start: startRank,
                 end: startRank + count,
-                gid: this.loginUser?.mid ? this.loginUser?.mid : "000000000000000000000000000",
+                gid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
             })
             return tweets
         },
