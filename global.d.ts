@@ -20,7 +20,6 @@ interface User {
     name?: string;
     profile?: string;
     hostIds?: MimeiId[];
-    nodeId?: MimeiId;
     providerIp?: string;  // IP of the best provider for the author's data
     client?: any;       // Hprose client handler
     timestamp: string | number = Date.now();

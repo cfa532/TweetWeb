@@ -239,31 +239,40 @@ export const useTweetStore = defineStore('tweetStore', {
                 return t
             }
             // Get IP address of the provider of this tweet
-            let author, providerClient, providerIp
+            let author, providerClient, providerIp, tweetInDB
             if (authorId) {
                 author = await this.getUser(authorId)
                 if (!author)
                     return
                 providerIp = author?.providerIp
                 providerClient = author?.client
+                // With authodId, we can get most up to date tweet record.
+                tweetInDB = await providerClient.RunMApp("refresh_tweet", {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    tweetid: tweetId,
+                    appuserid: this.loginUser?.mid,
+                    hostid: author?.hostIds?.[0],
+                    userid: authorId,     // author of the tweet
+                })
             } else {
                 providerIp = await this.getProviderIp(tweetId)
                 if (!providerIp)
                     return
                 providerClient = this.lapi.getClient(providerIp)
+                // Get tweet data from Tweet App Mimei. Its definition is different from this app.
+                tweetInDB = await providerClient.RunMApp("get_tweet", {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    tweetid: tweetId,
+                    userid: this.loginUser,
+                })
             }
-            // Get tweet data from Tweet App Mimei. Its definition is different from this app.
-            let tweetInDB = await providerClient.RunMApp("get_tweet", {
-                aid: this.lapi.appId,
-                ver: "last",
-                tweetid: tweetId,
-                userid: GUEST_ID,  // just a placeholder
-            })
-            console.log(tweetInDB, providerIp, author)
+            console.log("Get tweet from db", tweetInDB, providerIp, author)
             if (!tweetInDB)
                 return
             author = author ? author : await this.getUser(tweetInDB.authorId)
-
+            // convert Tweet App's definition to this app's definition.
             let tweet = {
                 mid: tweetInDB.mid,
                 authorId: author!.mid,
@@ -285,13 +294,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 commentCount: tweetInDB.commentCount,
             }
             sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
-
-            console.log("Get tweet node", author?.hostIds?.[0], author?.nodeId, tweetId)
-            if  (author?.hostIds?.[0] && author?.nodeId && (author?.hostIds?.[0] !== author?.nodeId)) {
-                // get tweet from a node different from author's host.
-                this.lapi.client.RunMApp("node_check_score", {aid: this.appId, ver:"last",
-                    hostid: author?.hostIds?.[0], userid: author?.nodeId, mid: tweetId}, [])
-            }
             return tweet
         },
 
@@ -403,7 +405,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 console.error("Login failed", userId, user)
                 return
             }
-            console.log("User", user)
+            console.log("Login user", user)
             let ret = await user.client.RunMApp("login", {
                 aid: this.appId, ver: "last", username: username, password: password
             })
@@ -416,7 +418,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 /**
                  * Now find the IP of a host where user has write permission
                  */
-                if (user.hostIds && user.hostIds.length>0) {
+                if (user.hostIds && user.hostIds.length > 0) {
                     let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
                         aid: this.appId, ver: "last", nodeid: user.hostIds[0]
                     })
@@ -479,10 +481,13 @@ export const useTweetStore = defineStore('tweetStore', {
             tweet.authorId = this.loginUser?.mid
             if (tweetId) {
                 await this.loginUser?.client.RunMApp("add_comment",
-                    {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet)})
+                    {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet)}
+                )
             } else {
-                let t = await this.loginUser?.client.RunMApp("upload_tweet",
-                    {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet)})
+                let t = await this.loginUser?.client.RunMApp("add_tweet",
+                    {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
+                        hostid: this.loginUser?.hostIds?.[0]}
+                    )
                 console.log("New tweet mid", t)
                 return t
             }
