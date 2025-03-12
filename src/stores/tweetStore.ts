@@ -265,7 +265,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     aid: this.lapi.appId,
                     ver: "last",
                     tweetid: tweetId,
-                    userid: this.loginUser,
+                    userid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                 })
             }
             console.log("Get tweet from db", tweetInDB, providerIp, author)
