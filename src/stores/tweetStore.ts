@@ -251,7 +251,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     aid: this.lapi.appId,
                     ver: "last",
                     tweetid: tweetId,
-                    appuserid: this.loginUser?.mid,
+                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                     hostid: author?.hostIds?.[0],
                     userid: authorId,     // author of the tweet
                 })
