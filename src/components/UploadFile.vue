@@ -25,6 +25,15 @@ const alertStore = useAlertStore()
 const hproseClient = tweetStore.loginUser?.client
 const isResumableUpload = ref(true)
 const uploads = ref<any[]>([]) // Store tus upload instances
+const abortControllers = ref<AbortController[]>([])
+
+onBeforeUnmount(() => {
+  // Abort all uploads and cleanup when component unmounts
+  abortControllers.value.forEach(controller => controller.abort())
+  uploads.value.forEach(upload => {
+    if (upload) upload.abort()
+  })
+})
 
 onMounted(() => {
     // Check if there are any uploads in progress from localStorage
@@ -42,30 +51,28 @@ onMounted(() => {
 
 // Helper function to handle individual file uploads with tus
 async function uploadFileWithTus(file: File, index: number = 0): Promise<string> {
+  // Create an AbortController for this upload
+  const controller = new AbortController()
+  abortControllers.value[index] = controller
+  
   return new Promise((resolve, reject) => {
-    // Create a flag to track if the component is still mounted
-    let isMounted = true;
-    
-    // Function to safely resolve/reject only if still mounted
-    const safeResolve = (value: any) => {
-      if (isMounted) resolve(value);
-    };
-    
-    const safeReject = (error: any) => {
-      if (isMounted) reject(error);
-    };
-    
-    if (file.size > sliceSize * 400) {
-      safeReject(new Error('Max file size exceeded (4GB)'));
-      return;
+    // Check if already aborted
+    if (controller.signal.aborted) {
+      reject(new Error('Upload aborted'))
+      return
     }
     
+    if (file.size > sliceSize * 400) {
+      reject(new Error('Max file size exceeded (4GB)'))
+      return
+    }
+
     // Assign initial progress value
-    uploadProgress[index] = 0;
-    
+    uploadProgress[index] = 0
+
     // Create a unique identifier for this file
-    const fileId = `${file.name}-${file.size}-${Date.now()}`;
-    
+    const fileId = `${file.name}-${file.size}-${Date.now()}`
+
     // Create a new tus upload
     const upload = new tus.Upload(file, {
       endpoint: `${tusServerUrl}/upload`,
@@ -78,85 +85,92 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
         userId: tweetStore.loginUser?.mid || ''
       },
       onError: (error) => {
-        console.error('Upload failed:', error);
-        safeReject(error);
+        console.error('Upload failed:', error)
+        reject(error)
       },
       onProgress: (bytesUploaded, bytesTotal) => {
-        if (isMounted) {
-          uploadProgress[index] = Math.floor((bytesUploaded / bytesTotal) * 100);
-          console.log('Uploading...', uploadProgress[index] + '%');
+        if (!controller.signal.aborted) {
+          uploadProgress[index] = Math.floor((bytesUploaded / bytesTotal) * 100)
+          console.log('Uploading...', uploadProgress[index] + '%')
         }
       },
       onSuccess: () => {
-        console.log('Upload successful', file.name, upload.url);
+        console.log('Upload successful', file.name, upload.url)
         
-        // Save to localStorage
-        if (upload.url) {
-          try {
-            const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}');
+        try {
+          // Save to localStorage
+          if (upload.url) {
+            const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
             storedUploads[fileId] = {
               url: upload.url,
               filename: file.name,
               size: file.size,
               createdAt: Date.now()
-            };
-            localStorage.setItem('resumableUploads', JSON.stringify(storedUploads));
-          } catch (e) {
-            console.error('Error saving to localStorage:', e);
+            }
+            localStorage.setItem('resumableUploads', JSON.stringify(storedUploads))
+          }
+          
+          // Register the file with the server
+          axios.post(`${tusServerUrl}/files/register`, {
+            uploadUrl: upload.url,
+            filename: file.name,
+            filetype: file.type
+          })
+          .then(response => {
+            // Remove from localStorage
+            try {
+              const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
+              delete storedUploads[fileId]
+              localStorage.setItem('resumableUploads', JSON.stringify(storedUploads))
+            } catch (e) {
+              console.error('Error updating localStorage:', e)
+            }
+            
+            if (!controller.signal.aborted) {
+              resolve(response.data.id)
+            }
+          })
+          .catch(error => {
+            console.error('Error registering file:', error)
+            if (!controller.signal.aborted) {
+              reject(error)
+            }
+          })
+        } catch (e) {
+          console.error('Error in onSuccess handler:', e)
+          if (!controller.signal.aborted) {
+            reject(e)
           }
         }
-        
-        // Register the file with the server
-        axios.post(`${tusServerUrl}/files/register`, {
-          uploadUrl: upload.url,
-          filename: file.name,
-          filetype: file.type
-        })
-        .then(response => {
-          try {
-            // Remove from localStorage
-            const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}');
-            delete storedUploads[fileId];
-            localStorage.setItem('resumableUploads', JSON.stringify(storedUploads));
-          } catch (e) {
-            console.error('Error updating localStorage:', e);
-          }
-          safeResolve(response.data.id);
-        })
-        .catch(error => {
-          console.error('Error registering file:', error);
-          safeReject(error);
-        });
       }
-    });
-    
+    })
+
     // Store the upload instance
-    if (isMounted) {
-      uploads.value[index] = upload;
-    }
-    
-    // Add cleanup function for component unmount
-    onBeforeUnmount(() => {
-      isMounted = false;
-      if (uploads.value[index]) {
-        uploads.value[index].abort();
+    uploads.value[index] = upload
+
+    // Listen for abort signal
+    controller.signal.addEventListener('abort', () => {
+      if (upload) {
+        upload.abort()
       }
-    });
-    
+    })
+
     // Find previous uploads and start upload
     upload.findPreviousUploads().then((previousUploads) => {
-      if (!isMounted) return;
+      if (controller.signal.aborted) return
       
       if (previousUploads.length) {
-        upload.resumeFromPreviousUpload(previousUploads[0]);
+        upload.resumeFromPreviousUpload(previousUploads[0])
       }
       
-      upload.start();
+      upload.start()
     }).catch(err => {
-      console.error('Error finding previous uploads:', err);
-      if (isMounted) upload.start();
-    });
-  });
+      console.error('Error finding previous uploads:', err)
+      if (!controller.signal.aborted) {
+        upload.start()
+      }
+    })
+  })
 }
 
 async function onSubmit() {
