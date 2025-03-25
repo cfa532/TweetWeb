@@ -41,12 +41,13 @@ function getContentType(filename) {
 
 // File browser functionality
 router.get('/files', (req, res) => {
-  const requestPath = req.query.path || '';
-  const currentPath = path.join(uploadPath, requestPath);
+  // Normalize and sanitize the requested path
+  const requestPath = (req.query.path || '').replace(/\.\./g, '');
+  const currentPath = path.resolve(uploadPath, requestPath);
 
   // Security check to prevent directory traversal
-  if (!currentPath.startsWith(uploadPath)) {
-    return res.status(403).send('Access denied');
+  if (!currentPath.startsWith(path.resolve(uploadPath))) {
+    return res.status(403).send('Access denied: Invalid path');
   }
 
   try {
@@ -54,21 +55,56 @@ router.get('/files', (req, res) => {
     if (stats.isDirectory()) {
       // List directory contents
       const items = fs.readdirSync(currentPath);
-      const fileList = items.map(item => {
-        const itemPath = path.join(currentPath, item);
-        const itemStats = fs.statSync(itemPath);
-        const isDirectory = itemStats.isDirectory();
-        return {
-          name: item,
-          isDirectory,
-          size: isDirectory ? null : itemStats.size,
-          modified: itemStats.mtime,
-          path: path.join(requestPath, item).replace(/\\/g, '/'),
-          url: isDirectory ? 
-            `/files?path=${encodeURIComponent(path.join(requestPath, item).replace(/\\/g, '/'))}` : 
-            `/files/${path.relative(uploadPath, itemPath).replace(/\\/g, '/')}`
-        };
+      
+      // Create a map of file IDs to their metadata
+      const metadataMap = {};
+      items.forEach(item => {
+        if (item.endsWith('.metadata.json')) {
+          try {
+            const fileId = item.replace('.metadata.json', '');
+            const metadata = JSON.parse(fs.readFileSync(path.join(currentPath, item), 'utf8'));
+            metadataMap[fileId] = metadata;
+          } catch (err) {
+            console.error(`Error reading metadata for ${item}:`, err);
+          }
+        }
       });
+
+      // Filter and map files
+      const fileList = items
+        .filter(item => {
+          // Skip metadata files and other system files
+          return !item.endsWith('.metadata.json') && !item.endsWith('.info.json') && !item.startsWith('.');
+        })
+        .map(item => {
+          const itemPath = path.join(currentPath, item);
+          const itemStats = fs.statSync(itemPath);
+          const isDirectory = itemStats.isDirectory();
+          
+          // Get original filename from metadata if available
+          let displayName = item;
+          if (!isDirectory) {
+            const fileId = item.split('.')[0]; // Get the file ID part
+            if (metadataMap[fileId] && metadataMap[fileId].originalFilename) {
+              displayName = metadataMap[fileId].originalFilename;
+            }
+          }
+          
+          // Calculate relative path for URL
+          const relativePath = path.relative(uploadPath, itemPath);
+          return {
+            name: displayName,
+            systemName: item,
+            isDirectory,
+            size: isDirectory ? null : itemStats.size,
+            modified: itemStats.mtime,
+            // For directory links, use the query parameter approach
+            url: isDirectory 
+              ? `/files?path=${encodeURIComponent(path.join(requestPath, item).replace(/\\/g, '/'))}`
+              // For file links, use the direct file path approach
+              : `/files/${relativePath.replace(/\\/g, '/')}`
+          };
+        });
 
       // Sort: directories first, then files alphabetically
       fileList.sort((a, b) => {
@@ -76,6 +112,10 @@ router.get('/files', (req, res) => {
         if (!a.isDirectory && b.isDirectory) return 1;
         return a.name.localeCompare(b.name);
       });
+
+      // Calculate parent directory path for the 'up' link
+      const parentPath = path.dirname(requestPath);
+      const parentUrl = parentPath === '.' ? '/files' : `/files?path=${encodeURIComponent(parentPath.replace(/\\/g, '/'))}`;
 
       // Render directory listing
       res.send(`
@@ -127,7 +167,7 @@ router.get('/files', (req, res) => {
               ${requestPath ? `
                 <tr>
                   <td>
-                    <a href='/files?path=${encodeURIComponent(path.dirname(requestPath).replace(/\\/g, '/'))}'>
+                    <a href='${parentUrl}'>
                       <span class='folder-icon'>📁</span>
                       <span class='file-name'>..</span>
                     </a>
@@ -165,19 +205,34 @@ router.get('/files', (req, res) => {
       const filename = path.basename(currentPath);
       const stats = fs.statSync(currentPath);
       const isDownload = req.query.download === 'true';
-
+      
+      // Try to get original filename from metadata
+      let displayName = filename;
+      const fileId = filename.split('.')[0]; // Get the file ID part
+      const metadataPath = path.join(path.dirname(currentPath), `${fileId}.metadata.json`);
+      if (fs.existsSync(metadataPath)) {
+        try {
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+          if (metadata.originalFilename) {
+            displayName = metadata.originalFilename;
+          }
+        } catch (err) {
+          console.error(`Error reading metadata for ${filename}:`, err);
+        }
+      }
+      
       // Set appropriate headers
       res.setHeader('Content-Length', stats.size);
       if (isDownload) {
-        res.setHeader('Content-Disposition', `attachment; filename='${filename}'`);
+        res.setHeader('Content-Disposition', `attachment; filename="${displayName}"`);
       } else {
-        res.setHeader('Content-Disposition', `inline; filename='${filename}'`);
+        res.setHeader('Content-Disposition', `inline; filename="${displayName}"`);
       }
-
+      
       // Set content type
       const contentType = getContentType(filename);
       res.setHeader('Content-Type', contentType);
-
+      
       // If not downloading, and it's a non-viewable file type, show a simple file viewer
       if (!isDownload && !contentType.startsWith('image/') && !contentType.startsWith('video/') && 
           !contentType.startsWith('audio/') && contentType !== 'application/pdf') {
@@ -185,7 +240,7 @@ router.get('/files', (req, res) => {
           <!DOCTYPE html>
           <html>
           <head>
-            <title>File: ${filename}</title>
+            <title>File: ${displayName}</title>
             <meta name='viewport' content='width=device-width, initial-scale=1'>
             <style>
               body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
@@ -204,7 +259,7 @@ router.get('/files', (req, res) => {
             <a href='/files?path=${encodeURIComponent(path.dirname(path.relative(uploadPath, currentPath)).replace(/\\/g, '/'))}' class='back-link'>← Back to folder</a>
             <div class='file-container'>
               <div class='file-header'>
-                <h1 class='file-title'>${filename}</h1>
+                <h1 class='file-title'>${displayName}</h1>
                 <div class='file-actions'>
                   <a href='${req.originalUrl}&download=true'>Download</a>
                 </div>
@@ -220,7 +275,7 @@ router.get('/files', (req, res) => {
           </html>
         `);
       }
-
+      
       // Send the file
       fs.createReadStream(currentPath).pipe(res);
     }
@@ -248,6 +303,65 @@ router.get('/files', (req, res) => {
       </body>
       </html>
     `);
+  }
+});
+
+// Add this route after the '/files' route for direct file access
+router.get('/files/:filepath(*)', (req, res) => {
+  try {
+    // Get the requested file path
+    const filepath = req.params.filepath;
+    const fullPath = path.join(uploadPath, filepath);
+    
+    // Security check to prevent directory traversal
+    if (!fullPath.startsWith(path.resolve(uploadPath))) {
+      return res.status(403).send('Access denied: Invalid path');
+    }
+    
+    // Check if file exists
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+      return res.status(404).send('File not found');
+    }
+    
+    const filename = path.basename(fullPath);
+    const stats = fs.statSync(fullPath);
+    const isDownload = req.query.download === 'true';
+    
+    // Try to get original filename from metadata
+    let displayName = filename;
+    const fileId = filename.split('.')[0]; // Get the file ID part
+    const metadataPath = path.join(path.dirname(fullPath), `${fileId}.metadata.json`);
+    if (fs.existsSync(metadataPath)) {
+      try {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        if (metadata.originalFilename) {
+          displayName = metadata.originalFilename;
+        }
+      } catch (err) {
+        console.error(`Error reading metadata for ${filename}:`, err);
+      }
+    }
+    
+    // Set appropriate headers
+    res.setHeader('Content-Length', stats.size);
+    
+    // Set content type
+    const contentType = getContentType(filename);
+    res.setHeader('Content-Type', contentType);
+    
+    // Set disposition based on download parameter
+    if (isDownload) {
+      res.setHeader('Content-Disposition', `attachment; filename="${displayName}"`);
+    } else {
+      res.setHeader('Content-Disposition', `inline; filename="${displayName}"`);
+    }
+    
+    // Send the file
+    fs.createReadStream(fullPath).pipe(res);
+    
+  } catch (error) {
+    console.error('Error serving file:', error);
+    res.status(500).send('Error serving file');
   }
 });
 
