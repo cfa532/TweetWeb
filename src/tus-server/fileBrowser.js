@@ -17,7 +17,10 @@ function formatDate(date) {
 }
 
 // Get content type based on file extension
-function getContentType(filename) {
+function getContentType(filename, metadata) {
+  if (metadata && metadata.filetype) {
+    return metadata.filetype;
+  }
   const ext = path.extname(filename).toLowerCase();
   const contentTypes = {
     '.pdf': 'application/pdf',
@@ -59,9 +62,9 @@ router.get('/files', (req, res) => {
       // Create a map of file IDs to their metadata
       const metadataMap = {};
       items.forEach(item => {
-        if (item.endsWith('.metadata.json')) {
+        if (item.endsWith('.json')) {
           try {
-            const fileId = item.replace('.metadata.json', '');
+            const fileId = item.replace('.json', '');
             const metadata = JSON.parse(fs.readFileSync(path.join(currentPath, item), 'utf8'));
             metadataMap[fileId] = metadata;
           } catch (err) {
@@ -74,7 +77,7 @@ router.get('/files', (req, res) => {
       const fileList = items
         .filter(item => {
           // Skip metadata files and other system files
-          return !item.endsWith('.metadata.json') && !item.endsWith('.info.json') && !item.startsWith('.');
+          return !item.endsWith('.json') && !item.startsWith('.');
         })
         .map(item => {
           const itemPath = path.join(currentPath, item);
@@ -83,26 +86,33 @@ router.get('/files', (req, res) => {
           
           // Get original filename from metadata if available
           let displayName = item;
+          let fileMetadata = null;
           if (!isDirectory) {
             const fileId = item.split('.')[0]; // Get the file ID part
-            if (metadataMap[fileId] && metadataMap[fileId].originalFilename) {
-              displayName = metadataMap[fileId].originalFilename;
+            if (metadataMap[fileId]) {
+              fileMetadata = metadataMap[fileId].metadata;
+              if (metadataMap[fileId].metadata && metadataMap[fileId].metadata.filename) {
+                displayName = metadataMap[fileId].metadata.filename;
+              }
             }
           }
           
           // Calculate relative path for URL
           const relativePath = path.relative(uploadPath, itemPath);
+          const encodedRelativePath = encodeURIComponent(relativePath.replace(/\\/g, '/')); // Encode the relative path
+
           return {
             name: displayName,
             systemName: item,
             isDirectory,
             size: isDirectory ? null : itemStats.size,
             modified: itemStats.mtime,
+            metadata: fileMetadata,
             // For directory links, use the query parameter approach
-            url: isDirectory 
+            url: isDirectory
               ? `/files?path=${encodeURIComponent(path.join(requestPath, item).replace(/\\/g, '/'))}`
               // For file links, use the direct file path approach
-              : `/files/${relativePath.replace(/\\/g, '/')}`
+              : `/files/${encodedRelativePath}` // Use the encoded relative path here
           };
         });
 
@@ -123,6 +133,7 @@ router.get('/files', (req, res) => {
         <html>
         <head>
           <title>File Browser - ${requestPath || 'Root'}</title>
+          <meta charset="UTF-8">
           <meta name='viewport' content='width=device-width, initial-scale=1'>
           <style>
             body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
@@ -205,16 +216,19 @@ router.get('/files', (req, res) => {
       const filename = path.basename(currentPath);
       const stats = fs.statSync(currentPath);
       const isDownload = req.query.download === 'true';
-      
-      // Try to get original filename from metadata
+
+      // Try to get metadata
       let displayName = filename;
-      const fileId = filename.split('.')[0]; // Get the file ID part
-      const metadataPath = path.join(path.dirname(currentPath), `${fileId}.metadata.json`);
+      let fileMetadata = null;
+      const fileId = filename.split('.')[0];
+      const metadataPath = path.join(path.dirname(currentPath), `${fileId}.json`);
+
       if (fs.existsSync(metadataPath)) {
         try {
           const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-          if (metadata.originalFilename) {
-            displayName = metadata.originalFilename;
+          fileMetadata = metadata.metadata;
+          if (metadata.metadata && metadata.metadata.filename) {
+            displayName = metadata.metadata.filename;
           }
         } catch (err) {
           console.error(`Error reading metadata for ${filename}:`, err);
@@ -223,14 +237,18 @@ router.get('/files', (req, res) => {
       
       // Set appropriate headers
       res.setHeader('Content-Length', stats.size);
+
+      // Encode the filename for Content-Disposition
+      const encodedFilename = encodeURIComponent(displayName);
+
       if (isDownload) {
-        res.setHeader('Content-Disposition', `attachment; filename="${displayName}"`);
+          res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
       } else {
-        res.setHeader('Content-Disposition', `inline; filename="${displayName}"`);
+          res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodedFilename}`);
       }
       
       // Set content type
-      const contentType = getContentType(filename);
+      const contentType = getContentType(filename, fileMetadata);
       res.setHeader('Content-Type', contentType);
       
       // If not downloading, and it's a non-viewable file type, show a simple file viewer
@@ -241,6 +259,7 @@ router.get('/files', (req, res) => {
           <html>
           <head>
             <title>File: ${displayName}</title>
+            <meta charset="UTF-8">
             <meta name='viewport' content='width=device-width, initial-scale=1'>
             <style>
               body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
@@ -286,6 +305,7 @@ router.get('/files', (req, res) => {
       <html>
       <head>
         <title>Error - File Not Found</title>
+        <meta charset="UTF-8">
         <style>
           body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; text-align: center; }
           h1 { color: #dc3545; }
@@ -326,16 +346,19 @@ router.get('/files/:filepath(*)', (req, res) => {
     const filename = path.basename(fullPath);
     const stats = fs.statSync(fullPath);
     const isDownload = req.query.download === 'true';
-    
-    // Try to get original filename from metadata
+
+    // Try to get metadata
     let displayName = filename;
-    const fileId = filename.split('.')[0]; // Get the file ID part
-    const metadataPath = path.join(path.dirname(fullPath), `${fileId}.metadata.json`);
+    let fileMetadata = null;
+    const fileId = filename.split('.')[0];
+    const metadataPath = path.join(path.dirname(fullPath), `${fileId}.json`);
+
     if (fs.existsSync(metadataPath)) {
       try {
         const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-        if (metadata.originalFilename) {
-          displayName = metadata.originalFilename;
+        fileMetadata = metadata.metadata;
+        if (metadata.metadata && metadata.metadata.filename) {
+          displayName = metadata.metadata.filename;
         }
       } catch (err) {
         console.error(`Error reading metadata for ${filename}:`, err);
@@ -344,17 +367,20 @@ router.get('/files/:filepath(*)', (req, res) => {
     
     // Set appropriate headers
     res.setHeader('Content-Length', stats.size);
-    
-    // Set content type
-    const contentType = getContentType(filename);
-    res.setHeader('Content-Type', contentType);
-    
+
+    // Encode the filename for Content-Disposition
+    const encodedFilename = encodeURIComponent(displayName);
+
     // Set disposition based on download parameter
     if (isDownload) {
-      res.setHeader('Content-Disposition', `attachment; filename="${displayName}"`);
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     } else {
-      res.setHeader('Content-Disposition', `inline; filename="${displayName}"`);
+        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodedFilename}`);
     }
+    
+    // Set content type
+    const contentType = getContentType(filename, fileMetadata);
+    res.setHeader('Content-Type', contentType);
     
     // Send the file
     fs.createReadStream(fullPath).pipe(res);
