@@ -3,6 +3,7 @@ const cors = require('cors');
 const express = require('express');
 const uploadRouter = require('./uploadRoutes');
 const fileBrowserRouter = require('./uploadedFilesBrowser');
+const netdisk = require('./netdisk');
 const app = express();
 
 // Get the port from the environment variable, or default to 3000
@@ -22,6 +23,7 @@ app.use(cors({
 // Use the routers
 app.use('/', uploadRouter); // Mount the upload router
 app.use('/', fileBrowserRouter); // Mount the file browser router
+app.use('/', netdisk);
 
 // Redirect root to file browser
 app.get('/', (req, res) => {
@@ -31,5 +33,5 @@ app.get('/', (req, res) => {
 // Start the server
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server listening on port ${port}`);
-  console.log(`File browser available at http://localhost:${port}/files`);
+  console.log(`File browser available at http://server-ip:${port}/files`);
 });
