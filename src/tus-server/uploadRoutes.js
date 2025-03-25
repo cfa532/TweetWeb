@@ -52,23 +52,14 @@ router.post('/files/register', async (req, res) => {
     // Get file stats (size, etc.)
     const stats = fs.statSync(uploadedFilePath);
     const fileSize = stats.size;
-    
-    // Generate a unique file ID
-    const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+
+    // Extract the id from the uploadId (which is the tus upload's metadata.json id)
+    const fileId = uploadId;
     const fileExt = path.extname(filename || '');
     const permanentFilePath = path.join(uploadPath, `${fileId}${fileExt}`);
     
     // Rename the file to its permanent location
     fs.renameSync(uploadedFilePath, permanentFilePath);
-    
-    // Create metadata file with original filename
-    const metadataFilePath = path.join(uploadPath, `${fileId}.metadata.json`);
-    fs.writeFileSync(metadataFilePath, JSON.stringify({
-      originalFilename: filename,
-      contentType: filetype,
-      uploadDate: new Date().toISOString(),
-      size: fileSize
-    }, null, 2));
     
     console.log(`File registered: ${fileId} ${filename} ${fileSize}`);
     
