@@ -2,7 +2,7 @@ require('dotenv').config()
 const cors = require('cors');
 const express = require('express');
 const uploadRouter = require('./uploadRoutes');
-const fileBrowserRouter = require('./fileBrowser');
+const fileBrowserRouter = require('./uploadedFilesBrowser');
 const app = express();
 
 // Get the port from the environment variable, or default to 3000
