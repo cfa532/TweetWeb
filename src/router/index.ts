@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost,
-  IPs, UploadPackage, DownloadPackage, Followings, Followers, Contact
+  IPs, UploadPackage, DownloadPackage, Followings, Followers, Contact, UploadFile
 } from "@/components"
 import { useAlertStore } from '@/stores';
 
@@ -36,10 +36,23 @@ export const router = createRouter({
           next("/login")
         } else
           next()
-      },
+      }
     },
-    { path: '/upload',
-      name: "upload",
+    {
+      path: '/upload',
+      name: "uploadFile",
+      component: UploadFile,
+      beforeEnter: (to: any, from: any, next: any) => {
+        let user = sessionStorage.getItem("user")
+        if (!user || JSON.parse(user)["username"]!="developer") {
+          next("/login")
+        } else {
+          next()
+        }
+      }
+    },
+    { path: '/uploadApk',
+      name: "uploadApk",
       component: UploadPackage,
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("user")
@@ -50,8 +63,8 @@ export const router = createRouter({
       },
     },
     {
-      path: '/download',
-      name: "download",
+      path: '/downloadApk',
+      name: "downloadApk",
       component: DownloadPackage,
     },
     {
