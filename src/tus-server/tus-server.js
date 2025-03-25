@@ -4,7 +4,6 @@ const { Server } = require('@tus/server');
 const { FileStore } = require('@tus/file-store');
 const path = require('path');
 const fs = require('fs');
-const { url } = require('inspector');
 
 // Set up tus server for resumable uploads
 // const uploadPath = path.resolve(__dirname, './uploads');
@@ -42,42 +41,38 @@ router.all('/upload/*', (req, res) => {
 // Register a completed upload
 router.post('/files/register', async (req, res) => {
   try {
-    const { uploadUrl } = req.body;
+    const { uploadUrl, filename, filetype } = req.body;
     const uploadId = path.basename(uploadUrl);
 
     // Construct the full path to the uploaded file
     const uploadedFilePath = path.join(uploadPath, uploadId);
 
     // Check if the file exists
-    // if (!fs.existsSync(uploadedFilePath)) {
-    //   console.warn(`File not found: ${uploadedFilePath}`);
-    //   return res.status(404).json({ error: 'File not found' });
-    // }
+    if (!fs.existsSync(uploadedFilePath)) {
+      console.warn(`File not found: ${uploadedFilePath}`);
+      return res.status(404).json({ error: 'File not found' });
+    }
 
     // Get file stats (size, etc.)
     const stats = fs.statSync(uploadedFilePath);
     const fileSize = stats.size;
 
-    // Read metadata from the request
-    const filename = req.body.filename || 'unknown';
-    const filetype = req.body.filetype || 'application/octet-stream';
-
     // Generate a unique file ID
     const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-    const permanentFilePath = path.join(uploadPath, `${fileId}${path.extname(filename)}`);
+    const permanentFilePath = path.join(uploadPath, `${fileId}${path.extname(filename || '')}`);
 
     // Rename the file to its permanent location
     fs.renameSync(uploadedFilePath, permanentFilePath);
-    console.log(`File registered: ${fileId} ${filename} ${fileSize} ${url}`);
+    console.log(`File registered: ${fileId} ${filename} ${fileSize}`);
 
     // Return the file ID to the client
     res.status(201).json({
       id: fileId,
-      name: filename,
+      name: filename || 'unknown',
       size: fileSize,
-      type: filetype,
+      type: filetype || 'application/octet-stream',
       createdAt: Date.now(),
-      url: `/files/${fileId}${path.extname(filename)}`
+      url: `/files/${fileId}${path.extname(filename || '')}`
     });
   } catch (error) {
     console.error('Error registering file:', error);

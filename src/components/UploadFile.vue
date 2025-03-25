@@ -58,7 +58,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
         const upload = new tus.Upload(file, {
             endpoint: `${tusServerUrl}/upload`,
             retryDelays: [0, 3000, 5000, 10000, 20000],
-            overridePatchMethod: false, // Use actual PATCH instead of POST with X-HTTP-Method-Override
+            overridePatchMethod: false,
             removeFingerprintOnSuccess: true,
             metadata: {
                 filename: file.name,
@@ -73,40 +73,10 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
                 uploadProgress[index] = Math.floor((bytesUploaded / bytesTotal) * 100)
                 console.log('Uploading...', uploadProgress[index] + '%')
             },
-            onSuccess: async () => {
-                console.log('Upload successful 2', upload.url)
-                try {
-                    // Get the file ID from the server
-                    const response = await axios.post(`${tusServerUrl}/files/register`, {
-                        uploadUrl: upload.url
-                    })
-
-                    // Remove from localStorage
-                    const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
-                    delete storedUploads[fileId]
-                    localStorage.setItem('resumableUploads', JSON.stringify(storedUploads))
-
-                    resolve(response.data.id)
-                } catch (error) {
-                    reject(error)
-                }
-            }
-        })
-
-        // Store the upload instance
-        uploads.value[index] = upload
-
-        // Store upload URL in localStorage for potential resume
-        upload.findPreviousUploads().then((previousUploads) => {
-            if (previousUploads.length) {
-                upload.resumeFromPreviousUpload(previousUploads[0])
-            }
-
-            upload.start()
-
-            // Save to localStorage when we have a URL
-            upload.options.onSuccess = () => {
-                console.log('Upload successful 1', upload.url)
+            onSuccess: () => {
+                console.log('Upload successful', file.name, upload.url)
+                
+                // Save to localStorage
                 if (upload.url) {
                     const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
                     storedUploads[fileId] = {
@@ -118,22 +88,36 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
                     localStorage.setItem('resumableUploads', JSON.stringify(storedUploads))
                 }
 
-                // Continue with your existing success logic
+                // Register the file with the server
                 axios.post(`${tusServerUrl}/files/register`, {
-                    uploadUrl: upload.url
+                    uploadUrl: upload.url,
+                    filename: file.name,
+                    filetype: file.type
                 })
-                    .then(response => {
-                        // Remove from localStorage
-                        const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
-                        delete storedUploads[fileId]
-                        localStorage.setItem('resumableUploads', JSON.stringify(storedUploads))
+                .then(response => {
+                    // Remove from localStorage
+                    const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
+                    delete storedUploads[fileId]
+                    localStorage.setItem('resumableUploads', JSON.stringify(storedUploads))
 
-                        resolve(response.data.id)
-                    })
-                    .catch(error => {
-                        reject(error)
-                    })
+                    resolve(response.data.id)
+                })
+                .catch(error => {
+                    console.error('Error registering file:', error)
+                    reject(error)
+                })
             }
+        })
+
+        // Store the upload instance
+        uploads.value[index] = upload
+
+        // Find previous uploads and start
+        upload.findPreviousUploads().then((previousUploads) => {
+            if (previousUploads.length) {
+                upload.resumeFromPreviousUpload(previousUploads[0])
+            }
+            upload.start()
         })
     })
 }
