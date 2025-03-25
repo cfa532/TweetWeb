@@ -4,6 +4,7 @@ const fsPromises = require('fs').promises; // Rename to avoid confusion
 const fs = require('fs'); // Require the standard fs module
 const path = require('path');
 const mime = require('mime-types'); // For determining content type
+
 const tusDataDir = process.env.NET_DISK;
 const baseUrl = process.env.BASE_URL || ''; // Add a base URL for your application
 
@@ -51,7 +52,8 @@ async function generateFileListHTML(directoryPath, currentPath = '') {
                     name: file,
                     url: `${baseUrl}/netd?path=${encodeURIComponent(relativePath)}`,
                     isDirectory: true,
-                    modified: stat.mtime
+                    modified: stat.mtime,
+                    relativePath: relativePath // Store relative path for share functionality
                 });
             } else {
                 fileList.push({
@@ -59,7 +61,8 @@ async function generateFileListHTML(directoryPath, currentPath = '') {
                     url: `${baseUrl}/netd/${encodeURIComponent(relativePath)}`,
                     isDirectory: false,
                     size: stat.size,
-                    modified: stat.mtime
+                    modified: stat.mtime,
+                    relativePath: relativePath // Store relative path for share functionality
                 });
             }
         }
@@ -68,88 +71,96 @@ async function generateFileListHTML(directoryPath, currentPath = '') {
         const requestPath = currentPath;
 
         return `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>File Browser - ${requestPath || 'Root'}</title>
-                <meta charset='UTF-8'>
-                <meta name='viewport' content='width=device-width, initial-scale=1'>
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
-                    h1 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; }
-                    .breadcrumb { margin-bottom: 20px; background-color: #f8f9fa; padding: 8px 15px; border-radius: 4px; }
-                    .breadcrumb a { color: #007bff; text-decoration: none; }
-                    .breadcrumb a:hover { text-decoration: underline; }
-                    .file-list { width: 100%; border-collapse: collapse; }
-                    .file-list th, .file-list td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
-                    .file-list th { background-color: #f8f9fa; font-weight: bold; }
-                    .file-list tr:hover { background-color: #f5f5f5; }
-                    .folder-icon, .file-icon { margin-right: 10px; }
-                    .folder-icon { color: #ffc107; }
-                    .file-icon { color: #6c757d; }
-                    .file-name { font-weight: 500; }
-                    .file-size, .file-date { color: #6c757d; white-space: nowrap; }
-                    .file-actions { white-space: nowrap; }
-                    .file-actions a { margin-left: 10px; color: #007bff; text-decoration: none; }
-                    .file-actions a:hover { text-decoration: underline; }
-                    @media (max-width: 768px) { .file-date { display: none; } }
-                </style>
-            </head>
-            <body>
-                <h1>File Browser</h1>
-                <div class='breadcrumb'>
-                    <a href='${baseUrl}/netd'>Root</a>
-                    ${requestPath.split('/').filter(Boolean).map((part, index, array) => {
-                        const pathSoFar = array.slice(0, index + 1).join('/');
-                        return ` / <a href='${baseUrl}/netd?path=${encodeURIComponent(pathSoFar)}'>${part}</a>`;
-                    }).join('')}
-                </div>
-                <table class='file-list'>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Size</th>
-                            <th>Modified</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${requestPath ? `
-                            <tr>
-                                <td>
-                                    <a href='${parentUrl}'>
-                                        <span class='folder-icon'>📁</span>
-                                        <span class='file-name'>..</span>
-                                    </a>
-                                </td>
-                                <td></td>
-                                <td></td>
-                                <td></td>
-                            </tr>
-                        ` : ''}
-                        ${fileList.map(item => `
-                            <tr>
-                                <td>
-                                    <a href='${item.url}'>
-                                        <span class='${item.isDirectory ? 'folder-icon' : 'file-icon'}'>${item.isDirectory ? '📁' : '📄'}</span>
-                                        <span class='file-name'>${item.name}</span>
-                                    </a>
-                                </td>
-                                <td class='file-size'>${item.isDirectory ? '-' : formatFileSize(item.size)}</td>
-                                <td class='file-date'>${formatDate(item.modified)}</td>
-                                <td class='file-actions'>
-                                    ${!item.isDirectory ? `
-                                        <a href='${item.url}?download=true'>Download</a>
-                                        <a href='${item.url}' target='_blank'>View</a>
-                                    ` : ''}
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </body>
-            </html>
-        `;
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>File Browser - ${requestPath || 'Root'}</title>
+          <meta charset='UTF-8'>
+          <meta name='viewport' content='width=device-width, initial-scale=1'>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
+            h1 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+            .breadcrumb { margin-bottom: 20px; background-color: #f8f9fa; padding: 8px 15px; border-radius: 4px; }
+            .breadcrumb a { color: #007bff; text-decoration: none; }
+            .breadcrumb a:hover { text-decoration: underline; }
+            .file-list { width: 100%; border-collapse: collapse; }
+            .file-list th, .file-list td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+            .file-list th { background-color: #f8f9fa; font-weight: bold; }
+            .file-list tr:hover { background-color: #f5f5f5; }
+            .folder-icon, .file-icon { margin-right: 10px; }
+            .folder-icon { color: #ffc107; }
+            .file-icon { color: #6c757d; }
+            .file-name { font-weight: 500; }
+            .file-size, .file-date { color: #6c757d; white-space: nowrap; }
+            .file-actions { white-space: nowrap; }
+            .file-actions a { margin-left: 10px; color: #007bff; text-decoration: none; }
+            .file-actions a:hover { text-decoration: underline; }
+            @media (max-width: 768px) { .file-date { display: none; } }
+          </style>
+        </head>
+        <body>
+          <h1>File Browser</h1>
+          <div class='breadcrumb'>
+            <a href='${baseUrl}/netd'>Root</a>
+            ${requestPath.split('/').filter(Boolean).map((part, index, array) => {
+              const pathSoFar = array.slice(0, index + 1).join('/');
+              return ` / <a href='${baseUrl}/netd?path=${encodeURIComponent(pathSoFar)}'>${part}</a>`;
+            }).join('')}
+          </div>
+          <table class='file-list'>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Modified</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${requestPath ? `
+                <tr>
+                  <td>
+                    <a href='${parentUrl}'>
+                      <span class='folder-icon'>📁</span>
+                      <span class='file-name'>..</span>
+                    </a>
+                  </td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                </tr>
+              ` : ''}
+              ${fileList.map(item => `
+                <tr>
+                  <td>
+                    <a href='${item.url}'>
+                      <span class='${item.isDirectory ? 'folder-icon' : 'file-icon'}'>${item.isDirectory ? '📁' : '📄'}</span>
+                      <span class='file-name'>${item.name}</span>
+                    </a>
+                  </td>
+                  <td class='file-size'>${item.isDirectory ? '-' : formatFileSize(item.size)}</td>
+                  <td class='file-date'>${formatDate(item.modified)}</td>
+                  <td class='file-actions'>
+                    ${!item.isDirectory ? `
+                      <a href='${item.url}?download=true'>Download</a>
+                      <a href='${item.url}' target='_blank'>View</a>
+                    ` : ''}
+                    <a href='#' onclick="shareFile('${item.relativePath}', ${item.isDirectory})">Share</a>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <script>
+            function shareFile(relativePath, isDirectory) {
+              // Implement your share functionality here
+              // You can use relativePath and isDirectory to determine what to share
+              alert('Share ' + relativePath + (isDirectory ? ' (Directory)' : ' (File)'));
+            }
+          </script>
+        </body>
+        </html>
+      `;
     } catch (err) {
         console.error(err);
         return `<p>Failed to read files: ${err.message}</p>`;
