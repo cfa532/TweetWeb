@@ -74,7 +74,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
                 console.log('Uploading...', uploadProgress[index] + '%')
             },
             onSuccess: async () => {
-                console.log('Upload successful', upload.url)
+                console.log('Upload successful 2', upload.url)
                 try {
                     // Get the file ID from the server
                     const response = await axios.post(`${tusServerUrl}/files/register`, {
@@ -106,7 +106,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
 
             // Save to localStorage when we have a URL
             upload.options.onSuccess = () => {
-                console.log('Upload successful')
+                console.log('Upload successful 1', upload.url)
                 if (upload.url) {
                     const storedUploads = JSON.parse(localStorage.getItem('resumableUploads') || '{}')
                     storedUploads[fileId] = {
@@ -119,7 +119,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
                 }
 
                 // Continue with your existing success logic
-                axios.post('/files/register', {
+                axios.post(`${tusServerUrl}/files/register`, {
                     uploadUrl: upload.url
                 })
                     .then(response => {
@@ -275,7 +275,7 @@ function removeFile(f: File) {
                     </div>
                 </div>
             </div>
-            <div class="upload-info">
+            <!-- <div class="upload-info">
                 <p>
                     <strong>Large File Upload Features:</strong>
                 <ul>
@@ -285,7 +285,7 @@ function removeFile(f: File) {
                     <li>Maximum file size: 3GB</li>
                 </ul>
                 </p>
-            </div>
+            </div> -->
         </div>
     </div>
 </template>
