@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost,
+import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, FileList,
   IPs, UploadPackage, DownloadPackage, Followings, Followers, Contact, UploadFile
 } from "@/components"
 import { useAlertStore } from '@/stores';
@@ -13,12 +13,14 @@ export const router = createRouter({
   routes: [
     { path: '/', name: "main", component: MainPage },
     {
+      // display tweets on main screen
       path: '/tweet/:tweetId/:authorId?',
       name: 'TweetDetail',
       component: TweetDetail,
       props: false,
     },
     {
+      // display user tweets
       path: '/author/:authorId',
       name: 'UserPage',
       component: UserPage,
@@ -39,6 +41,12 @@ export const router = createRouter({
       }
     },
     {
+      path: '/netdisk',
+      name: 'netdisk',
+      component: FileList
+    },
+    {
+      // upload regular file to server
       path: '/upload',
       name: "uploadFile",
       component: UploadFile,
@@ -51,7 +59,9 @@ export const router = createRouter({
         }
       }
     },
-    { path: '/uploadApk',
+    { 
+      // publish installation package as Mimei
+      path: '/uploadApk',
       name: "uploadApk",
       component: UploadPackage,
       beforeEnter: (to: any, from: any, next: any) => {
@@ -68,6 +78,7 @@ export const router = createRouter({
       component: DownloadPackage,
     },
     {
+      // for user sending message to App contact.
       path: '/contact',
       name: "contact",
       component: Contact,
