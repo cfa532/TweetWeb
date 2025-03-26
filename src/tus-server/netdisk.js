@@ -144,8 +144,8 @@ async function generateFileListHTML(directoryPath, currentPath = '') {
                     ${!item.isDirectory ? `
                       <a href='${item.url}?download=true'>Download</a>
                       <a href='${item.url}' target='_blank'>View</a>
+                      <a href='#' onclick='shareFile("${item.relativePath}", ${item.isDirectory})'>Share</a>
                     ` : ''}
-                    <a href='#' onclick="shareFile('${item.relativePath}', ${item.isDirectory})">Share</a>
                   </td>
                 </tr>
               `).join('')}
@@ -208,30 +208,60 @@ router.get('/netd/:filepath(*)', async (req, res) => {
         const isDownload = req.query.download === 'true';
 
         // Set appropriate headers
-        res.setHeader('Content-Length', stats.size);
+        //res.setHeader('Content-Length', stats.size);  // Remove this line
 
         // Encode the filename for Content-Disposition
         const encodedFilename = encodeURIComponent(filename);
 
         // Set disposition based on download parameter
-        if (isDownload) {
-            res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
-        } else {
-            res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodedFilename}`);
-        }
+        let disposition = isDownload ? `attachment; filename*=UTF-8''${encodedFilename}` : `inline; filename*=UTF-8''${encodedFilename}`;
 
         // Set content type
         const contentType = getContentType(filename);
-        res.setHeader('Content-Type', contentType);
 
-        // Send the file
-        const fileStream = fs.createReadStream(fullPath); // Use the standard fs module
-        fileStream.pipe(res);
+        // Handle byte-range requests
+        const range = req.headers.range;
 
-        fileStream.on('error', (streamError) => {
-            console.error('Error streaming file:', streamError);
-            res.status(500).send('Error streaming file');
-        });
+        if (range) {
+            // Parse the range header
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+            const chunksize = (end - start) + 1;
+
+            // Create the stream with the specified range
+            const fileStream = fs.createReadStream(fullPath, { start, end });
+
+            // Set the appropriate headers
+            res.status(206); // Partial Content
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', chunksize);
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', disposition);
+
+            // Pipe the stream to the response
+            fileStream.pipe(res);
+
+            fileStream.on('error', (streamError) => {
+                console.error('Error streaming file:', streamError);
+                res.status(500).send('Error streaming file');
+            });
+
+        } else {
+            // No range requested -- serve the entire file
+            res.setHeader('Content-Length', stats.size);
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', disposition);
+
+            const fileStream = fs.createReadStream(fullPath);
+            fileStream.pipe(res);
+
+            fileStream.on('error', (streamError) => {
+                console.error('Error streaming file:', streamError);
+                res.status(500).send('Error streaming file');
+            });
+        }
 
     } catch (error) {
         console.error('Error serving file:', error);
