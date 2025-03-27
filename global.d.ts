@@ -81,7 +81,7 @@ type FileSystemItem = {
     name: string;
     path: string;
     isDirectory: boolean;
-    size: number;
-    modified: string; // ISO 8601 date string
+    size: number = 0;
+    modified: string = Date.now(); // ISO 8601 date string
     url: string;
 };

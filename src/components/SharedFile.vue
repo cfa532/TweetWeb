@@ -1,25 +1,35 @@
 <script setup lang='ts'>
 import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
+import axios from 'axios';
 import { useTweetStore } from '@/stores';
 
-// Get the server base URL from environment variables
 const route = useRoute();
 const fileId = route.params.mid;
 const tweetStore = useTweetStore();
-
-const files = ref([] as FileSystemItem[]); // This is not used anymore
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sharedFile = ref<FileSystemItem | null>(null);
+const directoryContents = ref<FileSystemItem[]>([]);
+const currentPath = ref('');
+const parentPath = ref<string | null>(null);
+const directoryHistory = ref<string[]>([]);
 
-// File action functions
+// Computed property to split the current path into parts for breadcrumb
+const pathParts = computed(() => {
+  if (!currentPath.value) return [];
+  return currentPath.value.split('/').filter(Boolean);
+});
+
+// File action functions - FIXED to prevent path duplication
 const viewFile = (file: FileSystemItem) => {
-  window.open(`${file.url}/netd/${encodeURIComponent(file.path)}`, '_blank');
+  // Use the base URL without appending the path twice
+  window.open(`${file.url}`, '_blank');
 };
 
 const downloadFile = (file: FileSystemItem) => {
-  window.open(`${file.url}/netd/${encodeURIComponent(file.path)}?download=true`, '_blank');
+  // Use the base URL without appending the path twice
+  window.open(`${file.url}?download=true`, '_blank');
 };
 
 // Utility functions
@@ -35,6 +45,54 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString();
 };
 
+// Function to fetch directory contents
+const fetchDirectoryContents = async (path: string, baseUrl: string) => {
+  try {
+    loading.value = true;
+    // Make sure we're using the correct endpoint format
+    const response = await axios.get(`${baseUrl}/netd`, {
+      params: { path }
+    });
+    directoryContents.value = response.data.files || [];
+    currentPath.value = response.data.currentPath || '';
+    parentPath.value = response.data.parentPath;
+    
+    // Add current path to history if it's not already the last item
+    if (directoryHistory.value[directoryHistory.value.length - 1] !== path) {
+      directoryHistory.value.push(path);
+    }
+  } catch (err: any) {
+    console.error('Failed to load directory contents:', err);
+    error.value = err.message || 'Failed to load directory contents';
+  } finally {
+    loading.value = false;
+  }
+};
+
+// Navigation functions
+const navigateTo = (path: string) => {
+  if (sharedFile.value) {
+    fetchDirectoryContents(path, sharedFile.value.url);
+  }
+};
+
+const navigateToParent = () => {
+  if (parentPath.value !== null && sharedFile.value) {
+    fetchDirectoryContents(parentPath.value, sharedFile.value.url);
+    // Remove the last item from history
+    directoryHistory.value.pop();
+  }
+};
+
+const navigateToBreadcrumb = (index: number) => {
+  if (sharedFile.value) {
+    const path = index === -1 ? '' : pathParts.value.slice(0, index + 1).join('/');
+    fetchDirectoryContents(path, sharedFile.value.url);
+    // Trim history to this point
+    directoryHistory.value = directoryHistory.value.slice(0, index + 2);
+  }
+};
+
 // Load initial directory on component mount
 onMounted(async () => {
   try {
@@ -45,6 +103,12 @@ onMounted(async () => {
         ...file,
         url: file.url, // Ensure the URL is stored
       };
+      if (file.isDirectory) {
+        // Initialize history with root
+        directoryHistory.value = [''];
+        // Fetch directory contents
+        await fetchDirectoryContents(file.path, file.url);
+      }
     } else {
       error.value = 'File not found.';
     }
@@ -58,43 +122,100 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="file-browser-container">
-    <header class="file-browser-header">
+  <div class='file-browser-container'>
+    <header class='file-browser-header'>
       <h1>Shared File</h1>
     </header>
 
-    <main class="file-browser-content">
-      <div v-if="loading" class="loading-indicator">
+    <main class='file-browser-content'>
+      <div v-if='loading' class='loading-indicator'>
         <p>Loading...</p>
       </div>
 
-      <div v-if="error" class="error-message">
+      <div v-if='error' class='error-message'>
         <p>Error: {{ error }}</p>
       </div>
 
-      <div v-if="sharedFile" class="file-details">
-        <section class="file-info">
+      <!-- Single file view -->
+      <div v-if='sharedFile && !sharedFile.isDirectory' class='file-details'>
+        <section class='file-info'>
           <h2>{{ sharedFile.name }}</h2>
           <p><strong>Size:</strong> {{ formatFileSize(sharedFile.size) }}</p>
           <p><strong>Modified:</strong> {{ formatDate(sharedFile.modified) }}</p>
         </section>
 
-        <section class="file-actions">
-          <button @click="downloadFile(sharedFile)" class="download-button">
-            <i class="fas fa-download"></i> Download
+        <section class='file-actions'>
+          <button @click='downloadFile(sharedFile)' class='action-button'>
+            <i class='fas fa-download'></i> Download
           </button>
-          <button @click="viewFile(sharedFile)" class="view-button">
-            <i class="fas fa-eye"></i> View
+          <button @click='viewFile(sharedFile)' class='action-button'>
+            <i class='fas fa-eye'></i> View
           </button>
         </section>
       </div>
 
-      <div v-else-if="!loading && !error" class="not-found-message">
+      <!-- Directory view -->
+      <div v-else-if='sharedFile && sharedFile.isDirectory' class='directory-browser'>
+        <!-- Breadcrumb navigation -->
+        <div class='breadcrumb'>
+          <span @click='navigateToBreadcrumb(-1)' class='breadcrumb-link'>Root</span>
+          <template v-for='(part, index) in pathParts' :key='index'>
+            / <span @click='navigateToBreadcrumb(index)' class='breadcrumb-link'>{{ part }}</span>
+          </template>
+        </div>
+
+        <!-- Parent directory button -->
+        <div v-if='parentPath !== null' class='parent-directory'>
+          <button @click='navigateToParent' class='action-button'>
+            <i class='fas fa-folder'></i> .. (Parent Directory)
+          </button>
+        </div>
+
+        <!-- Directory contents -->
+        <table v-if='directoryContents.length > 0' class='file-list'>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Size</th>
+              <th>Modified</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for='item in directoryContents' :key='item.path'>
+              <td>
+                <div @click='item.isDirectory ? navigateTo(item.path) : viewFile(item)' class='file-link'>
+                  <i :class='item.isDirectory ? "fas fa-folder" : "fas fa-file"'></i>
+                  <span class='file-name'>{{ item.name }}</span>
+                </div>
+              </td>
+              <td class='file-size'>{{ item.isDirectory ? '-' : formatFileSize(item.size) }}</td>
+              <td class='file-date'>{{ formatDate(item.modified) }}</td>
+              <td class='file-actions'>
+                <template v-if='!item.isDirectory'>
+                  <button @click.stop='downloadFile(item)' class='action-button'>
+                    <i class='fas fa-download'></i> Download
+                  </button>
+                  <button @click.stop='viewFile(item)' class='action-button'>
+                    <i class='fas fa-eye'></i> View
+                  </button>
+                </template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div v-else-if='!loading' class='no-files'>
+          This directory is empty.
+        </div>
+      </div>
+
+      <div v-else-if='!loading && !error' class='not-found-message'>
         <p>File not found.</p>
       </div>
     </main>
 
-    <footer class="file-browser-footer">
+    <footer class='file-browser-footer'>
       <p>&copy; 2024 Shared File Browser</p>
     </footer>
   </div>
@@ -167,34 +288,131 @@ onMounted(async () => {
   margin-bottom: 10px;
 }
 
-/* File Actions Section */
-.file-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-start;
+/* Directory Browser */
+.directory-browser {
+  background-color: white;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.download-button,
-.view-button {
+/* Breadcrumb */
+.breadcrumb {
+  margin-bottom: 20px;
+  background-color: #f8f9fa;
+  padding: 8px 15px;
+  border-radius: 4px;
+}
+
+.breadcrumb-link {
+  color: #007bff;
+  cursor: pointer;
+}
+
+.breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+/* Parent Directory */
+.parent-directory {
+  margin-bottom: 15px;
+}
+
+/* File List */
+.file-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.file-list th,
+.file-list td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+
+.file-list th {
+  background-color: #f8f9fa;
+  font-weight: bold;
+}
+
+.file-list tr:hover {
+  background-color: #f5f5f5;
+}
+
+.file-link {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.file-link i {
+  margin-right: 10px;
+}
+
+.fas.fa-folder {
+  color: #ffc107;
+}
+
+.fas.fa-file {
+  color: #6c757d;
+}
+
+.file-name {
+  font-weight: 500;
+}
+
+.file-size,
+.file-date {
+  color: #6c757d;
+  white-space: nowrap;
+}
+
+/* File Actions */
+.file-actions {
+  white-space: nowrap;
+}
+
+.action-button {
+  margin-right: 8px;
+  padding: 6px 12px;
   background-color: #007bff;
   color: white;
   border: none;
-  padding: 10px 20px;
-  border-radius: 5px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  transition: background-color 0.3s;
   display: flex;
   align-items: center;
   gap: 5px;
 }
 
-.download-button:hover,
-.view-button:hover {
+.action-button:hover {
   background-color: #0056b3;
 }
 
-/* Font Awesome Icons */
-.fas {
-  margin-right: 5px;
+.no-files {
+  color: #6c757d;
+  text-align: center;
+  padding: 20px;
+  font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .file-date {
+    display: none;
+  }
+  
+  .file-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  
+  .action-button {
+    margin-right: 0;
+  }
 }
 </style>

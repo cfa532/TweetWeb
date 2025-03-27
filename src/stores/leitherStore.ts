@@ -49,6 +49,7 @@ export const useLeitherStore = defineStore({
     },
     actions: {
         getClient(ip: string) {
+            // return window.hprose.Client.create("http://" + ip, ayApi)
             return window.hprose.Client.create("ws://" + ip +"/ws/", ayApi)
         },
     }

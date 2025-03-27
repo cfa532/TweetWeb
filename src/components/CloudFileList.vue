@@ -1,6 +1,6 @@
 <script setup lang='ts'>
 import { ref, computed, onMounted, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
 
@@ -16,7 +16,7 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 
 const showShareDialog = ref(false);
-const selectedFile = ref<any>(null);
+const selectedFile = ref<FileSystemItem | undefined>();
 const shareUrl = ref('');
 
 // Computed property to split the current path into parts for breadcrumb
@@ -28,18 +28,18 @@ const pathParts = computed(() => {
 const loadDirectory = async (path = '') => {
   loading.value = true;
   error.value = null;
-  
+
   try {
     console.log('Loading directory:', path);
     const response = await axios.get(`${SERVER_BASE_URL}/netd`, {
       params: { path }
     });
-    
+
     console.log('Response:', response.data);
-    
+
     // Filter out system files (starting with $)
     const filteredFiles = (response.data.files || []).filter((file: File) => !file.name.startsWith('$'));
-    
+
     files.value = filteredFiles;
     currentPath.value = response.data.currentPath || '';
     parentPath.value = response.data.parentPath;
@@ -82,6 +82,14 @@ const shareFile = async (file: FileSystemItem) => {
   showShareDialog.value = true;
 };
 
+const shareDirectory = async (file: FileSystemItem) => {
+  selectedFile.value = file
+  console.log(file)
+  const mid = await tweetStore.shareFile(file)
+  shareUrl.value = `${window.location.origin}/shared/${mid}`;
+  showShareDialog.value = true;
+};
+
 const copyShareUrl = () => {
   navigator.clipboard.writeText(shareUrl.value)
     .then(() => alert('URL copied to clipboard!'))
@@ -90,7 +98,7 @@ const copyShareUrl = () => {
 
 const closeShareDialog = () => {
   showShareDialog.value = false;
-  selectedFile.value = null;
+  selectedFile.value = undefined;
 };
 
 // Utility functions
@@ -124,7 +132,7 @@ onMounted(() => {
 <template>
   <div class='netdisk-container'>
     <h1>File Browser</h1>
-    
+
     <!-- Breadcrumb navigation -->
     <div class='breadcrumb'>
       <span @click='navigateTo("")' class='breadcrumb-link'>Root</span>
@@ -132,17 +140,17 @@ onMounted(() => {
         / <span @click='navigateTo(pathParts.slice(0, index + 1).join("/"))' class='breadcrumb-link'>{{ part }}</span>
       </template>
     </div>
-    
+
     <!-- Loading indicator -->
     <div v-if='loading' class='loading'>
       Loading...
     </div>
-    
+
     <!-- Error message -->
     <div v-if='error' class='error'>
       {{ error }}
     </div>
-    
+
     <!-- File listing -->
     <table v-if='!loading && !error && files.length > 0' class='file-list'>
       <thead>
@@ -166,7 +174,7 @@ onMounted(() => {
           <td></td>
           <td></td>
         </tr>
-        
+
         <!-- File/directory entries -->
         <tr v-for='item in files' :key='item.path'>
           <td>
@@ -185,16 +193,19 @@ onMounted(() => {
               <button @click.stop='viewFile(item)' class='action-button'>View</button>
               <button @click.stop='shareFile(item)' class='action-button'>Share</button>
             </template>
+            <template v-else>
+              <button @click.stop='shareDirectory(item)' class='action-button'>Share</button>
+            </template>
           </td>
         </tr>
       </tbody>
     </table>
-    
+
     <!-- No files message -->
     <div v-if='!loading && !error && files.length === 0' class='no-files'>
       This directory is empty.
     </div>
-    
+
     <!-- Share dialog -->
     <div v-if='showShareDialog' class='share-dialog'>
       <div class='share-dialog-content'>
@@ -246,7 +257,8 @@ h1 {
   border-collapse: collapse;
 }
 
-.file-list th, .file-list td {
+.file-list th,
+.file-list td {
   padding: 12px 15px;
   text-align: left;
   border-bottom: 1px solid #ddd;
@@ -267,7 +279,8 @@ h1 {
   align-items: center;
 }
 
-.folder-icon, .file-icon {
+.folder-icon,
+.file-icon {
   margin-right: 10px;
 }
 
@@ -283,7 +296,8 @@ h1 {
   font-weight: 500;
 }
 
-.file-size, .file-date {
+.file-size,
+.file-date {
   color: #6c757d;
   white-space: nowrap;
 }
@@ -305,7 +319,9 @@ h1 {
   background-color: #e9ecef;
 }
 
-.loading, .error, .no-files {
+.loading,
+.error,
+.no-files {
   padding: 20px;
   text-align: center;
 }
