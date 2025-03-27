@@ -15,11 +15,14 @@ const currentPath = ref('');
 const parentPath = ref<string | null>(null);
 const directoryHistory = ref<string[]>([]);
 const rootPath = ref(''); // Store the root path (shared directory path)
+const retryCount = ref(0);
+const maxRetries = 2;
+const rootDirectoryName = ref('Root'); // Store the name of the shared directory
 
-// For share dialog
-const showShareDialog = ref(false);
-const selectedFile = ref<FileSystemItem | null>(null);
-const shareUrl = ref('');
+// Computed property to determine if we're sharing a single file
+const isSingleFileShare = computed(() => {
+  return sharedFile.value && !sharedFile.value.isDirectory;
+});
 
 // Computed property to split the current path into parts for breadcrumb
 const pathParts = computed(() => {
@@ -39,26 +42,12 @@ const filteredDirectoryContents = computed(() => {
 
 // File action functions
 const viewFile = (file: FileSystemItem) => {
+  // For a file, use the complete URL including path
   window.open(`${file.url}`, '_blank');
 };
 
 const downloadFile = (file: FileSystemItem) => {
   window.open(`${file.url}?download=true`, '_blank');
-};
-
-const copyShareUrl = () => {
-  navigator.clipboard.writeText(shareUrl.value)
-    .then(() => {
-      alert('URL copied to clipboard!');
-    })
-    .catch(err => {
-      console.error('Failed to copy URL: ', err);
-    });
-};
-
-const closeShareDialog = () => {
-  showShareDialog.value = false;
-  selectedFile.value = null;
 };
 
 // Utility functions
@@ -99,9 +88,21 @@ const fetchDirectoryContents = async (path: string, baseUrl: string) => {
     if (directoryHistory.value[directoryHistory.value.length - 1] !== path) {
       directoryHistory.value.push(path);
     }
+    
+    // Reset retry count on successful fetch
+    retryCount.value = 0;
   } catch (err: any) {
     console.error('Failed to load directory contents:', err);
     error.value = err.message || 'Failed to load directory contents';
+    
+    // Retry logic
+    if (retryCount.value < maxRetries) {
+      retryCount.value++;
+      console.log(`Retrying (${retryCount.value}/${maxRetries}) in 5 seconds...`);
+      setTimeout(() => {
+        fetchDirectoryContents(path, baseUrl);
+      }, 5000);
+    }
   } finally {
     loading.value = false;
   }
@@ -130,8 +131,8 @@ const navigateToParent = () => {
   }
 };
 
-// Load initial directory on component mount
-onMounted(async () => {
+// Function to load shared file with retry logic
+const loadSharedFile = async () => {
   try {
     loading.value = true;
     const file = await tweetStore.getSharedFile(fileId as string);
@@ -145,6 +146,8 @@ onMounted(async () => {
       if (file.isDirectory) {
         // Set the root path to the shared directory path
         rootPath.value = file.path;
+        // Set the root directory name
+        rootDirectoryName.value = file.name;
         // Initialize history with root
         directoryHistory.value = [rootPath.value];
         // Fetch directory contents
@@ -155,28 +158,53 @@ onMounted(async () => {
         currentPath.value = rootPath.value;
         directoryHistory.value = [rootPath.value];
         
+        // Get the parent directory name
+        const pathParts = rootPath.value.split('/');
+        rootDirectoryName.value = pathParts[pathParts.length - 1] || 'Root';
+        
         // Create a virtual directory listing with just this file
+        file.url = `${file.url}/netd/${encodeURIComponent(file.path)}`
         directoryContents.value = [file];
       }
+      
+      // Reset retry count on success
+      retryCount.value = 0;
     } else {
       error.value = 'File not found.';
+      
+      // Retry logic
+      if (retryCount.value < maxRetries) {
+        retryCount.value++;
+        console.log(`Retrying (${retryCount.value}/${maxRetries}) in 5 seconds...`);
+        setTimeout(loadSharedFile, 5000);
+      }
     }
   } catch (err: any) {
     console.error('Failed to load shared file:', err);
     error.value = err.message || 'Failed to load shared file';
+    
+    // Retry logic
+    if (retryCount.value < maxRetries) {
+      retryCount.value++;
+      console.log(`Retrying (${retryCount.value}/${maxRetries}) in 5 seconds...`);
+      setTimeout(loadSharedFile, 5000);
+    }
   } finally {
     loading.value = false;
   }
+};
+
+// Load initial directory on component mount
+onMounted(() => {
+  loadSharedFile();
 });
 </script>
 
 <template>
   <div class='netdisk-container'>
-    <h1>Shared File Browser</h1>
-
-    <!-- Breadcrumb navigation -->
-    <div class='breadcrumb'>
-      <span @click='navigateTo("")' class='breadcrumb-link'>Root</span>
+    <!-- Breadcrumb navigation - only show if it's a directory share -->
+    <div v-if='!isSingleFileShare' class='breadcrumb'>
+      <span @click='navigateTo("")' class='breadcrumb-link'>{{ rootDirectoryName }}</span>
       <template v-for='(part, index) in pathParts' :key='index'>
         / <span @click='navigateTo(pathParts.slice(0, index + 1).join("/"))' class='breadcrumb-link'>{{ part }}</span>
       </template>
@@ -184,11 +212,12 @@ onMounted(async () => {
 
     <!-- Loading indicator -->
     <div v-if='loading' class='loading'>
-      Loading...
+      <div class="loading-spinner"></div>
+      <p>Loading... {{ retryCount > 0 ? `(Retry ${retryCount}/${maxRetries})` : '' }}</p>
     </div>
 
     <!-- Error message -->
-    <div v-if='error' class='error'>
+    <div v-if='error && retryCount >= maxRetries' class='error'>
       {{ error }}
     </div>
 
@@ -203,8 +232,8 @@ onMounted(async () => {
         </tr>
       </thead>
       <tbody>
-        <!-- Parent directory link - only show if not at root -->
-        <tr v-if='parentPath !== null && currentPath !== rootPath'>
+        <!-- Parent directory link - only show if not at root and not a single file share -->
+        <tr v-if='parentPath !== null && currentPath !== rootPath && !isSingleFileShare'>
           <td>
             <div @click='navigateToParent' class='file-link'>
               <span class='folder-icon'>📁</span>
@@ -241,19 +270,6 @@ onMounted(async () => {
     <!-- No files message -->
     <div v-if='!loading && !error && filteredDirectoryContents.length === 0' class='no-files'>
       This directory is empty.
-    </div>
-
-    <!-- Share dialog -->
-    <div v-if='showShareDialog' class='share-dialog'>
-      <div class='share-dialog-content'>
-        <h3>Share {{ selectedFile?.name }}</h3>
-        <p>File URL:</p>
-        <input type='text' readonly :value='shareUrl' @click='($event.target as HTMLInputElement).select()' />
-        <div class='share-actions'>
-          <button @click='copyShareUrl'>Copy</button>
-          <button @click='closeShareDialog'>Close</button>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -378,6 +394,25 @@ h1 {
 
 .loading {
   color: #007bff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #007bff;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .error {

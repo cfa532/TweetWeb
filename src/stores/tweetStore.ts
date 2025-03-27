@@ -550,7 +550,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const sharingUser = await this.getUser(file.userId)
             const cloudPort = sharingUser?.cloudDrivePort ? sharingUser?.cloudDrivePort : 8010
             file.url = `http://${ip0}:${cloudPort}`   // base url for the file
-            console.log("Get shared file", file, sharingUser)
+            console.log("Get shared file", file)
             return file
         },
         async toggleLike(tweetId: MimeiId) {
