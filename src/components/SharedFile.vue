@@ -14,21 +14,30 @@ const directoryContents = ref<FileSystemItem[]>([]);
 const currentPath = ref('');
 const parentPath = ref<string | null>(null);
 const directoryHistory = ref<string[]>([]);
+const rootPath = ref(''); // Store the root path (shared directory path)
 
 // Computed property to split the current path into parts for breadcrumb
 const pathParts = computed(() => {
   if (!currentPath.value) return [];
-  return currentPath.value.split('/').filter(Boolean);
+  // Only include path parts relative to the root path
+  const relativePath = currentPath.value.replace(rootPath.value, '');
+  return relativePath.split('/').filter(Boolean);
 });
 
-// File action functions - FIXED to prevent path duplication
+// Computed property to filter out system files
+const filteredDirectoryContents = computed(() => {
+  return directoryContents.value.filter(item => {
+    // Filter out files/folders that start with a dot or dollar sign
+    return !item.name.startsWith('.') && !item.name.startsWith('$');
+  });
+});
+
+// File action functions
 const viewFile = (file: FileSystemItem) => {
-  // Use the base URL without appending the path twice
   window.open(`${file.url}`, '_blank');
 };
 
 const downloadFile = (file: FileSystemItem) => {
-  // Use the base URL without appending the path twice
   window.open(`${file.url}?download=true`, '_blank');
 };
 
@@ -49,13 +58,23 @@ const formatDate = (dateString: string) => {
 const fetchDirectoryContents = async (path: string, baseUrl: string) => {
   try {
     loading.value = true;
+    
+    // Ensure we don't navigate above the root path
+    if (!path.startsWith(rootPath.value)) {
+      path = rootPath.value;
+    }
+    
     // Make sure we're using the correct endpoint format
     const response = await axios.get(`${baseUrl}/netd`, {
       params: { path }
     });
+    
     directoryContents.value = response.data.files || [];
     currentPath.value = response.data.currentPath || '';
-    parentPath.value = response.data.parentPath;
+    
+    // Only set parentPath if we're not at the root of the shared directory
+    // This prevents navigating above the shared directory
+    parentPath.value = currentPath.value !== rootPath.value ? response.data.parentPath : null;
     
     // Add current path to history if it's not already the last item
     if (directoryHistory.value[directoryHistory.value.length - 1] !== path) {
@@ -77,7 +96,7 @@ const navigateTo = (path: string) => {
 };
 
 const navigateToParent = () => {
-  if (parentPath.value !== null && sharedFile.value) {
+  if (parentPath.value !== null && sharedFile.value && currentPath.value !== rootPath.value) {
     fetchDirectoryContents(parentPath.value, sharedFile.value.url);
     // Remove the last item from history
     directoryHistory.value.pop();
@@ -86,7 +105,17 @@ const navigateToParent = () => {
 
 const navigateToBreadcrumb = (index: number) => {
   if (sharedFile.value) {
-    const path = index === -1 ? '' : pathParts.value.slice(0, index + 1).join('/');
+    // If index is -1, navigate to the root (shared directory)
+    if (index === -1) {
+      fetchDirectoryContents(rootPath.value, sharedFile.value.url);
+      directoryHistory.value = [rootPath.value];
+      return;
+    }
+    
+    // Otherwise, build the path from the root and the selected breadcrumb parts
+    const relativeParts = pathParts.value.slice(0, index + 1);
+    const path = rootPath.value + (relativeParts.length > 0 ? '/' + relativeParts.join('/') : '');
+    
     fetchDirectoryContents(path, sharedFile.value.url);
     // Trim history to this point
     directoryHistory.value = directoryHistory.value.slice(0, index + 2);
@@ -103,11 +132,16 @@ onMounted(async () => {
         ...file,
         url: file.url, // Ensure the URL is stored
       };
+      
       if (file.isDirectory) {
+        // Set the root path to the shared directory path
+        rootPath.value = file.path;
+        
         // Initialize history with root
-        directoryHistory.value = [''];
+        directoryHistory.value = [rootPath.value];
+        
         // Fetch directory contents
-        await fetchDirectoryContents(file.path, file.url);
+        await fetchDirectoryContents(rootPath.value, file.url);
       }
     } else {
       error.value = 'File not found.';
@@ -164,15 +198,15 @@ onMounted(async () => {
           </template>
         </div>
 
-        <!-- Parent directory button -->
-        <div v-if='parentPath !== null' class='parent-directory'>
+        <!-- Parent directory button - only show if not at root -->
+        <div v-if='parentPath !== null && currentPath !== rootPath' class='parent-directory'>
           <button @click='navigateToParent' class='action-button'>
             <i class='fas fa-folder'></i> .. (Parent Directory)
           </button>
         </div>
 
         <!-- Directory contents -->
-        <table v-if='directoryContents.length > 0' class='file-list'>
+        <table v-if='filteredDirectoryContents.length > 0' class='file-list'>
           <thead>
             <tr>
               <th>Name</th>
@@ -182,7 +216,7 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for='item in directoryContents' :key='item.path'>
+            <tr v-for='item in filteredDirectoryContents' :key='item.path'>
               <td>
                 <div @click='item.isDirectory ? navigateTo(item.path) : viewFile(item)' class='file-link'>
                   <i :class='item.isDirectory ? "fas fa-folder" : "fas fa-file"'></i>
