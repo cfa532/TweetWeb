@@ -131,8 +131,6 @@ onMounted(() => {
 
 <template>
   <div class='netdisk-container'>
-    <h1>File Browser</h1>
-
     <!-- Breadcrumb navigation -->
     <div class='breadcrumb'>
       <span @click='navigateTo("")' class='breadcrumb-link'>Root</span>
