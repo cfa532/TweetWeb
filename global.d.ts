@@ -25,6 +25,7 @@ interface User {
     timestamp: string | number = Date.now();
     followingCount?: number;
     followerCount?: number;
+    cloudDrivePort?: number;
 };
 
 interface Tweet {
@@ -60,15 +61,27 @@ interface FVPair {
     value: any
 };
 
+// Type of passing attachments as Mimei
 interface MimeiFileType {
     mid: string
     type: string
     size?: number
     fileName?: string
     timestamp: string | number = Date.now()
-    aspectRatio?: number
+    aspectRatio?: number    // for video files
 
     // not saved in Mimei DB, for display only. The value is assigned from Tweet's downloadable
     // upload render the attachment.
     downloadable?: boolean
+};
+
+// File type returned by network drive
+type FileSystemItem = {
+    userId: MimeiId;    // user who shared the file
+    name: string;
+    path: string;
+    isDirectory: boolean;
+    size: number;
+    modified: string; // ISO 8601 date string
+    url: string;
 };

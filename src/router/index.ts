@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
-import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, FileList,
+import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, FileList, Shared,
   IPs, UploadPackage, DownloadPackage, Followings, Followers, Contact, UploadFile
 } from "@/components"
 import { useAlertStore } from '@/stores';
@@ -41,9 +41,23 @@ export const router = createRouter({
       }
     },
     {
+      path: '/shared/:mid',
+      name: "shared",
+      component: Shared,
+      props: true
+    },
+    {
+      // show files on appointed location on a server
       path: '/netdisk',
       name: 'netdisk',
-      component: FileList
+      component: FileList,
+      beforeEnter: (to: any, from: any, next: any) => {
+        let user = sessionStorage.getItem("user")
+        if (!user) {
+          next("/login")
+        } else
+          next()
+      },
     },
     {
       // upload regular file to server

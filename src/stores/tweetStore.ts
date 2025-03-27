@@ -504,8 +504,9 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid
         },
         /**
+         * Upload a file to mm database, and add referrence to userId.
          * @param filename 
-         * @returns 
+         * @returns mid of uploaded file
          */
         async uploadFile(cid: string, filename: string) {
             let mid = await this.loginUser?.client.RunMApp("upload_file", {
@@ -515,6 +516,42 @@ export const useTweetStore = defineStore('tweetStore', {
                 userid: this.loginUser?.mid
             })
             return mid
+        },
+        async shareFile(file: FileSystemItem) {
+            let mid = await this.loginUser?.client.RunMApp("share_file", {
+                aid: this.lapi.appId,
+                ver: "last",
+                file: JSON.stringify(file),
+                userid: this.loginUser?.mid
+            })
+            return mid
+        },
+        async getSharedFile(mid: MimeiId) {
+            // get file object and base url of the mid
+            let ip = await this.lapi.client.RunMApp("get_shared_file_ip", {
+                aid: this.lapi.appId,
+                ver: "last",
+                mid: mid
+            })
+            let ip0 = splitIpAndPort(ip)
+            console.log("Get shared file", mid, ip, ip0)
+            if (!ip0) {
+                console.error("Invalid IP", ip)
+                return
+            }
+
+            const hproseClient = this.lapi.getClient(ip)
+            let file = await hproseClient.RunMApp("get_shared_file", {
+                aid: this.lapi.appId,
+                ver: "last",
+                mid: mid
+            })
+
+            const sharingUser = await this.getUser(file.userId)
+            const cloudPort = sharingUser?.cloudDrivePort ? sharingUser?.cloudDrivePort : 8010
+            file.url = `http://${ip0}:${cloudPort}`   // base url for the file
+            console.log("Get shared file", file, sharingUser)
+            return file
         },
         async toggleLike(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_likes", {
@@ -641,3 +678,12 @@ export const useTweetStore = defineStore('tweetStore', {
     },
 });
 
+function splitIpAndPort(address: string) {
+    const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
+    const match = address.match(regex);
+    if (match) {
+        let ip = match[1] || match[2]; // IPv6 or IPv4
+        const port = match[3] ? parseInt(match[3], 10) : null; // Port number (or null if not present)
+        return ip
+    }
+}

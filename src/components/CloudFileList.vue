@@ -2,13 +2,14 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
+import { useTweetStore } from '@/stores';
 
 // Get the server base URL from environment variables
 const SERVER_BASE_URL = import.meta.env.VITE_TUS_SERVER || '';
 const route = useRoute();
-const router = useRouter();
+const tweetStore = useTweetStore()
 
-const files = ref([] as any[]);
+const files = ref([] as FileSystemItem[]);
 const currentPath = ref('');
 const parentPath = ref(null);
 const loading = ref(true);
@@ -64,17 +65,20 @@ const navigateToParent = () => {
 };
 
 // File action functions
-const viewFile = (file: any) => {
+const viewFile = (file: FileSystemItem) => {
   window.open(`${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}`, '_blank');
 };
 
-const downloadFile = (file: any) => {
+const downloadFile = (file: FileSystemItem) => {
   window.open(`${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}?download=true`, '_blank');
 };
 
-const shareFile = (file: any) => {
+const shareFile = async (file: FileSystemItem) => {
   selectedFile.value = file;
-  shareUrl.value = `${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}`;
+  console.log(file)
+  const mid = await tweetStore.shareFile(file)
+  // shareUrl.value = `${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}`;
+  shareUrl.value = `${window.location.origin}/shared/${mid}`;
   showShareDialog.value = true;
 };
 
