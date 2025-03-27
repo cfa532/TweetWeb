@@ -533,6 +533,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid
             })
+            console.log("Get shared file", mid, ip)
             let ip0 = splitIpAndPort(ip)
             console.log("Get shared file", mid, ip, ip0)
             if (!ip0) {

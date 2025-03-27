@@ -61,6 +61,29 @@ router.post('/files/register', async (req, res) => {
     // Rename the file to its permanent location
     fs.renameSync(uploadedFilePath, permanentFilePath);
     
+    // Create symbolic link in NET_DISK directory if NET_DISK is defined
+    if (process.env.NET_DISK) {
+      // Ensure NET_DISK/uploads directory exists
+      const netDiskUploadsPath = path.join(process.env.NET_DISK, 'uploads');
+      if (!fs.existsSync(netDiskUploadsPath)) {
+        fs.mkdirSync(netDiskUploadsPath, { recursive: true });
+      }
+      
+      // Create symbolic link using the original filename
+      const symlinkPath = path.join(netDiskUploadsPath, filename);
+      
+      // Remove existing symlink if it exists
+      if (fs.existsSync(symlinkPath)) {
+        fs.unlinkSync(symlinkPath);
+      }
+      
+      // Create the symbolic link
+      fs.symlinkSync(permanentFilePath, symlinkPath);
+      console.log(`Created symbolic link: ${symlinkPath} -> ${permanentFilePath}`);
+    } else {
+      console.warn('NET_DISK environment variable not set. Skipping symbolic link creation.');
+    }
+    
     console.log(`File registered: ${fileId} ${filename} ${fileSize}`);
     
     // Return the file ID to the client

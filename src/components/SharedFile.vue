@@ -135,7 +135,7 @@ const navigateToParent = () => {
 const loadSharedFile = async () => {
   try {
     loading.value = true;
-    const file = await tweetStore.getSharedFile(fileId as string);
+    const file = await tweetStore.getSharedFile(fileId as MimeiId);
     
     if (file) {
       sharedFile.value = {
