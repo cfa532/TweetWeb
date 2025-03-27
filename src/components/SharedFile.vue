@@ -10,11 +10,16 @@ const tweetStore = useTweetStore();
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sharedFile = ref<FileSystemItem | null>(null);
-const directoryContents = ref<FileSystemItem[]>([]);
+const directoryContents = ref<FileSystemItem[]>([]); 
 const currentPath = ref('');
 const parentPath = ref<string | null>(null);
 const directoryHistory = ref<string[]>([]);
 const rootPath = ref(''); // Store the root path (shared directory path)
+
+// For share dialog
+const showShareDialog = ref(false);
+const selectedFile = ref<FileSystemItem | null>(null);
+const shareUrl = ref('');
 
 // Computed property to split the current path into parts for breadcrumb
 const pathParts = computed(() => {
@@ -41,6 +46,21 @@ const downloadFile = (file: FileSystemItem) => {
   window.open(`${file.url}?download=true`, '_blank');
 };
 
+const copyShareUrl = () => {
+  navigator.clipboard.writeText(shareUrl.value)
+    .then(() => {
+      alert('URL copied to clipboard!');
+    })
+    .catch(err => {
+      console.error('Failed to copy URL: ', err);
+    });
+};
+
+const closeShareDialog = () => {
+  showShareDialog.value = false;
+  selectedFile.value = null;
+};
+
 // Utility functions
 const formatFileSize = (bytes: number) => {
   if (bytes === 0) return '0 Bytes';
@@ -58,7 +78,6 @@ const formatDate = (dateString: string) => {
 const fetchDirectoryContents = async (path: string, baseUrl: string) => {
   try {
     loading.value = true;
-    
     // Ensure we don't navigate above the root path
     if (!path.startsWith(rootPath.value)) {
       path = rootPath.value;
@@ -91,7 +110,15 @@ const fetchDirectoryContents = async (path: string, baseUrl: string) => {
 // Navigation functions
 const navigateTo = (path: string) => {
   if (sharedFile.value) {
-    fetchDirectoryContents(path, sharedFile.value.url);
+    // If path is empty, navigate to root
+    if (!path) {
+      fetchDirectoryContents(rootPath.value, sharedFile.value.url);
+      return;
+    }
+    
+    // Otherwise, navigate to the specified path
+    const fullPath = rootPath.value + (path ? '/' + path : '');
+    fetchDirectoryContents(fullPath, sharedFile.value.url);
   }
 };
 
@@ -103,30 +130,12 @@ const navigateToParent = () => {
   }
 };
 
-const navigateToBreadcrumb = (index: number) => {
-  if (sharedFile.value) {
-    // If index is -1, navigate to the root (shared directory)
-    if (index === -1) {
-      fetchDirectoryContents(rootPath.value, sharedFile.value.url);
-      directoryHistory.value = [rootPath.value];
-      return;
-    }
-    
-    // Otherwise, build the path from the root and the selected breadcrumb parts
-    const relativeParts = pathParts.value.slice(0, index + 1);
-    const path = rootPath.value + (relativeParts.length > 0 ? '/' + relativeParts.join('/') : '');
-    
-    fetchDirectoryContents(path, sharedFile.value.url);
-    // Trim history to this point
-    directoryHistory.value = directoryHistory.value.slice(0, index + 2);
-  }
-};
-
 // Load initial directory on component mount
 onMounted(async () => {
   try {
     loading.value = true;
     const file = await tweetStore.getSharedFile(fileId as string);
+    
     if (file) {
       sharedFile.value = {
         ...file,
@@ -136,12 +145,18 @@ onMounted(async () => {
       if (file.isDirectory) {
         // Set the root path to the shared directory path
         rootPath.value = file.path;
-        
         // Initialize history with root
         directoryHistory.value = [rootPath.value];
-        
         // Fetch directory contents
         await fetchDirectoryContents(rootPath.value, file.url);
+      } else {
+        // If the shared file is a single file, create a virtual directory view
+        rootPath.value = file.path.substring(0, file.path.lastIndexOf('/'));
+        currentPath.value = rootPath.value;
+        directoryHistory.value = [rootPath.value];
+        
+        // Create a virtual directory listing with just this file
+        directoryContents.value = [file];
       }
     } else {
       error.value = 'File not found.';
@@ -156,192 +171,121 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class='file-browser-container'>
-    <header class='file-browser-header'>
-      <h1>Shared File</h1>
-    </header>
+  <div class='netdisk-container'>
+    <h1>Shared File Browser</h1>
 
-    <main class='file-browser-content'>
-      <div v-if='loading' class='loading-indicator'>
-        <p>Loading...</p>
-      </div>
+    <!-- Breadcrumb navigation -->
+    <div class='breadcrumb'>
+      <span @click='navigateTo("")' class='breadcrumb-link'>Root</span>
+      <template v-for='(part, index) in pathParts' :key='index'>
+        / <span @click='navigateTo(pathParts.slice(0, index + 1).join("/"))' class='breadcrumb-link'>{{ part }}</span>
+      </template>
+    </div>
 
-      <div v-if='error' class='error-message'>
-        <p>Error: {{ error }}</p>
-      </div>
+    <!-- Loading indicator -->
+    <div v-if='loading' class='loading'>
+      Loading...
+    </div>
 
-      <!-- Single file view -->
-      <div v-if='sharedFile && !sharedFile.isDirectory' class='file-details'>
-        <section class='file-info'>
-          <h2>{{ sharedFile.name }}</h2>
-          <p><strong>Size:</strong> {{ formatFileSize(sharedFile.size) }}</p>
-          <p><strong>Modified:</strong> {{ formatDate(sharedFile.modified) }}</p>
-        </section>
+    <!-- Error message -->
+    <div v-if='error' class='error'>
+      {{ error }}
+    </div>
 
-        <section class='file-actions'>
-          <button @click='downloadFile(sharedFile)' class='action-button'>
-            <i class='fas fa-download'></i> Download
-          </button>
-          <button @click='viewFile(sharedFile)' class='action-button'>
-            <i class='fas fa-eye'></i> View
-          </button>
-        </section>
-      </div>
+    <!-- File listing -->
+    <table v-if='!loading && !error && filteredDirectoryContents.length > 0' class='file-list'>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Size</th>
+          <th>Modified</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Parent directory link - only show if not at root -->
+        <tr v-if='parentPath !== null && currentPath !== rootPath'>
+          <td>
+            <div @click='navigateToParent' class='file-link'>
+              <span class='folder-icon'>📁</span>
+              <span class='file-name'>..</span>
+            </div>
+          </td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
 
-      <!-- Directory view -->
-      <div v-else-if='sharedFile && sharedFile.isDirectory' class='directory-browser'>
-        <!-- Breadcrumb navigation -->
-        <div class='breadcrumb'>
-          <span @click='navigateToBreadcrumb(-1)' class='breadcrumb-link'>Root</span>
-          <template v-for='(part, index) in pathParts' :key='index'>
-            / <span @click='navigateToBreadcrumb(index)' class='breadcrumb-link'>{{ part }}</span>
-          </template>
-        </div>
+        <!-- File/directory entries -->
+        <tr v-for='item in filteredDirectoryContents' :key='item.path'>
+          <td>
+            <div @click='item.isDirectory ? navigateTo(item.path.replace(rootPath, "").replace(/^\//, "")) : viewFile(item)' class='file-link'>
+              <span :class='item.isDirectory ? "folder-icon" : "file-icon"'>
+                {{ item.isDirectory ? '📁' : '📄' }}
+              </span>
+              <span class='file-name'>{{ item.name }}</span>
+            </div>
+          </td>
+          <td class='file-size'>{{ item.isDirectory ? '-' : formatFileSize(item.size) }}</td>
+          <td class='file-date'>{{ formatDate(item.modified) }}</td>
+          <td class='file-actions'>
+            <template v-if='!item.isDirectory'>
+              <button @click.stop='downloadFile(item)' class='action-button'>Download</button>
+              <button @click.stop='viewFile(item)' class='action-button'>View</button>
+            </template>
+          </td>
+        </tr>
+      </tbody>
+    </table>
 
-        <!-- Parent directory button - only show if not at root -->
-        <div v-if='parentPath !== null && currentPath !== rootPath' class='parent-directory'>
-          <button @click='navigateToParent' class='action-button'>
-            <i class='fas fa-folder'></i> .. (Parent Directory)
-          </button>
-        </div>
+    <!-- No files message -->
+    <div v-if='!loading && !error && filteredDirectoryContents.length === 0' class='no-files'>
+      This directory is empty.
+    </div>
 
-        <!-- Directory contents -->
-        <table v-if='filteredDirectoryContents.length > 0' class='file-list'>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Size</th>
-              <th>Modified</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for='item in filteredDirectoryContents' :key='item.path'>
-              <td>
-                <div @click='item.isDirectory ? navigateTo(item.path) : viewFile(item)' class='file-link'>
-                  <i :class='item.isDirectory ? "fas fa-folder" : "fas fa-file"'></i>
-                  <span class='file-name'>{{ item.name }}</span>
-                </div>
-              </td>
-              <td class='file-size'>{{ item.isDirectory ? '-' : formatFileSize(item.size) }}</td>
-              <td class='file-date'>{{ formatDate(item.modified) }}</td>
-              <td class='file-actions'>
-                <template v-if='!item.isDirectory'>
-                  <button @click.stop='downloadFile(item)' class='action-button'>
-                    <i class='fas fa-download'></i> Download
-                  </button>
-                  <button @click.stop='viewFile(item)' class='action-button'>
-                    <i class='fas fa-eye'></i> View
-                  </button>
-                </template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div v-else-if='!loading' class='no-files'>
-          This directory is empty.
+    <!-- Share dialog -->
+    <div v-if='showShareDialog' class='share-dialog'>
+      <div class='share-dialog-content'>
+        <h3>Share {{ selectedFile?.name }}</h3>
+        <p>File URL:</p>
+        <input type='text' readonly :value='shareUrl' @click='($event.target as HTMLInputElement).select()' />
+        <div class='share-actions'>
+          <button @click='copyShareUrl'>Copy</button>
+          <button @click='closeShareDialog'>Close</button>
         </div>
       </div>
-
-      <div v-else-if='!loading && !error' class='not-found-message'>
-        <p>File not found.</p>
-      </div>
-    </main>
-
-    <footer class='file-browser-footer'>
-      <p>&copy; 2024 Shared File Browser</p>
-    </footer>
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* General Styles */
-.file-browser-container {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #f8f9fa;
-  color: #343a40;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.file-browser-header {
-  background-color: #007bff;
-  color: white;
+.netdisk-container {
+  font-family: Arial, sans-serif;
+  margin: 0;
   padding: 20px;
-  text-align: center;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  color: #333;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-.file-browser-content {
-  padding: 20px;
-  flex: 1;
-}
-
-.file-browser-footer {
-  background-color: #343a40;
-  color: white;
-  text-align: center;
-  padding: 10px;
-  font-size: 0.8em;
-}
-
-/* Loading and Error Messages */
-.loading-indicator,
-.error-message,
-.not-found-message {
-  text-align: center;
-  padding: 20px;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  margin-bottom: 20px;
-}
-
-.error-message {
-  color: #dc3545;
-  border-color: #dc3545;
-}
-
-/* File Details Section */
-.file-details {
-  background-color: white;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.file-info h2 {
+h1 {
   margin-top: 0;
-  color: #007bff;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+  color: #2c3e50;
 }
 
-.file-info p {
-  margin-bottom: 10px;
-}
-
-/* Directory Browser */
-.directory-browser {
-  background-color: white;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-/* Breadcrumb */
 .breadcrumb {
   margin-bottom: 20px;
   background-color: #f8f9fa;
   padding: 8px 15px;
   border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .breadcrumb-link {
   color: #007bff;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -349,15 +293,12 @@ onMounted(async () => {
   text-decoration: underline;
 }
 
-/* Parent Directory */
-.parent-directory {
-  margin-bottom: 15px;
-}
-
-/* File List */
 .file-list {
   width: 100%;
   border-collapse: collapse;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .file-list th,
@@ -382,15 +323,16 @@ onMounted(async () => {
   align-items: center;
 }
 
-.file-link i {
+.folder-icon,
+.file-icon {
   margin-right: 10px;
 }
 
-.fas.fa-folder {
+.folder-icon {
   color: #ffc107;
 }
 
-.fas.fa-file {
+.file-icon {
   color: #6c757d;
 }
 
@@ -404,7 +346,6 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
-/* File Actions */
 .file-actions {
   white-space: nowrap;
 }
@@ -412,26 +353,104 @@ onMounted(async () => {
 .action-button {
   margin-right: 8px;
   padding: 6px 12px;
-  background-color: #007bff;
-  color: white;
-  border: none;
+  background-color: #f8f9fa;
+  border: 1px solid #ddd;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.3s;
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  transition: all 0.2s ease;
 }
 
 .action-button:hover {
-  background-color: #0056b3;
+  background-color: #e9ecef;
+  border-color: #ced4da;
+}
+
+.loading,
+.error,
+.no-files {
+  padding: 20px;
+  text-align: center;
+  background-color: white;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-top: 20px;
+}
+
+.loading {
+  color: #007bff;
+}
+
+.error {
+  color: #dc3545;
 }
 
 .no-files {
   color: #6c757d;
-  text-align: center;
-  padding: 20px;
   font-style: italic;
+}
+
+.share-dialog {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.share-dialog-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 5px;
+  width: 80%;
+  max-width: 500px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.share-dialog-content h3 {
+  margin-top: 0;
+  color: #2c3e50;
+}
+
+.share-dialog-content input {
+  width: 100%;
+  padding: 8px;
+  margin: 10px 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.share-actions button {
+  padding: 8px 15px;
+  cursor: pointer;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.share-actions button:hover {
+  background-color: #0069d9;
+}
+
+.share-actions button:last-child {
+  background-color: #6c757d;
+}
+
+.share-actions button:last-child:hover {
+  background-color: #5a6268;
 }
 
 @media (max-width: 768px) {
@@ -447,6 +466,7 @@ onMounted(async () => {
   
   .action-button {
     margin-right: 0;
+    margin-bottom: 5px;
   }
 }
 </style>
