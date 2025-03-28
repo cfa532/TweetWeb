@@ -75,10 +75,10 @@ const downloadFile = (file: FileSystemItem) => {
 
 const shareFile = async (file: FileSystemItem) => {
   selectedFile.value = file;
-  console.log(file)
   const mid = await tweetStore.shareFile(file)
   // shareUrl.value = `${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}`;
   shareUrl.value = `${window.location.origin}/shared/${mid}`;
+  console.log(file, shareUrl.value)
   showShareDialog.value = true;
 };
 
