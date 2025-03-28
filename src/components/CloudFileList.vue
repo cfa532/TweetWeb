@@ -13,7 +13,7 @@ const currentPath = ref('');
 const parentPath = ref(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
-
+const isSharing = ref(false);
 const showShareDialog = ref(false);
 const selectedFile = ref<FileSystemItem | undefined>();
 const shareUrl = ref('');
@@ -75,19 +75,34 @@ const downloadFile = (file: FileSystemItem) => {
 
 const shareFile = async (file: FileSystemItem) => {
   selectedFile.value = file;
-  const mid = await tweetStore.shareFile(file)
-  // shareUrl.value = `${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}`;
-  shareUrl.value = `${window.location.origin}/shared/${mid}`;
-  console.log(file, shareUrl.value)
-  showShareDialog.value = true;
+  isSharing.value = true; // Set loading to true before API call
+  try {
+    const mid = await tweetStore.shareFile(file);
+    shareUrl.value = `${window.location.origin}/shared/${mid}`;
+    console.log(file, shareUrl.value);
+    showShareDialog.value = true;
+  } catch (error) {
+    console.error('Error sharing file:', error);
+    alert('Failed to share file. Please try again.');
+  } finally {
+    isSharing.value = false; // Set loading to false after API call completes
+  }
 };
 
 const shareDirectory = async (file: FileSystemItem) => {
-  selectedFile.value = file
-  console.log(file)
-  const mid = await tweetStore.shareFile(file)
-  shareUrl.value = `${window.location.origin}/shared/${mid}`;
-  showShareDialog.value = true;
+  selectedFile.value = file;
+  console.log(file);
+  isSharing.value = true; // Set loading to true before API call
+  try {
+    const mid = await tweetStore.shareFile(file);
+    shareUrl.value = `${window.location.origin}/shared/${mid}`;
+    showShareDialog.value = true;
+  } catch (error) {
+    console.error('Error sharing directory:', error);
+    alert('Failed to share directory. Please try again.');
+  } finally {
+    isSharing.value = false; // Set loading to false after API call completes
+  }
 };
 
 const copyShareUrl = () => {
@@ -194,10 +209,16 @@ onMounted(() => {
             <template v-if='!item.isDirectory'>
               <button @click.stop='downloadFile(item)' class='action-button'>Download</button>
               <button @click.stop='viewFile(item)' class='action-button'>View</button>
-              <button @click.stop='shareFile(item)' class='action-button'>Share</button>
+              <button @click.stop='shareFile(item)' class='action-button' :disabled="isSharing">
+                <span v-if="isSharing && selectedFile?.path === item.path" class="loading-spinner"></span>
+                <span v-else>Share</span>
+              </button>
             </template>
             <template v-else>
-              <button @click.stop='shareDirectory(item)' class='action-button'>Share</button>
+              <button @click.stop='shareDirectory(item)' class='action-button' :disabled="isSharing">
+                <span v-if="isSharing && selectedFile?.path === item.path" class="loading-spinner"></span>
+                <span v-else>Share</span>
+              </button>
             </template>
           </td>
         </tr>
@@ -381,5 +402,26 @@ h1 {
   .file-date {
     display: none;
   }
+}
+
+/* Add styles for the loading spinner */
+.loading-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-top-color: #007bff;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Disabled button style */
+.action-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 </style>
