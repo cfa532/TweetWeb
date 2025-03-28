@@ -4,9 +4,7 @@ const fsPromises = require('fs').promises;
 const fs = require('fs');
 const path = require('path');
 const mime = require('mime-types');
-
 const tusDataDir = process.env.NET_DISK;
-const baseUrl = process.env.BASE_URL || '';
 
 // Helper function to determine content type
 function getContentType(filename) {
@@ -47,8 +45,8 @@ router.get('/netd', async (req, res) => {
                     size: stat.size,
                     modified: stat.mtime,
                     url: stat.isDirectory() 
-                        ? `${baseUrl}/netd?path=${encodeURIComponent(relativePath)}`
-                        : `${baseUrl}/netd/${encodeURIComponent(relativePath)}`
+                        ? `/netd?path=${encodeURIComponent(relativePath)}`
+                        : `/netd/${encodeURIComponent(relativePath)}`
                 });
             } catch (err) {
                 console.error(`Error accessing ${file}:`, err);

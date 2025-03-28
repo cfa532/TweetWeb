@@ -5,7 +5,6 @@ import axios from 'axios';
 import { useTweetStore } from '@/stores';
 
 // Get the server base URL from environment variables
-const SERVER_BASE_URL = import.meta.env.VITE_TUS_SERVER || '';
 const route = useRoute();
 const tweetStore = useTweetStore()
 
@@ -24,6 +23,7 @@ const pathParts = computed(() => {
   return currentPath.value ? currentPath.value.split('/').filter(Boolean) : [];
 });
 
+let TUS_SERVER_URL = ""
 // Function to load directory contents
 const loadDirectory = async (path = '') => {
   loading.value = true;
@@ -31,7 +31,7 @@ const loadDirectory = async (path = '') => {
 
   try {
     console.log('Loading directory:', path);
-    const response = await axios.get(`${SERVER_BASE_URL}/netd`, {
+    const response = await axios.get(`${TUS_SERVER_URL}/netd`, {
       params: { path }
     });
 
@@ -66,11 +66,11 @@ const navigateToParent = () => {
 
 // File action functions
 const viewFile = (file: FileSystemItem) => {
-  window.open(`${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}`, '_blank');
+  window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}`, '_blank');
 };
 
 const downloadFile = (file: FileSystemItem) => {
-  window.open(`${SERVER_BASE_URL}/netd/${encodeURIComponent(file.path)}?download=true`, '_blank');
+  window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?download=true`, '_blank');
 };
 
 const shareFile = async (file: FileSystemItem) => {
@@ -122,9 +122,14 @@ watch(
   }
 );
 
-// Load initial directory on component mount
+// Available only to login server on its base host.
 onMounted(() => {
   console.log('Component mounted, route query:', route.query);
+  let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
+    let port = tweetStore.loginUser?.cloudDrivePort ? tweetStore.loginUser?.cloudDrivePort : 8010
+    TUS_SERVER_URL = `http://${ip}:${port}`
+    console.log("TUS server", TUS_SERVER_URL)
+
   loadDirectory(route.query.path as string || '');
 });
 </script>

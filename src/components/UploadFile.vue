@@ -8,7 +8,7 @@ import axios from 'axios'; // Import axios
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
 }
-const tusServerUrl = import.meta.env.VITE_TUS_SERVER
+let tusServerUrl = ""
 const emit = defineEmits(['uploaded', 'hide'])
 const inpCaption = ref()
 const textValue = ref('')
@@ -22,7 +22,6 @@ const loading = ref(false)
 const selectFiles = ref()
 const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
-const hproseClient = tweetStore.loginUser?.client
 const isResumableUpload = ref(true)
 const uploads = ref<any[]>([]) // Store tus upload instances
 const abortControllers = ref<AbortController[]>([])
@@ -35,7 +34,12 @@ interface StoredUpload {
     file: File | null; // Store the File object
 }
 
-onMounted(() => {
+onMounted(async () => {
+    let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
+    let port = tweetStore.loginUser?.cloudDrivePort ? tweetStore.loginUser?.cloudDrivePort : 8010
+    tusServerUrl = `http://${ip}:${port}`
+    console.log("TUS server", tusServerUrl)
+
     // Check if there are any uploads in progress from localStorage
     const storedUploadsString = localStorage.getItem('resumableUploads');
     if (storedUploadsString) {

@@ -19,13 +19,14 @@ interface User {
     username: string;
     name?: string;
     profile?: string;
-    hostIds?: MimeiId[];
-    providerIp?: string;  // IP of the best provider for the author's data
+    hostId?: MimeiId;
+    providerIp?: string;  // Provider's IP that has write permission
     client?: any;       // Hprose client handler
     timestamp: string | number = Date.now();
     followingCount?: number;
     followerCount?: number;
     cloudDrivePort?: number;
+    hostUrl?: string;
 };
 
 interface Tweet {

@@ -252,7 +252,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     ver: "last",
                     tweetid: tweetId,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                    hostid: author?.hostIds?.[0],
+                    hostid: author?.hostId,
                     userid: authorId,     // author of the tweet
                 })
             } else {
@@ -317,6 +317,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // cache the user data
             if (user) {
                 user.providerIp = providerIp
+                user.hostId = user.hostIds[0]
                 sessionStorage.setItem(userId, JSON.stringify(user))
                 user.client = providerClient
                 user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
@@ -405,7 +406,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 console.error("Login failed", userId, user)
                 return
             }
-            console.log("Login user", user)
             let ret = await user.client.RunMApp("login", {
                 aid: this.appId, ver: "last", username: username, password: password
             })
@@ -418,11 +418,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 /**
                  * Now find the IP of a host where user has write permission
                  */
-                if (user.hostIds && user.hostIds.length > 0) {
+                if (user.hostId) {
                     let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
-                        aid: this.appId, ver: "last", nodeid: user.hostIds[0]
+                        aid: this.appId, ver: "last", nodeid: user.hostId
                     })
-                    let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
+                    let ip = await this.findFirstAccessibleIPv4(hostIps.trim().split(','), this.lapi.appId)
                     console.log("Host IPs", hostIps, ip)
                     if (!ip) {
                         console.error("No writable host found for user", hostIps, user)
@@ -476,6 +476,12 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log("Open temp file", fsid, this.loginUser)
             return fsid
         },
+        /**
+         * 
+         * @param tweet a Tweet object to be uploaded
+         * @param tweetId if none, a new tweet is created, otherwise a comment added to the tweetId
+         * @returns a mid of the uploaded object
+         */
         async uploadTweet(tweet: any, tweetId: MimeiId) {
             console.log("Upload tweet", tweetId, tweet)
             tweet.authorId = this.loginUser?.mid
@@ -486,7 +492,7 @@ export const useTweetStore = defineStore('tweetStore', {
             } else {
                 let t = await this.loginUser?.client.RunMApp("add_tweet",
                     {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
-                        hostid: this.loginUser?.hostIds?.[0]}
+                        hostid: this.loginUser?.hostId}
                     )
                 console.log("New tweet mid", t)
                 return t
@@ -534,7 +540,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 mid: mid
             })
             console.log("Get shared file", mid, ip)
-            let ip0 = splitIpAndPort(ip)
+            let ip0 = this.splitIpAndPort(ip)
             console.log("Get shared file", mid, ip, ip0)
             if (!ip0) {
                 console.error("Invalid IP", ip)
@@ -597,6 +603,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error('There was a problem with the fetch operation:', error);
                 });
         },
+        /**
+         * 
+         * @param ip 
+         * @returns whether the ip is of local network.
+         */
         isLocalIP(ip: string) {
             const localPatterns = [
                 /^127\./, // Loopback
@@ -612,20 +623,35 @@ export const useTweetStore = defineStore('tweetStore', {
             return str == null || str == undefined || str.trim() == '';
         },
 
-        async findFirstAccessibleIP(ipList: string[], mid: string) {
-            if (!ipList || ipList.length < 1) {
+        async findFirstAccessibleIP(ipList: string[], mid: string, filterIPv6 = false): Promise<string | null> {
+            if (!ipList?.length) {
                 console.error('No IP addresses provided in findFirstAccessibleIP()');
-                return null; // Return null immediately if the list is empty
+                return null;
             }
-        
-            const fetchWithTimeout = (url: string, timeout = 30000) => {
+            
+            // Filter IPs if needed
+            let processedIpList = [...ipList];
+            if (filterIPv6) {
+                // IPv6 addresses have multiple colons
+                processedIpList = ipList.filter(ip => (ip.match(/:/g) || []).length <= 1);
+                
+                if (!processedIpList.length) {
+                    console.log('No IPv4 addresses found in the list');
+                    return null;
+                }
+            }
+            
+            const fetchWithTimeout = (url: string, timeout = 30000): Promise<any> => {
                 return new Promise((resolve, reject) => {
-                    const timer = setTimeout(() => reject(new Error('Request timed out')), timeout);
-                    fetch(url)
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => {
+                        controller.abort();
+                        reject(new Error('Request timed out'));
+                    }, timeout);
+                    
+                    fetch(url, { signal: controller.signal })
                         .then(response => {
-                            if (!response.ok) {
-                                throw new Error('Network response was not ok');
-                            }
+                            if (!response.ok) throw new Error('Network response was not ok');
                             return response.json();
                         })
                         .then(data => {
@@ -638,53 +664,90 @@ export const useTweetStore = defineStore('tweetStore', {
                         });
                 });
             };
-        
+            
             return new Promise<string | null>((resolve) => {
-                if (!ipList || ipList.length === 0) {
-                    resolve(null);
-                    return;
-                }
-        
-                let resolved = false; // Flag to prevent multiple resolutions
-        
-                ipList.forEach(ip => {
+                let resolved = false;
+                let pendingRequests = 0;
+                
+                // Function to check if we should resolve with null
+                const checkComplete = () => {
+                    if (!resolved && pendingRequests === 0) {
+                        resolved = true;
+                        resolve(null);
+                    }
+                };
+                
+                // Process each IP
+                processedIpList.forEach(ip => {
                     if (this.isEmptyString(ip) || this.isLocalIP(ip)) {
                         return;
                     }
-        
+                    
+                    pendingRequests++;
                     const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
-        
+                    
                     fetchWithTimeout(url)
-                        .then(data => {
+                        .then(() => {
                             if (!resolved) {
                                 resolved = true;
-                                resolve(ip); // Resolve with the IP immediately
+                                resolve(ip);
                             }
                         })
                         .catch(error => {
-                            console.log(`Error fetching from ${ip}`, error);
-                            // Do nothing, let other promises continue
+                            console.log(`Error fetching from ${ip}:`, error.message);
+                        })
+                        .finally(() => {
+                            pendingRequests--;
+                            checkComplete();
                         });
                 });
-        
-                // Set a timeout to resolve with null if no IP responds within a reasonable time
+                
+                // Set a timeout as a fallback
                 setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
-                        resolve(null); // Resolve with null if no IP responds in time
+                        resolve(null);
                     }
-                }, 30000); // Adjust timeout as needed
+                }, 30000);
+                
+                // Handle the case where all IPs were filtered out
+                if (pendingRequests === 0) {
+                    checkComplete();
+                }
             });
-        }
+        },
+        
+        // The IPv4-specific function now just calls the main function with the filter flag
+        async findFirstAccessibleIPv4(ipList: string[], mid: string): Promise<string | null> {
+            return this.findFirstAccessibleIP(ipList, mid, true);
+        },
+
+        async getNodeIp(nodeId: MimeiId) {
+            let ips = await this.loginUser?.client.RunMApp("get_node_ip", {
+                aid: this.lapi.appId,
+                ver: "last",
+                nodeid: nodeId
+            })
+            for (let ip of ips) {
+                if (!this.isEmptyString(ip) && !this.isLocalIP(ip)) {
+                    return ip
+                }
+            }
+        },
+        /**
+         * @param address full ip address with port
+         * @returns IP without port
+         */
+        splitIpAndPort(address: string) {
+            const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
+            const match = address.match(regex);
+            if (match) {
+                // If match[1] exists, it's IPv6, so return with brackets
+                // If match[2] exists, it's IPv4, return as is
+                let ip = match[1] ? `[${match[1]}]` : match[2];
+                const port = match[3] ? parseInt(match[3], 10) : null; // Port number (or null if not present)
+                return ip;
+            }
+        },
     },
 });
-
-function splitIpAndPort(address: string) {
-    const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
-    const match = address.match(regex);
-    if (match) {
-        let ip = match[1] || match[2]; // IPv6 or IPv4
-        const port = match[3] ? parseInt(match[3], 10) : null; // Port number (or null if not present)
-        return ip
-    }
-}

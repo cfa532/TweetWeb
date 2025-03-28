@@ -66,7 +66,7 @@ export const router = createRouter({
       component: UploadFile,
       beforeEnter: (to: any, from: any, next: any) => {
         let user = sessionStorage.getItem("user")
-        if (!user || JSON.parse(user)["username"]!="developer") {
+        if (!user) {
           next("/login")
         } else {
           next()
