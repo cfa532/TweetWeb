@@ -19,6 +19,11 @@ const retryCount = ref(0);
 const maxRetries = 2;
 const rootDirectoryName = ref('Root'); // Store the name of the shared directory
 
+// Progress tracking
+const showProgress = ref(false);
+const progressValue = ref(0);
+const progressOperation = ref('');
+
 // Computed property to determine if we're sharing a single file
 const isSingleFileShare = computed(() => {
   return sharedFile.value && !sharedFile.value.isDirectory;
@@ -43,63 +48,162 @@ const filteredDirectoryContents = computed(() => {
 // File action functions
 const viewFile = async (file: FileSystemItem) => {
   try {
-    loading.value = true;
-    const response = await fetch(file.url);
+    // Check if the file is a common media type that browsers can stream
+    const fileExt = file.name.split('.').pop()?.toLowerCase();
+    const streamableTypes = ['mp4', 'mp3', 'wav', 'ogg', 'webm', 'pdf'];
     
-    if (!response.ok) {
-      throw new Error('Network response was not ok');
+    if (streamableTypes.includes(fileExt || '')) {
+      // For streamable files, open in a new tab directly
+      // This will stream the content rather than downloading it all at once
+      const newTab = window.open('about:blank', '_blank');
+      if (newTab) {
+        newTab.document.write(`
+          <html>
+            <head>
+              <title>Viewing: ${file.name}</title>
+              <style>
+                body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
+                .content { max-width: 100%; max-height: 100%; }
+              </style>
+            </head>
+            <body>
+              <div id="loading">Loading ${file.name}...</div>
+            </body>
+          </html>
+        `);
+        
+        // Fetch the file and create an object URL
+        fetch(file.url)
+          .then(response => response.blob())
+          .then(blob => {
+            const blobUrl = URL.createObjectURL(blob);
+            
+            if (fileExt === 'pdf') {
+              newTab.location.href = blobUrl;
+            } else if (['mp4', 'webm'].includes(fileExt || '')) {
+              newTab.document.body.innerHTML = `
+                <video controls autoplay class="content">
+                  <source src="${blobUrl}" type="video/${fileExt}">
+                  Your browser does not support the video tag.
+                </video>
+              `;
+            } else if (['mp3', 'wav', 'ogg'].includes(fileExt || '')) {
+              newTab.document.body.innerHTML = `
+                <audio controls autoplay class="content">
+                  <source src="${blobUrl}" type="audio/${fileExt}">
+                  Your browser does not support the audio tag.
+                </audio>
+              `;
+            } else {
+              // For other streamable types
+              newTab.location.href = blobUrl;
+            }
+          })
+          .catch(err => {
+            newTab.document.body.innerHTML = `<div>Error loading file: ${err.message}</div>`;
+          });
+      }
+    } else {
+      // For non-streamable files, download with progress tracking
+      showProgress.value = true;
+      progressOperation.value = 'Viewing';
+      progressValue.value = 0;
+      
+      const response = await fetch(file.url);
+      if (!response.ok) throw new Error('Network response was not ok');
+      
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Failed to get reader from response');
+      
+      const contentLength = Number(response.headers.get('Content-Length')) || 0;
+      let receivedLength = 0;
+      const chunks = [];
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        chunks.push(value);
+        receivedLength += value.length;
+        
+        if (contentLength > 0) {
+          progressValue.value = Math.round((receivedLength / contentLength) * 100);
+        }
+      }
+      
+      // Concatenate chunks into a single Uint8Array
+      const allChunks = new Uint8Array(receivedLength);
+      let position = 0;
+      for (const chunk of chunks) {
+        allChunks.set(chunk, position);
+        position += chunk.length;
+      }
+      
+      // Create blob and open in new tab
+      const blob = new Blob([allChunks]);
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+      
+      showProgress.value = false;
     }
-    
-    const blob = await response.blob();
-    const blobUrl = window.URL.createObjectURL(blob);
-    
-    // Open the blob URL in a new tab
-    window.open(blobUrl, '_blank');
   } catch (error) {
     console.error('Error viewing file:', error);
     alert('Failed to view file. Please try again.');
-  } finally {
-    loading.value = false;
+    showProgress.value = false;
   }
 };
 
 const downloadFile = async (file: FileSystemItem) => {
   try {
-    loading.value = true;
+    showProgress.value = true;
+    progressOperation.value = 'Downloading';
+    progressValue.value = 0;
     
-    // Use the downloadBlob method
-    await downloadBlob(file.url, file.name);
+    const response = await fetch(file.url);
+    if (!response.ok) throw new Error('Network response was not ok');
     
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Failed to get reader from response');
+    
+    const contentLength = Number(response.headers.get('Content-Length')) || 0;
+    let receivedLength = 0;
+    const chunks = [];
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      chunks.push(value);
+      receivedLength += value.length;
+      
+      if (contentLength > 0) {
+        progressValue.value = Math.round((receivedLength / contentLength) * 100);
+      }
+    }
+    
+    // Concatenate chunks into a single Uint8Array
+    const allChunks = new Uint8Array(receivedLength);
+    let position = 0;
+    for (const chunk of chunks) {
+      allChunks.set(chunk, position);
+      position += chunk.length;
+    }
+    
+    // Create blob and trigger download
+    const blob = new Blob([allChunks]);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showProgress.value = false;
   } catch (error) {
     console.error('Error downloading file:', error);
     alert('Failed to download file. Please try again.');
-  } finally {
-    loading.value = false;
+    showProgress.value = false;
   }
-};
-
-// Utility function to download blob
-const downloadBlob = async (url: string, fileName: string) => {
-  console.log("Download", url);
-  return fetch(url) // Return the promise from fetch
-    .then(response => {
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-      return response.blob(); // Convert the response to a Blob
-    })
-    .then(blob => {
-      const link = document.createElement('a');
-      link.href = window.URL.createObjectURL(blob);
-      link.download = fileName; // Use the file's actual name
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    })
-    .catch(error => {
-      console.error('There was a problem with the fetch operation:', error);
-      throw error; // Re-throw to be caught by the calling function
-    });
 };
 
 // Utility functions
@@ -262,9 +366,17 @@ onMounted(() => {
       </template>
     </div>
 
+    <!-- Progress bar for file operations -->
+    <div v-if='showProgress' class='progress-container'>
+      <div class='progress-label'>{{ progressOperation }} file: {{ progressValue }}%</div>
+      <div class='progress-bar'>
+        <div class='progress-bar-fill' :style='{ width: `${progressValue}%` }'></div>
+      </div>
+    </div>
+
     <!-- Loading indicator -->
     <div v-if='loading' class='loading'>
-      <div class="loading-spinner"></div>
+      <div class='loading-spinner'></div>
       <p>Loading... {{ retryCount > 0 ? `(Retry ${retryCount}/${maxRetries})` : '' }}</p>
     </div>
 
@@ -359,6 +471,33 @@ h1 {
 
 .breadcrumb-link:hover {
   text-decoration: underline;
+}
+
+/* Progress bar styles */
+.progress-container {
+  margin: 15px 0;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.progress-label {
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.progress-bar {
+  height: 20px;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background-color: #007bff;
+  transition: width 0.3s ease;
 }
 
 .file-list {
@@ -474,70 +613,6 @@ h1 {
 .no-files {
   color: #6c757d;
   font-style: italic;
-}
-
-.share-dialog {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-}
-
-.share-dialog-content {
-  background-color: white;
-  padding: 20px;
-  border-radius: 5px;
-  width: 80%;
-  max-width: 500px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-.share-dialog-content h3 {
-  margin-top: 0;
-  color: #2c3e50;
-}
-
-.share-dialog-content input {
-  width: 100%;
-  padding: 8px;
-  margin: 10px 0;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-}
-
-.share-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 15px;
-}
-
-.share-actions button {
-  padding: 8px 15px;
-  cursor: pointer;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  transition: background-color 0.2s;
-}
-
-.share-actions button:hover {
-  background-color: #0069d9;
-}
-
-.share-actions button:last-child {
-  background-color: #6c757d;
-}
-
-.share-actions button:last-child:hover {
-  background-color: #5a6268;
 }
 
 @media (max-width: 768px) {
