@@ -41,13 +41,65 @@ const filteredDirectoryContents = computed(() => {
 });
 
 // File action functions
-const viewFile = (file: FileSystemItem) => {
-  // For a file, use the complete URL including path
-  window.open(`${file.url}`, '_blank');
+const viewFile = async (file: FileSystemItem) => {
+  try {
+    loading.value = true;
+    const response = await fetch(file.url);
+    
+    if (!response.ok) {
+      throw new Error('Network response was not ok');
+    }
+    
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    
+    // Open the blob URL in a new tab
+    window.open(blobUrl, '_blank');
+  } catch (error) {
+    console.error('Error viewing file:', error);
+    alert('Failed to view file. Please try again.');
+  } finally {
+    loading.value = false;
+  }
 };
 
-const downloadFile = (file: FileSystemItem) => {
-  window.open(`${file.url}?download=true`, '_blank');
+const downloadFile = async (file: FileSystemItem) => {
+  try {
+    loading.value = true;
+    
+    // Use the downloadBlob method
+    await downloadBlob(file.url, file.name);
+    
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    alert('Failed to download file. Please try again.');
+  } finally {
+    loading.value = false;
+  }
+};
+
+// Utility function to download blob
+const downloadBlob = async (url: string, fileName: string) => {
+  console.log("Download", url);
+  return fetch(url) // Return the promise from fetch
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      return response.blob(); // Convert the response to a Blob
+    })
+    .then(blob => {
+      const link = document.createElement('a');
+      link.href = window.URL.createObjectURL(blob);
+      link.download = fileName; // Use the file's actual name
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    })
+    .catch(error => {
+      console.error('There was a problem with the fetch operation:', error);
+      throw error; // Re-throw to be caught by the calling function
+    });
 };
 
 // Utility functions
