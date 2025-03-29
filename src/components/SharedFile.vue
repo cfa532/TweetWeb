@@ -7,7 +7,7 @@ import { useTweetStore } from '@/stores';
 // Constants
 const FILE_SIZE_THRESHOLD = 50 * 1024 * 1024; // 50MB - use arrayBuffer for files smaller than this
 const STREAMABLE_TYPES = ['mp4', 'mp3', 'wav', 'ogg', 'webm', 'pdf'];
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 3;
 const RETRY_DELAY = 5000;
 
 // State management
