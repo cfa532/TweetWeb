@@ -1,210 +1,58 @@
 <script setup lang='ts'>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, reactive } from 'vue';
 import { useRoute } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
 
+// Constants
+const FILE_SIZE_THRESHOLD = 50 * 1024 * 1024; // 50MB - use arrayBuffer for files smaller than this
+const STREAMABLE_TYPES = ['mp4', 'mp3', 'wav', 'ogg', 'webm', 'pdf'];
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 5000;
+
+// State management
 const route = useRoute();
 const fileId = route.params.mid;
 const tweetStore = useTweetStore();
 const loading = ref(true);
 const error = ref<string | null>(null);
 const sharedFile = ref<FileSystemItem | null>(null);
-const directoryContents = ref<FileSystemItem[]>([]); 
+const directoryContents = ref<FileSystemItem[]>([]);
 const currentPath = ref('');
 const parentPath = ref<string | null>(null);
 const directoryHistory = ref<string[]>([]);
-const rootPath = ref(''); // Store the root path (shared directory path)
+const rootPath = ref('');
 const retryCount = ref(0);
-const maxRetries = 2;
-const rootDirectoryName = ref('Root'); // Store the name of the shared directory
+const rootDirectoryName = ref('Root');
 
 // Progress tracking
-const showProgress = ref(false);
-const progressValue = ref(0);
-const progressOperation = ref('');
-
-// Computed property to determine if we're sharing a single file
-const isSingleFileShare = computed(() => {
-  return sharedFile.value && !sharedFile.value.isDirectory;
+const progress = reactive({
+  show: false,
+  value: 0,
+  operation: '',
+  speed: '0 KB/s',
+  eta: ''
 });
 
-// Computed property to split the current path into parts for breadcrumb
+// Cache for directory contents
+const directoryCache = new Map<string, { contents: FileSystemItem[], timestamp: number, currentPath: string, parentPath: string | null }>();
+
+// Computed properties
+const isSingleFileShare = computed(() => 
+  sharedFile.value && !sharedFile.value.isDirectory
+);
+
 const pathParts = computed(() => {
   if (!currentPath.value) return [];
-  // Only include path parts relative to the root path
   const relativePath = currentPath.value.replace(rootPath.value, '');
   return relativePath.split('/').filter(Boolean);
 });
 
-// Computed property to filter out system files
-const filteredDirectoryContents = computed(() => {
-  return directoryContents.value.filter(item => {
-    // Filter out files/folders that start with a dot or dollar sign
-    return !item.name.startsWith('.') && !item.name.startsWith('$');
-  });
-});
-
-// File action functions
-const viewFile = async (file: FileSystemItem) => {
-  try {
-    // Check if the file is a common media type that browsers can stream
-    const fileExt = file.name.split('.').pop()?.toLowerCase();
-    const streamableTypes = ['mp4', 'mp3', 'wav', 'ogg', 'webm', 'pdf'];
-    
-    if (streamableTypes.includes(fileExt || '')) {
-      // For streamable files, open in a new tab directly
-      // This will stream the content rather than downloading it all at once
-      const newTab = window.open('about:blank', '_blank');
-      if (newTab) {
-        newTab.document.write(`
-          <html>
-            <head>
-              <title>Viewing: ${file.name}</title>
-              <style>
-                body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
-                .content { max-width: 100%; max-height: 100%; }
-              </style>
-            </head>
-            <body>
-              <div id="loading">Loading ${file.name}...</div>
-            </body>
-          </html>
-        `);
-        
-        // Fetch the file and create an object URL
-        fetch(file.url)
-          .then(response => response.blob())
-          .then(blob => {
-            const blobUrl = URL.createObjectURL(blob);
-            
-            if (fileExt === 'pdf') {
-              newTab.location.href = blobUrl;
-            } else if (['mp4', 'webm'].includes(fileExt || '')) {
-              newTab.document.body.innerHTML = `
-                <video controls autoplay class="content">
-                  <source src="${blobUrl}" type="video/${fileExt}">
-                  Your browser does not support the video tag.
-                </video>
-              `;
-            } else if (['mp3', 'wav', 'ogg'].includes(fileExt || '')) {
-              newTab.document.body.innerHTML = `
-                <audio controls autoplay class="content">
-                  <source src="${blobUrl}" type="audio/${fileExt}">
-                  Your browser does not support the audio tag.
-                </audio>
-              `;
-            } else {
-              // For other streamable types
-              newTab.location.href = blobUrl;
-            }
-          })
-          .catch(err => {
-            newTab.document.body.innerHTML = `<div>Error loading file: ${err.message}</div>`;
-          });
-      }
-    } else {
-      // For non-streamable files, download with progress tracking
-      showProgress.value = true;
-      progressOperation.value = 'Viewing';
-      progressValue.value = 0;
-      
-      const response = await fetch(file.url);
-      if (!response.ok) throw new Error('Network response was not ok');
-      
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('Failed to get reader from response');
-      
-      const contentLength = Number(response.headers.get('Content-Length')) || 0;
-      let receivedLength = 0;
-      const chunks = [];
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        chunks.push(value);
-        receivedLength += value.length;
-        
-        if (contentLength > 0) {
-          progressValue.value = Math.round((receivedLength / contentLength) * 100);
-        }
-      }
-      
-      // Concatenate chunks into a single Uint8Array
-      const allChunks = new Uint8Array(receivedLength);
-      let position = 0;
-      for (const chunk of chunks) {
-        allChunks.set(chunk, position);
-        position += chunk.length;
-      }
-      
-      // Create blob and open in new tab
-      const blob = new Blob([allChunks]);
-      const blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, '_blank');
-      
-      showProgress.value = false;
-    }
-  } catch (error) {
-    console.error('Error viewing file:', error);
-    alert('Failed to view file. Please try again.');
-    showProgress.value = false;
-  }
-};
-
-const downloadFile = async (file: FileSystemItem) => {
-  try {
-    showProgress.value = true;
-    progressOperation.value = 'Downloading';
-    progressValue.value = 0;
-    
-    const response = await fetch(file.url);
-    if (!response.ok) throw new Error('Network response was not ok');
-    
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Failed to get reader from response');
-    
-    const contentLength = Number(response.headers.get('Content-Length')) || 0;
-    let receivedLength = 0;
-    const chunks = [];
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      chunks.push(value);
-      receivedLength += value.length;
-      
-      if (contentLength > 0) {
-        progressValue.value = Math.round((receivedLength / contentLength) * 100);
-      }
-    }
-    
-    // Concatenate chunks into a single Uint8Array
-    const allChunks = new Uint8Array(receivedLength);
-    let position = 0;
-    for (const chunk of chunks) {
-      allChunks.set(chunk, position);
-      position += chunk.length;
-    }
-    
-    // Create blob and trigger download
-    const blob = new Blob([allChunks]);
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = file.name;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    showProgress.value = false;
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    alert('Failed to download file. Please try again.');
-    showProgress.value = false;
-  }
-};
+const filteredDirectoryContents = computed(() => 
+  directoryContents.value.filter(item => 
+    !item.name.startsWith('.') && !item.name.startsWith('$')
+  )
+);
 
 // Utility functions
 const formatFileSize = (bytes: number) => {
@@ -219,52 +67,300 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString();
 };
 
-// Function to fetch directory contents
+const getFileExtension = (filename: string) => {
+  return filename.split('.').pop()?.toLowerCase() || '';
+};
+
+const formatSpeed = (bytesPerSecond: number) => {
+  return formatFileSize(bytesPerSecond) + '/s';
+};
+
+const formatETA = (seconds: number) => {
+  if (!isFinite(seconds) || seconds < 0) return 'calculating...';
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.ceil(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+};
+
+// File handling functions
+const processFileWithProgress = async (url: string, options: { 
+  onProgress: (progress: number, speed: string, eta: string) => void, 
+  useStreaming?: boolean,
+  fileSize?: number
+}) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Network response was not ok');
+  
+  const contentLength = options.fileSize || Number(response.headers.get('Content-Length')) || 0;
+  
+  // For smaller files or when streaming isn't needed, use arrayBuffer for better performance
+  if (!options.useStreaming && contentLength < FILE_SIZE_THRESHOLD) {
+    const startTime = Date.now();
+    const buffer = await response.arrayBuffer();
+    const elapsedSeconds = (Date.now() - startTime) / 1000;
+    const speed = elapsedSeconds > 0 ? contentLength / elapsedSeconds : 0;
+    
+    options.onProgress(100, formatSpeed(speed), '0s');
+    return new Blob([buffer]);
+  }
+  
+  // For larger files, use streaming
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('Failed to get reader from response');
+  
+  let receivedLength = 0;
+  let startTime = Date.now();
+  let lastUpdateTime = startTime;
+  let lastReceivedLength = 0;
+  let speedSamples: number[] = [];
+  
+  const readableStream = new ReadableStream({
+    start(controller) {
+      function pump(): any {
+        return reader?.read().then(({ done, value }) => {
+          if (done) {
+            controller.close();
+            return;
+          }
+          
+          controller.enqueue(value);
+          receivedLength += value.length;
+          
+          // Update progress and speed every ~500ms
+          const now = Date.now();
+          const timeSinceLastUpdate = (now - lastUpdateTime) / 1000;
+          
+          if (timeSinceLastUpdate >= 0.5 || done) {
+            const overallElapsed = (now - startTime) / 1000;
+            const chunkSize = receivedLength - lastReceivedLength;
+            const instantSpeed = chunkSize / timeSinceLastUpdate;
+            
+            // Add to speed samples (keep last 5 samples for smoothing)
+            speedSamples.push(instantSpeed);
+            if (speedSamples.length > 5) speedSamples.shift();
+            
+            // Calculate average speed
+            const avgSpeed = speedSamples.reduce((sum, s) => sum + s, 0) / speedSamples.length;
+            
+            // Calculate ETA
+            const remainingBytes = contentLength - receivedLength;
+            const eta = avgSpeed > 0 ? remainingBytes / avgSpeed : Infinity;
+            
+            // Update progress
+            if (contentLength > 0) {
+              const progressPercent = Math.round((receivedLength / contentLength) * 100);
+              options.onProgress(
+                progressPercent, 
+                formatSpeed(avgSpeed),
+                formatETA(eta)
+              );
+            }
+            
+            lastUpdateTime = now;
+            lastReceivedLength = receivedLength;
+          }
+          
+          return pump();
+        });
+      }
+      
+      return pump();
+    }
+  });
+  
+  const streamResponse = new Response(readableStream);
+  return streamResponse.blob();
+};
+
+const downloadFile = async (file: FileSystemItem) => {
+  try {
+    progress.show = true;
+    progress.operation = 'Downloading';
+    progress.value = 0;
+    progress.speed = 'calculating...';
+    progress.eta = 'calculating...';
+    
+    const blob = await processFileWithProgress(file.url, {
+      fileSize: file.size,
+      onProgress: (value, speed, eta) => {
+        progress.value = value;
+        progress.speed = speed;
+        progress.eta = eta;
+      }
+    });
+    
+    // Create download link
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      progress.show = false;
+    }, 100);
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    alert('Failed to download file. Please try again.');
+    progress.show = false;
+  }
+};
+
+const viewFile = async (file: FileSystemItem) => {
+  try {
+    const fileExt = getFileExtension(file.name);
+    const isStreamable = STREAMABLE_TYPES.includes(fileExt);
+    
+    progress.show = true;
+    progress.operation = 'Loading';
+    progress.value = 0;
+    progress.speed = 'calculating...';
+    progress.eta = 'calculating...';
+    
+    const blob = await processFileWithProgress(file.url, {
+      fileSize: file.size,
+      onProgress: (value, speed, eta) => {
+        progress.value = value;
+        progress.speed = speed;
+        progress.eta = eta;
+      },
+      useStreaming: isStreamable
+    });
+    
+    const blobUrl = URL.createObjectURL(blob);
+    
+    // Open in a new tab with appropriate handling
+    const newTab = window.open('about:blank', '_blank');
+    if (newTab) {
+      if (fileExt === 'pdf') {
+        newTab.location.href = blobUrl;
+      } else if (['mp4', 'webm'].includes(fileExt)) {
+        newTab.document.write(`
+          <html>
+            <head>
+              <title>Viewing: ${file.name}</title>
+              <style>
+                body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
+                .content { max-width: 100%; max-height: 100%; }
+              </style>
+            </head>
+            <body>
+              <video controls autoplay class='content'>
+                <source src='${blobUrl}' type='video/${fileExt}'>
+                Your browser does not support the video tag.
+              </video>
+            </body>
+          </html>
+        `);
+      } else if (['mp3', 'wav', 'ogg'].includes(fileExt)) {
+        newTab.document.write(`
+          <html>
+            <head>
+              <title>Viewing: ${file.name}</title>
+              <style>
+                body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
+                .content { max-width: 100%; max-height: 100%; }
+              </style>
+            </head>
+            <body>
+              <audio controls autoplay class='content'>
+                <source src='${blobUrl}' type='audio/${fileExt}'>
+                Your browser does not support the audio tag.
+              </audio>
+            </body>
+          </html>
+        `);
+      } else {
+        newTab.location.href = blobUrl;
+      }
+    }
+    
+    progress.show = false;
+  } catch (error) {
+    console.error('Error viewing file:', error);
+    alert('Failed to view file. Please try again.');
+    progress.show = false;
+  }
+};
+
+// Directory navigation functions
 const fetchDirectoryContents = async (path: string, baseUrl: string) => {
   try {
     loading.value = true;
+    
     // Ensure we don't navigate above the root path
     if (!path.startsWith(rootPath.value)) {
       path = rootPath.value;
     }
     
-    // Make sure we're using the correct endpoint format
+    // Check cache first (valid for 5 minutes)
+    const cacheKey = `${baseUrl}:${path}`;
+    const cachedData = directoryCache.get(cacheKey);
+    const now = Date.now();
+    
+    if (cachedData && (now - cachedData.timestamp < 5 * 60 * 1000)) {
+      directoryContents.value = cachedData.contents;
+      currentPath.value = cachedData.currentPath;
+      parentPath.value = cachedData.currentPath !== rootPath.value ? cachedData.parentPath : null;
+      
+      // Add to history if needed
+      if (directoryHistory.value[directoryHistory.value.length - 1] !== path) {
+        directoryHistory.value.push(path);
+      }
+      
+      retryCount.value = 0;
+      loading.value = false;
+      return;
+    }
+    
+    // Make API request if not cached
     const response = await axios.get(`${baseUrl}/netd`, {
       params: { path }
     });
     
-    directoryContents.value = response.data.files || [];
-    currentPath.value = response.data.currentPath || '';
+    const data = response.data;
+    directoryContents.value = data.files || [];
+    currentPath.value = data.currentPath || '';
+    parentPath.value = currentPath.value !== rootPath.value ? data.parentPath : null;
     
-    // Only set parentPath if we're not at the root of the shared directory
-    // This prevents navigating above the shared directory
-    parentPath.value = currentPath.value !== rootPath.value ? response.data.parentPath : null;
+    // Cache the results
+    directoryCache.set(cacheKey, {
+      contents: directoryContents.value,
+      currentPath: currentPath.value,
+      parentPath: data.parentPath,
+      timestamp: now
+    });
     
-    // Add current path to history if it's not already the last item
+    // Add to history if needed
     if (directoryHistory.value[directoryHistory.value.length - 1] !== path) {
       directoryHistory.value.push(path);
     }
     
-    // Reset retry count on successful fetch
     retryCount.value = 0;
   } catch (err: any) {
     console.error('Failed to load directory contents:', err);
     error.value = err.message || 'Failed to load directory contents';
     
     // Retry logic
-    if (retryCount.value < maxRetries) {
+    if (retryCount.value < MAX_RETRIES) {
       retryCount.value++;
-      console.log(`Retrying (${retryCount.value}/${maxRetries}) in 5 seconds...`);
+      console.log(`Retrying (${retryCount.value}/${MAX_RETRIES}) in ${RETRY_DELAY/1000} seconds...`);
       setTimeout(() => {
         fetchDirectoryContents(path, baseUrl);
-      }, 5000);
+      }, RETRY_DELAY);
     }
   } finally {
     loading.value = false;
   }
 };
 
-// Navigation functions
 const navigateTo = (path: string) => {
   if (sharedFile.value) {
     // If path is empty, navigate to root
@@ -287,7 +383,7 @@ const navigateToParent = () => {
   }
 };
 
-// Function to load shared file with retry logic
+// Load shared file with retry logic
 const loadSharedFile = async () => {
   try {
     loading.value = true;
@@ -296,54 +392,44 @@ const loadSharedFile = async () => {
     if (file) {
       sharedFile.value = {
         ...file,
-        url: file.url, // Ensure the URL is stored
+        url: file.url,
       };
       
       if (file.isDirectory) {
-        // Set the root path to the shared directory path
         rootPath.value = file.path;
-        // Set the root directory name
         rootDirectoryName.value = file.name;
-        // Initialize history with root
         directoryHistory.value = [rootPath.value];
-        // Fetch directory contents
         await fetchDirectoryContents(rootPath.value, file.url);
       } else {
-        // If the shared file is a single file, create a virtual directory view
         rootPath.value = file.path.substring(0, file.path.lastIndexOf('/'));
         currentPath.value = rootPath.value;
         directoryHistory.value = [rootPath.value];
         
-        // Get the parent directory name
         const pathParts = rootPath.value.split('/');
         rootDirectoryName.value = pathParts[pathParts.length - 1] || 'Root';
         
-        // Create a virtual directory listing with just this file
-        file.url = `${file.url}/netd/${encodeURIComponent(file.path)}`
+        file.url = `${file.url}/netd/${encodeURIComponent(file.path)}`;
         directoryContents.value = [file];
       }
       
-      // Reset retry count on success
       retryCount.value = 0;
     } else {
       error.value = 'File not found.';
       
-      // Retry logic
-      if (retryCount.value < maxRetries) {
+      if (retryCount.value < MAX_RETRIES) {
         retryCount.value++;
-        console.log(`Retrying (${retryCount.value}/${maxRetries}) in 5 seconds...`);
-        setTimeout(loadSharedFile, 5000);
+        console.log(`Retrying (${retryCount.value}/${MAX_RETRIES}) in ${RETRY_DELAY/1000} seconds...`);
+        setTimeout(loadSharedFile, RETRY_DELAY);
       }
     }
   } catch (err: any) {
     console.error('Failed to load shared file:', err);
     error.value = err.message || 'Failed to load shared file';
     
-    // Retry logic
-    if (retryCount.value < maxRetries) {
+    if (retryCount.value < MAX_RETRIES) {
       retryCount.value++;
-      console.log(`Retrying (${retryCount.value}/${maxRetries}) in 5 seconds...`);
-      setTimeout(loadSharedFile, 5000);
+      console.log(`Retrying (${retryCount.value}/${MAX_RETRIES}) in ${RETRY_DELAY/1000} seconds...`);
+      setTimeout(loadSharedFile, RETRY_DELAY);
     }
   } finally {
     loading.value = false;
@@ -367,21 +453,26 @@ onMounted(() => {
     </div>
 
     <!-- Progress bar for file operations -->
-    <div v-if='showProgress' class='progress-container'>
-      <div class='progress-label'>{{ progressOperation }} file: {{ progressValue }}%</div>
+    <div v-if='progress.show' class='progress-container'>
+      <div class='progress-label'>
+        {{ progress.operation }} file: {{ progress.value }}% 
+        <span class='progress-details'>
+          ({{ progress.speed }} • {{ progress.eta }} remaining)
+        </span>
+      </div>
       <div class='progress-bar'>
-        <div class='progress-bar-fill' :style='{ width: `${progressValue}%` }'></div>
+        <div class='progress-bar-fill' :style='{ width: `${progress.value}%` }'></div>
       </div>
     </div>
 
     <!-- Loading indicator -->
     <div v-if='loading' class='loading'>
       <div class='loading-spinner'></div>
-      <p>Loading... {{ retryCount > 0 ? `(Retry ${retryCount}/${maxRetries})` : '' }}</p>
+      <p>Loading... {{ retryCount > 0 ? `(Retry ${retryCount}/${MAX_RETRIES})` : '' }}</p>
     </div>
 
     <!-- Error message -->
-    <div v-if='error && retryCount >= maxRetries' class='error'>
+    <div v-if='error && retryCount >= MAX_RETRIES' class='error'>
       {{ error }}
     </div>
 
@@ -437,6 +528,15 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* You can add these styles to your existing CSS */
+.progress-details {
+  font-size: 0.9em;
+  color: #666;
+  margin-left: 10px;
+}
+</style>
 
 <style scoped>
 .netdisk-container {

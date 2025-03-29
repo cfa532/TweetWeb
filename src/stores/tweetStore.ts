@@ -469,6 +469,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             }
         },
+        /**
+         * Open a temp file on target host
+         * @returns file's sid
+         */
         async openTempFile() {
             var fsid = await this.loginUser?.client.RunMApp("open_temp_file", {
                 aid: this.appId, ver: "last"
