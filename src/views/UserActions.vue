@@ -1,23 +1,25 @@
 <script setup lang="ts">
 // share menu or other right click items
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useTweetStore } from '@/stores';
 import { useRouter } from 'vue-router';
-import type { PropType } from 'vue'
 
 const router = useRouter();
 const tweetStore = useTweetStore()
 const actionMenu = ref()
-const btnDelete = ref()
-const props = defineProps({ 
-    tweet: {type: Object as PropType<Tweet>, required: false}
+const loginAction = ref("Login")
+
+onMounted(() => {
+    if (tweetStore.loginUser) {
+        loginAction.value = "Logout"
+    } else {
+        loginAction.value = "Login"
+    }
 })
 
 function showMenu() {
     actionMenu.value.hidden = false
-    if (tweetStore.loginUser && tweetStore.loginUser.mid==props.tweet?.authorId) {
-        btnDelete.value.hidden = false
-    }
+
     // toggle right menu on and off
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
@@ -38,12 +40,24 @@ function uploadFile() {
     actionMenu.value.hidden = true
     router.push({name: 'uploadFile'})
 }
+function login() {
+    if (tweetStore.loginUser) {
+        tweetStore.logout()
+        loginAction.value = "Login"
+    } else {
+        router.push({name: 'login'})
+    }
+    actionMenu.value.hidden = true
+}
 </script>
 
 <template>
 <div style=" width:100%; position: relative; text-align: right;">
     <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="actionMenu" class="action" hidden>
+        <div class="item">
+            <a href="#" style="text-decoration: none;" @click.stop="login">{{ loginAction }}</a>
+        </div>
         <div class="item">
             <a href="#" style="text-decoration: none;" @click.stop="netdisk">Netdisk</a>
         </div>

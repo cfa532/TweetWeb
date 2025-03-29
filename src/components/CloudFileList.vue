@@ -32,8 +32,9 @@ const loadDirectory = async (path = '') => {
 
   try {
     console.log('Loading directory:', path);
+    const username = tweetStore.loginUser?.username
     const response = await axios.get(`${TUS_SERVER_URL}/netd`, {
-      params: { path }
+      params: { path, username }
     });
 
     console.log('Response:', response.data);

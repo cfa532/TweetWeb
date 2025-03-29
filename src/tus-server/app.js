@@ -9,6 +9,22 @@ const app = express();
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
 
+function checkAuthorizedUser(req, res, next) {
+  // username sent by client.
+  const loggedInUsername = req.query.username;
+  
+  // Check if the logged in user matches the authorized user from env
+  if (!loggedInUsername || loggedInUsername !== process.env.AUTHORIZED_USERNAME) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'You are not authorized to access this resource' 
+    });
+  }
+  
+  // User is authorized, proceed to the next middleware
+  next();
+}
+
 // Middleware
 app.use(express.json());
 app.use(cors({
@@ -23,7 +39,7 @@ app.use(cors({
 // Use the routers
 app.use('/', uploadRouter); // Mount the upload router
 app.use('/', fileBrowserRouter); // Mount the file browser router
-app.use('/', netdisk);
+app.use('/', checkAuthorizedUser, netdisk);
 
 // Redirect root to file browser
 app.get('/', (req, res) => {

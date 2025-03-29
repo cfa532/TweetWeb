@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { Loading, Preview, ItemHeader } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget

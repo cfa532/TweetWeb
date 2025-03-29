@@ -11,7 +11,9 @@ import { useAlertStore } from '@/stores';
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: "main", component: MainPage },
+    { 
+      path: '/', name: "main", component: MainPage
+    },
     {
       // display tweets on main screen
       path: '/tweet/:tweetId/:authorId?',
