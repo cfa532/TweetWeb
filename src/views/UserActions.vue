@@ -2,24 +2,27 @@
 // share menu or other right click items
 import { ref } from 'vue'
 import { useTweetStore } from '@/stores';
+import { useRouter } from 'vue-router';
 import type { PropType } from 'vue'
+
+const router = useRouter();
 const tweetStore = useTweetStore()
-const shareMenu = ref()
+const actionMenu = ref()
 const btnDelete = ref()
 const props = defineProps({ 
     tweet: {type: Object as PropType<Tweet>, required: false}
 })
 
 function showMenu() {
-    shareMenu.value.hidden = false
+    actionMenu.value.hidden = false
     if (tweetStore.loginUser && tweetStore.loginUser.mid==props.tweet?.authorId) {
         btnDelete.value.hidden = false
     }
     // toggle right menu on and off
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
-            if (e.target !== shareMenu.value) {
-                shareMenu.value.hidden = true
+            if (e.target !== actionMenu.value) {
+                actionMenu.value.hidden = true
                 setTimeout(()=>{
                     window.onclick = null
                 }, 100)
@@ -27,35 +30,25 @@ function showMenu() {
         }
     }, 100)
 }
-function copyLink() {
-    console.log(window.location.href);
-    const input = document.createElement("input");
-    input.style.position = "absolute";
-    input.style.opacity = "0";
-    input.style.pointerEvents = "none";
-    input.value = window.location.href;
-    document.body.appendChild(input);
-    input.select();
-    document.execCommand('copy');
-    document.body.removeChild(input);
-    shareMenu.value.hidden = true
+function netdisk() {
+    actionMenu.value.hidden = true
+    router.push({name: 'netdisk'})
 }
-function deleteTweet() {
-  if (props.tweet) {
-    tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
-  }
+function uploadFile() {
+    actionMenu.value.hidden = true
+    router.push({name: 'uploadFile'})
 }
 </script>
 
 <template>
 <div style=" width:100%; position: relative; text-align: right;">
     <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
-    <div ref="shareMenu" class="menu" hidden>
+    <div ref="actionMenu" class="action" hidden>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="copyLink">Copy &#128279; to clipboard</a>
+            <a href="#" style="text-decoration: none;" @click.stop="netdisk">Netdisk</a>
         </div>
-        <div ref="btnDelete" class="item" hidden>
-            <a href="#" style="text-decoration: none;" @click.stop="deleteTweet">Delete</a>
+        <div class="item">
+            <a href="#" style="text-decoration: none;" @click.stop="uploadFile">Upload</a>
         </div>
     </div>
 </div>
@@ -68,7 +61,7 @@ function deleteTweet() {
     padding: 4px 10px 8px 10px;
     text-decoration: none;
 }
-.menu {
+.action {
     position: absolute;
     top: 5px;
     right: 0px;

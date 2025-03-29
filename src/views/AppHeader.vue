@@ -2,7 +2,7 @@
 import { watch, onMounted, ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
-import { QRCoder } from '@/views';
+import { QRCoder, UserActions } from '@/views';
 import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
@@ -18,14 +18,12 @@ const user = ref<User>()
 onMounted(async () => {
     if (props.userId) {
         user.value = await tweetStore.getUser(props.userId)
-        tweetStore.getFollowCount(props.userId)   // No need to await here.
     }
 })
 watch(userId, async (nv, ov) => {
     if (nv !== ov) {
         if (nv) {
             user.value = await tweetStore.getUser(nv)
-            tweetStore.getFollowCount(nv)
             console.log(user.value)
         }
         else {
@@ -40,7 +38,8 @@ watch(userId, async (nv, ov) => {
         <div class="d-flex justify-content-between">
             <div class="d-flex">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img :src="user? user.avatar : avatarUrl" @click="router.push({ name: 'main' })" alt="Logo" class="rounded-circle" />
+                    <img :src="user ? user.avatar : avatarUrl" @click="router.push({ name: 'main' })" alt="Logo"
+                        class="rounded-circle" />
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
@@ -51,13 +50,6 @@ watch(userId, async (nv, ov) => {
                         <span class="time text-muted">
                             - {{ formatTimeDifference(user.timestamp as number) }}
                         </span>
-                    </div>
-                    <!-- Followers and Friends Links -->
-                    <div class="links mt-1">
-                        <a href="#" @click.prevent="router.push(`/followers/${user.mid}`)" class="me-2 text-muted">{{
-                            user.followerCount }} fans</a>
-                        <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
-                            user.followingCount }} following</a>
                     </div>
 
                     <div class="mt-1">
@@ -75,6 +67,17 @@ watch(userId, async (nv, ov) => {
                     <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize=20></QRCoder>
                 </div>
             </div>
+        </div>
+        <!-- Followers and Friends Links -->
+        <div v-if="user" class="user-actions">
+            <div v-if="user" class="links">
+                <a href="#" @click.prevent="router.push(`/followers/${user.mid}`)" class="text-muted">{{
+                    user.followersCount }} fans</a>
+                <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
+                    user.followingCount }} following</a>
+                <a href="#"  class="text-muted">{{ user.tweetCount }} tweet</a>
+            </div>
+            <UserActions></UserActions>
         </div>
     </div>
 </template>
@@ -140,16 +143,40 @@ watch(userId, async (nv, ov) => {
     font-size: 0.95rem;
 }
 
+.user-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.links {
+    padding-left: 10px;
+    display: flex;
+    width: 80%;
+    /* Takes 80% of the container width */
+}
+
 .links a {
     color: #3d5563;
     text-decoration: none;
     font-size: 0.9rem;
-    margin-right: 10px;
-    /* Adds space between links */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-right: 10px;
+    text-align: left;
 }
 
 .links a:hover {
     text-decoration: underline;
+}
+
+/* UserActions takes the remaining 20% */
+:deep(UserActions) {
+    width: 20%;
+    flex-shrink: 0;
+    text-align: right;
 }
 
 /* New styles for the link container */

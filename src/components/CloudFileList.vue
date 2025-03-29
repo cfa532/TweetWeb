@@ -1,11 +1,12 @@
 <script setup lang='ts'>
 import { ref, computed, onMounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
 
 // Get the server base URL from environment variables
 const route = useRoute();
+const router = useRouter();
 const tweetStore = useTweetStore()
 
 const files = ref([] as FileSystemItem[]);
@@ -141,12 +142,19 @@ watch(
 onMounted(() => {
   console.log('Component mounted, route query:', route.query);
   let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
-    let port = tweetStore.loginUser?.cloudDrivePort ? tweetStore.loginUser?.cloudDrivePort : 8010
-    TUS_SERVER_URL = `http://${ip}:${port}`
-    console.log("TUS server", TUS_SERVER_URL)
+  let port = tweetStore.loginUser?.cloudDrivePort ? tweetStore.loginUser?.cloudDrivePort : 8010
+  TUS_SERVER_URL = `http://${ip}:${port}`
+  console.log("TUS server", TUS_SERVER_URL)
 
   loadDirectory(route.query.path as string || '');
 });
+
+function goHome() {
+  router.push({
+    name: "UserPage", 
+    params: {authorId: tweetStore.loginUser?.mid}
+  })
+}
 </script>
 
 <template>
@@ -157,6 +165,8 @@ onMounted(() => {
       <template v-for='(part, index) in pathParts' :key='index'>
         / <span @click='navigateTo(pathParts.slice(0, index + 1).join("/"))' class='breadcrumb-link'>{{ part }}</span>
       </template>
+      <span class="breadcrumb-separator" v-if="pathParts.length > 0">|</span>
+      <span @click='goHome' class='breadcrumb-link home-link'>Home</span>
     </div>
 
     <!-- Loading indicator -->
@@ -275,7 +285,15 @@ h1 {
 .breadcrumb-link:hover {
   text-decoration: underline;
 }
+.breadcrumb-separator {
+  margin: 0 8px;
+  color: #6c757d;
+}
 
+.home-link {
+  margin-left: 8px;
+  color: #28a745; /* Different color to distinguish it */
+}
 .file-list {
   width: 100%;
   border-collapse: collapse;
@@ -416,7 +434,9 @@ h1 {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Disabled button style */

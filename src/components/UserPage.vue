@@ -103,7 +103,7 @@ watch(authorId, async (nv, ov)=>{
     <AppHeader :userId=authorId />
     <b v-if="pinnedTweets?.length!>0">&nbsp;&nbsp;Pinned</b>
     <TweetView v-for="tweet in pinnedTweets" :tweet="tweet" :key="tweet.mid" />
-    <hr />
+    <hr  v-if="pinnedTweets?.length!>0"/>
     <b v-if="pinnedTweets?.length!>0">&nbsp;&nbsp;Tweets</b>
     <TweetView v-for="tweet in tweetFeed" :tweet="tweet" :key="tweet.mid" />
     <div v-if="isLoading" class="d-flex justify-content-center my-3">

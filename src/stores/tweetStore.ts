@@ -328,16 +328,6 @@ export const useTweetStore = defineStore('tweetStore', {
             return user
         },
 
-        async getFollowCount(userId: MimeiId) {
-            let user = await this.getUser(userId)
-            if (!user) return
-            let f = await user.client.RunMApp("get_follow_count", {
-                aid: this.appId, ver: "last", userid: user.mid,
-            })
-            user.followingCount = f["followingCount"]
-            user.followerCount = f["followersCount"]
-        },
-
         // Given a mimie Id, find IP of its best provider
         async getProviderIp(mid: string): Promise<string | null> {
             let IPs = await this.lapi.client.RunMApp("get_providers", {

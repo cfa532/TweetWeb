@@ -24,7 +24,8 @@ interface User {
     client?: any;       // Hprose client handler
     timestamp: string | number = Date.now();
     followingCount?: number;
-    followerCount?: number;
+    followersCount?: number;
+    tweetCount?: number;
     cloudDrivePort?: number;
     hostUrl?: string;
 };
