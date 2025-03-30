@@ -3,7 +3,6 @@ import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { Loading, Preview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import * as tus from 'tus-js-client';
-import axios from 'axios'; // Import axios
 
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
@@ -82,8 +81,10 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
         }
 
         uploadProgress[index] = 0;
-
         const fileId = `${file.name}-${file.size}-${Date.now()}`;
+
+        // Add a timeout to detect stalled uploads
+        let uploadTimeout: number | null = null;
 
         const upload = new tus.Upload(file, {
             endpoint: `${tusServerUrl}/upload`,
@@ -98,76 +99,60 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
             },
             onError: (error) => {
                 console.error('Upload failed:', error);
-                controller.abort(); // Ensure abort is called on error
-                if (!controller.signal.aborted) {
-                    reject(error);
+
+                // Clear any timeout
+                if (uploadTimeout) {
+                    clearTimeout(uploadTimeout);
+                    uploadTimeout = null;
                 }
+
+                // Extract just the response text from the error message
+                let errorMessage = 'Upload failed';
+
+                if (error.message) {
+                    // Look for the response text pattern in the error message
+                    const responseTextMatch = error.message.match(/response text: ([^,]+)/);
+                    if (responseTextMatch && responseTextMatch[1]) {
+                        errorMessage = responseTextMatch[1].trim();
+                    }
+                }
+
+                // Display the extracted error message
+                alertStore.error(errorMessage);
+
+                // Abort the upload
+                controller.abort();
+
+                // Reject the promise
+                reject(new Error(errorMessage));
             },
             onProgress: (bytesUploaded, bytesTotal) => {
-                if (!controller.signal.aborted) {
-                    uploadProgress[index] = Math.floor((bytesUploaded / bytesTotal) * 100);
-                    console.log('Uploading...', uploadProgress[index] + '%');
+                // Reset timeout on progress
+                if (uploadTimeout) {
+                    clearTimeout(uploadTimeout);
                 }
+
+                // Set a new timeout to detect stalled uploads
+                uploadTimeout = setTimeout(() => {
+                    console.error('Upload timed out');
+                    alertStore.error('Upload timed out. Please try again.');
+                    controller.abort();
+                    reject(new Error('Upload timed out'));
+                }, 30000); // 30 seconds timeout
+
+                // Your existing progress code
+                uploadProgress[index] = (bytesUploaded / bytesTotal) * 100;
             },
             onSuccess: () => {
-                console.log('Upload successful', file.name, upload.url);
-
-                try {
-                    if (upload.url) {
-                        const storedUploadsString = localStorage.getItem('resumableUploads') || '{}';
-                        const storedUploads = JSON.parse(storedUploadsString);
-                        storedUploads[fileId] = {
-                            url: upload.url,
-                            filename: file.name,
-                            size: file.size,
-                            createdAt: Date.now(),
-                            file: null // We can't store the File object
-                        };
-                        localStorage.setItem('resumableUploads', JSON.stringify(storedUploads));
-                    }
-
-                    axios.post(`${tusServerUrl}/files/register`, {
-                        uploadUrl: upload.url,
-                        filename: file.name,
-                        filetype: file.type,
-                        username: tweetStore.loginUser?.username || ''
-                    }, {
-                        signal: controller.signal
-                        }) // Pass the AbortSignal
-                        .then(response => {
-                            if (controller.signal.aborted) {
-                                console.log('axios request aborted, not resolving');
-                                return; // Component unmounted, don't resolve
-                            }
-
-                            try {
-                                const storedUploadsString = localStorage.getItem('resumableUploads') || '{}';
-                                const storedUploads = JSON.parse(storedUploadsString);
-                                delete storedUploads[fileId];
-                                localStorage.setItem('resumableUploads', JSON.stringify(storedUploads));
-                            } catch (e) {
-                                console.error('Error updating localStorage:', e);
-                            }
-
-                            resolve(response.data.id);
-                        })
-                        .catch(error => {
-                            console.error('Error registering file:', error);
-                            controller.abort(); // Ensure abort is called on error
-                            if (controller.signal.aborted) {
-                                console.log('axios request aborted, not rejecting');
-                                return; // Component unmounted, don't reject
-                            }
-                            reject(error);
-                        });
-                } catch (e) {
-                    console.error('Error in onSuccess handler:', e);
-                    controller.abort(); // Ensure abort is called on error
-                    if (controller.signal.aborted) {
-                        return; // Component unmounted, don't reject
-                    }
-                    reject(e);
+                // Clear timeout on success
+                if (uploadTimeout) {
+                    clearTimeout(uploadTimeout);
+                    uploadTimeout = null;
                 }
+
+                // Your existing success code
+                uploadProgress[index] = 100;
+                resolve(fileId);
             }
         });
 
@@ -175,30 +160,31 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
 
         controller.signal.addEventListener('abort', () => {
             console.log('Upload aborted via AbortController');
+            if (uploadTimeout) {
+                clearTimeout(uploadTimeout);
+                uploadTimeout = null;
+            }
             if (upload) {
                 upload.abort();
             }
         });
 
-        // Check for previous uploads *before* starting a new one.
-        upload.findPreviousUploads().then((previousUploads) => {
-            if (controller.signal.aborted) {
-                console.log('findPreviousUploads aborted, not starting upload');
-                return;
-            }
+        // Start the upload with timeout detection
+        uploadTimeout = setTimeout(() => {
+            console.error('Upload failed to start');
+            alertStore.error('Upload failed to start. Please check your connection and try again.');
+            controller.abort();
+            reject(new Error('Upload failed to start'));
+        }, 10000); // 10 seconds timeout for starting
 
+        upload.findPreviousUploads().then((previousUploads) => {
             if (previousUploads.length) {
-                console.log(`Resuming previous upload for ${file.name}`);
                 upload.resumeFromPreviousUpload(previousUploads[0]);
             }
-
             upload.start();
         }).catch(err => {
             console.error('Error finding previous uploads:', err);
-            controller.abort(); // Ensure abort is called on error
-            if (!controller.signal.aborted) {
-                upload.start();
-            }
+            upload.start();
         });
     });
 }
@@ -365,17 +351,6 @@ function removeFile(f: File) {
                     </div>
                 </div>
             </div>
-            <!-- <div class="upload-info">
-                <p>
-                    <strong>Large File Upload Features:</strong>
-                <ul>
-                    <li>Resumable uploads - continue where you left off if your connection drops</li>
-                    <li>Upload multiple files at once</li>
-                    <li>Pause and resume individual uploads</li>
-                    <li>Maximum file size: 3GB</li>
-                </ul>
-                </p>
-            </div> -->
         </div>
     </div>
 </template>

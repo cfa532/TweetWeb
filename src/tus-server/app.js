@@ -14,49 +14,65 @@ function checkAuthorizedUser(req, res, next) {
   if (req.path === '/files/register') {
     return next();
   }
-  // These are continuation requests for an already authorized upload
+  
+  // Skip authorization for PATCH requests to existing uploads
   if (req.method === 'PATCH' && req.path.startsWith('/upload/')) {
     return next();
   }
-
-  // For TUS upload requests, extract username from metadata
-  if (req.headers['upload-metadata']) {
+  
+  // For TUS upload requests (POST to /upload), extract username from metadata
+  if (req.method === 'POST' && req.path === '/upload' && req.headers['upload-metadata']) {
     try {
       const metadataStr = req.headers['upload-metadata'];
+      console.log('Raw metadata:', metadataStr);
+      
       const metadataPairs = metadataStr.split(',');
-      let username = '';
+      let usernameFound = false;
       
       for (const pair of metadataPairs) {
-        const [key, value] = pair.split(' ');
+        const parts = pair.split(' ');
+        if (parts.length !== 2) continue;
+        
+        const key = parts[0];
+        const encodedValue = parts[1];
+        
         if (key === 'username') {
+          usernameFound = true;
           // Decode the base64 value
-          username = Buffer.from(value, 'base64').toString('utf-8');
-          break;
+          const username = Buffer.from(encodedValue, 'base64').toString('utf-8');
+          console.log('Username from TUS metadata:', username);
+          console.log('Expected username:', process.env.AUTHORIZED_USERNAME);
+          
+          if (username === process.env.AUTHORIZED_USERNAME) {
+            req.username = username;
+            return next();
+          } else {
+            console.log('Username mismatch');
+            // Return a plain text error for TUS client
+            return res.status(403).send('Authorization failed: Invalid username');
+          }
         }
       }
       
-      console.log('Username from TUS metadata:', username);
-      if (username && username === process.env.AUTHORIZED_USERNAME) {
-        req.username = username;
-        return next();
+      if (!usernameFound) {
+        console.log('No username found in metadata');
+        return res.status(403).send('Authorization failed: No username provided');
       }
     } catch (err) {
       console.error('Error parsing TUS metadata:', err);
+      return res.status(400).send('Invalid metadata format');
     }
   }
-
+  
   // For regular requests, check query params, body, or headers
   const loggedInUsername = req.query.username || req.body.username || req.headers['x-username'];
   console.log('Username from request:', loggedInUsername);
-
+  
   // Check if the logged in user matches the authorized user from env
   if (!loggedInUsername || loggedInUsername !== process.env.AUTHORIZED_USERNAME) {
-    return res.status(403).json({ 
-      success: false, 
-      message: 'You are not authorized to access this resource' 
-    });
+    return res.status(403).json({ success: false, message: 'You are not authorized to access this resource' });
   }
-
+  
   // Store username for downstream middleware
   req.username = loggedInUsername;
   next();
