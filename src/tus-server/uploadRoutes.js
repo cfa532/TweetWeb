@@ -22,15 +22,23 @@ const tusServer = new Server({
   respectForwardedHeaders: true
 });
 
+// Add hooks to the tus server to log events
+tusServer.on('POST', (req) => {
+  console.log('TUS POST request received');
+  console.log('Username from request:', req.username);
+});
+
 // Handle base upload path (for POST requests to create uploads)
 router.all('/upload', (req, res) => {
   console.log(`Received ${req.method} request to ${req.url}`);
+  // Username has already been verified by the middleware
   tusServer.handle(req, res);
 });
 
 // Handle upload paths with IDs (for PATCH requests to upload chunks)
 router.all('/upload/*', (req, res) => {
   console.log(`Received ${req.method} request to ${req.url}`);
+  // Username has already been verified by the middleware
   tusServer.handle(req, res);
 });
 
@@ -39,6 +47,9 @@ router.post('/files/register', async (req, res) => {
   try {
     const { uploadUrl, filename, filetype } = req.body;
     const uploadId = path.basename(uploadUrl);
+    
+    // Username has already been verified by the middleware
+    console.log(`Processing file registration for user: ${req.username}`);
     
     // Construct the full path to the uploaded file
     const uploadedFilePath = path.join(uploadPath, uploadId);

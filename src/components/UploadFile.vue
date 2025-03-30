@@ -93,7 +93,8 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
             metadata: {
                 filename: file.name,
                 filetype: file.type,
-                userId: tweetStore.loginUser?.mid || ''
+                userId: tweetStore.loginUser?.mid || '',
+                username: tweetStore.loginUser?.username || ''
             },
             onError: (error) => {
                 console.error('Upload failed:', error);
@@ -129,7 +130,10 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
                         uploadUrl: upload.url,
                         filename: file.name,
                         filetype: file.type,
-                    }, { signal: controller.signal }) // Pass the AbortSignal
+                        username: tweetStore.loginUser?.username || ''
+                    }, {
+                        signal: controller.signal
+                        }) // Pass the AbortSignal
                         .then(response => {
                             if (controller.signal.aborted) {
                                 console.log('axios request aborted, not resolving');
