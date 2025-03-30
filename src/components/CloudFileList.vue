@@ -68,11 +68,13 @@ const navigateToParent = () => {
 
 // File action functions
 const viewFile = (file: FileSystemItem) => {
-  window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}`, '_blank');
+  const username = tweetStore.loginUser?.username;
+  window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?username=${username}`, '_blank');
 };
 
 const downloadFile = (file: FileSystemItem) => {
-  window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?download=true`, '_blank');
+  const username = tweetStore.loginUser?.username;
+  window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?download=true&username=${username}`, '_blank');
 };
 
 const shareFile = async (file: FileSystemItem) => {
