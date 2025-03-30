@@ -1,4 +1,3 @@
-require('dotenv').config()
 const express = require('express');
 const router = express.Router();
 const { Server } = require('@tus/server');
@@ -48,19 +47,20 @@ router.post('/files/register', async (req, res) => {
   try {
     const { uploadUrl, filename, filetype } = req.body;
     const uploadId = path.basename(uploadUrl);
-    
+
     // Username has already been verified by the middleware
     console.log(`Processing file registration for user: ${req.username}`);
-    
+    console.log(`NET_DISK: ${process.env.NET_DISK}`); // Verify NET_DISK
+
     // Construct the full path to the uploaded file
     const uploadedFilePath = path.join(uploadPath, uploadId);
-    
+
     // Check if the file exists
     if (!fs.existsSync(uploadedFilePath)) {
       console.warn(`File not found: ${uploadedFilePath}`);
       return res.status(404).json({ error: 'File not found' });
     }
-    
+
     // Get file stats (size, etc.)
     const stats = fs.statSync(uploadedFilePath);
     const fileSize = stats.size;
@@ -69,35 +69,59 @@ router.post('/files/register', async (req, res) => {
     const fileId = uploadId;
     const fileExt = path.extname(filename || '');
     const permanentFilePath = path.join(uploadPath, `${fileId}${fileExt}`);
-    
+
     // Rename the file to its permanent location
     fs.renameSync(uploadedFilePath, permanentFilePath);
-    
+
     // Create symbolic link in NET_DISK directory if NET_DISK is defined
     if (process.env.NET_DISK) {
       // Ensure NET_DISK/uploads directory exists
       const netDiskUploadsPath = path.join(process.env.NET_DISK, 'uploads');
       if (!fs.existsSync(netDiskUploadsPath)) {
-        fs.mkdirSync(netDiskUploadsPath, { recursive: true });
+        try {
+          fs.mkdirSync(netDiskUploadsPath, { recursive: true });
+          console.log(`Created directory: ${netDiskUploadsPath}`);
+        } catch (mkdirError) {
+          console.error(`Error creating directory ${netDiskUploadsPath}:`, mkdirError);
+          return res.status(500).json({ error: 'Could not create directory' }); // Stop if directory creation fails
+        }
       }
-      
+
+      // Check if filename is valid
+      if (!filename) {
+        console.warn('Filename is missing. Skipping symbolic link creation.');
+        return; // Skip symlink creation if filename is missing
+      }
+
       // Create symbolic link using the original filename
       const symlinkPath = path.join(netDiskUploadsPath, filename);
-      
+
       // Remove existing symlink if it exists
       if (fs.existsSync(symlinkPath)) {
-        fs.unlinkSync(symlinkPath);
+        try {
+          fs.unlinkSync(symlinkPath);
+          console.log(`Removed existing symlink: ${symlinkPath}`);
+        } catch (unlinkError) {
+          console.error(`Error removing existing symlink ${symlinkPath}:`, unlinkError);
+        }
       }
-      
+      const permanentFilePath = path.join(uploadPath, `${fileId}${fileExt}`);
+
       // Create the symbolic link
-      fs.symlinkSync(permanentFilePath, symlinkPath);
-      console.log(`Created symbolic link: ${symlinkPath} -> ${permanentFilePath}`);
+      try {
+        fs.symlinkSync(permanentFilePath, symlinkPath);
+        console.log(`Created symbolic link: ${symlinkPath} -> ${permanentFilePath}`);
+      } catch (error) {
+        console.error(`Error creating symbolic link: ${error}`);
+      }
     } else {
-      console.warn('NET_DISK environment variable not set. Skipping symbolic link creation.');
+      console.warn(
+        'NET_DISK environment variable not set. Skipping symbolic link creation.'
+      );
     }
-    
-    console.log(`File registered: ${fileId} ${filename} ${fileSize}`);
-    
+
+    console.log(`File registered: ${filename} ${fileSize} ${fileId}`);
+
     // Return the file ID to the client
     res.status(201).json({
       id: fileId,
@@ -105,7 +129,7 @@ router.post('/files/register', async (req, res) => {
       size: fileSize,
       type: filetype || 'application/octet-stream',
       createdAt: Date.now(),
-      url: `/files/${fileId}${fileExt}`
+      url: `/files/${fileId}${fileExt}`,
     });
   } catch (error) {
     console.error('Error registering file:', error);
