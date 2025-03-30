@@ -83,13 +83,12 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
 
         uploadProgress[index] = 0;
         const fileId = `${file.name}-${file.size}-${Date.now()}`;
-
-        // Add a timeout to detect stalled uploads
-        let uploadTimeout: number | null = null;
+        console.log(`Starting upload for ${file.name} (${file.size} bytes) to ${tusServerUrl}/upload`);
 
         const upload = new tus.Upload(file, {
             endpoint: `${tusServerUrl}/upload`,
-            retryDelays: [0, 3000, 5000, 10000, 20000],
+            retryDelays: [0, 1000, 3000, 5000, 10000, 20000, 30000],
+            chunkSize: 10 * 1024 * 1024, // Smaller chunks (256KB) for better reliability
             overridePatchMethod: false,
             removeFingerprintOnSuccess: true,
             metadata: {
@@ -100,92 +99,85 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
             },
             onError: (error) => {
                 console.error('Upload failed:', error);
-
-                // Clear any timeout
-                if (uploadTimeout) {
-                    clearTimeout(uploadTimeout);
-                    uploadTimeout = null;
-                }
-
                 // Extract just the response text from the error message
                 let errorMessage = 'Upload failed';
-
                 if (error.message) {
+                    console.log('Full error message:', error.message);
                     // Look for the response text pattern in the error message
                     const responseTextMatch = error.message.match(/response text: ([^,]+)/);
                     if (responseTextMatch && responseTextMatch[1]) {
                         errorMessage = responseTextMatch[1].trim();
                     }
                 }
-
                 // Display the extracted error message
                 alertStore.error(errorMessage);
-
                 // Abort the upload
                 controller.abort();
-
                 // Reject the promise
                 reject(new Error(errorMessage));
             },
             onProgress: (bytesUploaded, bytesTotal) => {
-                // Reset timeout on progress
-                if (uploadTimeout) {
-                    clearTimeout(uploadTimeout);
-                }
-
-                // Set a new timeout to detect stalled uploads
-                uploadTimeout = setTimeout(() => {
-                    console.error('Upload timed out');
-                    alertStore.error('Upload timed out. Please try again.');
-                    controller.abort();
-                    reject(new Error('Upload timed out'));
-                }, 30000); // 30 seconds timeout
-
-                // Your existing progress code
+                // Update progress
                 uploadProgress[index] = (bytesUploaded / bytesTotal) * 100;
+                console.log(`Progress for ${file.name}: ${Math.round(uploadProgress[index])}% (${bytesUploaded}/${bytesTotal} bytes)`);
             },
             onSuccess: () => {
-                // Clear timeout on success
-                if (uploadTimeout) {
-                    clearTimeout(uploadTimeout);
-                    uploadTimeout = null;
-                }
-
-                // Your existing success code
+                console.log(`Upload completed successfully for ${file.name}`);
                 uploadProgress[index] = 100;
                 resolve(fileId);
             }
         });
 
         uploads.value[index] = upload;
-
         controller.signal.addEventListener('abort', () => {
             console.log('Upload aborted via AbortController');
-            if (uploadTimeout) {
-                clearTimeout(uploadTimeout);
-                uploadTimeout = null;
-            }
             if (upload) {
                 upload.abort();
             }
         });
 
-        // Start the upload with timeout detection
-        uploadTimeout = setTimeout(() => {
-            console.error('Upload failed to start');
-            alertStore.error('Upload failed to start. Please check your connection and try again.');
-            controller.abort();
-            reject(new Error('Upload failed to start'));
-        }, 10000); // 10 seconds timeout for starting
-
+        // Start the upload with better error handling for resume failures
+        console.log(`Checking for previous uploads for ${file.name}`);
         upload.findPreviousUploads().then((previousUploads) => {
             if (previousUploads.length) {
+                console.log(`Found previous upload for ${file.name}, attempting to resume`);
+                // Try to resume, but catch 404/403 errors and start a new upload
                 upload.resumeFromPreviousUpload(previousUploads[0]);
+                upload.start();
+            } else {
+                console.log(`No previous uploads found for ${file.name}, starting new upload`);
+                upload.start();
             }
-            upload.start();
         }).catch(err => {
-            console.error('Error finding previous uploads:', err);
-            upload.start();
+            console.error('Error finding or resuming previous uploads:', err);
+            console.log(`Starting fresh upload for ${file.name} after error`);
+
+            // Get the upload URL from the upload instance
+            const uploadURL = upload.url;
+
+            if (uploadURL) {
+                tus.Upload.terminate(uploadURL, {
+                    endpoint: upload.options.endpoint, // Pass the endpoint here
+                    headers: upload.options.headers, // Pass any necessary headers
+                }).then(() => {
+                    console.log('Previous upload terminated, starting fresh');
+                    // Create a new upload instance with the same options
+                    const freshUpload = new tus.Upload(file, upload.options);
+                    uploads.value[index] = freshUpload;
+                    freshUpload.start();
+                }).catch(termErr => {
+                    console.error('Error terminating previous upload:', termErr);
+                    // Try starting a new upload anyway
+                    const freshUpload = new tus.Upload(file, upload.options);
+                    uploads.value[index] = freshUpload;
+                    freshUpload.start();
+                });
+            } else {
+                console.warn("Upload URL not available, cannot terminate. Starting fresh upload.");
+                const freshUpload = new tus.Upload(file, upload.options);
+                uploads.value[index] = freshUpload;
+                freshUpload.start();
+            }
         });
     });
 }

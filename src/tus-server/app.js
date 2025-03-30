@@ -16,7 +16,7 @@ function checkAuthorizedUser(req, res, next) {
   }
   
   // Skip authorization for PATCH requests to existing uploads
-  if (req.method === 'PATCH' && req.path.startsWith('/upload/')) {
+  if ((req.method === 'PATCH' || req.method === 'HEAD') && req.path.startsWith('/upload/')) {
     return next();
   }
   

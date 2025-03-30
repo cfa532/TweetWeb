@@ -24,7 +24,8 @@ function showMenu() {
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
             if (e.target !== actionMenu.value) {
-                actionMenu.value.hidden = true
+                if (actionMenu.value)
+                    actionMenu.value.hidden = true
                 setTimeout(()=>{
                     window.onclick = null
                 }, 100)
