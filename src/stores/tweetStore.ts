@@ -434,7 +434,6 @@ export const useTweetStore = defineStore('tweetStore', {
         logout() {
             sessionStorage.clear()
             this.$reset
-            window.location.reload()
         },
         async getFollowers(userId: MimeiId) {
             let user = await this.getUser(userId)

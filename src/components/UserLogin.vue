@@ -2,9 +2,14 @@
 import { Form, Field } from 'vee-validate';
 import * as Yup from 'yup';
 import { useTweetStore } from '@/stores';
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 const router = useRouter()
-
+const props = defineProps({
+  redirect: {
+    type: String,
+    default: '/'
+  }
+});
 const schema = Yup.object().shape({
     username: Yup.string().required('Username is required'),
     password: Yup.string().required('Password is required'),
@@ -16,7 +21,8 @@ async function onSubmit(values: any) {
     let user = await tweetStore.login(username, password);
     if (user) {
         console.log("Login successful", user);
-        router.push("post")
+        // router.push("post")
+        router.push(props.redirect);
     }
 }
 </script>

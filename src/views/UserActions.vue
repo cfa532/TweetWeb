@@ -36,14 +36,16 @@ function netdisk() {
     actionMenu.value.hidden = true
     router.push({name: 'netdisk'})
 }
-function uploadFile() {
+function uploadTweet() {
     actionMenu.value.hidden = true
-    router.push({name: 'uploadFile'})
+    router.push({name: 'post'})
 }
 function login() {
     if (tweetStore.loginUser) {
         tweetStore.logout()
+        sessionStorage.setItem("isBot", "No")
         loginAction.value = "Login"
+        location.reload()
     } else {
         router.push({name: 'login'})
     }
@@ -59,10 +61,10 @@ function login() {
             <a href="#" style="text-decoration: none;" @click.stop="login">{{ loginAction }}</a>
         </div>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="netdisk">Netdisk</a>
+            <a href="#" style="text-decoration: none;" @click.stop="uploadTweet">Publish</a>
         </div>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="uploadFile">Upload</a>
+            <a href="#" style="text-decoration: none;" @click.stop="netdisk">Netdisk</a>
         </div>
     </div>
 </div>

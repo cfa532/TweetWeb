@@ -4,10 +4,6 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
 } from "@/components"
 import { useAlertStore } from '@/stores';
 
-/**
- * createWebHashHistory: access tweet by IP is ok, by domain not.
- * createWebHistory works for domain base url, so is createWebHistory
- */
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -30,14 +26,19 @@ export const router = createRouter({
     },
     { path: '/followings/:userId', name: "followings", component: Followings },
     { path: '/followers/:userId', name: "followers", component: Followers },
-    { path: '/login', name: "login", component: Login },
+    { 
+      path: '/login', 
+      name: "login", 
+      component: Login,
+      props: (route) => ({ redirect: route.query.redirect || '/' })
+    },
     { path: '/ips', name: "IPs", component: IPs },
     {
       path: '/post/:tweetId?', name: "post", component: AddPost,
-      beforeEnter: (to: any, from: any, next: any) => {
+      beforeEnter: (to, from, next) => {
         let user = sessionStorage.getItem("user")
         if (!user) {
-          next("/login")
+          next({ name: 'login', query: { redirect: to.fullPath } })
         } else
           next()
       }
@@ -53,10 +54,10 @@ export const router = createRouter({
       path: '/netdisk',
       name: 'netdisk',
       component: CloudFileList,
-      beforeEnter: (to: any, from: any, next: any) => {
+      beforeEnter: (to, from, next) => {
         let user = sessionStorage.getItem("user")
         if (!user) {
-          next("/login")
+          next({ name: 'login', query: { redirect: to.fullPath } })
         } else
           next()
       },
@@ -66,10 +67,10 @@ export const router = createRouter({
       path: '/upload',
       name: "uploadFile",
       component: UploadFile,
-      beforeEnter: (to: any, from: any, next: any) => {
+      beforeEnter: (to, from, next) => {
         let user = sessionStorage.getItem("user")
         if (!user) {
-          next("/login")
+          next({ name: 'login', query: { redirect: to.fullPath } })
         } else {
           next()
         }
@@ -80,10 +81,10 @@ export const router = createRouter({
       path: '/uploadApk',
       name: "uploadApk",
       component: UploadPackage,
-      beforeEnter: (to: any, from: any, next: any) => {
+      beforeEnter: (to, from, next) => {
         let user = sessionStorage.getItem("user")
         if (!user || JSON.parse(user)["username"]!="developer") {
-          next("/login")
+          next({ name: 'login', query: { redirect: to.fullPath } })
         } else
           next()
       },
@@ -102,7 +103,7 @@ export const router = createRouter({
   ],
 })
 
-router.beforeEach((to: any, from: any) => {
+router.beforeEach((to, from) => {
   useAlertStore().clear()
 })
 
