@@ -2,13 +2,14 @@
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { Loading, Preview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
+import { useRoute, useRouter } from 'vue-router';
 import * as tus from 'tus-js-client';
 
+const router = useRouter();
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
 }
 let tusServerUrl = ""
-const emit = defineEmits(['uploaded', 'hide'])
 const inpCaption = ref()
 const textValue = ref('')
 const divAttach = ref()
@@ -317,10 +318,13 @@ function removeFile(f: File) {
 </script>
 
 <template>
-    <div class="row justify-content-start align-items-start">
+
+    <div class="row justify-content-start align-items-start mt-2">
         <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
             <div class="card-header d-flex align-items-center">
                 <input v-model="isResumableUpload" type="checkbox" checked>&nbsp;Enable resumable uploads</input>
+                <span @click='router.push({name: "netdisk"})' class='breadcrumb-link'>Netdisk</span>
+                <span @click='router.push({name: "main"})' class='breadcrumb-link'>Home</span>
             </div>
             <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
                 <div class="input-container">
@@ -356,6 +360,13 @@ function removeFile(f: File) {
 </template>
 
 <style scoped>
+.breadcrumb-link {
+    color: #007bff;
+    text-decoration: none;
+    cursor: pointer;
+    margin-left: 30px;
+}
+
 .card-header {
     margin-left: 10px;
     display: flex;

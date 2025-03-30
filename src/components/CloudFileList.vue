@@ -149,7 +149,11 @@ onMounted(() => {
 
   loadDirectory(route.query.path as string || '');
 });
-
+function uploadFile() {
+  router.push({
+    name: "uploadFile", 
+  })
+}
 function goHome() {
   router.push({
     name: "UserPage", 
@@ -167,6 +171,7 @@ function goHome() {
         / <span @click='navigateTo(pathParts.slice(0, index + 1).join("/"))' class='breadcrumb-link'>{{ part }}</span>
       </template>
       <span class="breadcrumb-separator" v-if="pathParts.length > 0">|</span>
+      <span @click='uploadFile' class='breadcrumb-link home-link'>Upload</span>
       <span @click='goHome' class='breadcrumb-link home-link'>Home</span>
     </div>
 
