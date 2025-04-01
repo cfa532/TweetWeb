@@ -32,55 +32,59 @@ onMounted(() => {
 
 // Upload files and store them as IPFS or Mimei type
 async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
-  
-  function getMedaiType(t: string) {
-    if (t.startsWith("image/")) return "Image"
-    if (t.startsWith("video/")) return "Video"
-    if (t.startsWith("audio/")) return "Audio"
-    return "Uknown"
-  }
-  async function getVideoAspectRatio(file: File): Promise<number> {
-    return new Promise<number>((resolve, reject) => {
-        const video = document.createElement('video');
-        video.preload = 'metadata';
 
-        video.onloadedmetadata = () => {
-            // Calculate aspect ratio
-            const aspectRatio = video.videoWidth / video.videoHeight;
-            resolve(aspectRatio);
-        };
+function getMedaiType(t: string) {
+  if (t.startsWith("image/")) return "Image"
+  if (t.startsWith("video/")) return "Video"
+  if (t.startsWith("audio/")) return "Audio"
+  return "Uknown"
+}
+async function getVideoAspectRatio(file: File): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
 
-        video.onerror = () => {
-            reject(new Error('Failed to load video metadata'));
-        };
+      video.onloadedmetadata = () => {
+          // Calculate aspect ratio
+          const aspectRatio = video.videoWidth / video.videoHeight;
+          resolve(aspectRatio);
+      };
 
-        // Set video source
-        video.src = URL.createObjectURL(file);
-    });
-  }
+      video.onerror = () => {
+          reject(new Error('Failed to load video metadata'));
+      };
 
-  // Helper function to handle individual file uploads
-  async function uploadSingleFile(file: File, index: number): Promise<MimeiFileType> {
-    if (file.size > sliceSize * 300) {
-      throw new Error('Max file size exceeded')
-    }
+      // Set video source
+      video.src = URL.createObjectURL(file);
+  });
+}
+
+const results: PromiseSettledResult<MimeiFileType>[] = [];
+
+for (let i = 0; i < files.length; i++) {
+  const file = files[i];
+  try {
     // Assign initial progress value
-    uploadProgress[index] = 0
+    uploadProgress[i] = 0;
 
     // Create a FileInfo object with file name, last modified time,
-    const fsid = await tweetStore.openTempFile()
-    const fileType = getMedaiType(file.type)
+    const fsid = await tweetStore.openTempFile();
+    const fileType = getMedaiType(file.type);
     const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null
     const fi = { mid: "", type: fileType, size: file.size, fileName: file.name,
               timestamp: file.lastModified, aspectRatio: aspectRatio} as MimeiFileType
-    fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // returned an IPFS id actually
+    fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i) // returned an IPFS id actually
 
-    console.log(fi)    // never executed when there is a timeout uploading file.
-    return fi
+    console.log(fi);
+    results.push({ status: 'fulfilled', value: fi });
+
+  } catch (error) {
+    console.error(`Error uploading file ${file.name}:`, error);
+    results.push({ status: 'rejected', reason: error });
   }
+}
 
-  // Use Promise.allSettled to wait for all file upload operations to complete
-  return Promise.allSettled(files.map((file, i) => uploadSingleFile(file, i)))
+return results;
 }
 
 async function onSubmit() {
