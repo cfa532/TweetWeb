@@ -59,13 +59,13 @@ function login() {
     <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="actionMenu" class="action" hidden>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="login">{{ loginAction }}</a>
-        </div>
-        <div class="item">
             <a href="#" style="text-decoration: none;" @click.stop="uploadTweet">Publish</a>
         </div>
         <div class="item">
             <a href="#" style="text-decoration: none;" @click.stop="netdisk">Netdisk</a>
+        </div>
+        <div class="item">
+            <a href="#" style="text-decoration: none;" @click.stop="login">{{ loginAction }}</a>
         </div>
     </div>
 </div>
