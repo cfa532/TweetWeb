@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 const GUEST_ID = "000000000000000000000000000"
-const THIRTY_DAYS = 2592000000
+const TWEET_COUNT = 30
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
@@ -53,45 +53,57 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async loadTweets(
             authorId: string | undefined = undefined,
-            startTimestamp: number = Date.now(),
-            endTimestamp: number = Date.now() - THIRTY_DAYS
+            startRank: number = 0,
+            endRank: number = startRank + TWEET_COUNT
         ) {
-            let followings = authorId? [authorId] : this.followings
-            followings.forEach(async (uid: string) => {
-                let author = await this.getUser(uid)
+            if (authorId) {
+                // load author's tweets
+                this.loadTweetsByRank(authorId)
+            } else {
+                if (this.loginUser) {
+                    // load tweets from all the followings 
+                    let tweetFeed = await this.getTweetFeed(this.loginUser, startRank, endRank)  
+                    console.log("Tweets of user", tweetFeed, startRank, endRank)
+                    if (!tweetFeed)
+                        return
+                    this.fillTweet(tweetFeed)
+                } else {
+                    // load admin's tweets
+                    this.loadTweetsByRank(this.followings[0])
+                }
+            }
+        },
+        async fillTweet(tweets: Tweet[]) {
+            // Tweet may not have its author data yet.
+            tweets?.forEach(async tweet => {
+                // skip tweet that is in tweets already.
+                if (this.tweets.find(e => e.mid == tweet.mid))
+                    return
+                let author = await this.getUser(tweet.authorId)
                 if (!author)
                     return
-                let tweetsByUser = await this.getTweetListByUser(author, startTimestamp, endTimestamp)  
-                console.log("Tweets of user", tweetsByUser, startTimestamp, endTimestamp)
-
-                // Tweet may not have its author data yet.
-                tweetsByUser?.forEach(async tweet => {
-                    // skip tweet that is in tweets already.
-                    if (this.tweets.find(e => e.mid == tweet.mid))
-                        return
-                    tweet.author = author
-                    tweet.provider = author.providerIp
-                    tweet.attachments = tweet.attachments?.map(e => {
-                        return {
-                            mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
-                            type: e.type,
-                            timestamp: e.timestamp,
-                            fileName: e.fileName,
-                            downloadable: tweet.downloadable,
-                            size: e.size
-                        }
-                    })
-                    tweet.comments = []     // load comments only on detail page
-
-                    if (tweet?.originalTweetId) {
-                        tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
-                        if (!tweet.originalTweet) {
-                            return  // failed to find original tweet, exit.
-                        }
+                tweet.author = author
+                tweet.provider = author.providerIp
+                tweet.attachments = tweet.attachments?.map(e => {
+                    return {
+                        mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
+                        type: e.type,
+                        timestamp: e.timestamp,
+                        fileName: e.fileName,
+                        downloadable: tweet.downloadable,
+                        size: e.size
                     }
-                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
-                    this.tweets.push(tweet);
                 })
+                tweet.comments = []     // load comments only on detail page
+
+                if (tweet?.originalTweetId) {
+                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                    if (!tweet.originalTweet) {
+                        return  // failed to find original tweet, exit.
+                    }
+                }
+                sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
+                this.tweets.push(tweet);
             })
         },
         async loadTweetsByRank(
@@ -106,36 +118,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     return
                 let tweetsByUser = await this.getTweetListByRank(author, startRank, count)  
                 console.log("Tweets of user", tweetsByUser, startRank, count)
-
-                // Tweet may not have its author data yet.
-                tweetsByUser?.forEach(async tweet => {
-                    // skip tweet that is in tweets already.
-                    if (this.tweets.find(e => e.mid == tweet.mid))
-                        return
-                    
-                    tweet.author = author
-                    tweet.provider = author.providerIp
-                    tweet.attachments = tweet.attachments?.map(e => {
-                        return {
-                            mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
-                            type: e.type,
-                            timestamp: e.timestamp,
-                            fileName: e.fileName,
-                            downloadable: tweet.downloadable,
-                            size: e.size
-                        }
-                    })
-                    tweet.comments = []     // load comments only on detail page
-
-                    if (tweet?.originalTweetId) {
-                        tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
-                        if (!tweet.originalTweet) {
-                            return  // failed to find original tweet, exit.
-                        }
-                    }
-                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
-                    this.tweets.push(tweet);
-                })
+                if (!tweetsByUser)
+                    return
+                this.fillTweet(tweetsByUser)
             })
         },
         /**
@@ -164,21 +149,35 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return pinnedTweets
         },
-        async getTweetListByUser(user: User,
-            startTimestamp: number = Date.now(),
-            endTimestamp: number = Date.now() - THIRTY_DAYS
+        /**
+         * @param user is login user.
+         * @param startRank 
+         * @param endRank 
+         * @returns tweets of app`user's followings' tweets
+         */
+        async getTweetFeed(
+            user: User,
+            startRank: number,
+            endRank: number
         ): Promise<Tweet[] | undefined> {
             let tweets = await user.client.RunMApp("get_tweets", {
                 aid: this.appId,
                 ver: "last",
                 userid: user.mid,
-                start: startTimestamp,
-                end: endTimestamp,
+                start: startRank,
+                end: endRank,
                 gid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
             })
             return tweets
         },
-        async getTweetListByRank(user: User,
+        /**
+         * @param user 
+         * @param startRank 
+         * @param count 
+         * @returns tweets of the given user
+         */
+        async getTweetListByRank(
+            user: User,
             startRank: number,
             count: number
         ): Promise<Tweet[] | undefined> {
