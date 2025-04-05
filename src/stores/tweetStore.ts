@@ -91,7 +91,8 @@ export const useTweetStore = defineStore('tweetStore', {
                         timestamp: e.timestamp,
                         fileName: e.fileName,
                         downloadable: tweet.downloadable,
-                        size: e.size
+                        size: e.size,
+                        aspectRatio: e.aspectRatio
                     }
                 })
                 tweet.comments = []     // load comments only on detail page
@@ -160,7 +161,7 @@ export const useTweetStore = defineStore('tweetStore', {
             startRank: number,
             endRank: number
         ): Promise<Tweet[] | undefined> {
-            let tweets = await user.client.RunMApp("get_tweets", {
+            let tweets = await user.client.RunMApp("get_tweet_feed", {
                 aid: this.appId,
                 ver: "last",
                 userid: user.mid,

@@ -17,18 +17,55 @@ const selectFile = () => {
         fileInput.value.click();
     }
 };
+function getMedaiType(t: string) {
+  if (t.startsWith('image/')) return 'Image'
+  if (t.startsWith('video/')) return 'Video'
+  if (t.startsWith('audio/')) return 'Audio'
+  return 'Uknown'
+}
+const getVideoAspectRatio = (file: File): Promise<number> => {
+    return new Promise((resolve, reject) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
 
-const handleFileSelect = (event: Event) => {
+        video.onloadedmetadata = () => {
+            window.URL.revokeObjectURL(video.src);
+            const aspectRatio = video.videoWidth / video.videoHeight;
+            resolve(aspectRatio);
+        };
+
+        video.onerror = (error) => {
+            window.URL.revokeObjectURL(video.src);
+            reject(error);
+        };
+
+        video.src = URL.createObjectURL(file);
+    });
+};
+
+const handleFileSelect = async (event: Event) => {
     const target = event.target as HTMLInputElement;
     if (target.files && target.files.length > 0) {
         const file = target.files[0];
 
+        let aspectRatio: number | null = null;
+        if (file.type.startsWith('video')) {
+            try {
+                aspectRatio = await getVideoAspectRatio(file);
+            } catch (error) {
+                console.error("Error getting video aspect ratio:", error);
+                // Handle the error appropriately, maybe set a default value or inform the user
+                aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
+            }
+        }
+
         const mimeiFile: MimeiFileType = {
-            mid: '', // You might need to generate a unique ID here
-            type: file.type,
+            mid: '',
+            type: getMedaiType(file.type),
             size: file.size,
             fileName: file.name,
             timestamp: Date.now(),
+            aspectRatio: aspectRatio || undefined, // Add aspect ratio to the file object
         };
 
         selectedFiles.value.push(mimeiFile);
@@ -75,6 +112,7 @@ watch(() => props.isVisible, (isVisible) => {
             />
             <div v-for="(file, index) in selectedFiles" :key="index" class="input-group">
                 <p>{{ file.fileName }}</p>
+                <p v-if="file.aspectRatio">Aspect Ratio: {{ file.aspectRatio.toFixed(2) }}</p>
                 <div class="cid-container">
                     <input type="text" v-model="file.mid" placeholder="Enter Cid" />
                     <button @click="removeFile(index)" class="delete-button">×</button>
