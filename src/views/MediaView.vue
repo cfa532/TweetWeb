@@ -9,7 +9,9 @@ const props = defineProps({
     autoplay: {type: Boolean, required: false},
     addtionalItems: {type: Number, required: false},    // show PLUS sign over last item in preview grid
 });
-
+const mediaMid = computed(() => {
+    return props.media.mid.substring(props.media.mid.lastIndexOf("/")+1)
+})
 const userComponent = computed(() => {
     let p = props.media.type.toLowerCase()
     if (p.includes("image")) {
@@ -25,7 +27,7 @@ const userComponent = computed(() => {
 </script>
 
 <template>
-    <div class="container">
+    <div class="container" :id="mediaMid">
         <span v-if="addtionalItems" class="overlay">+{{ addtionalItems }}</span>
         <KeepAlive>
             <component :is="userComponent" v-bind="props"></component>

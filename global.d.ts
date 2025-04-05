@@ -74,7 +74,7 @@ interface MimeiFileType {
 
     // not saved in Mimei DB, for display only. The value is assigned from Tweet's downloadable
     // upload render the attachment.
-    downloadable?: boolean
+    downloadable?: boolean = true
 };
 
 // File type returned by network drive

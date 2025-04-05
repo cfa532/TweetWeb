@@ -48,7 +48,7 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         /**
          * If an userId is given, load tweets of the given user.
-         * Otherwise load tweets from all the followings.
+         * Otherwise load tweets from all the followings of login user.
          * @param authorId 
          */
         async loadTweets(
@@ -63,7 +63,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (this.loginUser) {
                     // load tweets from all the followings 
                     let tweetFeed = await this.getTweetFeed(this.loginUser, startRank, endRank)  
-                    console.log("Tweets of user", tweetFeed, startRank, endRank)
+                    console.log("Tweets of user", this.loginUser, tweetFeed, startRank, endRank)
                     if (!tweetFeed)
                         return
                     this.fillTweet(tweetFeed)

@@ -105,7 +105,7 @@ const attachmentGridRows = computed(() => {
         :timestamp='displayedTweet.timestamp as number'
       />
     </div>
-    <div class='card-body'>
+    <div class='card-body' :id="props.tweet.mid">
       <p v-if='displayedTweet.content' class='card-text' v-html='processedContent'></p>
       <div v-if='displayedTweet.attachments?.length' class='media-attachments'>
         <div v-if='displayedTweet.attachments.length === 1' class='single-attachment'>

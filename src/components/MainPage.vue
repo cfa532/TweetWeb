@@ -3,11 +3,8 @@ import { computed, onMounted, ref, onUnmounted } from 'vue';
 import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views'
 
-const SEVEN_DAYS = 604800000;
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
-const lastLoadTime = ref(new Date().getTime()); // Use ref for reactivity
-const endTime = ref(lastLoadTime.value - SEVEN_DAYS*4);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
 
@@ -26,9 +23,7 @@ async function loadMoreTweets() {
     if (isLoading.value)
         return; // Prevent multiple loads
     isLoading.value = true;
-    await tweetStore.loadTweets(undefined, lastLoadTime.value, endTime.value);
-    lastLoadTime.value = endTime.value;
-    endTime.value -= SEVEN_DAYS;
+    await tweetStore.loadTweets(undefined, tweetStore.tweets.length);
     isLoading.value = false;
 }
 
@@ -63,26 +58,8 @@ async function loadTweets() {
     if (isLoading.value)
         return; // Prevent multiple loads
     isLoading.value = true;
-    let attempts = 0; // Add an attempts counter
-    const maxAttempts = 10; // Set a maximum number of attempts
-
-    await tweetStore.loadTweets(undefined, lastLoadTime.value, endTime.value);
-    lastLoadTime.value = endTime.value;
-    endTime.value -= SEVEN_DAYS;    // go back 7 days
-
-    while (tweetFeed.value.length < 4 && attempts < maxAttempts && initialLoad.value) 
-    {
-        attempts++;
-        await tweetStore.loadTweets(undefined, lastLoadTime.value, endTime.value);
-        lastLoadTime.value = endTime.value;
-        endTime.value -= SEVEN_DAYS;
-    }
+    await tweetStore.loadTweets(undefined);
     initialLoad.value = false;
-
-    window.setTimeout(() => {
-        tweetStore.tweets.sort((a: any, b: any) => b.timestamp - a.timestamp);
-        isLoading.value = false;
-    }, 2000);
 }
 
 const tweetFeed = computed(() => {
