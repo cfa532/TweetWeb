@@ -526,6 +526,12 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return mid
         },
+        /**
+         * 
+         * @param mid A mimei id
+         * @returns the IP of a node that provides the mimei. IP only, no port number.
+         * There should be one node only for sharing a file on hard drive by its mimei label.
+         */
         async getSharedFile(mid: MimeiId) {
             // get file object and base url of the mid
             let ip = await this.lapi.client.RunMApp("get_shared_file_ip", {
@@ -549,6 +555,7 @@ export const useTweetStore = defineStore('tweetStore', {
             })
 
             const sharingUser = await this.getUser(file.userId)
+            // Cloud port is the file server port on the same node.
             const cloudPort = sharingUser?.cloudDrivePort ? sharingUser?.cloudDrivePort : 8010
             file.url = `http://${ip0}:${cloudPort}`   // base url for the file
             console.log("Get shared file", file)
