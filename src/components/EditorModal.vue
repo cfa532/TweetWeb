@@ -79,7 +79,11 @@ for (let i = 0; i < files.length; i++) {
     const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null
     const fi = { mid: '', type: fileType, size: file.size, fileName: file.name,
               timestamp: file.lastModified, aspectRatio: aspectRatio} as MimeiFileType
+
+    const defaultTimeout = hproseClient.timeout
+    hproseClient.timeout = 0
     fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i) // returned an IPFS id actually
+    hproseClient.timeout = defaultTimeout
 
     console.log(fi);
     results.push({ status: 'fulfilled', value: fi });
@@ -148,10 +152,7 @@ async function readFileSlice(
 
   if (end === arr.byteLength) {
     // last slice read. Convert temp to IPFS file
-    const defaultTimeout = hproseClient.timeout
-    hproseClient.timeout = 0
     const cid = await hproseClient.MFTemp2Ipfs(fsid)
-    hproseClient.timeout = defaultTimeout
     return cid
   } else {
     // recursive call

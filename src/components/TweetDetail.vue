@@ -133,7 +133,7 @@ async function toggleLike(t: Tweet) {
         router.push({ name: 'login' })
         return
     }
-    tweet.value = await tweetStore.toggleLike(t.mid)
+    tweet.value = await tweetStore.toggleFavorite(t.mid)
 }
 async function toggleBookmark(t: Tweet) {
     if (!tweetStore.loginUser) {

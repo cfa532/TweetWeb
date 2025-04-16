@@ -539,9 +539,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid
             })
-            console.log("Get shared file", mid, ip)
             let ip0 = this.splitIpAndPort(ip)
-            console.log("Get shared file", mid, ip, ip0)
             if (!ip0) {
                 console.error("Invalid IP", ip)
                 return
@@ -561,7 +559,7 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log("Get shared file", file)
             return file
         },
-        async toggleLike(tweetId: MimeiId) {
+        async toggleFavorite(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_likes", {
                 aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
             })
@@ -605,8 +603,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
         },
         /**
-         * 
-         * @param ip 
+         * @param ip is full IP address with port
          * @returns whether the ip is of local network.
          */
         isLocalIP(ip: string) {
@@ -616,6 +613,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 /^192\.168\./, // Class C private
                 /^172\.(1[6-9]|2[0-9]|3[0-1])\./ // Class B private
             ];
+
+            const portRegex = /:(\d+)$/;
+            const portMatch = ip.match(portRegex);
+
+            if (portMatch) {
+                const port = parseInt(portMatch[1], 10);
+                if (port < 8000 || port > 9000) {
+                    return true;
+                }
+            }
 
             return localPatterns.some(pattern => pattern.test(ip));
         },
