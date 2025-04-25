@@ -39,62 +39,64 @@ onMounted(() => {
 // Upload files and store them as IPFS or Mimei type
 async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
 
-function getMedaiType(t: string) {
-  if (t.startsWith('image/')) return 'Image'
-  if (t.startsWith('video/')) return 'Video'
-  if (t.startsWith('audio/')) return 'Audio'
-  return 'Uknown'
-}
-async function getVideoAspectRatio(file: File): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
+  function getMedaiType(t: string) {
+    if (t.startsWith('image/')) return 'Image'
+    if (t.startsWith('video/')) return 'Video'
+    if (t.startsWith('audio/')) return 'Audio'
+    return 'Uknown'
+  }
+  async function getVideoAspectRatio(file: File): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
       const video = document.createElement('video');
       video.preload = 'metadata';
 
       video.onloadedmetadata = () => {
-          // Calculate aspect ratio
-          const aspectRatio = video.videoWidth / video.videoHeight;
-          resolve(aspectRatio);
+        // Calculate aspect ratio
+        const aspectRatio = video.videoWidth / video.videoHeight;
+        resolve(aspectRatio);
       };
 
       video.onerror = () => {
-          reject(new Error('Failed to load video metadata'));
+        reject(new Error('Failed to load video metadata'));
       };
 
       // Set video source
       video.src = URL.createObjectURL(file);
-  });
-}
-
-const results: PromiseSettledResult<MimeiFileType>[] = [];
-
-for (let i = 0; i < files.length; i++) {
-  const file = files[i];
-  try {
-    // Assign initial progress value
-    uploadProgress[i] = 0;
-
-    // Create a FileInfo object with file name, last modified time,
-    const fsid = await tweetStore.openTempFile();
-    const fileType = getMedaiType(file.type);
-    const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null
-    const fi = { mid: '', type: fileType, size: file.size, fileName: file.name,
-              timestamp: file.lastModified, aspectRatio: aspectRatio} as MimeiFileType
-
-    const defaultTimeout = hproseClient.timeout
-    hproseClient.timeout = 0
-    fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i) // returned an IPFS id actually
-    hproseClient.timeout = defaultTimeout
-
-    console.log(fi);
-    results.push({ status: 'fulfilled', value: fi });
-
-  } catch (error) {
-    console.error(`Error uploading file ${file.name}:`, error);
-    results.push({ status: 'rejected', reason: error });
+    });
   }
-}
 
-return results;
+  const results: PromiseSettledResult<MimeiFileType>[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    try {
+      // Assign initial progress value
+      uploadProgress[i] = 0;
+
+      // Create a FileInfo object with file name, last modified time,
+      const fsid = await tweetStore.openTempFile();
+      const fileType = getMedaiType(file.type);
+      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null
+      const fi = {
+        mid: '', type: fileType, size: file.size, fileName: file.name,
+        timestamp: file.lastModified, aspectRatio: aspectRatio
+      } as MimeiFileType
+
+      const defaultTimeout = hproseClient.timeout
+      hproseClient.timeout = 0
+      fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i) // returned an IPFS id actually
+      hproseClient.timeout = defaultTimeout
+
+      console.log(fi);
+      results.push({ status: 'fulfilled', value: fi });
+
+    } catch (error) {
+      console.error(`Error uploading file ${file.name}:`, error);
+      results.push({ status: 'rejected', reason: error });
+    }
+  }
+
+  return results;
 }
 
 async function onSubmit() {
@@ -223,77 +225,78 @@ function logout() {
 }
 
 const handleCids = (ids: MimeiFileType[]) => {
-    mmFiles.value = ids;
-    showCidModal.value = false;
-    if (ids.length > 0) {
-      divAttach.value.hidden = false
-      if (!tweetTitle.value && !txtConent.value) {
-        tweetTitle.value = ids[0].fileName;
-      }
+  mmFiles.value = ids;
+  showCidModal.value = false;
+  if (ids.length > 0) {
+    divAttach.value.hidden = false
+    if (!tweetTitle.value && !txtConent.value) {
+      tweetTitle.value = ids[0].fileName;
     }
+  }
 };
 const cancelCidsModal = () => {
-    showCidModal.value = false;
-    console.log('Modal cancelled');
+  showCidModal.value = false;
+  console.log('Modal cancelled');
 };
 const openModal = () => {
-    showCidModal.value = true;
+  showCidModal.value = true;
 }
 function removeMimei(m: MimeiFileType) {
-    const i = mmFiles.value.findIndex((e) => e.mid == m.mid)
-    mmFiles.value.splice(i, 1)
-    if (filesUpload.value.length == 0 && mmFiles.value.length == 0) {
-        divAttach.value.hidden = true
-    }
+  const i = mmFiles.value.findIndex((e) => e.mid == m.mid)
+  mmFiles.value.splice(i, 1)
+  if (filesUpload.value.length == 0 && mmFiles.value.length == 0) {
+    divAttach.value.hidden = true
+  }
 }
 </script>
 
 <template>
-<CidModal :isVisible="showCidModal" @save="handleCids" @cancel="cancelCidsModal" />
+  <CidModal :isVisible="showCidModal" @save="handleCids" @cancel="cancelCidsModal" />
 
-<div class='row justify-content-start align-items-start'>
-<div class='col-sm-12 col-md-10 col-lg-8' style='background-color:aliceblue;'>
-  <div class='card-header d-flex align-items-center'>
-    <ItemHeader :author='author'></ItemHeader>
-    <button class='logout' @click.prevent='logout'>Logout</button>
-  </div>
-  <div class='modal-content' @dragover.prevent='dragOver' @drop.prevent='onSelect'>
-    <div>
-      <input type='text' placeholder='Title...' v-model='tweetTitle' class='input-caption' />
-    </div>
-    <div class='input-container'>
-      <textarea ref='textArea' v-model='txtConent' placeholder='Input......' class='input-textarea'></textarea>
-      <div ref='dropHere' hidden class='drop-here'>
-        <p>DROP HERE</p>
+  <div class='row justify-content-start align-items-start'>
+    <div class='col-sm-12 col-md-10 col-lg-8' style='background-color:aliceblue;'>
+      <div class='card-header d-flex align-items-center'>
+        <ItemHeader :author='author'></ItemHeader>
+        <button class='logout' @click.prevent='logout'>Logout</button>
+      </div>
+      <div class='modal-content' @dragover.prevent='dragOver' @drop.prevent='onSelect'>
+        <div>
+          <input type='text' placeholder='Title...' v-model='tweetTitle' class='input-caption' />
+        </div>
+        <div class='input-container'>
+          <textarea ref='textArea' v-model='txtConent' placeholder='Input......' class='input-textarea'></textarea>
+          <div ref='dropHere' hidden class='drop-here'>
+            <p>DROP HERE</p>
+          </div>
+        </div>
+        <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
+          <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
+          <div class='button-container'>
+            <span>
+              <button class='btn' @click.prevent='selectFiles.click()'>Files</button>&nbsp;
+              <label class="bottom-btn" @click.prevent="openModal">
+                <IconLink />
+              </label>
+            </span>
+            <span>
+              <input type='checkbox' v-model='downloadable' id='checkbox'>&nbsp;
+              <label for='checkbox'>Downloadable</label>&nbsp;&nbsp;&nbsp;
+              <input type='checkbox' v-model='isPrivate' id='checkbox'>&nbsp;
+              <label for='checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
+              <button class='btn' type='submit'>Submit</button>
+            </span>
+          </div>
+          <Loading :visible='loading' />
+        </form>
+      </div>
+      <div ref='divAttach' hidden class='preview-container'>
+        <Preview @file-canceled='removeFile(file)' v-for='(file, index) in filesUpload' :key='index' v-bind:src='file'
+          v-bind:progress='uploadProgress[index]'></Preview>
+        <CidPreview @link-removed="removeMimei(m)" v-for="(m, index) in mmFiles" :key="index"
+          :src="m.fileName as string" />
       </div>
     </div>
-    <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
-      <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
-      <div class='button-container'>
-        <span>
-          <button class='btn' @click.prevent='selectFiles.click()'>Files</button>&nbsp;
-          <label class="bottom-btn" @click.prevent="openModal">
-            <IconLink />
-          </label>
-        </span>
-        <span>
-          <input type='checkbox' v-model='downloadable' id='checkbox'>&nbsp;
-          <label for='checkbox'>Downloadable</label>&nbsp;&nbsp;&nbsp;
-          <input type='checkbox' v-model='isPrivate' id='checkbox'>&nbsp;
-          <label for='checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
-          <button class='btn' type='submit'>Submit</button>
-        </span>
-      </div>
-      <Loading :visible='loading' />
-    </form>
   </div>
-  <div ref='divAttach' hidden class='preview-container'>
-    <Preview @file-canceled='removeFile(file)' v-for='(file, index) in filesUpload' :key='index' v-bind:src='file'
-      v-bind:progress='uploadProgress[index]'></Preview>
-    <CidPreview @link-removed="removeMimei(m)" v-for="(m, index) in mmFiles" :key="index" :src="m.fileName as string" />
-  </div>
-</div>
-</div>
 </template>
 
 <style scoped>
