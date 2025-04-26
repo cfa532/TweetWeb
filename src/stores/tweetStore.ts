@@ -107,6 +107,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.tweets.push(tweet);
             })
         },
+        /**
+         * @param authorId 
+         * @param startRank starting position to load tweets
+         * @param count number of tweets to load
+         */
         async loadTweetsByRank(
             authorId: string | undefined = undefined,
             startRank: number = 0,
@@ -412,7 +417,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
                         aid: this.appId, ver: "last", nodeid: user.hostId
                     })
-                    let ip = await this.findFirstAccessibleIPv4(hostIps.trim().split(','), this.lapi.appId)
+                    let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
                     console.log("Host IPs", hostIps, ip)
                     if (!ip) {
                         console.error("No writable host found for user", hostIps, user)
@@ -632,7 +637,11 @@ export const useTweetStore = defineStore('tweetStore', {
             return str == null || str == undefined || str.trim() == '';
         },
 
-        async findFirstAccessibleIP(ipList: string[], mid: string, filterIPv6 = false): Promise<string | null> {
+        async findFirstAccessibleIP(
+            ipList: string[], 
+            mid: string, 
+            filterIPv6 = false,     // filter IPv6 address, default to No.
+        ): Promise<string | null> {
             if (!ipList?.length) {
                 console.error('No IP addresses provided in findFirstAccessibleIP()');
                 return null;
