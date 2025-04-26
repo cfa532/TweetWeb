@@ -107,28 +107,29 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.tweets.push(tweet);
             })
         },
+
         /**
          * @param authorId 
          * @param startRank starting position to load tweets
          * @param count number of tweets to load
+         * @returns the number of tweets loaded.
          */
         async loadTweetsByRank(
-            authorId: string | undefined = undefined,
+            authorId: string,
             startRank: number = 0,
             count: number = 10
         ) {
-            let followings = authorId? [authorId] : this.followings
-            followings.forEach(async (uid: string) => {
-                let author = await this.getUser(uid)
-                if (!author)
-                    return
-                let tweetsByUser = await this.getTweetListByRank(author, startRank, count)  
-                console.log("Tweets of user", tweetsByUser, startRank, count)
-                if (!tweetsByUser)
-                    return
-                this.fillTweet(tweetsByUser)
-            })
+            let author = await this.getUser(authorId)
+            if (!author)
+                return 0
+            let tweetsByUser = await this.getTweetListByRank(author, startRank, count)
+            console.log("Tweets of user", authorId, tweetsByUser)
+            if (!tweetsByUser)
+                return 0
+            this.fillTweet(tweetsByUser)
+            return tweetsByUser.length
         },
+
         /**
          * @returns get MimeiId list of pinned tweets of the user, then load the tweets.
          */
@@ -136,7 +137,7 @@ export const useTweetStore = defineStore('tweetStore', {
             let pinnedTweets = [] as Tweet[]
             let user = await this.getUser(userId)
             if (!user)
-                return
+                return []
             let pinned = await user.client.RunMApp("get_top_tweets", {aid: this.appId, ver: "last", userid: userId})
             console.log("Pinned tweets", pinned)
             pinned?.forEach(async (e: any) => {
@@ -186,7 +187,7 @@ export const useTweetStore = defineStore('tweetStore', {
             user: User,
             startRank: number,
             count: number
-        ): Promise<Tweet[] | undefined> {
+        ): Promise<Tweet[]> {
             let tweets = await user.client.RunMApp("get_tweets_by_rank", {
                 aid: this.appId,
                 ver: "last",
