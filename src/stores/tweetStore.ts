@@ -602,9 +602,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error('There was a problem with the fetch operation:', error);
                 });
         },
+
         /**
          * @param ip is full IP address with port
-         * @returns whether the ip is of local network.
+         * @returns true if the ip is of local network. Only allow port# between 8000 and 9000.
          */
         isLocalIP(ip: string) {
             const localPatterns = [
@@ -727,9 +728,13 @@ export const useTweetStore = defineStore('tweetStore', {
         
         // The IPv4-specific function now just calls the main function with the filter flag
         async findFirstAccessibleIPv4(ipList: string[], mid: string): Promise<string | null> {
-            return this.findFirstAccessibleIP(ipList, mid, true);
+            return await this.findFirstAccessibleIP(ipList, mid, true);
         },
 
+        /**
+         * @param nodeId 
+         * @returns IP address list of a node, after removing local IPv4
+         */
         async getNodeIp(nodeId: MimeiId) {
             let ips = await this.loginUser?.client.RunMApp("get_node_ip", {
                 aid: this.lapi.appId,
