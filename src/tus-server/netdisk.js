@@ -1,19 +1,38 @@
+/**
+ * NetDisk Router Module
+ * This module provides endpoints for browsing and serving files from a network disk.
+ * It includes functionality for directory listing, file serving with range requests,
+ * and security measures against directory traversal attacks.
+ */
+
 const express = require('express');
 const router = express.Router();
 const fsPromises = require('fs').promises;
 const fs = require('fs');
 const path = require('path');
 const mime = require('mime-types');
-
 const tusDataDir = process.env.NET_DISK;
 
-// Helper function to determine content type
+/**
+ * Helper function to determine the MIME type of a file
+ * @param {string} filename - The name of the file
+ * @returns {string} The MIME type of the file, defaults to 'application/octet-stream'
+ */
 function getContentType(filename) {
     const contentType = mime.lookup(filename);
     return contentType || 'application/octet-stream';
 }
 
-// API endpoint to get directory contents
+/**
+ * GET /netd
+ * Lists contents of a directory with file metadata
+ * Query parameters:
+ * - path: The directory path to list (optional)
+ * Returns:
+ * - currentPath: Current directory path
+ * - parentPath: Parent directory path
+ * - files: Array of file/directory objects with metadata
+ */
 router.get('/netd', async (req, res) => {
     try {
         const currentPath = req.query.path || '';
@@ -70,7 +89,17 @@ router.get('/netd', async (req, res) => {
     }
 });
 
-// Endpoint to serve files
+/**
+ * GET /netd/:filepath
+ * Serves files with support for:
+ * - Range requests for partial content
+ * - Content-Type detection
+ * - Download/Inline viewing options
+ * - Security checks against directory traversal
+ * 
+ * Query parameters:
+ * - download: Set to 'true' to force download instead of inline viewing
+ */
 router.get('/netd/:filepath(*)', async (req, res) => {
     try {
         let filepath = req.params.filepath;

@@ -1,3 +1,9 @@
+/**
+ * Main Application Server
+ * This module sets up the Express server with TUS upload support, file browsing,
+ * and network disk functionality. It includes authorization middleware and CORS configuration.
+ */
+
 require('dotenv').config()
 
 const cors = require('cors');
@@ -10,6 +16,18 @@ const app = express();
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
 
+/**
+ * Authorization Middleware
+ * Checks if the request is authorized based on username.
+ * Handles different types of requests:
+ * - Regular API requests (via query params, body, or headers)
+ * - TUS upload requests (via upload-metadata header)
+ * - Special cases for registration and PATCH requests
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
 function checkAuthorizedUser(req, res, next) {
   // Skip authorization for the register endpoint
   if (req.path === '/files/register') {
@@ -71,7 +89,7 @@ function checkAuthorizedUser(req, res, next) {
   
   // Check if the logged in user matches the authorized user from env
   if (!loggedInUsername || loggedInUsername !== process.env.AUTHORIZED_USERNAME) {
-    return res.status(403).json({ success: false, message: 'You are not authorized to access this resource' });
+    return res.status(403).json({ success: false, message: 'You are not authorized to access this resource.'});
   }
   
   // Store username for downstream middleware
@@ -79,13 +97,32 @@ function checkAuthorizedUser(req, res, next) {
   next();
 }
 
-// Middleware
+// Configure middleware
 app.use(express.json());
+
+// Configure CORS with specific settings for TUS protocol
 app.use(cors({
   origin: '*', // Your frontend origin
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Tus-Resumable', 'Upload-Length', 'Upload-Metadata', 'Upload-Offset', 'Upload-Defer-Length'],
-  exposedHeaders: ['Location', 'Tus-Resumable', 'Upload-Offset', 'Upload-Length'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Tus-Resumable',
+    'Upload-Length',
+    'Upload-Metadata',
+    'Upload-Offset',
+    'Upload-Defer-Length',
+    'x-username',
+    'X-Username'  // Add both lowercase and uppercase versions
+  ],
+  exposedHeaders: [
+    'Location',
+    'Tus-Resumable',
+    'Upload-Offset',
+    'Upload-Length',
+    'x-username',
+    'X-Username'
+  ],
   credentials: true,
   maxAge: 86400 // 24 hours
 }));
@@ -93,10 +130,10 @@ app.use(cors({
 // Apply the authorization middleware to all routes
 app.use(checkAuthorizedUser);
 
-// Use the routers
-app.use('/', uploadRouter); // Mount the upload router
-app.use('/', fileBrowserRouter); // Mount the file browser router
-app.use('/', netdisk);
+// Mount the routers
+app.use('/', uploadRouter);     // TUS upload handling
+app.use('/', fileBrowserRouter); // File browser interface
+app.use('/', netdisk);          // Network disk functionality
 
 // Redirect root to file browser
 app.get('/', (req, res) => {
