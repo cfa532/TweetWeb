@@ -89,6 +89,9 @@ router.get('/netd', async (req, res) => {
     }
 });
 
+// Create a new router for file access that bypasses authorization
+const fileAccessRouter = express.Router();
+
 /**
  * GET /netd/:filepath
  * Serves files with support for:
@@ -100,7 +103,7 @@ router.get('/netd', async (req, res) => {
  * Query parameters:
  * - download: Set to 'true' to force download instead of inline viewing
  */
-router.get('/netd/:filepath(*)', async (req, res) => {
+fileAccessRouter.get('/:filepath(*)', async (req, res) => {
     try {
         let filepath = req.params.filepath;
         const fullPath = path.join(tusDataDir, filepath);
@@ -183,6 +186,9 @@ router.get('/netd/:filepath(*)', async (req, res) => {
         res.status(500).send('Error serving file');
     }
 });
+
+// Mount the file access router at /netd
+router.use('/netd', fileAccessRouter);
 
 // Serve the Vue app for any netd route
 router.get('/netd*', (req, res) => {

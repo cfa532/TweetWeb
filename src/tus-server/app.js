@@ -38,6 +38,11 @@ function checkAuthorizedUser(req, res, next) {
   if ((req.method === 'PATCH' || req.method === 'HEAD') && req.path.startsWith('/upload/')) {
     return next();
   }
+
+  // Skip authorization for file access paths
+  if (req.path.startsWith('/netd/') && req.path !== '/netd') {
+    return next();
+  }
   
   // For TUS upload requests (POST to /upload), extract username from metadata
   if (req.method === 'POST' && req.path === '/upload' && req.headers['upload-metadata']) {

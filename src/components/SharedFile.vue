@@ -218,6 +218,56 @@ const viewFile = async (file: FileSystemItem) => {
     const fileExt = getFileExtension(file.name);
     const isStreamable = STREAMABLE_TYPES.includes(fileExt);
     
+    // For large files, use direct streaming
+    if (file.size > FILE_SIZE_THRESHOLD && isStreamable) {
+      const newTab = window.open('about:blank', '_blank');
+      if (newTab) {
+        if (fileExt === 'pdf') {
+          newTab.location.href = file.url;
+        } else if (['mp4', 'webm'].includes(fileExt)) {
+          newTab.document.write(`
+            <html>
+              <head>
+                <title>Viewing: ${file.name}</title>
+                <style>
+                  body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
+                  .content { max-width: 100%; max-height: 100%; }
+                </style>
+              </head>
+              <body>
+                <video controls autoplay class='content'>
+                  <source src='${file.url}' type='video/${fileExt}'>
+                  Your browser does not support the video tag.
+                </video>
+              </body>
+            </html>
+          `);
+        } else if (['mp3', 'wav', 'ogg'].includes(fileExt)) {
+          newTab.document.write(`
+            <html>
+              <head>
+                <title>Viewing: ${file.name}</title>
+                <style>
+                  body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f0f0; }
+                  .content { max-width: 100%; max-height: 100%; }
+                </style>
+              </head>
+              <body>
+                <audio controls autoplay class='content'>
+                  <source src='${file.url}' type='audio/${fileExt}'>
+                  Your browser does not support the audio tag.
+                </audio>
+              </body>
+            </html>
+          `);
+        } else {
+          newTab.location.href = file.url;
+        }
+      }
+      return;
+    }
+    
+    // For smaller files or non-streamable types, use the existing progress-based loading
     progress.show = true;
     progress.operation = 'Loading';
     progress.value = 0;
