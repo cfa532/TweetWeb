@@ -32,19 +32,30 @@ const loadDirectory = async (path = '') => {
 
   try {
     console.log('Loading directory:', path);
-    const username = tweetStore.loginUser?.username
-    const response = await axios.get(`${TUS_SERVER_URL}/netd`, {
-      params: { path, username }
-    });
+    const username = tweetStore.loginUser?.username;
+    if (!username) {
+      throw new Error('Username is required');
+    }
 
-    console.log('Response:', response.data);
+    const response = await fetch(`${TUS_SERVER_URL}/netd?path=${encodeURIComponent(path)}`, {
+      headers: {
+        'x-username': username
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log('Response:', data);
 
     // Filter out system files (starting with $)
-    const filteredFiles = (response.data.files || []).filter((file: File) => !file.name.startsWith('$'));
+    const filteredFiles = (data.files || []).filter((file: File) => !file.name.startsWith('$'));
 
     files.value = filteredFiles;
-    currentPath.value = response.data.currentPath || '';
-    parentPath.value = response.data.parentPath;
+    currentPath.value = data.currentPath || '';
+    parentPath.value = data.parentPath;
   } catch (err: any) {
     console.error('Failed to load directory:', err);
     error.value = err.message || 'Failed to load directory';
