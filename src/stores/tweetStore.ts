@@ -345,7 +345,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 console.error("No provider found for", mid)
                 return null
             }
-            let ip = await this.findFirstAccessibleIP(IPs, this.lapi.appId)
+            let ip = await this.findFirstAccessibleIP(IPs, this.lapi.appId, true)   // IPv4 only
             return ip
         },
         /**
@@ -641,7 +641,7 @@ export const useTweetStore = defineStore('tweetStore', {
         async findFirstAccessibleIP(
             ipList: string[], 
             mid: string, 
-            filterIPv6 = false,     // filter IPv6 address, default to No.
+            filterIPv6 = true,     // filter IPv6 address, default to No.
         ): Promise<string | null> {
             if (!ipList?.length) {
                 console.error('No IP addresses provided in findFirstAccessibleIP()');
