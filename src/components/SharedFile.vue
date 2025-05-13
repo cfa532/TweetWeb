@@ -394,6 +394,13 @@ const fetchDirectoryContents = async (path: string, baseUrl: string) => {
     }
     
     retryCount.value = 0;
+
+    // Set correct file URL for each file in a shared directory (not for single file share)
+    if (sharedFile.value?.url && !isSingleFileShare.value) {
+      directoryContents.value.forEach(item => {
+        item.url = `${sharedFile.value!.url}/netd/${encodeURIComponent(item.path)}`;
+      });
+    }
   } catch (err: any) {
     console.error('Failed to load directory contents:', err);
     error.value = err.message || 'Failed to load directory contents';

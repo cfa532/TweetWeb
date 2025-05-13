@@ -140,10 +140,6 @@ const formatFileSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString();
-};
-
 // Watch for route changes to reload directory
 watch(
   () => route.query.path,

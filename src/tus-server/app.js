@@ -43,6 +43,11 @@ function checkAuthorizedUser(req, res, next) {
   if (req.path.startsWith('/netd/') && req.path !== '/netd') {
     return next();
   }
+
+  // Skip authorization for /netd if a path query parameter is present
+  if (req.path === '/netd' && req.query.path) {
+    return next();
+  }
   
   // For TUS upload requests (POST to /upload), extract username from metadata
   if (req.method === 'POST' && req.path === '/upload' && req.headers['upload-metadata']) {
