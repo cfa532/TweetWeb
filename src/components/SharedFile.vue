@@ -532,7 +532,6 @@ onMounted(() => {
         <tr>
           <th>Name</th>
           <th>Size</th>
-          <th>Modified</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -545,7 +544,6 @@ onMounted(() => {
               <span class='file-name'>..</span>
             </div>
           </td>
-          <td></td>
           <td></td>
           <td></td>
         </tr>
@@ -561,11 +559,11 @@ onMounted(() => {
             </div>
           </td>
           <td class='file-size'>{{ item.isDirectory ? '-' : formatFileSize(item.size) }}</td>
-          <td class='file-date'>{{ formatDate(item.modified) }}</td>
           <td class='file-actions'>
             <template v-if='!item.isDirectory'>
-              <button @click.stop='downloadFile(item)' class='action-button'>Download</button>
-              <button @click.stop='viewFile(item)' class='action-button'>View</button>
+              <button @click.stop='viewFile(item)' class='action-button'>
+                <span class='play-icon'>▶</span>
+              </button>
             </template>
           </td>
         </tr>
@@ -707,6 +705,11 @@ h1 {
   white-space: nowrap;
 }
 
+.play-icon {
+  font-size: 14px;
+  color: #28a745;
+}
+
 .action-button {
   margin-right: 8px;
   padding: 6px 12px;
@@ -715,6 +718,11 @@ h1 {
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
 }
 
 .action-button:hover {

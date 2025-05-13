@@ -324,6 +324,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (user) {
                 user.providerIp = providerIp
                 user.hostId = user.hostIds[0]
+                user.cloudDrivePort = import.meta.env.VITE_CLOUD_DRIVE_PORT
                 sessionStorage.setItem(userId, JSON.stringify(user))
                 user.client = providerClient
                 user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
@@ -560,8 +561,8 @@ export const useTweetStore = defineStore('tweetStore', {
 
             const sharingUser = await this.getUser(file.userId)
             // Cloud port is the file server port on the same node.
-            const cloudPort = sharingUser?.cloudDrivePort ? sharingUser?.cloudDrivePort : 8010
-            file.url = `http://${ip0}:${cloudPort}`   // base url for the file
+            console.log("Sharing user", sharingUser, file)
+            file.url = `http://${ip0}:${sharingUser?.cloudDrivePort}`   // base url for the file
             console.log("Get shared file", file)
             return file
         },

@@ -156,8 +156,7 @@ watch(
 onMounted(() => {
   console.log('Component mounted, route query:', route.query);
   let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
-  let port = tweetStore.loginUser?.cloudDrivePort ? tweetStore.loginUser?.cloudDrivePort : 8010
-  TUS_SERVER_URL = `http://${ip}:${port}`
+  TUS_SERVER_URL = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
   console.log("TUS server", TUS_SERVER_URL)
 
   loadDirectory(route.query.path as string || '');
@@ -204,7 +203,6 @@ function goHome() {
         <tr>
           <th>Name</th>
           <th>Size</th>
-          <th>Modified</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -217,7 +215,6 @@ function goHome() {
               <span class='file-name'>..</span>
             </div>
           </td>
-          <td></td>
           <td></td>
           <td></td>
         </tr>
@@ -233,20 +230,23 @@ function goHome() {
             </div>
           </td>
           <td class='file-size'>{{ item.isDirectory ? '-' : formatFileSize(item.size) }}</td>
-          <td class='file-date'>{{ formatDate(item.modified) }}</td>
           <td class='file-actions'>
             <template v-if='!item.isDirectory'>
-              <button @click.stop='downloadFile(item)' class='action-button'>Download</button>
-              <button @click.stop='viewFile(item)' class='action-button'>View</button>
-              <button @click.stop='shareFile(item)' class='action-button' :disabled="isSharing">
+              <button @click.stop='downloadFile(item)' class='action-button' title="Download">
+                <span class='action-icon'>⬇️</span>
+              </button>
+              <button @click.stop='viewFile(item)' class='action-button' title="View">
+                <span class='action-icon'>▶️</span>
+              </button>
+              <button @click.stop='shareFile(item)' class='action-button' :disabled="isSharing" title="Share">
                 <span v-if="isSharing && selectedFile?.path === item.path" class="loading-spinner"></span>
-                <span v-else>Share</span>
+                <span v-else class='action-icon'>🔗</span>
               </button>
             </template>
             <template v-else>
-              <button @click.stop='shareDirectory(item)' class='action-button' :disabled="isSharing">
+              <button @click.stop='shareDirectory(item)' class='action-button' :disabled="isSharing" title="Share">
                 <span v-if="isSharing && selectedFile?.path === item.path" class="loading-spinner"></span>
-                <span v-else>Share</span>
+                <span v-else class='action-icon'>🔗</span>
               </button>
             </template>
           </td>
@@ -365,19 +365,39 @@ h1 {
 
 .file-actions {
   white-space: nowrap;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.action-icon {
+  font-size: 14px;
 }
 
 .action-button {
   margin-right: 8px;
-  padding: 4px 8px;
+  padding: 6px 12px;
   background-color: #f8f9fa;
   border: 1px solid #ddd;
   border-radius: 4px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
 }
 
 .action-button:hover {
   background-color: #e9ecef;
+  border-color: #ced4da;
+}
+
+.action-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .loading,
@@ -456,11 +476,5 @@ h1 {
   to {
     transform: rotate(360deg);
   }
-}
-
-/* Disabled button style */
-.action-button:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
 }
 </style>

@@ -36,8 +36,7 @@ interface StoredUpload {
 
 onMounted(async () => {
     let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
-    let port = tweetStore.loginUser?.cloudDrivePort ? tweetStore.loginUser?.cloudDrivePort : 8010
-    tusServerUrl = `http://${ip}:${port}`
+    tusServerUrl = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
     console.log("TUS server", tusServerUrl)
 
     // Check if there are any uploads in progress from localStorage
