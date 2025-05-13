@@ -534,7 +534,6 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid
         },
         /**
-         * 
          * @param mid A mimei id
          * @returns the IP of a node that provides the mimei. IP only, no port number.
          * There should be one node only for sharing a file on hard drive by its mimei label.
