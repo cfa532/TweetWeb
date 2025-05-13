@@ -1,58 +1,58 @@
 <script setup lang='ts'>
+// --- Imports and Store Setup ---
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
 
-// Get the server base URL from environment variables
+// --- State and Store References ---
 const route = useRoute();
 const router = useRouter();
 const tweetStore = useTweetStore()
 
-const files = ref([] as FileSystemItem[]);
-const currentPath = ref('');
-const parentPath = ref(null);
-const loading = ref(true);
-const error = ref<string | null>(null);
-const isSharing = ref(false);
-const showShareDialog = ref(false);
-const selectedFile = ref<FileSystemItem | undefined>();
-const shareUrl = ref('');
+// --- Reactive State ---
+const files = ref([] as FileSystemItem[]); // List of files/directories in the current directory
+const currentPath = ref(''); // Current directory path
+const parentPath = ref(null); // Parent directory path
+const loading = ref(true); // Loading state
+const error = ref<string | null>(null); // Error message
+const isSharing = ref(false); // Sharing state
+const showShareDialog = ref(false); // Show/hide share dialog
+const selectedFile = ref<FileSystemItem | undefined>(); // File selected for sharing
+const shareUrl = ref(''); // URL for sharing
 
-// Computed property to split the current path into parts for breadcrumb
+// --- Computed Properties ---
+// Split the current path for breadcrumb navigation
 const pathParts = computed(() => {
   return currentPath.value ? currentPath.value.split('/').filter(Boolean) : [];
 });
 
 let TUS_SERVER_URL = ""
-// Function to load directory contents
+
+// --- Directory Loading ---
+// Load the contents of a directory from the server
 const loadDirectory = async (path = '') => {
   loading.value = true;
   error.value = null;
-
   try {
     console.log('Loading directory:', path);
     const username = tweetStore.loginUser?.username;
     if (!username) {
       throw new Error('Username is required');
     }
-
+    // Fetch directory listing from the backend
     const response = await fetch(`${TUS_SERVER_URL}/netd?path=${encodeURIComponent(path)}`, {
       headers: {
         'x-username': username
       }
     });
-    
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    
     const data = await response.json();
     console.log('Response:', data);
-
     // Filter out system files (starting with $)
     const filteredFiles = (data.files || []).filter((file: File) => !file.name.startsWith('$'));
-
     files.value = filteredFiles;
     currentPath.value = data.currentPath || '';
     parentPath.value = data.parentPath;
@@ -64,35 +64,34 @@ const loadDirectory = async (path = '') => {
   }
 };
 
-// Navigation functions
+// --- Navigation Functions ---
+// Navigate to a specific directory
 const navigateTo = (path: string) => {
   console.log('Navigating to:', path);
-  // Instead of using router, directly load the directory
   loadDirectory(path);
 };
-
+// Navigate to the parent directory
 const navigateToParent = () => {
   if (parentPath.value !== null) {
     navigateTo(parentPath.value);
   }
 };
 
-// File action functions
+// --- File Action Functions ---
+// Open a file for viewing in a new tab
 const viewFile = (file: FileSystemItem) => {
   const username = tweetStore.loginUser?.username;
   window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?username=${username}`, '_blank');
 };
-
+// Download a file
 const downloadFile = (file: FileSystemItem) => {
   const username = tweetStore.loginUser?.username;
   window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?download=true&username=${username}`, '_blank');
 };
-
-// --- File Sharing Functions ---
 // Share a single file and show the share dialog
 const shareFile = async (file: FileSystemItem) => {
   selectedFile.value = file;
-  isSharing.value = true; // Set loading to true before API call
+  isSharing.value = true;
   try {
     const mid = await tweetStore.shareFile(file);
     shareUrl.value = `${window.location.origin}/shared/${mid}`;
@@ -102,15 +101,14 @@ const shareFile = async (file: FileSystemItem) => {
     console.error('Error sharing file:', error);
     alert('Failed to share file. Please try again.');
   } finally {
-    isSharing.value = false; // Set loading to false after API call completes
+    isSharing.value = false;
   }
 };
-
 // Share a directory and show the share dialog
 const shareDirectory = async (file: FileSystemItem) => {
   selectedFile.value = file;
   console.log(file);
-  isSharing.value = true; // Set loading to true before API call
+  isSharing.value = true;
   try {
     const mid = await tweetStore.shareFile(file);
     shareUrl.value = `${window.location.origin}/shared/${mid}`;
@@ -119,17 +117,15 @@ const shareDirectory = async (file: FileSystemItem) => {
     console.error('Error sharing directory:', error);
     alert('Failed to share directory. Please try again.');
   } finally {
-    isSharing.value = false; // Set loading to false after API call completes
+    isSharing.value = false;
   }
 };
-
 // Copy the share URL to clipboard
 const copyShareUrl = () => {
   navigator.clipboard.writeText(shareUrl.value)
     .then(() => alert('URL copied to clipboard!'))
     .catch(err => console.error('Failed to copy URL:', err));
 };
-
 // Close the share dialog
 const closeShareDialog = () => {
   showShareDialog.value = false;
@@ -154,7 +150,6 @@ watch(
     loadDirectory(newPath as string || '');
   }
 );
-
 // On component mount, set up TUS server URL and load initial directory
 onMounted(() => {
   console.log('Component mounted, route query:', route.query);
@@ -163,7 +158,6 @@ onMounted(() => {
   console.log("TUS server", TUS_SERVER_URL)
   loadDirectory(route.query.path as string || '');
 });
-
 // Navigate to upload file page
 function uploadFile() {
   router.push({
