@@ -88,6 +88,8 @@ const downloadFile = (file: FileSystemItem) => {
   window.open(`${TUS_SERVER_URL}/netd/${encodeURIComponent(file.path)}?download=true&username=${username}`, '_blank');
 };
 
+// --- File Sharing Functions ---
+// Share a single file and show the share dialog
 const shareFile = async (file: FileSystemItem) => {
   selectedFile.value = file;
   isSharing.value = true; // Set loading to true before API call
@@ -104,6 +106,7 @@ const shareFile = async (file: FileSystemItem) => {
   }
 };
 
+// Share a directory and show the share dialog
 const shareDirectory = async (file: FileSystemItem) => {
   selectedFile.value = file;
   console.log(file);
@@ -120,18 +123,21 @@ const shareDirectory = async (file: FileSystemItem) => {
   }
 };
 
+// Copy the share URL to clipboard
 const copyShareUrl = () => {
   navigator.clipboard.writeText(shareUrl.value)
     .then(() => alert('URL copied to clipboard!'))
     .catch(err => console.error('Failed to copy URL:', err));
 };
 
+// Close the share dialog
 const closeShareDialog = () => {
   showShareDialog.value = false;
   selectedFile.value = undefined;
 };
 
-// Utility functions
+// --- Utility Functions ---
+// Format file size in human-readable form
 const formatFileSize = (bytes: number) => {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
@@ -140,6 +146,7 @@ const formatFileSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
+// --- Directory Navigation and Lifecycle ---
 // Watch for route changes to reload directory
 watch(
   () => route.query.path,
@@ -148,20 +155,22 @@ watch(
   }
 );
 
-// Available only to login server on its base host.
+// On component mount, set up TUS server URL and load initial directory
 onMounted(() => {
   console.log('Component mounted, route query:', route.query);
   let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
   TUS_SERVER_URL = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
   console.log("TUS server", TUS_SERVER_URL)
-
   loadDirectory(route.query.path as string || '');
 });
+
+// Navigate to upload file page
 function uploadFile() {
   router.push({
     name: "uploadFile", 
   })
 }
+// Navigate to user home page
 function goHome() {
   router.push({
     name: "UserPage", 

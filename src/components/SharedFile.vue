@@ -54,7 +54,7 @@ const filteredDirectoryContents = computed(() =>
   )
 );
 
-// Utility functions
+// Utility function to format file sizes in human-readable form
 const formatFileSize = (bytes: number) => {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
@@ -63,28 +63,26 @@ const formatFileSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString();
-};
-
+// Utility function to extract file extension from filename
 const getFileExtension = (filename: string) => {
   return filename.split('.').pop()?.toLowerCase() || '';
 };
 
+// Utility function to format download/upload speed
 const formatSpeed = (bytesPerSecond: number) => {
   return formatFileSize(bytesPerSecond) + '/s';
 };
 
+// Utility function to format estimated time remaining
 const formatETA = (seconds: number) => {
   if (!isFinite(seconds) || seconds < 0) return 'calculating...';
   if (seconds < 60) return `${Math.ceil(seconds)}s`;
-  
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.ceil(seconds % 60);
   return `${minutes}m ${remainingSeconds}s`;
 };
 
-// File handling functions
+// Handles file download/viewing with progress and streaming support
 const processFileWithProgress = async (url: string, options: { 
   onProgress: (progress: number, speed: string, eta: string) => void, 
   useStreaming?: boolean,
@@ -101,21 +99,18 @@ const processFileWithProgress = async (url: string, options: {
     const buffer = await response.arrayBuffer();
     const elapsedSeconds = (Date.now() - startTime) / 1000;
     const speed = elapsedSeconds > 0 ? contentLength / elapsedSeconds : 0;
-    
     options.onProgress(100, formatSpeed(speed), '0s');
     return new Blob([buffer]);
   }
   
-  // For larger files, use streaming
+  // For larger files, use streaming to avoid memory issues and show progress
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Failed to get reader from response');
-  
   let receivedLength = 0;
   let startTime = Date.now();
   let lastUpdateTime = startTime;
   let lastReceivedLength = 0;
   let speedSamples: number[] = [];
-  
   const readableStream = new ReadableStream({
     start(controller) {
       function pump(): any {
@@ -124,30 +119,23 @@ const processFileWithProgress = async (url: string, options: {
             controller.close();
             return;
           }
-          
           controller.enqueue(value);
           receivedLength += value.length;
-          
           // Update progress and speed every ~500ms
           const now = Date.now();
           const timeSinceLastUpdate = (now - lastUpdateTime) / 1000;
-          
           if (timeSinceLastUpdate >= 0.5 || done) {
             const overallElapsed = (now - startTime) / 1000;
             const chunkSize = receivedLength - lastReceivedLength;
             const instantSpeed = chunkSize / timeSinceLastUpdate;
-            
             // Add to speed samples (keep last 5 samples for smoothing)
             speedSamples.push(instantSpeed);
             if (speedSamples.length > 5) speedSamples.shift();
-            
             // Calculate average speed
             const avgSpeed = speedSamples.reduce((sum, s) => sum + s, 0) / speedSamples.length;
-            
             // Calculate ETA
             const remainingBytes = contentLength - receivedLength;
             const eta = avgSpeed > 0 ? remainingBytes / avgSpeed : Infinity;
-            
             // Update progress
             if (contentLength > 0) {
               const progressPercent = Math.round((receivedLength / contentLength) * 100);
@@ -157,68 +145,25 @@ const processFileWithProgress = async (url: string, options: {
                 formatETA(eta)
               );
             }
-            
             lastUpdateTime = now;
             lastReceivedLength = receivedLength;
           }
-          
           return pump();
         });
       }
-      
       return pump();
     }
   });
-  
   const streamResponse = new Response(readableStream);
   return streamResponse.blob();
 };
 
-const downloadFile = async (file: FileSystemItem) => {
-  try {
-    progress.show = true;
-    progress.operation = 'Downloading';
-    progress.value = 0;
-    progress.speed = 'calculating...';
-    progress.eta = 'calculating...';
-    
-    const blob = await processFileWithProgress(file.url, {
-      fileSize: file.size,
-      onProgress: (value, speed, eta) => {
-        progress.value = value;
-        progress.speed = speed;
-        progress.eta = eta;
-      }
-    });
-    
-    // Create download link
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    
-    // Clean up
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      progress.show = false;
-    }, 100);
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    alert('Failed to download file. Please try again.');
-    progress.show = false;
-  }
-};
-
+// Handles viewing/playing a file (streaming for large files, blob for small files)
 const viewFile = async (file: FileSystemItem) => {
   try {
     const fileExt = getFileExtension(file.name);
     const isStreamable = STREAMABLE_TYPES.includes(fileExt);
-    
-    // For large files, use direct streaming
+    // For large files, use direct streaming (let browser handle buffering)
     if (file.size > FILE_SIZE_THRESHOLD && isStreamable) {
       const newTab = window.open('about:blank', '_blank');
       if (newTab) {
@@ -266,14 +211,12 @@ const viewFile = async (file: FileSystemItem) => {
       }
       return;
     }
-    
-    // For smaller files or non-streamable types, use the existing progress-based loading
+    // For smaller files or non-streamable types, use the progress-based loading and blob
     progress.show = true;
     progress.operation = 'Loading';
     progress.value = 0;
     progress.speed = 'calculating...';
     progress.eta = 'calculating...';
-    
     const blob = await processFileWithProgress(file.url, {
       fileSize: file.size,
       onProgress: (value, speed, eta) => {
@@ -283,9 +226,7 @@ const viewFile = async (file: FileSystemItem) => {
       },
       useStreaming: isStreamable
     });
-    
     const blobUrl = URL.createObjectURL(blob);
-    
     // Open in a new tab with appropriate handling
     const newTab = window.open('about:blank', '_blank');
     if (newTab) {
@@ -331,7 +272,6 @@ const viewFile = async (file: FileSystemItem) => {
         newTab.location.href = blobUrl;
       }
     }
-    
     progress.show = false;
   } catch (error) {
     console.error('Error viewing file:', error);
@@ -379,6 +319,12 @@ const fetchDirectoryContents = async (path: string, baseUrl: string) => {
     directoryContents.value = data.files || [];
     currentPath.value = data.currentPath || '';
     parentPath.value = currentPath.value !== rootPath.value ? data.parentPath : null;
+    // Set correct file URL for each file in a shared directory (not for single file share)
+    if (sharedFile.value?.url && !isSingleFileShare.value) {
+      directoryContents.value.forEach(item => {
+        item.url = `${sharedFile.value!.url}/netd/${encodeURIComponent(item.path)}`;
+      });
+    }
     
     // Cache the results
     directoryCache.set(cacheKey, {
@@ -394,13 +340,6 @@ const fetchDirectoryContents = async (path: string, baseUrl: string) => {
     }
     
     retryCount.value = 0;
-
-    // Set correct file URL for each file in a shared directory (not for single file share)
-    if (sharedFile.value?.url && !isSingleFileShare.value) {
-      directoryContents.value.forEach(item => {
-        item.url = `${sharedFile.value!.url}/netd/${encodeURIComponent(item.path)}`;
-      });
-    }
   } catch (err: any) {
     console.error('Failed to load directory contents:', err);
     error.value = err.message || 'Failed to load directory contents';
