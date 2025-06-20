@@ -6,12 +6,12 @@ import { TweetView, AppHeader } from '@/views';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
-const startRank = ref(0);
+const pageNumber = ref(0);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
 const authorId = computed(() => route.params.authorId as MimeiId);
 const pinnedTweets = ref<Tweet[]>([]);
-const tweetsToLoad = 10; // Number of tweets to load per request
+const pageSize = 10; // Number of tweets to load per page
 const loadTimeout = 3000; // 3 seconds
 
 onMounted(async () => {
@@ -43,9 +43,9 @@ async function loadTweets(authorId: MimeiId) {
 
     try {
         // Load initial set of tweets
-        const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, startRank.value, tweetsToLoad);
-        console.log('tweetsLoaded', tweetsLoaded, tweetsToLoad);
-        if (tweetsLoaded < tweetsToLoad) {
+        const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
+        console.log('tweetsLoaded', tweetsLoaded, pageSize);
+        if (tweetsLoaded < pageSize) {
             loadedAllTweets = true;
         }
 
@@ -66,9 +66,9 @@ async function loadTweets(authorId: MimeiId) {
 async function loadMoreTweets() {
     if (isLoading.value) return; // Prevent multiple loads
     isLoading.value = true;
-    startRank.value = tweetFeedLength.value;
+    pageNumber.value++;
     try {
-        await tweetStore.loadTweetsByRank(authorId.value, startRank.value, tweetsToLoad);
+        await tweetStore.loadTweetsByRank(authorId.value, pageNumber.value, pageSize);
     } finally {
         isLoading.value = false;
     }
@@ -78,12 +78,12 @@ function startTimeoutLoad(authorId: MimeiId, loadedAllTweets: boolean) {
     setTimeout(async () => {
         if (tweetFeed.value.length < 5 && !isLoading.value && !loadedAllTweets) {
             isLoading.value = true;
-            startRank.value = tweetFeedLength.value;
+            pageNumber.value++;
 
             try {
-                const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, startRank.value, tweetsToLoad);
+                const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
 
-                if (tweetsLoaded < tweetsToLoad) {
+                if (tweetsLoaded < pageSize) {
                     loadedAllTweets = true;
                 }
 
@@ -113,7 +113,7 @@ const tweetFeedLength = computed(() => {
 
 watch(authorId, async (nv, ov) => {
     if (nv && nv !== ov) {
-        startRank.value = 0; // Reset startRank when loading new author's tweets
+        pageNumber.value = 0; // Reset page number when loading new author's tweets
         await initialLoadTweets(nv);
     }
 });

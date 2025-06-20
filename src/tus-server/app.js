@@ -8,6 +8,7 @@ require('dotenv').config()
 
 const cors = require('cors');
 const express = require('express');
+const fileUpload = require('express-fileupload');
 const uploadRouter = require('./uploadRoutes');
 const fileBrowserRouter = require('./uploadedFilesBrowser');
 const netdisk = require('./netdisk');
@@ -109,6 +110,15 @@ function checkAuthorizedUser(req, res, next) {
 
 // Configure middleware
 app.use(express.json());
+
+// Configure file upload middleware
+app.use(fileUpload({
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  abortOnLimit: true,
+  useTempFiles: true,
+  tempFileDir: '/tmp/',
+  debug: false
+}));
 
 // Configure CORS with specific settings for TUS protocol
 app.use(cors({

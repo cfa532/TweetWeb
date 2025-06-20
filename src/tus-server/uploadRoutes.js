@@ -4,6 +4,8 @@ const { Server } = require('@tus/server');
 const { FileStore } = require('@tus/file-store');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const tar = require('tar');
 
 // Set up tus server for resumable uploads
 const uploadPath = fs.realpathSync(path.resolve(__dirname, './uploads'));
@@ -134,6 +136,77 @@ router.post('/files/register', async (req, res) => {
   } catch (error) {
     console.error('Error registering file:', error);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Extract tar file route
+router.post('/extract-tar', async (req, res) => {
+  try {
+    // Check if file was uploaded
+    if (!req.files || !req.files.tarFile) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No tar file uploaded. Please upload a file with the field name "tarFile".' 
+      });
+    }
+
+    const uploadedFile = req.files.tarFile;
+    
+    // Validate file type
+    const allowedTypes = ['application/x-tar', 'application/gzip', 'application/x-gzip'];
+    if (!allowedTypes.includes(uploadedFile.mimetype)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid file type. Please upload a tar or tar.gz file.' 
+      });
+    }
+
+    // Create a unique temporary directory
+    const tempDir = path.join(os.tmpdir(), `tar-extract-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    
+    // Create the temporary directory
+    fs.mkdirSync(tempDir, { recursive: true });
+    
+    console.log(`Created temporary directory: ${tempDir}`);
+    console.log(`Extracting tar file: ${uploadedFile.name} (${uploadedFile.size} bytes)`);
+
+    // Extract the tar file
+    await tar.extract({
+      file: uploadedFile.tempFilePath,
+      cwd: tempDir,
+      strip: 0 // Don't strip any directory levels
+    });
+
+    console.log(`Successfully extracted tar file to: ${tempDir}`);
+
+    // Return the path to the extracted directory
+    res.json({
+      success: true,
+      message: 'Tar file extracted successfully',
+      extractedPath: tempDir,
+      originalFileName: uploadedFile.name,
+      extractedSize: uploadedFile.size,
+      extractedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Error extracting tar file:', error);
+    
+    // Clean up temporary directory if it was created
+    if (tempDir && fs.existsSync(tempDir)) {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        console.log(`Cleaned up temporary directory: ${tempDir}`);
+      } catch (cleanupError) {
+        console.error('Error cleaning up temporary directory:', cleanupError);
+      }
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to extract tar file',
+      error: error.message
+    });
   }
 });
 

@@ -7,6 +7,8 @@ const tweetStore = useTweetStore();
 const isLoading = ref(false);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
+const pageNumber = ref(0);
+const pageSize = 30; // Using the same TWEET_COUNT constant from tweetStore
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
@@ -23,7 +25,8 @@ async function loadMoreTweets() {
     if (isLoading.value)
         return; // Prevent multiple loads
     isLoading.value = true;
-    await tweetStore.loadTweets(undefined, tweetStore.tweets.length);
+    pageNumber.value++;
+    await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
     isLoading.value = false;
 }
 
@@ -58,7 +61,8 @@ async function loadTweets() {
     if (isLoading.value)
         return; // Prevent multiple loads
     isLoading.value = true;
-    await tweetStore.loadTweets(undefined);
+    pageNumber.value = 0; // Reset page number for initial load
+    await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
     initialLoad.value = false;
 }
 

@@ -53,8 +53,8 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async loadTweets(
             authorId: string | undefined = undefined,
-            startRank: number = 0,
-            endRank: number = startRank + TWEET_COUNT
+            pageNumber: number = 0,
+            pageSize: number = TWEET_COUNT
         ) {
             if (authorId) {
                 // load author's tweets
@@ -62,8 +62,8 @@ export const useTweetStore = defineStore('tweetStore', {
             } else {
                 if (this.loginUser) {
                     // load tweets from all the followings 
-                    let tweetFeed = await this.getTweetFeed(this.loginUser, startRank, endRank)  
-                    console.log("Tweets of user", this.loginUser, tweetFeed, startRank, endRank)
+                    let tweetFeed = await this.getTweetFeed(this.loginUser, pageNumber, pageSize)  
+                    console.log("Tweets of user", this.loginUser, tweetFeed, pageNumber, pageSize)
                     if (!tweetFeed)
                         return
                     this.fillTweet(tweetFeed)
@@ -110,19 +110,19 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * @param authorId 
-         * @param startRank starting position to load tweets
-         * @param count number of tweets to load
+         * @param pageNumber page number to load (0-based)
+         * @param pageSize number of tweets per page
          * @returns the number of tweets loaded.
          */
         async loadTweetsByRank(
             authorId: string,
-            startRank: number = 0,
-            count: number = 10
+            pageNumber: number = 0,
+            pageSize: number = 10
         ) {
             let author = await this.getUser(authorId)
             if (!author)
                 return 0
-            let tweetsByUser = await this.getTweetListByRank(author, startRank, count)
+            let tweetsByUser = await this.getTweetListByRank(author, pageNumber, pageSize)
             console.log("Tweets of user", authorId, tweetsByUser)
             if (!tweetsByUser)
                 return 0
@@ -158,43 +158,43 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         /**
          * @param user is login user.
-         * @param startRank 
-         * @param endRank 
+         * @param pageNumber page number to load (0-based)
+         * @param pageSize number of tweets per page
          * @returns tweets of app`user's followings' tweets
          */
         async getTweetFeed(
             user: User,
-            startRank: number,
-            endRank: number
+            pageNumber: number,
+            pageSize: number
         ): Promise<Tweet[] | undefined> {
             let tweets = await user.client.RunMApp("get_tweet_feed", {
                 aid: this.appId,
                 ver: "last",
                 userid: user.mid,
-                start: startRank,
-                end: endRank,
-                gid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                pn: pageNumber,
+                ps: pageSize,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
             })
             return tweets
         },
         /**
          * @param user 
-         * @param startRank 
-         * @param count 
+         * @param pageNumber 
+         * @param pageSize 
          * @returns tweets of the given user
          */
         async getTweetListByRank(
             user: User,
-            startRank: number,
-            count: number
+            pageNumber: number,
+            pageSize: number
         ): Promise<Tweet[]> {
-            let tweets = await user.client.RunMApp("get_tweets_by_rank", {
+            let tweets = await user.client.RunMApp("get_tweets_by_user", {
                 aid: this.appId,
                 ver: "last",
                 userid: user.mid,
-                start: startRank,
-                end: startRank + count,
-                gid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                pn: pageNumber,
+                ps: pageSize,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
             })
             return tweets
         },
