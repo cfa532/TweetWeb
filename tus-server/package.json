@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "test": "node test-tar-extraction.js"
+    "test": "node test-tar-extraction.js",
+    "test-server": "node test-server.js"
   },
   "dependencies": {
     "@tus/file-store": "^2.0.0",

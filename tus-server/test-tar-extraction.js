@@ -58,8 +58,7 @@ async function testTarExtraction() {
       method: 'POST',
       body: form,
       headers: {
-        ...form.getHeaders(),
-        'x-username': process.env.AUTHORIZED_USERNAME || 'testuser'
+        ...form.getHeaders()
       }
     });
     

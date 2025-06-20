@@ -35,6 +35,11 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
   
+  // Skip authorization for the tar extraction endpoint
+  if (req.path === '/extract-tar') {
+    return next();
+  }
+  
   // Skip authorization for PATCH requests to existing uploads
   if ((req.method === 'PATCH' || req.method === 'HEAD') && req.path.startsWith('/upload/')) {
     return next();

@@ -95,13 +95,22 @@ fetch('/extract-tar', {
 - The extracted files are placed in temporary directories that should be cleaned up by the client
 - File size is limited to 50MB by default
 - Only tar and tar.gz files are accepted
-- Authorization is required for all endpoints (except file access)
+- Authorization is required for most endpoints (except file access and tar extraction)
 
 ## File Types Supported
 
 - `application/x-tar` - Standard tar files
 - `application/gzip` - Gzipped files
 - `application/x-gzip` - Alternative gzip MIME type
+
+## Authorization
+
+The following endpoints do NOT require authorization:
+- `/extract-tar` - Tar file extraction
+- `/netd/*` - File access paths
+- `/files/register` - File registration
+
+All other endpoints require the `AUTHORIZED_USERNAME` to be provided via query params, request body, or headers.
 
 ## Temporary Directory Cleanup
 

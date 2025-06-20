@@ -141,9 +141,15 @@ router.post('/files/register', async (req, res) => {
 
 // Extract tar file route
 router.post('/extract-tar', async (req, res) => {
+  console.log('=== Extract-tar route called ===');
+  console.log('Request headers:', req.headers);
+  console.log('Request body keys:', Object.keys(req.body || {}));
+  console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
+  
   try {
     // Check if file was uploaded
     if (!req.files || !req.files.tarFile) {
+      console.log('No tarFile found in request.files');
       return res.status(400).json({ 
         success: false, 
         message: 'No tar file uploaded. Please upload a file with the field name "tarFile".' 
@@ -151,10 +157,17 @@ router.post('/extract-tar', async (req, res) => {
     }
 
     const uploadedFile = req.files.tarFile;
+    console.log('Uploaded file details:', {
+      name: uploadedFile.name,
+      size: uploadedFile.size,
+      mimetype: uploadedFile.mimetype,
+      tempFilePath: uploadedFile.tempFilePath
+    });
     
     // Validate file type
     const allowedTypes = ['application/x-tar', 'application/gzip', 'application/x-gzip'];
     if (!allowedTypes.includes(uploadedFile.mimetype)) {
+      console.log('Invalid file type:', uploadedFile.mimetype);
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid file type. Please upload a tar or tar.gz file.' 
