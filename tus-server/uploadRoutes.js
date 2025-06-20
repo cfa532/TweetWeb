@@ -6,6 +6,16 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const tar = require('tar');
+const hprose = require('hprose');
+const { getLeitherPort } = require('./leitherDetector');
+const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "Getnodeip", "SwarmLocal", "DhtGetAllKeys","MFOpenByPath",
+  "DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs", "MFOpenTempFile", "MFTemp2MacFile", "MFSetData",
+  "MFGetData", "MMCreate", "MMOpen", "Hset", "Hget", "Hmset", "Hmget", "Zadd", "Zrangebyscore", "Zrange", "MFOpenMacFile",
+  "MFReaddir", "MFGetMimeType", "MFSetObject", "MFGetObject", "Zcount", "Zrevrange", "Hlen", "Hscan", "Hrevscan",
+  "MMRelease", "MMBackup", "MFStat", "Zrem", "Zremrangebyscore", "MiMeiPublish", "PullMsg", "MFTemp2Ipfs", "MFSetCid",
+  "MMSum", "MiMeiSync", "IpfsAdd", "MMAddRef", "MMDelRef", "MMDelVers", "MMRelease", "MMGetRef", "MMGetRefs", "Hdel",
+  "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight"
+];
 
 // Set up tus server for resumable uploads
 const uploadPath = fs.realpathSync(path.resolve(__dirname, './uploads'));
@@ -139,7 +149,7 @@ router.post('/files/register', async (req, res) => {
   }
 });
 
-// Extract tar file route
+// Extract tar file route with Leither integration
 router.post('/extract-tar', async (req, res) => {
   console.log('=== Extract-tar route called ===');
   console.log('Request headers:', req.headers);
@@ -192,15 +202,56 @@ router.post('/extract-tar', async (req, res) => {
 
     console.log(`Successfully extracted tar file to: ${tempDir}`);
 
-    // Return the path to the extracted directory
-    res.json({
-      success: true,
-      message: 'Tar file extracted successfully',
-      extractedPath: tempDir,
-      originalFileName: uploadedFile.name,
-      extractedSize: uploadedFile.size,
-      extractedAt: new Date().toISOString()
-    });
+    // Get Leither service port
+    const leitherPort = await getLeitherPort();
+    console.log(`Connecting to Leither service on port: ${leitherPort}`);
+
+    // Create hprose client
+    const client = hprose.Client.create(`ws://127.0.0.1:${leitherPort}/ws/`, ayApi);
+    
+    try {
+      // Get sid from Leither service
+      console.log('Getting ppt from Leither service...', await client.Getvar("", "ver"));
+      const ppt = await client.GetVarByContext("", "context_ppt", []);
+      console.log('PPT received:', ppt ? 'Yes' : 'No');
+      
+      // Login to get API access
+      console.log('Logging in to Leither service...');
+      const api = await client.Login(ppt);
+      console.log('Login successful:', api ? 'Yes' : 'No');
+      
+      // Add the temporary directory to IPFS
+      console.log('Adding temporary directory to IPFS...', tempDir);
+      const cid = await client.IpfsAdd(api.sid, tempDir);
+      console.log('IPFS CID received:', cid);
+      
+      // Return the CID to the caller
+      res.json({
+        success: true,
+        message: 'Tar file extracted and added to IPFS successfully',
+        extractedPath: tempDir,
+        originalFileName: uploadedFile.name,
+        extractedSize: uploadedFile.size,
+        extractedAt: new Date().toISOString(),
+        cid: cid,
+        leitherPort: leitherPort
+      });
+
+    } catch (leitherError) {
+      console.error('Leither service error:', leitherError);
+      
+      // Return the extracted path even if Leither fails
+      res.json({
+        success: true,
+        message: 'Tar file extracted successfully, but Leither service failed',
+        extractedPath: tempDir,
+        originalFileName: uploadedFile.name,
+        extractedSize: uploadedFile.size,
+        extractedAt: new Date().toISOString(),
+        leitherError: leitherError.message,
+        leitherPort: leitherPort
+      });
+    }
 
   } catch (error) {
     console.error('Error extracting tar file:', error);

@@ -1,5 +1,5 @@
 /**
- * Test script for tar extraction functionality
+ * Test script for tar extraction functionality with Leither integration
  * This script creates a test tar file and uploads it to the server
  */
 
@@ -70,6 +70,14 @@ async function testTarExtraction() {
       console.log('Original filename:', result.originalFileName);
       console.log('Extracted size:', result.extractedSize);
       console.log('Extracted at:', result.extractedAt);
+      
+      if (result.cid) {
+        console.log('🎉 IPFS CID received:', result.cid);
+        console.log('Leither port used:', result.leitherPort);
+      } else if (result.leitherError) {
+        console.log('⚠️  Leither service failed:', result.leitherError);
+        console.log('Leither port attempted:', result.leitherPort);
+      }
       
       // List contents of extracted directory
       console.log('\nContents of extracted directory:');
