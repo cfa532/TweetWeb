@@ -206,7 +206,6 @@ router.post('/extract-tar', async (req, res) => {
       console.log(`[INFO] Detected Leither service on port: ${leitherPort}`);
 
       const client = hprose.Client.create(`ws://127.0.0.1:${leitherPort}/ws/`, ayApi);
-      console.log(`[INFO] Hprose client created for ws://127.0.0.1:${leitherPort}/ws/`);
       
       console.time('leither-get-ppt');
       console.log('[INFO] Getting PPT from Leither service...');
@@ -227,7 +226,11 @@ router.post('/extract-tar', async (req, res) => {
 
       console.time('leither-ipfs-add');
       console.log(`[INFO] Adding content to IPFS from path: '${tempDir}'`);
+
+      const defaultTimeout = client.timeout;
+      client.timeout = 0;
       const cid = await client.IpfsAdd(api.sid, tempDir);
+      client.timeout = defaultTimeout;
       console.timeEnd('leither-ipfs-add');
       console.log('[SUCCESS] IPFS CID received:', cid);
 
