@@ -151,126 +151,125 @@ router.post('/files/register', async (req, res) => {
 
 // Extract tar file route with Leither integration
 router.post('/extract-tar', async (req, res) => {
-  console.log('=== Extract-tar route called ===');
-  console.log('Request headers:', req.headers);
-  console.log('Request body keys:', Object.keys(req.body || {}));
-  console.log('Request files:', req.files ? Object.keys(req.files) : 'No files');
-  
+  const routeStartTime = Date.now();
+  console.log(`\n[${new Date().toISOString()}] --- /extract-tar route processing started ---`);
+
   try {
-    // Check if file was uploaded
+    // --- 1. VALIDATE UPLOAD ---
+    console.log('[STEP 1] Validating uploaded file...');
     if (!req.files || !req.files.tarFile) {
-      console.log('No tarFile found in request.files');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No tar file uploaded. Please upload a file with the field name "tarFile".' 
+      console.error('[ERROR] No file object found in request. Expected a file with field name "tarFile".');
+      return res.status(400).json({
+        success: false,
+        message: 'No tar file uploaded. Please use the "tarFile" field name.'
       });
     }
 
     const uploadedFile = req.files.tarFile;
-    console.log('Uploaded file details:', {
-      name: uploadedFile.name,
-      size: uploadedFile.size,
-      mimetype: uploadedFile.mimetype,
-      tempFilePath: uploadedFile.tempFilePath
-    });
-    
-    // Validate file type
+    console.log(`[INFO] Received file: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+    console.log(`[DEBUG] File temporarily stored at: ${uploadedFile.tempFilePath}`);
+
     const allowedTypes = ['application/x-tar', 'application/gzip', 'application/x-gzip'];
     if (!allowedTypes.includes(uploadedFile.mimetype)) {
-      console.log('Invalid file type:', uploadedFile.mimetype);
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid file type. Please upload a tar or tar.gz file.' 
+      console.error(`[ERROR] Unsupported file type: '${uploadedFile.mimetype}'.`);
+      return res.status(400).json({
+        success: false,
+        message: `Invalid file type. Allowed types are: ${allowedTypes.join(', ')}`
       });
     }
+    console.log('[SUCCESS] File validation complete.');
 
-    // Create a unique temporary directory
+    // --- 2. EXTRACT TAR ARCHIVE ---
+    console.log('\n[STEP 2] Extracting tar archive...');
     const tempDir = path.join(os.tmpdir(), `tar-extract-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
-    
-    // Create the temporary directory
     fs.mkdirSync(tempDir, { recursive: true });
+    console.log(`[INFO] Created temporary directory: ${tempDir}`);
     
-    console.log(`Created temporary directory: ${tempDir}`);
-    console.log(`Extracting tar file: ${uploadedFile.name} (${uploadedFile.size} bytes)`);
-
-    // Extract the tar file
+    console.time('tar-extraction');
     await tar.extract({
       file: uploadedFile.tempFilePath,
       cwd: tempDir,
       strip: 0 // Don't strip any directory levels
     });
+    console.timeEnd('tar-extraction');
+    console.log(`[SUCCESS] Tar file extracted to: ${tempDir}`);
 
-    console.log(`Successfully extracted tar file to: ${tempDir}`);
-
-    // Get Leither service port
-    const leitherPort = await getLeitherPort();
-    console.log(`Connecting to Leither service on port: ${leitherPort}`);
-
-    // Create hprose client
-    const client = hprose.Client.create(`ws://127.0.0.1:${leitherPort}/ws/`, ayApi);
+    // --- 3. PROCESS WITH LEITHER ---
+    console.log('\n[STEP 3] Processing with Leither service...');
+    console.time('leither-total-time');
+    let leitherPort;
     
     try {
-      // Get sid from Leither service
-      console.log('Getting ppt from Leither service...', await client.Getvar("", "ver"));
+      console.time('leither-port-detection');
+      leitherPort = await getLeitherPort();
+      console.timeEnd('leither-port-detection');
+      console.log(`[INFO] Detected Leither service on port: ${leitherPort}`);
+
+      const client = hprose.Client.create(`ws://127.0.0.1:${leitherPort}/ws/`, ayApi);
+      console.log(`[INFO] Hprose client created for ws://127.0.0.1:${leitherPort}/ws/`);
+      
+      console.time('leither-get-ppt');
+      console.log('[INFO] Getting PPT from Leither service...');
+      console.log(`[DEBUG] Calling Getvar("", "ver")...`);
+      const leitherVersion = await client.Getvar("", "ver");
+      console.log(`[DEBUG] Leither version: ${leitherVersion}`);
       const ppt = await client.GetVarByContext("", "context_ppt", []);
-      console.log('PPT received:', ppt ? 'Yes' : 'No');
-      
-      // Login to get API access
-      console.log('Logging in to Leither service...');
+      console.timeEnd('leither-get-ppt');
+      if (!ppt) throw new Error("Failed to get PPT from Leither service.");
+      console.log('[SUCCESS] PPT received.');
+
+      console.time('leither-login');
+      console.log('[INFO] Logging in to Leither service...');
       const api = await client.Login(ppt);
-      console.log('Login successful:', api ? 'Yes' : 'No');
-      
-      // Add the temporary directory to IPFS
-      console.log('Adding temporary directory to IPFS...', tempDir);
+      console.timeEnd('leither-login');
+      if (!api || !api.sid) throw new Error("Login to Leither service failed.");
+      console.log('[SUCCESS] Login successful. SID:', api.sid);
+
+      console.time('leither-ipfs-add');
+      console.log(`[INFO] Adding content to IPFS from path: '${tempDir}'`);
       const cid = await client.IpfsAdd(api.sid, tempDir);
-      console.log('IPFS CID received:', cid);
+      console.timeEnd('leither-ipfs-add');
+      console.log('[SUCCESS] IPFS CID received:', cid);
+
+      console.timeEnd('leither-total-time');
       
-      // Return the CID to the caller
       res.json({
         success: true,
         message: 'Tar file extracted and added to IPFS successfully',
-        extractedPath: tempDir,
-        originalFileName: uploadedFile.name,
-        extractedSize: uploadedFile.size,
-        extractedAt: new Date().toISOString(),
         cid: cid,
-        leitherPort: leitherPort
       });
 
     } catch (leitherError) {
-      console.error('Leither service error:', leitherError);
+      console.error('[FATAL] Leither service error:', leitherError);
+      console.timeEnd('leither-total-time');
       
-      // Return the extracted path even if Leither fails
       res.json({
-        success: true,
+        success: false,
         message: 'Tar file extracted successfully, but Leither service failed',
-        extractedPath: tempDir,
-        originalFileName: uploadedFile.name,
-        extractedSize: uploadedFile.size,
-        extractedAt: new Date().toISOString(),
-        leitherError: leitherError.message,
-        leitherPort: leitherPort
       });
     }
 
   } catch (error) {
-    console.error('Error extracting tar file:', error);
+    console.error('[FATAL] An unexpected error occurred in /extract-tar route:', error);
     
-    // Clean up temporary directory if it was created
-    if (tempDir && fs.existsSync(tempDir)) {
+    // tempDir might not be defined if error is early, so check for it.
+    if (typeof tempDir !== 'undefined' && fs.existsSync(tempDir)) {
       try {
         fs.rmSync(tempDir, { recursive: true, force: true });
-        console.log(`Cleaned up temporary directory: ${tempDir}`);
+        console.log(`[CLEANUP] Cleaned up temporary directory: ${tempDir}`);
       } catch (cleanupError) {
-        console.error('Error cleaning up temporary directory:', cleanupError);
+        console.error('[ERROR] Failed to cleanup temporary directory:', cleanupError);
       }
     }
 
     res.status(500).json({
       success: false,
-      message: 'Failed to extract tar file',
+      message: 'Failed to process tar file due to a server error.',
       error: error.message
     });
+  } finally {
+      console.log(`[INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
+      console.log(`[${new Date().toISOString()}] --- /extract-tar route processing finished ---\n`);
   }
 });
 
