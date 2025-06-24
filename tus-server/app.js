@@ -12,6 +12,7 @@ const fileUpload = require('express-fileupload');
 const uploadRouter = require('./uploadRoutes');
 const fileBrowserRouter = require('./uploadedFilesBrowser');
 const netdisk = require('./netdisk');
+const videoRouter = require('./videoRoutes');
 const app = express();
 
 // Get the port from the environment variable, or default to 3000
@@ -37,6 +38,11 @@ function checkAuthorizedUser(req, res, next) {
   
   // Skip authorization for the tar extraction endpoint
   if (req.path === '/extract-tar') {
+    return next();
+  }
+  
+  // Skip authorization for the video conversion endpoint
+  if (req.path === '/convert-video') {
     return next();
   }
   
@@ -159,6 +165,7 @@ app.use(checkAuthorizedUser);
 app.use('/', uploadRouter);     // TUS upload handling
 app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
+app.use('/', videoRouter);       // Video routes
 
 // Redirect root to file browser
 app.get('/', (req, res) => {
