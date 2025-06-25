@@ -71,7 +71,7 @@ async function loadTweetsWithMinimum() {
     pageNumber.value = 0; // Reset page number for initial load
     
     // Load initial page
-    const initialTweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+    await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
     
     // Keep loading more pages until we have at least 6 tweets or no more tweets
     const minTweets = 6;

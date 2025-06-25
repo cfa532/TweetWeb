@@ -15,7 +15,7 @@ const controls = computed(()=>{
 })
 
 onMounted(() => {
-  console.log(props)
+  // console.log(props)
   vdiv.value.hidden = false;
 });
 

@@ -11,8 +11,8 @@ const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
 const authorId = computed(() => route.params.authorId as MimeiId);
 const pinnedTweets = ref<Tweet[]>([]);
-const pageSize = 10; // Number of tweets to load per page
-const loadTimeout = 3000; // 3 seconds
+const pageSize = 30; // Using the same page size as MainPage
+const initialLoad = ref(true);
 
 onMounted(async () => {
     await initialLoadTweets(authorId.value);
@@ -27,74 +27,73 @@ async function initialLoadTweets(authorId: MimeiId) {
     if (sessionStorage['isBot'] !== 'No') {
         if (confirm('芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!')) {
             sessionStorage['isBot'] = 'No';
-            await loadTweets(authorId);
+            await loadTweetsWithMinimum(authorId);
         } else {
             history.go(-1);
         }
     } else {
-        await loadTweets(authorId);
+        await loadTweetsWithMinimum(authorId);
     }
+}
+
+async function loadTweetsWithMinimum(authorId: MimeiId) {
+    if (isLoading.value)
+        return; // Prevent multiple loads
+    isLoading.value = true;
+    pageNumber.value = 0; // Reset page number for initial load
+    
+    // Load initial page
+    await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
+    
+    // Keep loading more pages until we have at least 6 tweets or no more tweets
+    const minTweets = 6;
+    
+    while (tweetFeed.value.length < minTweets) {
+        pageNumber.value++;
+        const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
+        
+        // If fewer tweets than requested were loaded, there are no more tweets
+        if (tweetsLoaded < pageSize) {
+            console.log('No more tweets available from backend');
+            break;
+        }
+    }
+    
+    // Load pinned tweets
+    pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
+    pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+    
+    isLoading.value = false;
+    initialLoad.value = false;
 }
 
 async function loadTweets(authorId: MimeiId) {
     if (isLoading.value) return;
     isLoading.value = true;
-    let loadedAllTweets = false;
-
-    try {
-        // Load initial set of tweets
-        const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
-        console.log('tweetsLoaded', tweetsLoaded, pageSize);
-        if (tweetsLoaded < pageSize) {
-            loadedAllTweets = true;
-        }
-
-        // Load pinned tweets
-        pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
-        pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
-
-        // Start the timeout mechanism
-        if (tweetFeed.value.length < 5 && !loadedAllTweets) {
-            startTimeoutLoad(authorId, loadedAllTweets);
-        }
-
-    } finally {
-        isLoading.value = false;
-    }
+    pageNumber.value = 0; // Reset page number for initial load
+    await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
+    
+    // Load pinned tweets
+    pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
+    pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+    
+    isLoading.value = false;
+    initialLoad.value = false;
 }
 
 async function loadMoreTweets() {
     if (isLoading.value) return; // Prevent multiple loads
     isLoading.value = true;
     pageNumber.value++;
-    try {
-        await tweetStore.loadTweetsByRank(authorId.value, pageNumber.value, pageSize);
-    } finally {
-        isLoading.value = false;
+    const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId.value, pageNumber.value, pageSize);
+    
+    // If fewer tweets than requested were loaded, there are no more tweets
+    if (tweetsLoaded < pageSize) {
+        console.log('No more tweets available from backend');
+        // Optionally, you could disable scroll loading here
     }
-}
-
-function startTimeoutLoad(authorId: MimeiId, loadedAllTweets: boolean) {
-    setTimeout(async () => {
-        if (tweetFeed.value.length < 5 && !isLoading.value && !loadedAllTweets) {
-            isLoading.value = true;
-            pageNumber.value++;
-
-            try {
-                const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
-
-                if (tweetsLoaded < pageSize) {
-                    loadedAllTweets = true;
-                }
-
-                if (tweetFeed.value.length < 5 && !loadedAllTweets) {
-                    startTimeoutLoad(authorId, loadedAllTweets); // Repeat if still needed
-                }
-            } finally {
-                isLoading.value = false;
-            }
-        }
-    }, loadTimeout);
+    
+    isLoading.value = false;
 }
 
 const tweetFeed = computed(() => {
@@ -105,10 +104,6 @@ const tweetFeed = computed(() => {
             return e.authorId === authorId.value;
         }
     });
-});
-
-const tweetFeedLength = computed(() => {
-    return tweetStore.tweets.filter(e => e.authorId === authorId.value).length;
 });
 
 watch(authorId, async (nv, ov) => {
