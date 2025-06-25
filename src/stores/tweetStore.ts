@@ -369,6 +369,15 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             return user
         },
+        
+        /**
+         * Remove a user from cache and session storage
+         * @param userId The user ID to remove
+         */
+        removeUser(userId: MimeiId) {
+            this.users.delete(userId)
+            sessionStorage.removeItem(userId)
+        },
 
         /**
          * Given a mimie Id, find IP of its best provider

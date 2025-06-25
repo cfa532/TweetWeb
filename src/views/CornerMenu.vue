@@ -19,7 +19,7 @@ function showMenu() {
     // toggle right menu on and off
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
-            if (e.target !== shareMenu.value) {
+            if (!shareMenu.value.contains(e.target as Node)) {
                 shareMenu.value.hidden = true
                 setTimeout(()=>{
                     window.onclick = null
@@ -53,13 +53,13 @@ function deleteTweet() {
 <div style=" width:100%; position: relative; text-align: right;">
     <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="shareMenu" class="menu" hidden>
-        <div class="item">
-            <a href="#" style="text-decoration: none; font-size: smaller;" @click.stop="copyLink">
+        <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">
+            <span style="text-decoration: none; font-size: smaller;">
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ props.tweet?.mid }}
-            </a>
+            </span>
         </div>
-        <div ref="btnDelete" class="item" hidden>
-            <a href="#" style="text-decoration: none;" @click.stop="deleteTweet">Delete</a>
+        <div ref="btnDelete" class="item clickable-item" @click.stop="deleteTweet" hidden style="cursor: pointer;">
+            <span style="text-decoration: none;">Delete</span>
         </div>
     </div>
 </div>
@@ -85,5 +85,13 @@ function deleteTweet() {
     border-bottom: 1px dotted;
     padding: 10px;
     text-align: center;
+}
+.clickable-item:hover {
+    background-color: #e0e0e0;
+    transition: background-color 0.2s ease;
+}
+.copy-item:hover {
+    background-color: #e0e0e0;
+    transition: background-color 0.2s ease;
 }
 </style>

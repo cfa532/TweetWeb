@@ -15,6 +15,7 @@ const pageSize = 30; // Using the same page size as MainPage
 const initialLoad = ref(true);
 
 onMounted(async () => {
+    tweetStore.removeUser(authorId.value);  // force reload user data from its host.
     await initialLoadTweets(authorId.value);
     window.addEventListener('scroll', handleScroll);
 });
@@ -58,20 +59,6 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             break;
         }
     }
-    
-    // Load pinned tweets
-    pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
-    pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
-    
-    isLoading.value = false;
-    initialLoad.value = false;
-}
-
-async function loadTweets(authorId: MimeiId) {
-    if (isLoading.value) return;
-    isLoading.value = true;
-    pageNumber.value = 0; // Reset page number for initial load
-    await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
     
     // Load pinned tweets
     pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
