@@ -26,7 +26,14 @@ async function loadMoreTweets() {
         return; // Prevent multiple loads
     isLoading.value = true;
     pageNumber.value++;
-    await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+    const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+    
+    // If fewer tweets than requested were loaded, there are no more tweets
+    if (tweetsLoaded < pageSize) {
+        console.log('No more tweets available from backend');
+        // Optionally, you could disable scroll loading here
+    }
+    
     isLoading.value = false;
 }
 
@@ -43,12 +50,12 @@ onMounted(async () => {
     if (sessionStorage['isBot'] != 'No') {
         if (confirm('芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!')) {
             sessionStorage['isBot'] = 'No'
-            await loadTweets()
+            await loadTweetsWithMinimum()
         } else {
             history.go(-1)
         }
     } else {
-        await loadTweets()
+        await loadTweetsWithMinimum()
     }
     window.addEventListener('scroll', handleScroll);
 });
@@ -57,12 +64,40 @@ onUnmounted(() => {
     window.removeEventListener('scroll', handleScroll);
 });
 
+async function loadTweetsWithMinimum() {
+    if (isLoading.value)
+        return; // Prevent multiple loads
+    isLoading.value = true;
+    pageNumber.value = 0; // Reset page number for initial load
+    
+    // Load initial page
+    const initialTweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+    
+    // Keep loading more pages until we have at least 6 tweets or no more tweets
+    const minTweets = 6;
+    
+    while (tweetStore.tweets.filter(e => !e.isPrivate).length < minTweets) {
+        pageNumber.value++;
+        const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+        
+        // If fewer tweets than requested were loaded, there are no more tweets
+        if (tweetsLoaded < pageSize) {
+            console.log('No more tweets available from backend');
+            break;
+        }
+    }
+    
+    isLoading.value = false;
+    initialLoad.value = false;
+}
+
 async function loadTweets() {
     if (isLoading.value)
         return; // Prevent multiple loads
     isLoading.value = true;
     pageNumber.value = 0; // Reset page number for initial load
     await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+    isLoading.value = false;
     initialLoad.value = false;
 }
 

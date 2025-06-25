@@ -108,21 +108,34 @@ router.post('/convert-video', async (req, res) => {
         let ffmpegCommand;
         
         if (isPortrait) {
-          // Portrait: one resolution (480 or 360 width)
-          const targetWidth = videoInfo.width >= 480 ? 480 : 360;
+          // Portrait: use standard portrait video widths (max 720px)
+          let targetWidth;
+          let bitrate;
+          
+          if (videoInfo.width >= 720) {
+            // HD portrait (720p equivalent) - maximum quality
+            targetWidth = 720;
+            bitrate = '2000k';
+          } else if (videoInfo.width >= 480) {
+            // SD portrait (480p equivalent)
+            targetWidth = 480;
+            bitrate = '1200k';
+          } else {
+            // Low quality portrait (360p equivalent)
+            targetWidth = 360;
+            bitrate = '800k';
+          }
+          
           // Ensure width is even
           const evenWidth = targetWidth % 2 === 0 ? targetWidth : targetWidth - 1;
-          ffmpegCommand = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "transpose=2,scale=${evenWidth}:-2" -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, 'segment%03d.ts')}" "${path.join(tempDir, 'playlist.m3u8')}"`;
+          ffmpegCommand = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -b:v ${bitrate} -vf "scale=${evenWidth}:-2" -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, 'segment%03d.ts')}" "${path.join(tempDir, 'playlist.m3u8')}"`;
         } else {
           // Landscape: two qualities (720 and 480 width)
           // Create directories for different qualities
           fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
           fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
           
-          // Calculate dimensions after rotation and scaling
-          // Original: 1920x1080, after transpose=2 (90° clockwise): 1080x1920
-          // Then scale to 720 width: 720x1280
-          // Then scale to 480 width: 480x854
+          // Calculate dimensions for scaling (no rotation)
           const width720 = 720;
           const height720 = Math.round((720 * videoInfo.height) / videoInfo.width);
           const width480 = 480;
@@ -132,18 +145,18 @@ router.post('/convert-video', async (req, res) => {
           const evenHeight720 = height720 % 2 === 0 ? height720 : height720 - 1;
           const evenHeight480 = height480 % 2 === 0 ? height480 : height480 - 1;
           
-          // Convert to 720p (ensure even dimensions and handle rotation)
-          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "transpose=2,scale=${width720}:${evenHeight720}" -b:v 1500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
+          // Convert to 720p with higher bitrate (no rotation)
+          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${width720}:${evenHeight720}" -b:v 2500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
           
-          // Convert to 480p (ensure even dimensions and handle rotation)
-          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "transpose=2,scale=${width480}:${evenHeight480}" -b:v 800k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
+          // Convert to 480p with higher bitrate (no rotation)
+          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${width480}:${evenHeight480}" -b:v 1200k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
           
-          // Create master playlist with actual dimensions
+          // Create master playlist with actual dimensions and updated bandwidth
           const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=${width720}x${evenHeight720}
+#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=${width720}x${evenHeight720}
 720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=${width480}x${evenHeight480}
+#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=${width480}x${evenHeight480}
 480p/playlist.m3u8`;
           
           fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);

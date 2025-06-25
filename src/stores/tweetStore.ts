@@ -15,6 +15,10 @@ export const useTweetStore = defineStore('tweetStore', {
         _user: null as User | null      // login user data
     }),
     getters: {
+        /**
+         * Gets the currently logged in user from state or session storage
+         * @returns The logged in user object or null if not logged in
+         */
         loginUser: (state): User | null => {
             if (state._user) {
                 return state._user
@@ -27,6 +31,11 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             return null
         },
+
+        /**
+         * Gets the list of users that the current user is following
+         * @returns Array of user IDs that the current user follows
+         */
         followings: (state)=> {
             if (state._followings.length > 0)
                 return state._followings
@@ -40,42 +49,55 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     },
     actions: {
-        addFollowing(mid: string) {
-            if (this.followings.indexOf(mid) == -1) {
-                this._followings.push(mid)
+        /**
+         * Add a user ID to the following list if not already present
+         * @param uid The user ID to add to followings
+         */
+        addFollowing(uid: string) {
+            if (this.followings.indexOf(uid) == -1) {
+                this._followings.push(uid)
                 sessionStorage.setItem("followings", JSON.stringify(this._followings))
             }
         },
         /**
          * If an userId is given, load tweets of the given user.
-         * Otherwise load tweets from all the followings of login user.
+         * Otherwise load tweets of login user's followings.
          * @param authorId 
+         * @param pageNumber page number to load (0-based)
+         * @param pageSize number of tweets per page
+         * @returns the number of tweets received from backend (including null ones)
          */
         async loadTweets(
             authorId: string | undefined = undefined,
             pageNumber: number = 0,
             pageSize: number = TWEET_COUNT
-        ) {
+        ): Promise<number> {
             if (authorId) {
                 // load author's tweets
-                this.loadTweetsByRank(authorId)
+                return await this.loadTweetsByRank(authorId, pageNumber, pageSize)
             } else {
                 if (this.loginUser) {
                     // load tweets from all the followings 
                     let tweetFeed = await this.getTweetFeed(this.loginUser, pageNumber, pageSize)  
                     console.log("Tweets of user", this.loginUser, tweetFeed, pageNumber, pageSize)
                     if (!tweetFeed)
-                        return
+                        return 0
                     this.fillTweet(tweetFeed)
+                    return tweetFeed.length
                 } else {
                     // load admin's tweets
-                    this.loadTweetsByRank(this.followings[0])
+                    return await this.loadTweetsByRank(this.followings[0], pageNumber, pageSize)
                 }
             }
         },
+        /**
+         * Processes and enriches tweet data with author information and media URLs
+         * @param tweets Array of tweets to process and add to the store
+         */
         async fillTweet(tweets: Tweet[]) {
             // Tweet may not have its author data yet.
             tweets?.forEach(async tweet => {
+                if (!tweet) return
                 // skip tweet that is in tweets already.
                 if (this.tweets.find(e => e.mid == tweet.mid))
                     return
@@ -109,7 +131,8 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * @param authorId 
+         * Loads tweets for a specific user by rank/popularity
+         * @param authorId The user ID whose tweets to load
          * @param pageNumber page number to load (0-based)
          * @param pageSize number of tweets per page
          * @returns the number of tweets loaded.
@@ -131,7 +154,9 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * @returns get MimeiId list of pinned tweets of the user, then load the tweets.
+         * Loads pinned tweets for a specific user
+         * @param userId The user ID whose pinned tweets to load
+         * @returns Array of pinned tweets
          */
         async loadPinnedTweets(userId: string) {
             let pinnedTweets = [] as Tweet[]
@@ -157,6 +182,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return pinnedTweets
         },
         /**
+         * Gets the tweet feed for a user (tweets from users they follow)
          * @param user is login user.
          * @param pageNumber page number to load (0-based)
          * @param pageSize number of tweets per page
@@ -178,9 +204,10 @@ export const useTweetStore = defineStore('tweetStore', {
             return tweets
         },
         /**
-         * @param user 
-         * @param pageNumber 
-         * @param pageSize 
+         * Gets tweets for a specific user sorted by rank
+         * @param user The user whose tweets to retrieve
+         * @param pageNumber Page number for pagination
+         * @param pageSize Number of tweets per page
          * @returns tweets of the given user
          */
         async getTweetListByRank(
@@ -201,7 +228,7 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Given only tweet ID, find it full data. Do NOT load comments yet. Wait until user opens
          * detail tweet page.
-         * @param tweetId 
+         * @param tweetId The ID of the tweet to retrieve
          * @param authorId must be used to find the right node for the tweet, which refers to authorId
          * @returns a Tweet object short of comments.
          */
@@ -232,6 +259,9 @@ export const useTweetStore = defineStore('tweetStore', {
          * Given tweet ID, get its content. There are 2 steps. First, find provider of
          * this tweet with its ID. 2nd, retrieve the tweet from the provider. Assume
          * author data is also available on the provider. Get author data too.
+         * @param tweetId The ID of the tweet to fetch
+         * @param authorId Optional author ID to help locate the tweet
+         * @returns The tweet object or undefined if not found
          */
         async fetchTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
             // check if the tweet has been retrieved
@@ -303,6 +333,11 @@ export const useTweetStore = defineStore('tweetStore', {
             return tweet
         },
 
+        /**
+         * Retrieves user data by user ID, caching the result
+         * @param userId The user ID to retrieve data for
+         * @returns The user object or undefined if not found
+         */
         async getUser(userId: MimeiId): Promise<User | undefined> {
             // check if the user has been cached.
             if (this.loginUser && this.loginUser.mid == userId)
@@ -335,7 +370,11 @@ export const useTweetStore = defineStore('tweetStore', {
             return user
         },
 
-        // Given a mimie Id, find IP of its best provider
+        /**
+         * Given a mimie Id, find IP of its best provider
+         * @param mid The Mimei ID to find provider for
+         * @returns The IP address of the best provider or null if not found
+         */
         async getProviderIp(mid: string): Promise<string | null> {
             let IPs = await this.lapi.client.RunMApp("get_providers", {
                 aid: this.lapi.appId,
@@ -352,7 +391,7 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Load comments of a tweet into its comments attribute. 
          * Comments are on the same node with the tweet.
-         * @param tweet 
+         * @param tweet The tweet to load comments for
          */
         async loadComments(tweet: Tweet) {
             if (!tweet || !tweet.provider) return
@@ -385,6 +424,12 @@ export const useTweetStore = defineStore('tweetStore', {
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },
 
+        /**
+         * Constructs the full media URL from a media ID and base URL
+         * @param mid The media ID
+         * @param baseUrl The base URL for the media server
+         * @returns The complete media URL
+         */
         getMediaUrl(mid: string | undefined, baseUrl: string): string {
             let url = baseUrl
             if (!mid) {
@@ -393,6 +438,12 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
         },
 
+        /**
+         * Authenticates a user with username and password
+         * @param username The username to login with
+         * @param password The password for authentication
+         * @returns The user object if login successful
+         */
         async login(username: string, password: string) {
             // given username, get UserId
             let userId = await this.lapi.client.RunMApp("get_userid", {
@@ -438,10 +489,18 @@ export const useTweetStore = defineStore('tweetStore', {
                 useAlertStore().error(ret["reason"])
             }
         },
+        /**
+         * Logs out the current user and clears session storage
+         */
         logout() {
             sessionStorage.clear()
             this.$reset
         },
+        /**
+         * Gets the list of followers for a specific user
+         * @param userId The user ID to get followers for
+         * @returns Array of follower user IDs
+         */
         async getFollowers(userId: MimeiId) {
             let user = await this.getUser(userId)
             if (!user)
@@ -449,6 +508,11 @@ export const useTweetStore = defineStore('tweetStore', {
             let list = await user.client.RunMApp("get_followers_sorted", {aid: this.appId, ver: "last", userid: userId})
             return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
         },
+        /**
+         * Gets the list of users that a specific user is following
+         * @param userId The user ID to get followings for
+         * @returns Array of following user IDs
+         */
         async getFollowings(userId: MimeiId) {
             let user = await this.getUser(userId)
             if (!user)
@@ -457,6 +521,11 @@ export const useTweetStore = defineStore('tweetStore', {
             return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
         },
 
+        /**
+         * Deletes a tweet from the system
+         * @param tweetId The ID of the tweet to delete
+         * @param authorId The ID of the tweet author
+         */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
             this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
             let user = await this.getUser(authorId)
@@ -478,7 +547,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return fsid
         },
         /**
-         * 
+         * Uploads a tweet or comment to the system
          * @param tweet a Tweet object to be uploaded
          * @param tweetId if none, a new tweet is created, otherwise a comment added to the tweetId
          * @returns a mid of the uploaded object
@@ -524,6 +593,11 @@ export const useTweetStore = defineStore('tweetStore', {
             })
             return mid
         },
+        /**
+         * Shares a file with other users
+         * @param file The file to share
+         * @returns The Mimei ID of the shared file
+         */
         async shareFile(file: FileSystemItem) {
             let mid = await this.loginUser?.client.RunMApp("share_file", {
                 aid: this.lapi.appId,
@@ -534,6 +608,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return mid
         },
         /**
+         * Retrieves a shared file by its Mimei ID
          * @param mid A mimei id
          * @returns the IP of a node that provides the mimei. IP only, no port number.
          * There should be one node only for sharing a file on hard drive by its mimei label.
@@ -565,6 +640,11 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log("Get shared file", file)
             return file
         },
+        /**
+         * Toggles the like status of a tweet
+         * @param tweetId The ID of the tweet to toggle like for
+         * @returns The updated tweet object
+         */
         async toggleFavorite(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_likes", {
                 aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
@@ -574,6 +654,11 @@ export const useTweetStore = defineStore('tweetStore', {
             localStorage.setItem(tweetId, JSON.stringify(tweet))
             return tweet
         },
+        /**
+         * Toggles the bookmark status of a tweet
+         * @param tweetId The ID of the tweet to toggle bookmark for
+         * @returns The updated tweet object
+         */
         async toggleBookmark(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
                 aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
@@ -586,6 +671,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * Download file and return the data blob to web client.
+         * @param url The URL of the file to download
          */
         async downloadBlob(url: string) {
             console.log("Download", url)
@@ -610,6 +696,7 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Checks if an IP address is a local network address
          * @param ip is full IP address with port
          * @returns true if the ip is of local network. Only allow port# between 8000 and 9000.
          */
@@ -634,10 +721,22 @@ export const useTweetStore = defineStore('tweetStore', {
             return localPatterns.some(pattern => pattern.test(ip));
         },
 
+        /**
+         * Checks if a string is empty or null
+         * @param str The string to check
+         * @returns True if the string is empty, null, or undefined
+         */
         isEmptyString(str?: String) {
             return str == null || str == undefined || str.trim() == '';
         },
 
+        /**
+         * Finds the first accessible IP address from a list of IPs
+         * @param ipList Array of IP addresses to test
+         * @param mid The Mimei ID to test against
+         * @param filterIPv6 Whether to filter out IPv6 addresses
+         * @returns The first accessible IP address or null if none found
+         */
         async findFirstAccessibleIP(
             ipList: string[], 
             mid: string, 
@@ -736,14 +835,20 @@ export const useTweetStore = defineStore('tweetStore', {
             });
         },
         
-        // The IPv4-specific function now just calls the main function with the filter flag
+        /**
+         * Finds the first accessible IPv4 address from a list
+         * @param ipList Array of IP addresses to test
+         * @param mid The Mimei ID to test against
+         * @returns The first accessible IPv4 address or null if none found
+         */
         async findFirstAccessibleIPv4(ipList: string[], mid: string): Promise<string | null> {
             return await this.findFirstAccessibleIP(ipList, mid, true);
         },
 
         /**
-         * @param nodeId 
-         * @returns IP address list of a node, after removing local IPv4
+         * Gets the IP address list of a node, after removing local IPv4
+         * @param nodeId The node ID to get IPs for
+         * @returns The first non-local IP address found
          */
         async getNodeIp(nodeId: MimeiId) {
             let ips = await this.loginUser?.client.RunMApp("get_node_ip", {
@@ -758,6 +863,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
         /**
+         * Extracts the IP address from a full address string (removes port)
          * @param address full ip address with port
          * @returns IP without port
          */
