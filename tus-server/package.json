@@ -1,12 +1,11 @@
 {
   "name": "tus-server",
   "version": "1.0.0",
-  "description": "TUS upload server with tar extraction functionality",
+  "description": "TUS upload server with video conversion functionality",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "test": "node test-tar-extraction.js",
     "test-server": "node test-server.js"
   },
   "dependencies": {
@@ -17,8 +16,7 @@
     "express": "^4.18.0",
     "express-fileupload": "^1.4.0",
     "hprose": "^2.0.0",
-    "mime-types": "^2.1.35",
-    "tar": "^6.1.0"
+    "mime-types": "^2.1.35"
   },
   "devDependencies": {
     "nodemon": "^3.0.0",

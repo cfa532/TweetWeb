@@ -41,11 +41,34 @@ router.post('/convert-video', async (req, res) => {
     console.log(`[INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
     console.log(`[DEBUG] File temporarily stored at: ${uploadedFile.tempFilePath}`);
 
+    // Check file size limit (1GB = 1024 * 1024 * 1024 bytes)
+    const maxFileSize = 1024 * 1024 * 1024; // 1GB
+    if (uploadedFile.size > maxFileSize) {
+      console.error(`[ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
+      return res.status(400).json({
+        success: false,
+        message: `File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 1GB.`
+      });
+    }
+
     // Parse the noResample parameter from form data
     const noResample = req.body.noResample === 'true' || req.body.noResample === true;
     console.log(`[INFO] noResample parameter: ${noResample}`);
 
-    const allowedTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/mkv', 'video/wmv', 'video/flv', 'video/webm'];
+    const allowedTypes = [
+      'video/mp4', 
+      'video/avi', 
+      'video/mov', 
+      'video/quicktime',  // MOV files
+      'video/mkv', 
+      'video/wmv', 
+      'video/flv', 
+      'video/webm',
+      'video/x-msvideo',  // AVI alternative MIME type
+      'video/x-matroska', // MKV alternative MIME type
+      'video/x-ms-wmv',   // WMV alternative MIME type
+      'video/x-flv'       // FLV alternative MIME type
+    ];
     if (!allowedTypes.includes(uploadedFile.mimetype)) {
       console.error(`[ERROR] Unsupported video type: '${uploadedFile.mimetype}'.`);
       return res.status(400).json({

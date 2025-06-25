@@ -36,11 +36,6 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
   
-  // Skip authorization for the tar extraction endpoint
-  if (req.path === '/extract-tar') {
-    return next();
-  }
-  
   // Skip authorization for the video conversion endpoint
   if (req.path === '/convert-video') {
     return next();
@@ -122,14 +117,19 @@ function checkAuthorizedUser(req, res, next) {
 // Configure middleware
 app.use(express.json());
 
-// Configure file upload middleware
-app.use(fileUpload({
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
-  abortOnLimit: true,
-  useTempFiles: true,
-  tempFileDir: '/tmp/',
-  debug: false
-}));
+// Configure file upload middleware with different limits for different routes
+app.use((req, res, next) => {
+  // Use 1GB limit for video conversion, 50MB for other routes
+  const fileSizeLimit = req.path === '/convert-video' ? 1024 * 1024 * 1024 : 50 * 1024 * 1024;
+  
+  fileUpload({
+    limits: { fileSize: fileSizeLimit },
+    abortOnLimit: true,
+    useTempFiles: true,
+    tempFileDir: '/tmp/',
+    debug: false
+  })(req, res, next);
+});
 
 // Configure CORS with specific settings for TUS protocol
 app.use(cors({
