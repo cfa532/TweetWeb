@@ -102,7 +102,10 @@ async function loadTweets() {
 }
 
 const tweetFeed = computed(() => {
-    return tweetStore.tweets.filter(e => !e.isPrivate);
+    const filteredTweets = tweetStore.tweets.filter(e => !e.isPrivate);
+    
+    // Sort by timestamp in descending order (newest first)
+    return filteredTweets.sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
 });
 </script>
 

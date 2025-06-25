@@ -18,6 +18,8 @@ onMounted(async () => {
     tweetStore.removeUser(authorId.value);  // force reload user data from its host.
     await initialLoadTweets(authorId.value);
     window.addEventListener('scroll', handleScroll);
+    // Scroll to top when page is opened
+    window.scrollTo(0, 0);
 });
 
 onUnmounted(() => {
@@ -84,19 +86,24 @@ async function loadMoreTweets() {
 }
 
 const tweetFeed = computed(() => {
-    return tweetStore.tweets.filter(e => {
+    const filteredTweets = tweetStore.tweets.filter(e => {
         if (e.isPrivate) {
             return tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value;
         } else {
             return e.authorId === authorId.value;
         }
     });
+    
+    // Sort by timestamp in descending order (newest first)
+    return filteredTweets.sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
 });
 
 watch(authorId, async (nv, ov) => {
     if (nv && nv !== ov) {
         pageNumber.value = 0; // Reset page number when loading new author's tweets
         await initialLoadTweets(nv);
+        // Scroll to top when switching to a different author
+        window.scrollTo(0, 0);
     }
 });
 
