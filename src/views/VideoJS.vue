@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import type { PropType } from 'vue'
+import Hls from 'hls.js';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -15,14 +16,76 @@ const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
 
+let hls: Hls | null = null;
+
 onMounted(() => {
-  // console.log(props)
   vdiv.value.hidden = false;
+  
+  // Wait for next tick to ensure video element is created
+  setTimeout(() => {
+    if (video.value && isHLS.value) {
+      setupHLS();
+    }
+  }, 100);
 });
+
+function setupHLS() {
+  if (!video.value) return;
+  
+  const videoElement = video.value;
+  
+  // Check if HLS is supported natively
+  if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+    // Use native HLS support
+    videoElement.src = getHLSSource();
+  } else if (Hls.isSupported()) {
+    // Use HLS.js
+    hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+    });
+    
+    hls.loadSource(getHLSSource());
+    hls.attachMedia(videoElement);
+    
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (props.autoplay) {
+        videoElement.play();
+      }
+    });
+    
+    hls.on(Hls.Events.ERROR, (event, data) => {
+      if (data.fatal) {
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            hls?.startLoad();
+            break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            hls?.recoverMediaError();
+            break;
+          default:
+            hls?.destroy();
+            break;
+        }
+      }
+    });
+  }
+}
 
 function getVideoSource(): string {
   // For regular videos, use the existing logic
   return props.media.mid + '#t=3';
+}
+
+function getHLSSource(): string {
+  // For HLS videos, props.media.mid already contains the full IPFS URL
+  // We need to append the playlist filename
+  return props.media.mid + '/playlist.m3u8';
+}
+
+function getHLSMasterSource(): string {
+  // For HLS videos with multiple resolutions, try master playlist first
+  return props.media.mid + '/master.m3u8';
 }
 
 function togglePlay() {
@@ -69,10 +132,7 @@ function disableRightClick(event: MouseEvent) {
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
     >
-      <!-- For HLS videos, try master.m3u8 first (multiple resolutions), then playlist.m3u8 (single resolution) -->
-      <source v-if="isHLS" :src="`${props.media.mid}/master.m3u8`" type="application/x-mpegURL" />
-      <source v-if="isHLS" :src="`${props.media.mid}/playlist.m3u8`" type="application/x-mpegURL" />
-      <!-- For regular videos -->
+      <!-- For regular videos only - HLS videos are handled by HLS.js -->
       <source v-if="!isHLS" :src="getVideoSource()" type="video/mp4" />
       <source v-if="!isHLS" :src="getVideoSource()" type="video/mp4" />
       Your browser does not support the video tag.
