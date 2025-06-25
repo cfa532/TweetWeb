@@ -3,6 +3,7 @@
 import { ref } from 'vue'
 import { useTweetStore } from '@/stores';
 import type { PropType } from 'vue'
+import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
 const shareMenu = ref()
 const btnDelete = ref()
@@ -40,6 +41,7 @@ function copyLink() {
     document.body.removeChild(input);
     shareMenu.value.hidden = true
 }
+
 function deleteTweet() {
   if (props.tweet) {
     tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
@@ -52,7 +54,9 @@ function deleteTweet() {
     <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="shareMenu" class="menu" hidden>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="copyLink">Copy &#128279; to clipboard</a>
+            <a href="#" style="text-decoration: none; font-size: smaller;" @click.stop="copyLink">
+                <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ props.tweet?.mid }}
+            </a>
         </div>
         <div ref="btnDelete" class="item" hidden>
             <a href="#" style="text-decoration: none;" @click.stop="deleteTweet">Delete</a>

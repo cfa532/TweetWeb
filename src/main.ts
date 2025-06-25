@@ -10,13 +10,13 @@ import App from './App.vue'
 import { library } from '@fortawesome/fontawesome-svg-core';
 
 // Import specific icons
-import { faPlay, faPause } from '@fortawesome/free-solid-svg-icons';
+import { faPlay, faPause, faCopy } from '@fortawesome/free-solid-svg-icons';
 
 // Import the FontAwesomeIcon component
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 
 // Add icons to the library
-library.add(faPlay, faPause);
+library.add(faPlay, faPause, faCopy);
 
 const app = createApp(App)
 
