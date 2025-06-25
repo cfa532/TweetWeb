@@ -5,6 +5,7 @@ import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
+import { compressImage, uploadVideo, getVideoAspectRatio, getMediaType } from '@/utils/uploadUtils'
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
@@ -23,6 +24,7 @@ const loading = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
+const noResample = ref(false)   // whether to preserve original video quality
 const tweetStore = useTweetStore()
 const hproseClient = tweetStore.loginUser?.client
 const tweet = ref<Tweet>()
@@ -34,37 +36,15 @@ const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 
 onMounted(() => {
   tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
+  console.log('EditorModal mounted with author:', {
+    mid: author.mid,
+    providerIp: author.providerIp,
+    cloudDrivePort: author.cloudDrivePort
+  });
 })
 
 // Upload files and store them as IPFS or Mimei type
 async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
-
-  function getMedaiType(t: string) {
-    if (t.startsWith('image/')) return 'Image'
-    if (t.startsWith('video/')) return 'Video'
-    if (t.startsWith('audio/')) return 'Audio'
-    return 'Uknown'
-  }
-  async function getVideoAspectRatio(file: File): Promise<number> {
-    return new Promise<number>((resolve, reject) => {
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-
-      video.onloadedmetadata = () => {
-        // Calculate aspect ratio
-        const aspectRatio = video.videoWidth / video.videoHeight;
-        resolve(aspectRatio);
-      };
-
-      video.onerror = () => {
-        reject(new Error('Failed to load video metadata'));
-      };
-
-      // Set video source
-      video.src = URL.createObjectURL(file);
-    });
-  }
-
   const results: PromiseSettledResult<MimeiFileType>[] = [];
 
   for (let i = 0; i < files.length; i++) {
@@ -73,19 +53,82 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       // Assign initial progress value
       uploadProgress[i] = 0;
 
-      // Create a FileInfo object with file name, last modified time,
-      const fsid = await tweetStore.openTempFile();
-      const fileType = getMedaiType(file.type);
-      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null
-      const fi = {
-        mid: '', type: fileType, size: file.size, fileName: file.name,
-        timestamp: file.lastModified, aspectRatio: aspectRatio
-      } as MimeiFileType
+      const fileType = getMediaType(file.type);
+      let processedFile = file;
+      let cid: string;
 
-      const defaultTimeout = hproseClient.timeout
-      hproseClient.timeout = 0
-      fi.mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i) // returned an IPFS id actually
-      hproseClient.timeout = defaultTimeout
+      // Handle different file types
+      if (fileType === 'Image') {
+        // Compress image to under 2MB
+        processedFile = await compressImage(file);
+        uploadProgress[i] = 50; // Show progress for compression
+        
+        // Upload compressed image using existing method
+        const fsid = await tweetStore.openTempFile();
+        const defaultTimeout = hproseClient.timeout;
+        hproseClient.timeout = 0;
+        cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
+        hproseClient.timeout = defaultTimeout;
+        
+      } else if (fileType === 'Video') {
+        // Upload video through new endpoint
+        uploadProgress[i] = 25; // Show initial progress
+        
+        // Validate required parameters
+        if (!author.providerIp) {
+          throw new Error('Provider IP is not available for video upload');
+        }
+        
+        const cloudDrivePort = author.cloudDrivePort?.toString() || '8010';
+        
+        // Extract IP address from providerIp (which might include a port)
+        let ipAddress = author.providerIp;
+        if (ipAddress.includes(':')) {
+          // Remove port from providerIp if it exists
+          ipAddress = ipAddress.split(':')[0];
+        }
+        
+        console.log('Video upload parameters:', {
+          originalProviderIp: author.providerIp,
+          extractedIpAddress: ipAddress,
+          cloudDrivePort: cloudDrivePort,
+          noResample: noResample.value
+        });
+        
+        // Construct baseUrl using extracted IP and cloudDrivePort
+        const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
+        
+        // Always use regular multipart upload for videos
+        cid = await uploadVideo(
+          file, 
+          baseUrl, 
+          cloudDrivePort,
+          (progress) => {
+            // Update progress from 25% to 95% based on upload progress
+            uploadProgress[i] = 25 + Math.round((progress * 70) / 100);
+          },
+          noResample.value
+        );
+        uploadProgress[i] = 100; // Complete
+        
+      } else {
+        // Handle other file types with existing method
+        const fsid = await tweetStore.openTempFile();
+        const defaultTimeout = hproseClient.timeout;
+        hproseClient.timeout = 0;
+        cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
+        hproseClient.timeout = defaultTimeout;
+      }
+
+      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null;
+      const fi = {
+        mid: cid,
+        type: fileType === 'Video' ? 'hls_video' : fileType,  // all videos are converted to hls_video
+        size: processedFile.size,
+        fileName: file.name,
+        timestamp: file.lastModified,
+        aspectRatio: aspectRatio
+      } as MimeiFileType;
 
       console.log(fi);
       results.push({ status: 'fulfilled', value: fi });
@@ -118,6 +161,7 @@ async function onSubmit() {
     }
     // upload tweet
     let tweet = {
+      authorId: tweetStore.loginUser?.mid,
       title: tweetTitle.value,
       content: txtConent.value,
       attachments: attachments.concat(mmFiles.value),
@@ -125,15 +169,31 @@ async function onSubmit() {
       downloadable: downloadable.value,
       timestamp: Date.now()
     }
-    await tweetStore.uploadTweet(tweet, tweetId as MimeiId)
-    txtConent.value = null
-    tweetTitle.value = null
-    filesUpload.value = []
-    mmFiles.value = []
+    
+    const result = await tweetStore.uploadTweet(tweet, tweetId as MimeiId)
+    
+    // Check if tweet upload was successful
+    if (result) {
+      useAlertStore().success("Tweet uploaded successfully!")
+      
+      // Clear form only on success
+      txtConent.value = null
+      tweetTitle.value = null
+      filesUpload.value = []
+      mmFiles.value = []
+      noResample.value = false
+      
+      // Emit success event and hide modal
+      emit('uploaded', result)
+      emit('hide')
+    } else {
+      throw new Error("Tweet upload failed: No response from server")
+    }
+    
   } catch (err) {
-    // something wrong uploading files, abort
+    // something wrong uploading files or tweet, show error
     console.error('onSubmit err:', err)
-    useAlertStore().error(err)
+    useAlertStore().error(err instanceof Error ? err.message : String(err))
   } finally {
     loading.value = false
   }
@@ -279,10 +339,12 @@ function removeMimei(m: MimeiFileType) {
               </label>
             </span>
             <span>
-              <input type='checkbox' v-model='downloadable' id='checkbox'>&nbsp;
-              <label for='checkbox'>Downloadable</label>&nbsp;&nbsp;&nbsp;
-              <input type='checkbox' v-model='isPrivate' id='checkbox'>&nbsp;
-              <label for='checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
+              <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>&nbsp;
+              <label for='downloadable-checkbox'>Downloadable</label>&nbsp;&nbsp;&nbsp;
+              <input type='checkbox' v-model='isPrivate' id='private-checkbox'>&nbsp;
+              <label for='private-checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
+              <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
+              <label for='noresample-checkbox' title='Preserve original video quality without resampling (larger file size)'>Preserve Quality</label>&nbsp;&nbsp;&nbsp;
               <button class='btn' type='submit'>Submit</button>
             </span>
           </div>

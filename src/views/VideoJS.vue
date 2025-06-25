@@ -10,6 +10,7 @@ const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
+const isHLS = computed(() => props.media.type === 'hls_video' || props.media.type === 'Video');
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
@@ -18,6 +19,11 @@ onMounted(() => {
   // console.log(props)
   vdiv.value.hidden = false;
 });
+
+function getVideoSource(): string {
+  // For regular videos, use the existing logic
+  return props.media.mid + '#t=3';
+}
 
 function togglePlay() {
   if (video.value.paused) {
@@ -63,7 +69,13 @@ function disableRightClick(event: MouseEvent) {
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
     >
-      <source :src="props.media.mid + '#t=3'" type="video/mp4" />
+      <!-- For HLS videos, try master.m3u8 first (multiple resolutions), then playlist.m3u8 (single resolution) -->
+      <source v-if="isHLS" :src="`${props.media.mid}/master.m3u8`" type="application/x-mpegURL" />
+      <source v-if="isHLS" :src="`${props.media.mid}/playlist.m3u8`" type="application/x-mpegURL" />
+      <!-- For regular videos -->
+      <source v-if="!isHLS" :src="getVideoSource()" type="video/mp4" />
+      <source v-if="!isHLS" :src="getVideoSource()" type="video/mp4" />
+      Your browser does not support the video tag.
     </video>
     <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 1%; position: relative;">
       {{ media.fileName }}

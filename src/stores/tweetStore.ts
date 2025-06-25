@@ -544,6 +544,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             }
         },
+        
         /**
          * Open a temp file on target host
          * @returns file's sid
@@ -555,6 +556,7 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log("Open temp file", fsid, this.loginUser)
             return fsid
         },
+
         /**
          * Uploads a tweet or comment to the system
          * @param tweet a Tweet object to be uploaded
@@ -562,20 +564,26 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a mid of the uploaded object
          */
         async uploadTweet(tweet: any, tweetId: MimeiId) {
-            console.log("Upload tweet", tweetId, tweet)
-            tweet.authorId = this.loginUser?.mid
+            var ret: any
+            const timeout = this.loginUser?.client.timeout
+            this.loginUser!.client.timeout = 0
             if (tweetId) {
-                await this.loginUser?.client.RunMApp("add_comment",
+                ret = await this.loginUser?.client.RunMApp("add_comment",
                     {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet)}
                 )
             } else {
-                let t = await this.loginUser?.client.RunMApp("add_tweet",
+                ret = await this.loginUser?.client.RunMApp("add_tweet",
                     {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
-                        hostid: this.loginUser?.hostId}
-                    )
-                console.log("New tweet mid", t)
-                return t
+                        hostid: this.loginUser?.hostId})
             }
+            this.loginUser!.client.timeout = timeout
+            console.log(`Upload ${tweetId ? 'comment' : 'tweet'}`, tweetId, ret)
+                
+            // Check if the backend returned null, indicating failure
+            if (ret === null || ret === undefined || !ret.success) {
+                throw new Error(ret.message);
+            }
+            return ret.mid
         },
         /**
          * Upload App upgrade package file.

@@ -41,6 +41,10 @@ router.post('/convert-video', async (req, res) => {
     console.log(`[INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
     console.log(`[DEBUG] File temporarily stored at: ${uploadedFile.tempFilePath}`);
 
+    // Parse the noResample parameter from form data
+    const noResample = req.body.noResample === 'true' || req.body.noResample === true;
+    console.log(`[INFO] noResample parameter: ${noResample}`);
+
     const allowedTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/mkv', 'video/wmv', 'video/flv', 'video/webm'];
     if (!allowedTypes.includes(uploadedFile.mimetype)) {
       console.error(`[ERROR] Unsupported video type: '${uploadedFile.mimetype}'.`);
@@ -57,47 +61,54 @@ router.post('/convert-video', async (req, res) => {
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[INFO] Created temporary directory: ${tempDir}`);
 
-    // --- 3. GET VIDEO DIMENSIONS ---
-    console.log('\n[STEP 3] Getting video dimensions...');
-    const getVideoInfo = () => {
-      return new Promise((resolve, reject) => {
-        execAsync(`ffprobe -v quiet -print_format json -show_format -show_streams "${uploadedFile.tempFilePath}"`, { encoding: 'utf-8' })
-          .then(result => {
-            console.log('[DEBUG] ffprobe stdout:', result.stdout);
-            console.log('[DEBUG] ffprobe stderr:', result.stderr);
-            
-            if (!result.stdout) {
-              reject(new Error('No output from ffprobe'));
-              return;
-            }
-            
-            try {
-              const metadata = JSON.parse(result.stdout);
-              const videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
-              if (!videoStream) {
-                reject(new Error('No video stream found'));
+    // --- 3. GET VIDEO DIMENSIONS (only if resampling is needed) ---
+    let videoInfo = null;
+    let isPortrait = false;
+    
+    if (!noResample) {
+      console.log('\n[STEP 3] Getting video dimensions for resampling...');
+      const getVideoInfo = () => {
+        return new Promise((resolve, reject) => {
+          execAsync(`ffprobe -v quiet -print_format json -show_format -show_streams "${uploadedFile.tempFilePath}"`, { encoding: 'utf-8' })
+            .then(result => {
+              console.log('[DEBUG] ffprobe stdout:', result.stdout);
+              console.log('[DEBUG] ffprobe stderr:', result.stderr);
+              
+              if (!result.stdout) {
+                reject(new Error('No output from ffprobe'));
                 return;
               }
-              resolve({
-                width: videoStream.width,
-                height: videoStream.height,
-                duration: metadata.format.duration ? parseFloat(metadata.format.duration) : null
-              });
-            } catch (parseError) {
-              console.error('[ERROR] Failed to parse ffprobe JSON:', parseError);
-              console.error('[ERROR] Raw stdout:', result.stdout);
-              reject(new Error(`Failed to parse video metadata: ${parseError.message}`));
-            }
-          })
-          .catch(reject);
-      });
-    };
+              
+              try {
+                const metadata = JSON.parse(result.stdout);
+                const videoStream = metadata.streams.find(stream => stream.codec_type === 'video');
+                if (!videoStream) {
+                  reject(new Error('No video stream found'));
+                  return;
+                }
+                resolve({
+                  width: videoStream.width,
+                  height: videoStream.height,
+                  duration: metadata.format.duration ? parseFloat(metadata.format.duration) : null
+                });
+              } catch (parseError) {
+                console.error('[ERROR] Failed to parse ffprobe JSON:', parseError);
+                console.error('[ERROR] Raw stdout:', result.stdout);
+                reject(new Error(`Failed to parse video metadata: ${parseError.message}`));
+              }
+            })
+            .catch(reject);
+        });
+      };
 
-    const videoInfo = await getVideoInfo();
-    console.log(`[INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
-    
-    const isPortrait = videoInfo.height > videoInfo.width;
-    console.log(`[INFO] Video orientation: ${isPortrait ? 'Portrait' : 'Landscape'}`);
+      videoInfo = await getVideoInfo();
+      console.log(`[INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
+      
+      isPortrait = videoInfo.height > videoInfo.width;
+      console.log(`[INFO] Video orientation: ${isPortrait ? 'Portrait' : 'Landscape'}`);
+    } else {
+      console.log('\n[STEP 3] Skipping video dimension analysis (noResample=true)');
+    }
 
     // --- 4. CONVERT TO HLS ---
     console.log('\n[STEP 4] Converting video to HLS format...');
@@ -107,7 +118,11 @@ router.post('/convert-video', async (req, res) => {
       return new Promise((resolve, reject) => {
         let ffmpegCommand;
         
-        if (isPortrait) {
+        if (noResample) {
+          // Direct conversion to HLS without resampling
+          console.log('[INFO] Converting video to HLS without resampling (preserving original quality)');
+          ffmpegCommand = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, 'segment%03d.ts')}" "${path.join(tempDir, 'playlist.m3u8')}"`;
+        } else if (isPortrait) {
           // Portrait: use standard portrait video widths (max 720px)
           let targetWidth;
           let bitrate;

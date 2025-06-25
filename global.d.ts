@@ -26,7 +26,7 @@ interface User {
     followingCount?: number;
     followersCount?: number;
     tweetCount?: number;
-    cloudDrivePort?: number;
+    cloudDrivePort?: number = 8010;
     hostUrl?: string;
 };
 
