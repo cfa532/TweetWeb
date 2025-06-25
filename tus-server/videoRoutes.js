@@ -146,55 +146,75 @@ router.post('/convert-video', async (req, res) => {
           console.log('[INFO] Converting video to HLS without resampling (preserving original quality)');
           ffmpegCommand = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, 'segment%03d.ts')}" "${path.join(tempDir, 'playlist.m3u8')}"`;
         } else if (isPortrait) {
-          // Portrait: use standard portrait video widths (max 720px)
-          let targetWidth;
-          let bitrate;
+          // Portrait: create two qualities (720p and 480p) regardless of original width
+          // Create directories for different qualities
+          fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
+          fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
           
-          if (videoInfo.width >= 720) {
-            // HD portrait (720p equivalent) - maximum quality
-            targetWidth = 720;
-            bitrate = '2000k';
-          } else if (videoInfo.width >= 480) {
-            // SD portrait (480p equivalent)
-            targetWidth = 480;
-            bitrate = '1200k';
-          } else {
-            // Low quality portrait (360p equivalent)
-            targetWidth = 360;
-            bitrate = '800k';
-          }
+          // Calculate dimensions for scaling while preserving aspect ratio
+          const width720 = 720;
+          const height720 = Math.round((720 * videoInfo.height) / videoInfo.width);
+          const width480 = 480;
+          const height480 = Math.round((480 * videoInfo.height) / videoInfo.width);
           
-          // Ensure width is even
-          const evenWidth = targetWidth % 2 === 0 ? targetWidth : targetWidth - 1;
-          ffmpegCommand = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -b:v ${bitrate} -vf "scale=${evenWidth}:-2" -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, 'segment%03d.ts')}" "${path.join(tempDir, 'playlist.m3u8')}"`;
+          // Ensure dimensions are even (required for H.264)
+          const evenWidth720 = width720 % 2 === 0 ? width720 : width720 - 1;
+          const evenHeight720 = height720 % 2 === 0 ? height720 : height720 - 1;
+          const evenWidth480 = width480 % 2 === 0 ? width480 : width480 - 1;
+          const evenHeight480 = height480 % 2 === 0 ? height480 : height480 - 1;
+          
+          // Convert to 720p with higher bitrate, preserving aspect ratio
+          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth720}:${evenHeight720}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 4000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
+          
+          // Convert to 480p with higher bitrate, preserving aspect ratio
+          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 2500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
+          
+          // Create master playlist with actual dimensions and updated bandwidth
+          const masterPlaylist = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=${evenWidth720}x${evenHeight720}
+720p/playlist.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=${evenWidth480}x${evenHeight480}
+480p/playlist.m3u8`;
+          
+          fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+          
+          // Execute both conversions in parallel
+          Promise.all([
+            execAsync(cmd720p),
+            execAsync(cmd480p)
+          ]).then(() => resolve()).catch(reject);
+          return;
         } else {
           // Landscape: two qualities (720 and 480 width)
           // Create directories for different qualities
           fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
           fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
           
-          // Calculate dimensions for scaling (no rotation)
+          // Calculate dimensions for scaling while preserving aspect ratio
           const width720 = 720;
           const height720 = Math.round((720 * videoInfo.height) / videoInfo.width);
           const width480 = 480;
           const height480 = Math.round((480 * videoInfo.height) / videoInfo.width);
           
-          // Ensure heights are even
+          // Ensure dimensions are even (required for H.264)
+          const evenWidth720 = width720 % 2 === 0 ? width720 : width720 - 1;
           const evenHeight720 = height720 % 2 === 0 ? height720 : height720 - 1;
+          const evenWidth480 = width480 % 2 === 0 ? width480 : width480 - 1;
           const evenHeight480 = height480 % 2 === 0 ? height480 : height480 - 1;
           
-          // Convert to 720p with higher bitrate (no rotation)
-          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${width720}:${evenHeight720}" -b:v 2500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
+          // Convert to 720p with higher bitrate, preserving aspect ratio
+          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth720}:${evenHeight720}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 5000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
           
-          // Convert to 480p with higher bitrate (no rotation)
-          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${width480}:${evenHeight480}" -b:v 1200k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
+          // Convert to 480p with higher bitrate, preserving aspect ratio
+          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
           
           // Create master playlist with actual dimensions and updated bandwidth
           const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=${width720}x${evenHeight720}
+#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=${evenWidth720}x${evenHeight720}
 720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=${width480}x${evenHeight480}
+#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=${evenWidth480}x${evenHeight480}
 480p/playlist.m3u8`;
           
           fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);

@@ -264,8 +264,8 @@ export async function uploadVideo(
       reject(new Error('Upload was aborted'));
     });
     
-    // Set timeout for large files (5 minutes)
-    xhr.timeout = 5 * 60 * 1000;
+    // Set timeout for large files (unlimited)
+    xhr.timeout = 0;
     xhr.addEventListener('timeout', () => {
       reject(new Error('Upload timeout'));
     });
