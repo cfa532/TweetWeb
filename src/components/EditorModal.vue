@@ -72,7 +72,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         
       } else if (fileType === 'Video') {
         // Upload video through new endpoint
-        uploadProgress[i] = 25; // Show initial progress
+        uploadProgress[i] = 5; // Show initial progress
         
         // Validate required parameters
         if (!author.providerIp) {

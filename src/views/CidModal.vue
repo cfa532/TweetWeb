@@ -17,9 +17,9 @@ const selectFile = () => {
         fileInput.value.click();
     }
 };
-function getMedaiType(t: string) {
+function getMediaType(t: string) {
   if (t.startsWith('image/')) return 'Image'
-  if (t.startsWith('video/')) return 'Video'
+  if (t.startsWith('video/')) return 'hls_video'
   if (t.startsWith('audio/')) return 'Audio'
   return 'Uknown'
 }
@@ -61,7 +61,7 @@ const handleFileSelect = async (event: Event) => {
 
         const mimeiFile: MimeiFileType = {
             mid: '',
-            type: getMedaiType(file.type),
+            type: getMediaType(file.type),
             size: file.size,
             fileName: file.name,
             timestamp: Date.now(),

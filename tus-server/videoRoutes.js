@@ -167,14 +167,14 @@ router.post('/convert-video', async (req, res) => {
           const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth720}:${evenHeight720}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 4000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
           
           // Convert to 480p with higher bitrate, preserving aspect ratio
-          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 2500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
+          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 2000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
           
           // Create master playlist with actual dimensions and updated bandwidth
           const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=${evenWidth720}x${evenHeight720}
 720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=${evenWidth480}x${evenHeight480}
+#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=${evenWidth480}x${evenHeight480}
 480p/playlist.m3u8`;
           
           fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
@@ -207,14 +207,14 @@ router.post('/convert-video', async (req, res) => {
           const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth720}:${evenHeight720}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 5000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
           
           // Convert to 480p with higher bitrate, preserving aspect ratio
-          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
+          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 2500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
           
           // Create master playlist with actual dimensions and updated bandwidth
           const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=${evenWidth720}x${evenHeight720}
 720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=${evenWidth480}x${evenHeight480}
+#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=${evenWidth480}x${evenHeight480}
 480p/playlist.m3u8`;
           
           fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);

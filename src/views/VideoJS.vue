@@ -36,34 +36,92 @@ function setupHLS() {
   
   // Check if HLS is supported natively
   if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
-    // Use native HLS support
-    videoElement.src = getHLSSource();
+    // Use native HLS support - try master playlist first, then fallback to single playlist
+    videoElement.src = getHLSMasterSource();
+    
+    // Add fallback for native HLS
+    videoElement.addEventListener('error', () => {
+      console.log('Master playlist failed, trying single playlist...');
+      videoElement.src = getHLSSource();
+    });
   } else if (Hls.isSupported()) {
-    // Use HLS.js
+    // Use HLS.js with auto quality selection and adaptive bitrate
     hls = new Hls({
       enableWorker: true,
       lowLatencyMode: true,
+      // Auto quality selection settings
+      abrEwmaDefaultEstimate: 500000, // 500kbps default bandwidth estimate
+      abrBandWidthFactor: 0.95, // Conservative bandwidth factor
+      abrBandWidthUpFactor: 0.7, // More conservative for bandwidth increases
+      abrMaxWithRealBitrate: true, // Use real bitrate for ABR decisions
+      // Quality selection preferences
+      startLevel: -1, // Auto-select starting quality level
+      capLevelToPlayerSize: true, // Cap quality to player size
+      // Buffer settings for smooth playback
+      maxBufferLength: 30, // Max buffer length in seconds
+      maxMaxBufferLength: 600, // Absolute max buffer length
+      maxBufferSize: 60 * 1000 * 1000, // 60MB max buffer size
+      maxBufferHole: 0.5, // Max buffer hole in seconds
     });
     
-    hls.loadSource(getHLSSource());
+    // Try master playlist first
+    hls.loadSource(getHLSMasterSource());
     hls.attachMedia(videoElement);
     
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      console.log('HLS manifest parsed successfully');
+      console.log('Available quality levels:', hls?.levels.length);
+      console.log('Auto-selected starting level:', hls?.currentLevel);
       if (props.autoplay) {
         videoElement.play();
       }
     });
     
+    // Monitor quality level changes
+    hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+      console.log('Quality level switched to:', data.level, 'bitrate:', hls?.levels[data.level]?.bitrate);
+    });
+    
     hls.on(Hls.Events.ERROR, (event, data) => {
+      console.error('HLS error:', data);
+      
+      // If master playlist fails, try single playlist
+      if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR && 
+          data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+        console.log('Master playlist failed, trying single playlist...');
+        hls?.destroy();
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          // Auto quality selection settings for fallback
+          abrEwmaDefaultEstimate: 500000,
+          abrBandWidthFactor: 0.95,
+          abrBandWidthUpFactor: 0.7,
+          abrMaxWithRealBitrate: true,
+          startLevel: -1,
+          capLevelToPlayerSize: true,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 600,
+          maxBufferSize: 60 * 1000 * 1000,
+          maxBufferHole: 0.5,
+        });
+        hls.loadSource(getHLSSource());
+        hls.attachMedia(videoElement);
+        return;
+      }
+      
       if (data.fatal) {
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
+            console.log('Network error, trying to recover...');
             hls?.startLoad();
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
+            console.log('Media error, trying to recover...');
             hls?.recoverMediaError();
             break;
           default:
+            console.log('Fatal error, destroying HLS instance');
             hls?.destroy();
             break;
         }
