@@ -347,7 +347,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
             let providerIp = await this.getProviderIp(userId)
             if (!providerIp) {
-                console.error("No provider found for user", userId)
+                console.warn("No provider found for user", userId)
                 return
             }
             let providerClient = this.lapi.getClient(providerIp)
