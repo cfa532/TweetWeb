@@ -21,12 +21,106 @@ const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "Getnodeip", "SwarmL
   "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight"
 ];
 
+// Helper function to safely escape file paths for shell commands
+function escapeShellArg(arg) {
+  return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+}
+
+// Helper function to ensure dimensions are even (required for H.264)
+function ensureEvenDimensions(width, height) {
+  return {
+    width: width % 2 === 0 ? width : width - 1,
+    height: height % 2 === 0 ? height : height - 1
+  };
+}
+
+// Helper function to cleanup old temporary files and directories
+function cleanupOldTempFiles() {
+  try {
+    const tempDir = os.tmpdir();
+    const files = fs.readdirSync(tempDir);
+    
+    // Find and remove old hls-convert directories (older than 1 hour)
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    
+    files.forEach(file => {
+      if (file.startsWith('hls-convert-')) {
+        const filePath = path.join(tempDir, file);
+        const stats = fs.statSync(filePath);
+        
+        if (stats.isDirectory() && stats.mtime.getTime() < oneHourAgo) {
+          try {
+            fs.rmSync(filePath, { recursive: true, force: true });
+            console.log(`[CLEANUP] Removed old temporary directory: ${filePath}`);
+          } catch (cleanupError) {
+            console.error(`[ERROR] Failed to cleanup old directory ${filePath}:`, cleanupError);
+          }
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[ERROR] Failed to cleanup old temporary files:', error);
+  }
+}
+
+// Helper function to create HLS conversion commands
+function createHLSConversionCommands(inputPath, tempDir, videoInfo, isPortrait) {
+  const commands = [];
+  
+  // Create directories for different qualities
+  fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
+  
+  // Calculate dimensions for scaling while preserving aspect ratio
+  const width720 = 720;
+  const height720 = Math.round((720 * videoInfo.height) / videoInfo.width);
+  const width480 = 480;
+  const height480 = Math.round((480 * videoInfo.height) / videoInfo.width);
+  
+  // Ensure dimensions are even
+  const dim720 = ensureEvenDimensions(width720, height720);
+  const dim480 = ensureEvenDimensions(width480, height480);
+  
+  // Set bitrates based on orientation
+  const bitrate720 = isPortrait ? 4000 : 5000;
+  const bitrate480 = isPortrait ? 2000 : 2500;
+  
+  // Create ffmpeg commands with proper escaping
+  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v ${bitrate720}k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  
+  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v ${bitrate480}k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  
+  commands.push(cmd720p, cmd480p);
+  
+  // Create master playlist
+  const bandwidth720 = bitrate720 * 1000;
+  const bandwidth480 = bitrate480 * 1000;
+  
+  const masterPlaylist = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth720},RESOLUTION=${dim720.width}x${dim720.height}
+720p/playlist.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth480},RESOLUTION=${dim480.width}x${dim480.height}
+480p/playlist.m3u8`;
+  
+  fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+  
+  return commands;
+}
+
 // Video conversion endpoint (no authentication required)
 router.post('/convert-video', async (req, res) => {
   const routeStartTime = Date.now();
   console.log(`\n[${new Date().toISOString()}] --- /convert-video route processing started ---`);
+  
+  let tempDir = null;
+  let uploadedFile = null;
 
   try {
+    // Cleanup old temporary files before starting new conversion
+    console.log('[CLEANUP] Cleaning up old temporary files...');
+    cleanupOldTempFiles();
+
     // --- 1. VALIDATE UPLOAD ---
     console.log('[STEP 1] Validating uploaded video file...');
     if (!req.files || !req.files.videoFile) {
@@ -37,7 +131,7 @@ router.post('/convert-video', async (req, res) => {
       });
     }
 
-    const uploadedFile = req.files.videoFile;
+    uploadedFile = req.files.videoFile;
     console.log(`[INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
     console.log(`[DEBUG] File temporarily stored at: ${uploadedFile.tempFilePath}`);
 
@@ -80,7 +174,7 @@ router.post('/convert-video', async (req, res) => {
 
     // --- 2. CREATE TEMPORARY DIRECTORY FOR HLS OUTPUT ---
     console.log('\n[STEP 2] Creating temporary directory for HLS output...');
-    const tempDir = path.join(os.tmpdir(), `hls-convert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    tempDir = path.join(os.tmpdir(), `hls-convert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[INFO] Created temporary directory: ${tempDir}`);
 
@@ -92,7 +186,9 @@ router.post('/convert-video', async (req, res) => {
       console.log('\n[STEP 3] Getting video dimensions for resampling...');
       const getVideoInfo = () => {
         return new Promise((resolve, reject) => {
-          execAsync(`ffprobe -v quiet -print_format json -show_format -show_streams "${uploadedFile.tempFilePath}"`, { encoding: 'utf-8' })
+          const ffprobeCommand = `ffprobe -v quiet -print_format json -show_format -show_streams ${escapeShellArg(uploadedFile.tempFilePath)}`;
+          
+          execAsync(ffprobeCommand, { encoding: 'utf-8', timeout: 30000 }) // 30 second timeout for ffprobe
             .then(result => {
               console.log('[DEBUG] ffprobe stdout:', result.stdout);
               console.log('[DEBUG] ffprobe stderr:', result.stderr);
@@ -109,6 +205,13 @@ router.post('/convert-video', async (req, res) => {
                   reject(new Error('No video stream found'));
                   return;
                 }
+                
+                // Validate dimensions
+                if (!videoStream.width || !videoStream.height || videoStream.width <= 0 || videoStream.height <= 0) {
+                  reject(new Error('Invalid video dimensions'));
+                  return;
+                }
+                
                 resolve({
                   width: videoStream.width,
                   height: videoStream.height,
@@ -144,98 +247,31 @@ router.post('/convert-video', async (req, res) => {
         if (noResample) {
           // Direct conversion to HLS without resampling
           console.log('[INFO] Converting video to HLS without resampling (preserving original quality)');
-          ffmpegCommand = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, 'segment%03d.ts')}" "${path.join(tempDir, 'playlist.m3u8')}"`;
-        } else if (isPortrait) {
-          // Portrait: create two qualities (720p and 480p) regardless of original width
-          // Create directories for different qualities
-          fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
-          fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
+          ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
           
-          // Calculate dimensions for scaling while preserving aspect ratio
-          const width720 = 720;
-          const height720 = Math.round((720 * videoInfo.height) / videoInfo.width);
-          const width480 = 480;
-          const height480 = Math.round((480 * videoInfo.height) / videoInfo.width);
-          
-          // Ensure dimensions are even (required for H.264)
-          const evenWidth720 = width720 % 2 === 0 ? width720 : width720 - 1;
-          const evenHeight720 = height720 % 2 === 0 ? height720 : height720 - 1;
-          const evenWidth480 = width480 % 2 === 0 ? width480 : width480 - 1;
-          const evenHeight480 = height480 % 2 === 0 ? height480 : height480 - 1;
-          
-          // Convert to 720p with higher bitrate, preserving aspect ratio
-          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth720}:${evenHeight720}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 4000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
-          
-          // Convert to 480p with higher bitrate, preserving aspect ratio
-          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 2000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
-          
-          // Create master playlist with actual dimensions and updated bandwidth
-          const masterPlaylist = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=${evenWidth720}x${evenHeight720}
-720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=${evenWidth480}x${evenHeight480}
-480p/playlist.m3u8`;
-          
-          fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
-          
-          // Execute both conversions in parallel
-          Promise.all([
-            execAsync(cmd720p),
-            execAsync(cmd480p)
-          ]).then(() => resolve()).catch(reject);
-          return;
+          execAsync(ffmpegCommand, { timeout: 24 * 60 * 60 * 1000 }) // 24 hour timeout for large files
+            .then(() => {
+              console.log('[SUCCESS] HLS conversion completed');
+              resolve();
+            })
+            .catch((err) => {
+              console.error('[ERROR] HLS conversion failed:', err);
+              reject(err);
+            });
         } else {
-          // Landscape: two qualities (720 and 480 width)
-          // Create directories for different qualities
-          fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
-          fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
+          // Multi-quality conversion
+          console.log('[INFO] Converting video to HLS with multiple qualities');
+          const commands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, isPortrait);
           
-          // Calculate dimensions for scaling while preserving aspect ratio
-          const width720 = 720;
-          const height720 = Math.round((720 * videoInfo.height) / videoInfo.width);
-          const width480 = 480;
-          const height480 = Math.round((480 * videoInfo.height) / videoInfo.width);
-          
-          // Ensure dimensions are even (required for H.264)
-          const evenWidth720 = width720 % 2 === 0 ? width720 : width720 - 1;
-          const evenHeight720 = height720 % 2 === 0 ? height720 : height720 - 1;
-          const evenWidth480 = width480 % 2 === 0 ? width480 : width480 - 1;
-          const evenHeight480 = height480 % 2 === 0 ? height480 : height480 - 1;
-          
-          // Convert to 720p with higher bitrate, preserving aspect ratio
-          const cmd720p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth720}:${evenHeight720}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 5000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '720p/segment%03d.ts')}" "${path.join(tempDir, '720p/playlist.m3u8')}"`;
-          
-          // Convert to 480p with higher bitrate, preserving aspect ratio
-          const cmd480p = `ffmpeg -i "${uploadedFile.tempFilePath}" -c:v libx264 -c:a aac -vf "scale=${evenWidth480}:${evenHeight480}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v 2500k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename "${path.join(tempDir, '480p/segment%03d.ts')}" "${path.join(tempDir, '480p/playlist.m3u8')}"`;
-          
-          // Create master playlist with actual dimensions and updated bandwidth
-          const masterPlaylist = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=${evenWidth720}x${evenHeight720}
-720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=${evenWidth480}x${evenHeight480}
-480p/playlist.m3u8`;
-          
-          fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
-          
-          // Execute both conversions in parallel
+          // Execute both conversions in parallel with 24 hour timeout
           Promise.all([
-            execAsync(cmd720p),
-            execAsync(cmd480p)
-          ]).then(() => resolve()).catch(reject);
-          return;
-        }
-        
-        execAsync(ffmpegCommand)
-          .then(() => {
-            console.log('[SUCCESS] HLS conversion completed');
+            execAsync(commands[0], { timeout: 24 * 60 * 60 * 1000 }), // 24 hour timeout
+            execAsync(commands[1], { timeout: 24 * 60 * 60 * 1000 })
+          ]).then(() => {
+            console.log('[SUCCESS] Multi-quality HLS conversion completed');
             resolve();
-          })
-          .catch((err) => {
-            console.error('[ERROR] HLS conversion failed:', err);
-            reject(err);
-          });
+          }).catch(reject);
+        }
       });
     };
 
@@ -287,7 +323,8 @@ router.post('/convert-video', async (req, res) => {
       res.json({
         success: true,
         message: 'Video converted to HLS and added to IPFS successfully',
-        cid: cid
+        cid: cid,
+        tempDir: tempDir // Return temp directory for potential reuse
       });
 
     } catch (leitherError) {
@@ -297,30 +334,33 @@ router.post('/convert-video', async (req, res) => {
       res.json({
         success: false,
         message: 'Video converted to HLS successfully, but Leither service failed',
-        error: leitherError.message
+        error: leitherError.message,
+        tempDir: tempDir // Return temp directory even on failure for potential reuse
       });
     }
 
   } catch (error) {
     console.error('[FATAL] An unexpected error occurred in /convert-video route:', error);
     
-    // tempDir might not be defined if error is early, so check for it.
-    if (typeof tempDir !== 'undefined' && fs.existsSync(tempDir)) {
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-        console.log(`[CLEANUP] Cleaned up temporary directory: ${tempDir}`);
-      } catch (cleanupError) {
-        console.error('[ERROR] Failed to cleanup temporary directory:', cleanupError);
-      }
-    }
-
     res.status(500).json({
       success: false,
       message: 'Failed to process video due to a server error.',
-      error: error.message
+      error: error.message,
+      tempDir: tempDir // Return temp directory if available
     });
   } finally {
+    // Only cleanup the uploaded file, keep the converted HLS files for potential reuse
+    if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
+      try {
+        fs.unlinkSync(uploadedFile.tempFilePath);
+        console.log(`[CLEANUP] Removed temporary uploaded file: ${uploadedFile.tempFilePath}`);
+      } catch (cleanupError) {
+        console.error('[ERROR] Failed to cleanup uploaded file:', cleanupError);
+      }
+    }
+    
     console.log(`[INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
+    console.log(`[INFO] HLS files preserved in: ${tempDir}`);
     console.log(`[${new Date().toISOString()}] --- /convert-video route processing finished ---\n`);
   }
 });
