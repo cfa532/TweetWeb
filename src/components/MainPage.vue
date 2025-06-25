@@ -8,7 +8,7 @@ const isLoading = ref(false);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
 const pageNumber = ref(0);
-const pageSize = 30; // Using the same TWEET_COUNT constant from tweetStore
+const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {

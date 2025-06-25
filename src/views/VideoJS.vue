@@ -16,6 +16,14 @@ const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
 
+// Detect if this video is being displayed in a tweet list context
+const isInTweetList = computed(() => {
+  // Check if we're in a tweet list by looking for tweet list specific elements
+  const tweetContainer = vdiv.value?.closest('.tweet-container');
+  const isInList = tweetContainer && !tweetContainer.closest('.card-body')?.closest('.comment');
+  return isInList;
+});
+
 let hls: Hls | null = null;
 
 onMounted(() => {
@@ -45,8 +53,26 @@ function setupHLS() {
       videoElement.src = getHLSSource();
     });
   } else if (Hls.isSupported()) {
-    // Use HLS.js with auto quality selection and adaptive bitrate
-    hls = new Hls({
+    // Configure HLS.js based on context (list vs detail)
+    const hlsConfig = isInTweetList.value ? {
+      // Low quality settings for tweet list
+      enableWorker: true,
+      lowLatencyMode: false, // Disable low latency for list view
+      // Conservative bandwidth settings for list view
+      abrEwmaDefaultEstimate: 250000, // 250kbps default bandwidth estimate (lower)
+      abrBandWidthFactor: 0.8, // More conservative bandwidth factor
+      abrBandWidthUpFactor: 0.5, // Very conservative for bandwidth increases
+      abrMaxWithRealBitrate: true,
+      // Force lower quality for list view
+      startLevel: 1, // Start with second quality level (usually 480p)
+      capLevelToPlayerSize: true,
+      // Smaller buffer for list view
+      maxBufferLength: 15, // Reduced buffer length
+      maxMaxBufferLength: 300, // Reduced max buffer
+      maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer size (smaller)
+      maxBufferHole: 0.5,
+    } : {
+      // High quality settings for detail view
       enableWorker: true,
       lowLatencyMode: true,
       // Auto quality selection settings
@@ -62,7 +88,9 @@ function setupHLS() {
       maxMaxBufferLength: 600, // Absolute max buffer length
       maxBufferSize: 60 * 1000 * 1000, // 60MB max buffer size
       maxBufferHole: 0.5, // Max buffer hole in seconds
-    });
+    };
+    
+    hls = new Hls(hlsConfig);
     
     // Try master playlist first
     hls.loadSource(getHLSMasterSource());
@@ -72,6 +100,7 @@ function setupHLS() {
       console.log('HLS manifest parsed successfully');
       console.log('Available quality levels:', hls?.levels.length);
       console.log('Auto-selected starting level:', hls?.currentLevel);
+      console.log('Context:', isInTweetList.value ? 'Tweet List (Low Quality)' : 'Detail View (High Quality)');
       if (props.autoplay) {
         videoElement.play();
       }
@@ -90,21 +119,7 @@ function setupHLS() {
           data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
         console.log('Master playlist failed, trying single playlist...');
         hls?.destroy();
-        hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: true,
-          // Auto quality selection settings for fallback
-          abrEwmaDefaultEstimate: 500000,
-          abrBandWidthFactor: 0.95,
-          abrBandWidthUpFactor: 0.7,
-          abrMaxWithRealBitrate: true,
-          startLevel: -1,
-          capLevelToPlayerSize: true,
-          maxBufferLength: 30,
-          maxMaxBufferLength: 600,
-          maxBufferSize: 60 * 1000 * 1000,
-          maxBufferHole: 0.5,
-        });
+        hls = new Hls(hlsConfig); // Use same config for fallback
         hls.loadSource(getHLSSource());
         hls.attachMedia(videoElement);
         return;

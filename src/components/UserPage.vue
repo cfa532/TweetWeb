@@ -11,7 +11,7 @@ const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
 const authorId = computed(() => route.params.authorId as MimeiId);
 const pinnedTweets = ref<Tweet[]>([]);
-const pageSize = 30; // Using the same page size as MainPage
+const pageSize = 10; // Using the same page size as MainPage
 const initialLoad = ref(true);
 
 onMounted(async () => {
