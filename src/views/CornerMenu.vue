@@ -19,7 +19,7 @@ function showMenu() {
     // toggle right menu on and off
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
-            if (!shareMenu.value.contains(e.target as Node)) {
+            if (shareMenu.value && !shareMenu.value.contains(e.target as Node)) {
                 shareMenu.value.hidden = true
                 setTimeout(()=>{
                     window.onclick = null
