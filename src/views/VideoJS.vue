@@ -156,16 +156,16 @@ function setupHLS() {
     });
     
     // Monitor quality level changes
-    hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
-      console.log('Quality level switched to:', data.level, 'bitrate:', hls?.levels[data.level]?.bitrate);
-    });
+    // hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+    //   console.log('Quality level switched to:', data.level, 'bitrate:', hls?.levels[data.level]?.bitrate);
+    // });
     
     // Monitor buffer events for hardware acceleration
-    hls.on(Hls.Events.BUFFER_APPENDING, () => {
-      if (supportsHardwareAcceleration.value) {
-        console.log('[HARDWARE] Buffer appending with hardware acceleration');
-      }
-    });
+    // hls.on(Hls.Events.BUFFER_APPENDING, () => {
+    //   if (supportsHardwareAcceleration.value) {
+    //     console.log('[HARDWARE] Buffer appending with hardware acceleration');
+    //   }
+    // });
     
     hls.on(Hls.Events.ERROR, (event, data) => {
       console.error('HLS error:', data);
