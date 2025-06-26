@@ -121,7 +121,7 @@ function createLeitherClient(port, retryCount = 0) {
       const client = hprose.Client.create(`ws://127.0.0.1:${port}/ws/`, ayApi);
       
       // Set connection timeout
-      client.timeout = 30000; // 30 seconds for connection
+      client.timeout = 3600000*4; // 4 hours for connection
       
       // Add connection event handlers
       if (client.connection) {
