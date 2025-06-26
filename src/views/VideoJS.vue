@@ -11,6 +11,7 @@ const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
+const autoplayBlocked = ref(false);
 const isHLS = computed(() => props.media.type === 'hls_video' || props.media.type === 'Video');
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
@@ -150,8 +151,10 @@ function setupHLS() {
       console.log('Auto-selected starting level:', hls?.currentLevel);
       console.log('Context:', isInTweetList.value ? 'Tweet List (Low Quality)' : 'Detail View (High Quality)');
       console.log('Hardware acceleration:', supportsHardwareAcceleration.value ? 'Enabled' : 'Disabled');
+      
+      // Handle autoplay with proper error handling
       if (props.autoplay) {
-        videoElement.play();
+        handleAutoplay(videoElement);
       }
     });
     
@@ -168,7 +171,7 @@ function setupHLS() {
     // });
     
     hls.on(Hls.Events.ERROR, (event, data) => {
-      console.error('HLS error:', data);
+      // console.error('HLS error:', data);
       
       // If master playlist fails, try single playlist
       if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR && 
@@ -198,6 +201,71 @@ function setupHLS() {
         }
       }
     });
+  }
+}
+
+// Handle autoplay with proper error handling and user interaction detection
+async function handleAutoplay(videoElement: HTMLVideoElement) {
+  try {
+    // Check if autoplay is allowed
+    const canAutoplay = await checkAutoplaySupport(videoElement);
+    
+    if (canAutoplay) {
+      console.log('[AUTOPLAY] Autoplay is supported, starting playback');
+      await videoElement.play();
+      isPlaying.value = true;
+    } else {
+      console.log('[AUTOPLAY] Autoplay blocked by browser policy');
+      // Show play button or other UI indication that user needs to interact
+      showAutoplayBlockedUI();
+    }
+  } catch (error) {
+    console.warn('[AUTOPLAY] Autoplay failed:', error);
+    // Show play button or other UI indication
+    showAutoplayBlockedUI();
+  }
+}
+
+// Check if autoplay is supported by the browser
+async function checkAutoplaySupport(videoElement: HTMLVideoElement): Promise<boolean> {
+  try {
+    // Try to play a silent video to test autoplay support
+    videoElement.muted = true;
+    videoElement.volume = 0;
+    
+    // Create a promise that resolves when play() succeeds or rejects
+    const playPromise = videoElement.play();
+    
+    if (playPromise !== undefined) {
+      await playPromise;
+      // If we get here, autoplay worked
+      videoElement.pause();
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.log('[AUTOPLAY] Autoplay test failed:', error);
+    return false;
+  }
+}
+
+// Show UI indication that autoplay is blocked
+function showAutoplayBlockedUI() {
+  console.log('[AUTOPLAY] Showing autoplay blocked UI');
+  autoplayBlocked.value = true;
+}
+
+// Handle manual play when autoplay is blocked
+async function handleManualPlay() {
+  try {
+    if (video.value) {
+      await video.value.play();
+      isPlaying.value = true;
+      autoplayBlocked.value = false;
+      console.log('[AUTOPLAY] Manual play successful');
+    }
+  } catch (error) {
+    console.error('[AUTOPLAY] Manual play failed:', error);
   }
 }
 
@@ -250,6 +318,17 @@ function disableRightClick(event: MouseEvent) {
       </button>
       <!-- Add more custom control buttons as needed -->
     </div>
+    
+    <!-- Autoplay blocked overlay -->
+    <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
+      <div class="autoplay-blocked-content">
+        <div class="play-button">
+          <font-awesome-icon icon="play" />
+        </div>
+        <p class="autoplay-message">Click to play video</p>
+      </div>
+    </div>
+    
     <video
       ref="video"
       class="video"
@@ -326,5 +405,48 @@ function disableRightClick(event: MouseEvent) {
 
 .custom-controls button:hover {
   text-decoration: underline;
+}
+
+/* Autoplay blocked overlay styles */
+.autoplay-blocked-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.autoplay-blocked-overlay:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.autoplay-blocked-content {
+  text-align: center;
+  color: white;
+}
+
+.play-button {
+  font-size: 48px;
+  margin-bottom: 10px;
+  opacity: 0.9;
+  transition: opacity 0.3s ease;
+}
+
+.autoplay-blocked-overlay:hover .play-button {
+  opacity: 1;
+}
+
+.autoplay-message {
+  font-size: 14px;
+  margin: 0;
+  opacity: 0.8;
+  font-weight: 500;
 }
 </style>
