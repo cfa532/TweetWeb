@@ -453,21 +453,127 @@ router.post('/convert-video', async (req, res) => {
       console.timeEnd('leither-port-detection');
       console.log(`[INFO] Detected Leither service on port: ${leitherPort}`);
 
-      const client = hprose.Client.create(`ws://127.0.0.1:${leitherPort}/ws/`, ayApi);
+      // Enhanced Leither client creation with better error handling
+      const createLeitherClient = (port, retryCount = 0) => {
+        return new Promise((resolve, reject) => {
+          const maxRetries = 3;
+          const retryDelay = 2000; // 2 seconds
+          
+          try {
+            console.log(`[LEITHER] Creating client connection to port ${port} (attempt ${retryCount + 1}/${maxRetries + 1})`);
+            
+            const client = hprose.Client.create(`ws://127.0.0.1:${port}/ws/`, ayApi);
+            
+            // Set connection timeout
+            client.timeout = 30000; // 30 seconds for connection
+            
+            // Add connection event handlers
+            if (client.connection) {
+              client.connection.on('open', () => {
+                console.log(`[LEITHER] WebSocket connection established to port ${port}`);
+                resolve(client);
+              });
+              
+              client.connection.on('close', (code, reason) => {
+                console.log(`[LEITHER] WebSocket connection closed: code=${code}, reason=${reason}`);
+                if (retryCount < maxRetries) {
+                  console.log(`[LEITHER] Retrying connection in ${retryDelay}ms...`);
+                  setTimeout(() => {
+                    createLeitherClient(port, retryCount + 1)
+                      .then(resolve)
+                      .catch(reject);
+                  }, retryDelay);
+                } else {
+                  reject(new Error(`Failed to establish WebSocket connection after ${maxRetries + 1} attempts. Last error: code=${code}, reason=${reason}`));
+                }
+              });
+              
+              client.connection.on('error', (error) => {
+                console.error(`[LEITHER] WebSocket connection error:`, error);
+                if (retryCount < maxRetries) {
+                  console.log(`[LEITHER] Retrying connection in ${retryDelay}ms...`);
+                  setTimeout(() => {
+                    createLeitherClient(port, retryCount + 1)
+                      .then(resolve)
+                      .catch(reject);
+                  }, retryDelay);
+                } else {
+                  reject(new Error(`WebSocket connection failed after ${maxRetries + 1} attempts: ${error.message}`));
+                }
+              });
+            } else {
+              // If no connection events available, resolve immediately
+              resolve(client);
+            }
+            
+          } catch (error) {
+            console.error(`[LEITHER] Error creating client:`, error);
+            if (retryCount < maxRetries) {
+              console.log(`[LEITHER] Retrying client creation in ${retryDelay}ms...`);
+              setTimeout(() => {
+                createLeitherClient(port, retryCount + 1)
+                  .then(resolve)
+                  .catch(reject);
+              }, retryDelay);
+            } else {
+              reject(error);
+            }
+          }
+        });
+      };
+
+      const client = await createLeitherClient(leitherPort);
       
       console.time('leither-get-ppt');
       console.log('[INFO] Getting PPT from Leither service...');
       console.log(`[DEBUG] Calling Getvar("", "ver")...`);
-      const leitherVersion = await client.Getvar("", "ver");
+      
+      // Add timeout and retry logic for Leither operations
+      const executeLeitherOperation = async (operation, operationName, maxRetries = 3) => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            console.log(`[LEITHER] ${operationName} (attempt ${attempt}/${maxRetries})`);
+            const result = await Promise.race([
+              operation(),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error(`${operationName} timeout after 30 seconds`)), 30000)
+              )
+            ]);
+            console.log(`[LEITHER] ${operationName} completed successfully`);
+            return result;
+          } catch (error) {
+            console.error(`[LEITHER] ${operationName} attempt ${attempt} failed:`, error.message);
+            if (attempt === maxRetries) {
+              throw error;
+            }
+            // Wait before retry (exponential backoff)
+            const delay = Math.pow(2, attempt) * 1000;
+            console.log(`[LEITHER] Retrying ${operationName} in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      };
+      
+      const leitherVersion = await executeLeitherOperation(
+        () => client.Getvar("", "ver"),
+        "Getvar version"
+      );
       console.log(`[DEBUG] Leither version: ${leitherVersion}`);
-      const ppt = await client.GetVarByContext("", "context_ppt", []);
+      
+      const ppt = await executeLeitherOperation(
+        () => client.GetVarByContext("", "context_ppt", []),
+        "GetVarByContext PPT"
+      );
       console.timeEnd('leither-get-ppt');
       if (!ppt) throw new Error("Failed to get PPT from Leither service.");
       console.log('[SUCCESS] PPT received.');
 
       console.time('leither-login');
       console.log('[INFO] Logging in to Leither service...');
-      const api = await client.Login(ppt);
+      const api = await executeLeitherOperation(
+        () => client.Login(ppt),
+        "Login"
+      );
       console.timeEnd('leither-login');
       if (!api || !api.sid) throw new Error("Login to Leither service failed.");
       console.log('[SUCCESS] Login successful. SID:', api.sid);
@@ -476,8 +582,12 @@ router.post('/convert-video', async (req, res) => {
       console.log(`[INFO] Adding HLS content to IPFS from path: '${tempDir}'`);
 
       const defaultTimeout = client.timeout;
-      client.timeout = 0;
-      const cid = await client.IpfsAdd(api.sid, tempDir);
+      client.timeout = 0; // No timeout for IPFS add operation
+      const cid = await executeLeitherOperation(
+        () => client.IpfsAdd(api.sid, tempDir),
+        "IpfsAdd",
+        2 // Fewer retries for IPFS add as it's a long operation
+      );
       client.timeout = defaultTimeout;
       console.timeEnd('leither-ipfs-add');
       console.log('[SUCCESS] IPFS CID received:', cid);
@@ -495,9 +605,19 @@ router.post('/convert-video', async (req, res) => {
       console.error('[FATAL] Leither service error:', leitherError);
       console.timeEnd('leither-total-time');
       
+      // Provide more detailed error information
+      let errorMessage = 'Video converted to HLS successfully, but Leither service failed';
+      if (leitherError.message.includes('1006')) {
+        errorMessage = 'Video converted to HLS successfully, but Leither service connection was lost (Error 1006). Please check if Leither service is running.';
+      } else if (leitherError.message.includes('timeout')) {
+        errorMessage = 'Video converted to HLS successfully, but Leither service operation timed out. The service may be overloaded.';
+      } else if (leitherError.message.includes('WebSocket')) {
+        errorMessage = 'Video converted to HLS successfully, but Leither service WebSocket connection failed. Please check network connectivity.';
+      }
+      
       res.json({
         success: false,
-        message: 'Video converted to HLS successfully, but Leither service failed',
+        message: errorMessage,
         error: leitherError.message,
         tempDir: tempDir // Return temp directory even on failure for potential reuse
       });
