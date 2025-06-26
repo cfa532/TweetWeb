@@ -24,6 +24,36 @@ const isInTweetList = computed(() => {
   return isInList;
 });
 
+// Hardware acceleration detection
+const supportsHardwareAcceleration = computed(() => {
+  if (!video.value) return false;
+  
+  // Check for hardware acceleration support
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  
+  if (!gl) return false;
+  
+  // Check for hardware video decoding support
+  const videoElement = video.value;
+  
+  // Test hardware acceleration by checking if the browser supports it
+  const testVideo = document.createElement('video');
+  testVideo.style.display = 'none';
+  document.body.appendChild(testVideo);
+  
+  // Check for hardware acceleration hints
+  const hasHardwareSupport = (
+    'mediaCapabilities' in navigator ||
+    'getVideoPlaybackQuality' in videoElement ||
+    'webkitVideoPlaybackQuality' in videoElement
+  );
+  
+  document.body.removeChild(testVideo);
+  
+  return hasHardwareSupport;
+});
+
 let hls: Hls | null = null;
 
 onMounted(() => {
@@ -42,6 +72,13 @@ function setupHLS() {
   
   const videoElement = video.value;
   
+  // Enable hardware acceleration if supported
+  if (supportsHardwareAcceleration.value) {
+    videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
+    videoElement.style.willChange = 'transform'; // Optimize for animations
+    console.log('[HARDWARE] Hardware acceleration enabled for video playback');
+  }
+  
   // Check if HLS is supported natively
   if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
     // Use native HLS support - try master playlist first, then fallback to single playlist
@@ -53,9 +90,9 @@ function setupHLS() {
       videoElement.src = getHLSSource();
     });
   } else if (Hls.isSupported()) {
-    // Configure HLS.js based on context (list vs detail)
+    // Configure HLS.js based on context (list vs detail) with hardware acceleration
     const hlsConfig = isInTweetList.value ? {
-      // Low quality settings for tweet list
+      // Low quality settings for tweet list with hardware acceleration
       enableWorker: true,
       lowLatencyMode: false, // Disable low latency for list view
       // Conservative bandwidth settings for list view
@@ -71,8 +108,12 @@ function setupHLS() {
       maxMaxBufferLength: 300, // Reduced max buffer
       maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer size (smaller)
       maxBufferHole: 0.5,
+      // Hardware acceleration settings
+      enableSoftwareAES: false, // Use hardware AES if available
+      enableStashBuffer: true, // Enable stash buffer for smoother playback
+      stashInitialSize: 384 * 1024, // Initial stash buffer size
     } : {
-      // High quality settings for detail view
+      // High quality settings for detail view with hardware acceleration
       enableWorker: true,
       lowLatencyMode: true,
       // Auto quality selection settings
@@ -88,6 +129,13 @@ function setupHLS() {
       maxMaxBufferLength: 600, // Absolute max buffer length
       maxBufferSize: 60 * 1000 * 1000, // 60MB max buffer size
       maxBufferHole: 0.5, // Max buffer hole in seconds
+      // Hardware acceleration settings
+      enableSoftwareAES: false, // Use hardware AES if available
+      enableStashBuffer: true, // Enable stash buffer for smoother playback
+      stashInitialSize: 384 * 1024, // Initial stash buffer size
+      // Advanced hardware acceleration
+      enableWebAssembly: true, // Enable WebAssembly for better performance
+      backBufferLength: 90, // Back buffer length for smooth seeking
     };
     
     hls = new Hls(hlsConfig);
@@ -101,6 +149,7 @@ function setupHLS() {
       console.log('Available quality levels:', hls?.levels.length);
       console.log('Auto-selected starting level:', hls?.currentLevel);
       console.log('Context:', isInTweetList.value ? 'Tweet List (Low Quality)' : 'Detail View (High Quality)');
+      console.log('Hardware acceleration:', supportsHardwareAcceleration.value ? 'Enabled' : 'Disabled');
       if (props.autoplay) {
         videoElement.play();
       }
@@ -109,6 +158,13 @@ function setupHLS() {
     // Monitor quality level changes
     hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
       console.log('Quality level switched to:', data.level, 'bitrate:', hls?.levels[data.level]?.bitrate);
+    });
+    
+    // Monitor buffer events for hardware acceleration
+    hls.on(Hls.Events.BUFFER_APPENDING, () => {
+      if (supportsHardwareAcceleration.value) {
+        console.log('[HARDWARE] Buffer appending with hardware acceleration');
+      }
     });
     
     hls.on(Hls.Events.ERROR, (event, data) => {
@@ -197,11 +253,16 @@ function disableRightClick(event: MouseEvent) {
     <video
       ref="video"
       class="video"
-      :class="{'video-portrait': isPortrait}"
+      :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
       :autoplay=props.autoplay
       controls
       :controlslist=controls
       preload="auto"
+      playsinline
+      webkit-playsinline
+      x5-playsinline
+      x5-video-player-type="h5"
+      x5-video-player-fullscreen="true"
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
     >
@@ -225,6 +286,14 @@ function disableRightClick(event: MouseEvent) {
 .video {
   width: 100%;
   display: block;
+}
+
+/* Hardware acceleration styles */
+.hardware-accelerated {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+  will-change: transform;
 }
 
 /* Add this style */

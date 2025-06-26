@@ -264,10 +264,10 @@ export async function uploadVideo(
       reject(new Error('Upload was aborted'));
     });
     
-    // Set timeout for large files (unlimited)
-    xhr.timeout = 0;
+    // Set timeout for large files (24 hours)
+    xhr.timeout = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
     xhr.addEventListener('timeout', () => {
-      reject(new Error('Upload timeout'));
+      reject(new Error('Upload timeout after 24 hours'));
     });
     
     // Open and send request

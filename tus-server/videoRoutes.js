@@ -63,8 +63,121 @@ function cleanupOldTempFiles() {
   }
 }
 
-// Helper function to create HLS conversion commands
-function createHLSConversionCommands(inputPath, tempDir, videoInfo, isPortrait) {
+// Helper function to detect available hardware encoders
+function detectHardwareEncoders() {
+  return new Promise((resolve) => {
+    execAsync('ffmpeg -hide_banner -encoders | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)"', { timeout: 10000 })
+      .then(result => {
+        const encoders = result.stdout.toLowerCase();
+        const available = {
+          nvidia: encoders.includes('h264_nvenc'),
+          intel: encoders.includes('h264_qsv'),
+          apple: encoders.includes('h264_videotoolbox'),
+          amd: encoders.includes('h264_amf')
+        };
+        console.log('[HARDWARE] Available encoders:', available);
+        resolve(available);
+      })
+      .catch(() => {
+        console.log('[HARDWARE] No hardware encoders detected, using software encoding');
+        resolve({ nvidia: false, intel: false, apple: false, amd: false });
+      });
+  });
+}
+
+// Helper function to test if a hardware encoder actually works
+function testHardwareEncoder(encoder) {
+  return new Promise((resolve) => {
+    // Create a simple test command to verify the encoder works
+    const testCommand = `ffmpeg -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -c:v ${encoder} -f null - 2>&1`;
+    
+    execAsync(testCommand, { timeout: 15000 })
+      .then(() => {
+        console.log(`[HARDWARE] Encoder ${encoder} test passed`);
+        resolve(true);
+      })
+      .catch((error) => {
+        console.log(`[HARDWARE] Encoder ${encoder} test failed:`, error.message);
+        resolve(false);
+      });
+  });
+}
+
+// Helper function to get optimal encoder settings with testing
+async function getOptimalEncoder(availableEncoders) {
+  // Priority order: NVIDIA > Intel > Apple > AMD > Software
+  if (availableEncoders.nvidia) {
+    const nvidiaWorks = await testHardwareEncoder('h264_nvenc');
+    if (nvidiaWorks) {
+      return {
+        encoder: 'h264_nvenc',
+        preset: 'fast',
+        profile: 'main',
+        level: '4.1',
+        hardware: true
+      };
+    } else {
+      console.log('[HARDWARE] NVIDIA encoder failed test, trying Intel...');
+    }
+  }
+  
+  if (availableEncoders.intel) {
+    const intelWorks = await testHardwareEncoder('h264_qsv');
+    if (intelWorks) {
+      return {
+        encoder: 'h264_qsv',
+        preset: 'fast',
+        profile: 'main',
+        level: '4.1',
+        hardware: true
+      };
+    } else {
+      console.log('[HARDWARE] Intel encoder failed test, trying Apple...');
+    }
+  }
+  
+  if (availableEncoders.apple) {
+    const appleWorks = await testHardwareEncoder('h264_videotoolbox');
+    if (appleWorks) {
+      return {
+        encoder: 'h264_videotoolbox',
+        preset: 'fast',
+        profile: 'main',
+        level: '4.1',
+        hardware: true
+      };
+    } else {
+      console.log('[HARDWARE] Apple encoder failed test, trying AMD...');
+    }
+  }
+  
+  if (availableEncoders.amd) {
+    const amdWorks = await testHardwareEncoder('h264_amf');
+    if (amdWorks) {
+      return {
+        encoder: 'h264_amf',
+        preset: 'fast',
+        profile: 'main',
+        level: '4.1',
+        hardware: true
+      };
+    } else {
+      console.log('[HARDWARE] AMD encoder failed test, falling back to software...');
+    }
+  }
+  
+  console.log('[HARDWARE] All hardware encoders failed or unavailable, using software encoding');
+  return {
+    encoder: 'libx264',
+    preset: 'fast',
+    profile: 'main',
+    level: '4.1',
+    hardware: false
+  };
+}
+
+// Helper function to create HLS conversion commands with hardware acceleration
+function createHLSConversionCommands(inputPath, tempDir, videoInfo, isPortrait, encoderConfig) {
   const commands = [];
   
   // Create directories for different qualities
@@ -85,10 +198,13 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, isPortrait) 
   const bitrate720 = isPortrait ? 4000 : 5000;
   const bitrate480 = isPortrait ? 2000 : 2500;
   
-  // Create ffmpeg commands with proper escaping
-  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v ${bitrate720}k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  // Hardware-specific encoding parameters
+  const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder) : '';
   
-  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v ${bitrate480}k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  // Create ffmpeg commands with hardware acceleration
+  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v ${bitrate720}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  
+  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos" -aspect ${videoInfo.width}:${videoInfo.height} -b:v ${bitrate480}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
   
   commands.push(cmd720p, cmd480p);
   
@@ -106,6 +222,22 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, isPortrait) 
   fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
   
   return commands;
+}
+
+// Helper function to get hardware-specific encoding parameters
+function getHardwareEncodingParams(encoder) {
+  switch (encoder) {
+    case 'h264_nvenc':
+      return '-rc vbr -cq 23 -b:v 0 -maxrate 5M -bufsize 10M';
+    case 'h264_qsv':
+      return '-global_quality 23 -look_ahead 1';
+    case 'h264_videotoolbox':
+      return '-allow_sw 1 -b:v 0';
+    case 'h264_amf':
+      return '-rc cqp -qp_i 23 -qp_p 23';
+    default:
+      return '';
+  }
 }
 
 // Video conversion endpoint (no authentication required)
@@ -240,8 +372,8 @@ router.post('/convert-video', async (req, res) => {
     console.log('\n[STEP 4] Converting video to HLS format...');
     console.time('hls-conversion');
     
-    const convertToHLS = () => {
-      return new Promise((resolve, reject) => {
+    const convertToHLS = async () => {
+      return new Promise(async (resolve, reject) => {
         let ffmpegCommand;
         
         if (noResample) {
@@ -261,16 +393,48 @@ router.post('/convert-video', async (req, res) => {
         } else {
           // Multi-quality conversion
           console.log('[INFO] Converting video to HLS with multiple qualities');
-          const commands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, isPortrait);
+          const availableEncoders = await detectHardwareEncoders();
+          const encoderConfig = await getOptimalEncoder(availableEncoders);
+          console.log(`[HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
           
-          // Execute both conversions in parallel with 24 hour timeout
-          Promise.all([
-            execAsync(commands[0], { timeout: 24 * 60 * 60 * 1000 }), // 24 hour timeout
-            execAsync(commands[1], { timeout: 24 * 60 * 60 * 1000 })
-          ]).then(() => {
+          // Try hardware encoding first, fallback to software if it fails
+          try {
+            const commands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, isPortrait, encoderConfig);
+            
+            // Execute both conversions in parallel with 24 hour timeout
+            await Promise.all([
+              execAsync(commands[0], { timeout: 24 * 60 * 60 * 1000 }), // 24 hour timeout
+              execAsync(commands[1], { timeout: 24 * 60 * 60 * 1000 })
+            ]);
             console.log('[SUCCESS] Multi-quality HLS conversion completed');
-            resolve();
-          }).catch(reject);
+          } catch (hardwareError) {
+            console.error('[HARDWARE] Hardware encoding failed:', hardwareError.message);
+            
+            if (encoderConfig.hardware) {
+              console.log('[HARDWARE] Falling back to software encoding...');
+              // Fallback to software encoding
+              const softwareConfig = {
+                encoder: 'libx264',
+                preset: 'fast',
+                profile: 'main',
+                level: '4.1',
+                hardware: false
+              };
+              
+              const fallbackCommands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, isPortrait, softwareConfig);
+              
+              await Promise.all([
+                execAsync(fallbackCommands[0], { timeout: 24 * 60 * 60 * 1000 }),
+                execAsync(fallbackCommands[1], { timeout: 24 * 60 * 60 * 1000 })
+              ]);
+              console.log('[SUCCESS] Multi-quality HLS conversion completed with software fallback');
+            } else {
+              // If it was already software encoding, re-throw the error
+              throw hardwareError;
+            }
+          }
+          
+          resolve();
         }
       });
     };
