@@ -121,7 +121,7 @@ function createLeitherClient(port, retryCount = 0) {
       const client = hprose.Client.create(`ws://127.0.0.1:${port}/ws/`, ayApi);
       
       // Set connection timeout
-      client.timeout = 3600000*4; // 4 hours for connection
+      client.timeout = 30000; // 30 seconds for connection
       
       // Add connection event handlers
       if (client.connection) {
@@ -674,7 +674,7 @@ async function processVideoUpload(req, res) {
           console.log(`[${requestId}] [INFO] Converting video to HLS without resampling (preserving original quality)`);
           ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
           
-          execAsync(ffmpegCommand, { timeout: 24 * 60 * 60 * 1000 }) // 24 hour timeout for large files
+          execAsync(ffmpegCommand, { timeout: 4 * 60 * 60 * 1000 }) // 4 hour timeout for large files
             .then(() => {
               console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
               resolve();
@@ -703,8 +703,8 @@ async function processVideoUpload(req, res) {
             
             // Execute both conversions in parallel with 24 hour timeout
             await Promise.all([
-              execAsync(commands[0], { timeout: 24 * 60 * 60 * 1000 }), // 24 hour timeout
-              execAsync(commands[1], { timeout: 24 * 60 * 60 * 1000 })
+              execAsync(commands[0], { timeout: 4 * 60 * 60 * 1000 }), // 4 hour timeout
+              execAsync(commands[1], { timeout: 4 * 60 * 60 * 1000 })
             ]);
             console.log(`[${requestId}] [SUCCESS] Multi-quality HLS conversion completed`);
           } catch (hardwareError) {
@@ -729,8 +729,8 @@ async function processVideoUpload(req, res) {
               const fallbackCommands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, isPortrait, softwareConfig);
               
               await Promise.all([
-                execAsync(fallbackCommands[0], { timeout: 24 * 60 * 60 * 1000 }),
-                execAsync(fallbackCommands[1], { timeout: 24 * 60 * 60 * 1000 })
+                execAsync(fallbackCommands[0], { timeout: 4 * 60 * 60 * 1000 }),
+                execAsync(fallbackCommands[1], { timeout: 4 * 60 * 60 * 1000 })
               ]);
               console.log(`[${requestId}] [SUCCESS] Multi-quality HLS conversion completed with software fallback`);
             } else {
@@ -777,7 +777,7 @@ async function processVideoUpload(req, res) {
             const result = await Promise.race([
               operation(),
               new Promise((_, reject) => 
-                setTimeout(() => reject(new Error(`${operationName} timeout after 30 seconds`)), 30000)
+                setTimeout(() => reject(new Error(`${operationName} timeout after 4 hours`)), 3600000*4)
               )
             ]);
             console.log(`[${requestId}] [LEITHER] ${operationName} completed successfully`);
