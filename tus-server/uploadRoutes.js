@@ -6,11 +6,12 @@ const path = require('path');
 const fs = require('fs');
 
 // Set up tus server for resumable uploads
-const uploadPath = fs.realpathSync(path.resolve(__dirname, './uploads'));
+const uploadDir = path.resolve(__dirname, './uploads');
 // Ensure upload directory exists
-if (!fs.existsSync(uploadPath)) {
-  fs.mkdirSync(uploadPath, { recursive: true });
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
+const uploadPath = fs.realpathSync(uploadDir);
 
 // Create FileStore instance
 const fileStore = new FileStore({ directory: uploadPath });
