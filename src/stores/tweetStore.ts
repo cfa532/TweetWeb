@@ -6,7 +6,8 @@ const TWEET_COUNT = 30
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
-        tweets: [] as Tweet[],
+        tweets: [] as Tweet[],      // tweets 
+        originalTweets: [] as Tweet[],
         users: new Map<MimeiId, User>(),
         _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
@@ -61,7 +62,7 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         /**
          * If an userId is given, load tweets of the given user.
-         * Otherwise load tweets of login user's followings.
+         * Otherwise load tweets of login user's followings' tweets.
          * @param authorId 
          * @param pageNumber page number to load (0-based)
          * @param pageSize number of tweets per page
@@ -71,22 +72,17 @@ export const useTweetStore = defineStore('tweetStore', {
             authorId: string | undefined = undefined,
             pageNumber: number = 0,
             pageSize: number = TWEET_COUNT
-        ): Promise<number> {
+        ): Promise<number | null> {
             if (authorId) {
                 // load author's tweets
-                return await this.loadTweetsByRank(authorId, pageNumber, pageSize)
+                return await this.loadTweetsByUser(authorId, pageNumber, pageSize)
             } else {
                 if (this.loginUser) {
-                    // load tweets from all the followings 
-                    let tweetFeed = await this.getTweetFeed(this.loginUser, pageNumber, pageSize)  
-                    console.log("Tweets of user", this.loginUser, tweetFeed, pageNumber, pageSize)
-                    if (!tweetFeed)
-                        return 0
-                    this.fillTweet(tweetFeed)
-                    return tweetFeed.length
+                    // load tweets from all the followings of login user.
+                    return await this.getTweetFeed(this.loginUser, pageNumber, pageSize)  
                 } else {
                     // load admin's tweets
-                    return await this.loadTweetsByRank(this.followings[0], pageNumber, pageSize)
+                    return await this.loadTweetsByUser(this.followings[0], pageNumber, pageSize)
                 }
             }
         },
@@ -94,63 +90,123 @@ export const useTweetStore = defineStore('tweetStore', {
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
          */
-        async fillTweet(tweets: Tweet[]) {
-            // Tweet may not have its author data yet.
-            tweets?.forEach(async tweet => {
-                if (!tweet) return
-                // skip tweet that is in tweets already.
-                if (this.tweets.find(e => e.mid == tweet.mid))
-                    return
-                let author = await this.getUser(tweet.authorId)
-                if (!author)
-                    return
-                tweet.author = author
-                tweet.provider = author.providerIp
-                tweet.attachments = tweet.attachments?.map(e => {
-                    return {
-                        mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
-                        type: e.type,
-                        timestamp: e.timestamp,
-                        fileName: e.fileName,
-                        downloadable: tweet.downloadable,
-                        size: e.size,
-                        aspectRatio: e.aspectRatio
-                    }
-                })
-                tweet.comments = []     // load comments only on detail page
-
-                if (tweet?.originalTweetId) {
-                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
-                    if (!tweet.originalTweet) {
-                        return  // failed to find original tweet, exit.
-                    }
+        async getTweetReady(tweet: Tweet) {
+            // skip tweet that is in this.tweets already.
+            if (this.tweets.find(e => e.mid == tweet.mid))
+                return
+            let author = await this.getUser(tweet.authorId)
+            if (!author)
+                return
+            
+            tweet.comments = []     // load comments only on detail page
+            tweet.author = author
+            tweet.provider = author.providerIp
+            tweet.attachments = tweet.attachments?.map(e => {
+                return {
+                    mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
+                    type: e.type,
+                    timestamp: e.timestamp,
+                    fileName: e.fileName,
+                    downloadable: tweet.downloadable,
+                    size: e.size,
+                    aspectRatio: e.aspectRatio
                 }
-                sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
-                this.tweets.push(tweet);
             })
+
+            if (tweet.originalTweetId) {
+                const originalTweet = this.originalTweets.find(t => t.mid == tweet.originalTweetId)
+                if (originalTweet) {
+                    tweet.originalTweet = originalTweet
+                } else {
+                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                }
+            }
+            sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
+            this.tweets.push(tweet);
         },
 
         /**
          * Loads tweets for a specific user by rank/popularity
-         * @param authorId The user ID whose tweets to load
+         * @param userId The user ID whose tweets to load
          * @param pageNumber page number to load (0-based)
          * @param pageSize number of tweets per page
          * @returns the number of tweets loaded.
          */
-        async loadTweetsByRank(
-            authorId: string,
+        async loadTweetsByUser(
+            userId: string,
             pageNumber: number = 0,
             pageSize: number = 10
-        ) {
-            let author = await this.getUser(authorId)
-            if (!author)
-                return 0
-            let tweetsByUser = await this.getTweetListByRank(author, pageNumber, pageSize)
-            console.log("Tweets of user", authorId, tweetsByUser)
-            if (!tweetsByUser)
-                return 0
-            this.fillTweet(tweetsByUser)
-            return tweetsByUser.length
+        ): Promise<number | null> {
+            let user = await this.getUser(userId)
+            if (!user)
+                return null
+
+            try {
+                const params = {
+                    aid: this.appId,
+                    ver: "last",
+                    userid: user.mid,
+                    pn: pageNumber,
+                    ps: pageSize,
+                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                }
+
+                console.log("Fetching tweets for user:", user.mid, "page:", pageNumber, "size:", pageSize)
+                const response = await user.client.RunMApp("get_tweets_by_user", params)
+                console.log("Tweets response:", response)
+
+                // Check success status first
+                const success = response?.success
+                if (success !== true) {
+                    const errorMessage = response?.message || "Unknown error occurred"
+                    console.error("Tweets loading failed for user", user.mid, ":", errorMessage)
+                    console.error("Response:", response)
+                    return null
+                }
+
+                // Extract tweets and originalTweets from the new response format
+                const tweetsData = response.tweets
+                const originalTweetsData = response.originalTweets
+
+                // Cache original tweets first (same as getTweetFeed)
+                if (originalTweetsData) {
+                    await this.updateOriginalTweets(originalTweetsData)
+                }
+
+                tweetsData?.forEach(async (tweetJson: any) => {
+                    if (tweetJson != null) {
+                        const tweet = tweetJson as Tweet
+                        const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                        if (!cachedTweet) {
+                            await this.getTweetReady(tweet)
+                        }
+                    }
+                })
+                return tweetsData?.length || null
+            } catch (e) {
+                console.error("Error fetching tweets for user:", user.mid)
+                console.error("Exception:", e)
+                return null
+            }
+        },
+
+        async updateOriginalTweets(originalTweetsData: any) {
+            for (const originalTweetJson of originalTweetsData) {
+                if (originalTweetJson != null) {
+                    try {
+                        const originalTweet = originalTweetJson as Tweet
+                        if (!this.originalTweets.find(t => t.mid === originalTweet.mid)) {
+                            const author = await this.getUser(originalTweet.authorId)
+                            if (author) {
+                                originalTweet.author = author
+                                this.originalTweets.push(originalTweet)
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Error caching original tweet:", e)
+                    }
+                }
+            }
         },
 
         /**
@@ -158,20 +214,27 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param userId The user ID whose pinned tweets to load
          * @returns Array of pinned tweets
          */
-        async loadPinnedTweets(userId: string) {
+        async loadPinnedTweets(userId: string): Promise<Tweet[]> {
             let pinnedTweets = [] as Tweet[]
             let user = await this.getUser(userId)
             if (!user)
                 return []
-            let pinned = await user.client.RunMApp("get_top_tweets", {aid: this.appId, ver: "last", userid: userId})
+
+            const params = {
+                aid: this.appId,
+                ver: "last",
+                userid: userId,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+            }
+            let pinned = await user.client.RunMApp("get_pinned_tweets", params)
             console.log("Pinned tweets", pinned)
             pinned?.forEach(async (e: any) => {
-                let tweet = this.tweets.find(t => t.mid == e.tweetId)
+                let tweet = this.tweets.find(t => t.mid == e.tweet)
                 if (tweet) {
                     tweet.timestamp = Number(e.timestamp)
                     pinnedTweets.push(tweet)
                 } else {
-                    let t = await this.getTweet(e.tweetId, userId)
+                    let t = await this.getTweet(e.tweet, userId)
                     if (t) {
                         this.tweets.push(t)
                         t.timestamp = Number(e.timestamp)
@@ -182,63 +245,172 @@ export const useTweetStore = defineStore('tweetStore', {
             return pinnedTweets
         },
         /**
-         * Gets the tweet feed for a user (tweets from users they follow)
+         * Load tweets of appUser and its followings from network.
+         * Keep null elements in the response list and preserves their positions.
          * @param user is login user.
          * @param pageNumber page number to load (0-based)
          * @param pageSize number of tweets per page
-         * @returns tweets of app`user's followings' tweets
+         * @returns tweets of app user's followings' tweets
          */
         async getTweetFeed(
             user: User,
             pageNumber: number,
             pageSize: number
-        ): Promise<Tweet[] | undefined> {
-            let tweets = await user.client.RunMApp("get_tweet_feed", {
-                aid: this.appId,
-                ver: "last",
-                userid: user.mid,
-                pn: pageNumber,
-                ps: pageSize,
-                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-            })
-            return tweets
+        ): Promise<number | null> {
+            try {
+                const params = {
+                    aid: this.appId,
+                    ver: "last",
+                    pn: pageNumber,
+                    ps: pageSize,
+                    userid: user.mid,
+                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                }
+                const response = await user.client.RunMApp("get_tweet_feed", params)
+
+                // Check success status first
+                const success = response?.success
+                if (success !== true) {
+                    const errorMessage = response?.message || "Unknown error occurred"
+                    console.error("Tweet feed loading failed:", errorMessage)
+                    console.error("Response:", response)
+                    return null
+                }
+
+                // Cache original tweets first
+                if (response.originalTweets) {
+                    await this.updateOriginalTweets(response.originalTweets)
+                }
+                // Extract tweets from the new response format
+                const tweetsData = response.tweets
+
+                // Process main tweets
+                tweetsData?.forEach(async (tweetJson: any) => {
+                    if (tweetJson != null) {
+                        const tweet = tweetJson as Tweet
+                        const author = await this.getUser(tweet.authorId)
+                        if (!author) {
+                            return
+                        }
+                        tweet.author = author
+
+                        // Skip private tweets in feed
+                        if (tweet.isPrivate) {
+                            return
+                        } else {
+                            const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                            if (!cachedTweet) {
+                                await this.getTweetReady(tweet)
+                            }
+                        }
+                    }
+                })
+                return tweetsData?.length || null
+            } catch (e) {
+                console.error("Error fetching tweet feed:", e)
+                return null
+            }
         },
         /**
-         * Gets tweets for a specific user sorted by rank
+         * Load tweets of a specific user by rank.
+         * Handles null elements in the response list and preserves their positions.
          * @param user The user whose tweets to retrieve
-         * @param pageNumber Page number for pagination
+         * @param pageNumber Page number for pagination (0-based)
          * @param pageSize Number of tweets per page
-         * @returns tweets of the given user
+         * @returns Array of tweets with null elements preserved for pagination.
          */
-        async getTweetListByRank(
+        async getUserTweetsByPage(
             user: User,
             pageNumber: number,
             pageSize: number
-        ): Promise<Tweet[]> {
-            let tweets = await user.client.RunMApp("get_tweets_by_user", {
-                aid: this.appId,
-                ver: "last",
-                userid: user.mid,
-                pn: pageNumber,
-                ps: pageSize,
-                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-            })
-            return tweets
+        ): Promise<Tweet[] | null> {
+            try {
+                const params = {
+                    aid: this.appId,
+                    ver: "last",
+                    userid: user.mid,
+                    pn: pageNumber,
+                    ps: pageSize,
+                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                }
+
+                console.log("Fetching tweets for user:", user.mid, "page:", pageNumber, "size:", pageSize)
+                const response = await user.client.RunMApp("get_tweets_by_user", params)
+
+                // Check success status first
+                const success = response?.success
+                if (success !== true) {
+                    const errorMessage = response?.message || "Unknown error occurred"
+                    console.error("Tweets loading failed for user", user.mid, ":", errorMessage)
+                    console.error("Response:", response)
+                    return null
+                }
+
+                // Extract tweets and originalTweets from the new response format
+                const tweetsData = response.tweets
+                const originalTweetsData = response.originalTweets
+
+                // Cache original tweets first (same as getTweetFeed)
+                if (originalTweetsData) {
+                    for (const originalTweetJson of originalTweetsData) {
+                        if (originalTweetJson != null) {
+                            try {
+                                const originalTweet = originalTweetJson as Tweet
+                                const author = await this.getUser(originalTweet.authorId)
+                                if (author) {
+                                    originalTweet.author = author
+                                    if (!this.originalTweets.find(t => t.mid === originalTweet.mid)) {
+                                        this.originalTweets.push(originalTweet)
+                                    }
+                                }
+                            } catch (e) {
+                                console.error("Error caching original tweet:", e)
+                            }
+                        }
+                    }
+                }
+
+                const result = tweetsData?.map((tweetJson: any) => {
+                    // If the element is null, keep it as null
+                    if (tweetJson == null) {
+                        return null
+                    } else {
+                        // Try to decode the tweet
+                        try {
+                            const tweet = tweetJson as Tweet
+                            tweet.author = user
+                            return tweet
+                        } catch (e) {
+                            console.error("Error decoding tweet:", e)
+                            return null
+                        }
+                    }
+                }) || null
+                return result
+            } catch (e) {
+                console.error("Error fetching tweets for user:", user.mid)
+                console.error("Exception:", e)
+                return null
+            }
         },
+
         /**
-         * Given only tweet ID, find it full data. Do NOT load comments yet. Wait until user opens
-         * detail tweet page.
+         * Given only tweet ID, find it full data. Do NOT load comments yet.
+         * Wait until user opens detail tweet page.
          * @param tweetId The ID of the tweet to retrieve
-         * @param authorId must be used to find the right node for the tweet, which refers to authorId
+         * @param authorId must be used to find the right node for the tweet.
          * @returns a Tweet object short of comments.
          */
-        async getTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
+        async getTweet(
+            tweetId: MimeiId,
+            authorId: MimeiId | undefined = undefined
+        ): Promise<Tweet | null> {
             let tweet = await this.fetchTweet(tweetId, authorId)
             console.log("Get tweet", tweet)
             if (!tweet ) {
                 // Author node has not data, try to load the tweet by id alone from some other provider.
                 tweet = await this.fetchTweet(tweetId)
-                if (!tweet) return
+                if (!tweet) return null
             }
 
             if (tweet?.originalTweetId) {
@@ -247,7 +419,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId)
                     if (!tweet.originalTweet) { 
                         console.info("Missing originalTweet", tweet)
-                        return
+                        return null
                     }
                 }
             }
@@ -263,7 +435,10 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param authorId Optional author ID to help locate the tweet
          * @returns The tweet object or undefined if not found
          */
-        async fetchTweet(tweetId: MimeiId, authorId: MimeiId | undefined = undefined): Promise<Tweet | undefined> {
+        async fetchTweet(
+            tweetId: MimeiId,
+            authorId: MimeiId | undefined = undefined
+        ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweets.find(e => e.mid == tweetId)
             if (cachedTweet)
@@ -279,7 +454,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (authorId) {
                 author = await this.getUser(authorId)
                 if (!author)
-                    return
+                    return null
                 providerIp = author?.providerIp
                 providerClient = author?.client
                 // With authodId, we can get most up to date tweet record.
@@ -288,25 +463,25 @@ export const useTweetStore = defineStore('tweetStore', {
                     ver: "last",
                     tweetid: tweetId,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                    hostid: author?.hostId,
                     userid: authorId,     // author of the tweet
+                    hostid: author?.hostId,
                 })
             } else {
                 providerIp = await this.getProviderIp(tweetId)
                 if (!providerIp)
-                    return
+                    return null
                 providerClient = this.lapi.getClient(providerIp)
                 // Get tweet data from Tweet App Mimei. Its definition is different from this app.
                 tweetInDB = await providerClient.RunMApp("get_tweet", {
                     aid: this.lapi.appId,
                     ver: "last",
                     tweetid: tweetId,
-                    userid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                 })
             }
             console.log("Get tweet from db", tweetInDB, providerIp, author)
             if (!tweetInDB)
-                return
+                return null
             author = author ? author : await this.getUser(tweetInDB.authorId)
             // convert Tweet App's definition to this app's definition.
             let tweet = {
@@ -352,7 +527,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             let providerClient = this.lapi.getClient(providerIp)
 
-            let user = await providerClient.RunMApp("get_user_core_data", {
+            let user = await providerClient.RunMApp("get_user", {
                 aid: this.appId, ver: "last", userid: userId,
             })
             // cache the user data
@@ -385,16 +560,15 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The IP address of the best provider or null if not found
          */
         async getProviderIp(mid: string): Promise<string | null> {
-            let IPs = await this.lapi.client.RunMApp("get_providers", {
+            let ip = await this.lapi.client.RunMApp("get_provider", {
                 aid: this.lapi.appId,
                 ver: "last",
                 mid: mid,
             })
-            if (!IPs) {
+            if (!ip) {
                 console.error("No provider found for", mid)
                 return null
             }
-            let ip = await this.findFirstAccessibleIP(IPs, this.lapi.appId, true)   // IPv4 only
             return ip
         },
         /**
@@ -409,7 +583,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 aid: this.lapi.appId,
                 ver: "last",
                 tweetid: tweet.mid,
-                userid: GUEST_ID,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                pn: 0,
+                ps: 20
             }) as any[]
             
             // comment type is a different Tweet type from the definition in this app
@@ -569,7 +745,7 @@ export const useTweetStore = defineStore('tweetStore', {
             this.loginUser!.client.timeout = 0
             if (tweetId) {
                 ret = await this.loginUser?.client.RunMApp("add_comment",
-                    {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet)}
+                    {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: this.loginUser?.hostId}
                 )
             } else {
                 ret = await this.loginUser?.client.RunMApp("add_tweet",
@@ -637,7 +813,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 ver: "last",
                 mid: mid
             })
-            let ip0 = this.splitIpAndPort(ip)
+            let ip0 = this.getIpWithoutPort(ip)
             if (!ip0) {
                 console.error("Invalid IP", ip)
                 return
@@ -663,8 +839,8 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleFavorite(tweetId: MimeiId) {
-            var ret = await this.loginUser?.client.RunMApp("toggle_likes", {
-                aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
+            var ret = await this.loginUser?.client.RunMApp("toggle_favorite", {
+                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostId
             })
             var tweet = this.tweets.find(e => e.mid == tweetId)
             tweet!.likeCount = ret["count"]
@@ -678,7 +854,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleBookmark(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
-                aid: this.appId, ver: "last", tweetid: tweetId, userid: this.loginUser?.mid
+                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostId
             })
             var tweet = this.tweets.find(e => e.mid == tweetId)
             tweet!.bookmarkCount = ret["count"]
@@ -757,7 +933,7 @@ export const useTweetStore = defineStore('tweetStore', {
         async findFirstAccessibleIP(
             ipList: string[], 
             mid: string, 
-            filterIPv6 = true,     // filter IPv6 address, default to No.
+            filterIPv6 = true,     // filter IPv6 address.
         ): Promise<string | null> {
             if (!ipList?.length) {
                 console.error('No IP addresses provided in findFirstAccessibleIP()');
@@ -867,7 +1043,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param nodeId The node ID to get IPs for
          * @returns The first non-local IP address found
          */
-        async getNodeIp(nodeId: MimeiId) {
+        async getNodeIp(nodeId: MimeiId): Promise<string | null> {
             let ips = await this.loginUser?.client.RunMApp("get_node_ip", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -878,13 +1054,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     return ip
                 }
             }
+            return null
         },
+
         /**
          * Extracts the IP address from a full address string (removes port)
          * @param address full ip address with port
          * @returns IP without port
          */
-        splitIpAndPort(address: string) {
+        getIpWithoutPort(address: string): string | null {
             const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
             const match = address.match(regex);
             if (match) {
@@ -894,6 +1072,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const port = match[3] ? parseInt(match[3], 10) : null; // Port number (or null if not present)
                 return ip;
             }
+            return null
         },
     },
 });

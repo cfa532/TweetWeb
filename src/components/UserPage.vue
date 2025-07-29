@@ -46,19 +46,35 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     pageNumber.value = 0; // Reset page number for initial load
     
     // Load initial page
-    await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
+    await tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
     
     // Keep loading more pages until we have at least 6 tweets or no more tweets
     const minTweets = 6;
+    let tweetsLoaded = 0;
+    let round = 0;
     
-    while (tweetFeed.value.length < minTweets) {
-        pageNumber.value++;
-        const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId, pageNumber.value, pageSize);
+    while (isLoading.value && round < 10) {
+        // Load initial page
+        const loadedPageSize = await tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
+        if (loadedPageSize) {
+            tweetsLoaded += loadedPageSize;
+            round++;
+        } else {
+            console.warn("Init load failed. Cannot load tweets in round", round);
+            break;
+        }
+        if (tweetsLoaded >= minTweets) {
+            break;
+        }
         
         // If fewer tweets than requested were loaded, there are no more tweets
-        if (tweetsLoaded < pageSize) {
-            console.log('No more tweets available from backend');
+        if (loadedPageSize < pageSize) {
+            console.log('No more tweets available from backend. Page number:', pageNumber.value);
             break;
+        } else {
+            // Load next page
+            pageNumber.value++;
+            console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
         }
     }
     
@@ -73,15 +89,14 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 async function loadMoreTweets() {
     if (isLoading.value) return; // Prevent multiple loads
     isLoading.value = true;
-    pageNumber.value++;
-    const tweetsLoaded = await tweetStore.loadTweetsByRank(authorId.value, pageNumber.value, pageSize);
+    const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
     
     // If fewer tweets than requested were loaded, there are no more tweets
-    if (tweetsLoaded < pageSize) {
+    if (tweetsLoaded && tweetsLoaded < pageSize) {
         console.log('No more tweets available from backend');
         // Optionally, you could disable scroll loading here
     }
-    
+    pageNumber.value++;
     isLoading.value = false;
 }
 

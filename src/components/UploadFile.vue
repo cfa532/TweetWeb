@@ -35,7 +35,7 @@ interface StoredUpload {
 }
 
 onMounted(async () => {
-    let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
+    let ip = tweetStore.getIpWithoutPort(tweetStore.loginUser?.providerIp as string)
     tusServerUrl = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
     console.log("TUS server", tusServerUrl)
 

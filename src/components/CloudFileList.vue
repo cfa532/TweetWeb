@@ -153,7 +153,7 @@ watch(
 // On component mount, set up TUS server URL and load initial directory
 onMounted(() => {
   console.log('Component mounted, route query:', route.query);
-  let ip = tweetStore.splitIpAndPort(tweetStore.loginUser?.providerIp as string)
+  let ip = tweetStore.getIpWithoutPort(tweetStore.loginUser?.providerIp as string)
   TUS_SERVER_URL = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
   console.log("TUS server", TUS_SERVER_URL)
   loadDirectory(route.query.path as string || '');

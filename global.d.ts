@@ -39,7 +39,7 @@ interface Tweet {
     attachments?: MimeiFileType[];
     timestamp: string | number = Date.now();
     originalTweetId?: MimeiId;
-    originalTweet?: Tweet;
+    originalTweet?: Tweet | null;
     originalAuthorId?: MimeiId;
     comments?: Tweet[];
 

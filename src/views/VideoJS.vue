@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import type { PropType } from 'vue'
 import Hls from 'hls.js';
+import { useRouter } from 'vue-router';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
   autoplay: { type: Boolean, required: false },
 })
+const router = useRouter();
 const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
@@ -56,6 +58,7 @@ const supportsHardwareAcceleration = computed(() => {
 });
 
 let hls: Hls | null = null;
+let hasTriedSinglePlaylist = false;
 
 onMounted(() => {
   vdiv.value.hidden = false;
@@ -66,6 +69,23 @@ onMounted(() => {
       setupHLS();
     }
   }, 100);
+  
+  // Add page visibility change listener
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  
+  // Add route change listener
+  router.beforeEach((to, from, next) => {
+    stopVideo();
+    next();
+  });
+});
+
+onUnmounted(() => {
+  // Clean up event listeners
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  
+  // Stop video and clean up HLS
+  stopVideo();
 });
 
 function setupHLS() {
@@ -73,12 +93,11 @@ function setupHLS() {
   
   const videoElement = video.value;
   
-  // Enable hardware acceleration if supported
-  if (supportsHardwareAcceleration.value) {
-    videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
-    videoElement.style.willChange = 'transform'; // Optimize for animations
-    console.log('[HARDWARE] Hardware acceleration enabled for video playback');
-  }
+      // Enable hardware acceleration if supported
+    if (supportsHardwareAcceleration.value) {
+      videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
+      videoElement.style.willChange = 'transform'; // Optimize for animations
+    }
   
   // Check if HLS is supported natively
   if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
@@ -87,8 +106,12 @@ function setupHLS() {
     
     // Add fallback for native HLS
     videoElement.addEventListener('error', () => {
-      console.log('Master playlist failed, trying single playlist...');
       videoElement.src = getHLSSource();
+      
+      // Add another error listener for single playlist failure
+      videoElement.addEventListener('error', () => {
+        fallbackToProgressiveVideo(videoElement);
+      }, { once: true });
     });
   } else if (Hls.isSupported()) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
@@ -142,15 +165,20 @@ function setupHLS() {
     hls = new Hls(hlsConfig);
     
     // Try master playlist first
+    hasTriedSinglePlaylist = false;
     hls.loadSource(getHLSMasterSource());
     hls.attachMedia(videoElement);
     
+    // Add timeout fallback in case HLS hangs
+    const hlsTimeout = setTimeout(() => {
+      if (hls && !videoElement.src) {
+        fallbackToProgressiveVideo(videoElement);
+      }
+    }, 10000); // 10 second timeout
+    
+    // Clear timeout when manifest is parsed
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      console.log('HLS manifest parsed successfully');
-      console.log('Available quality levels:', hls?.levels.length);
-      console.log('Auto-selected starting level:', hls?.currentLevel);
-      console.log('Context:', isInTweetList.value ? 'Tweet List (Low Quality)' : 'Detail View (High Quality)');
-      console.log('Hardware acceleration:', supportsHardwareAcceleration.value ? 'Enabled' : 'Disabled');
+      clearTimeout(hlsTimeout);
       
       // Handle autoplay with proper error handling
       if (props.autoplay) {
@@ -171,32 +199,36 @@ function setupHLS() {
     // });
     
     hls.on(Hls.Events.ERROR, (event, data) => {
-      // console.error('HLS error:', data);
-      
       // If master playlist fails, try single playlist
-      if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR && 
+      if (!hasTriedSinglePlaylist && data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR && 
           data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
-        console.log('Master playlist failed, trying single playlist...');
+        hasTriedSinglePlaylist = true;
         hls?.destroy();
         hls = new Hls(hlsConfig); // Use same config for fallback
         hls.loadSource(getHLSSource());
         hls.attachMedia(videoElement);
+        
+        // Add error handler for single playlist
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          fallbackToProgressiveVideo(videoElement);
+        });
         return;
       }
       
-      if (data.fatal) {
+      // If we've already tried single playlist or this is a different error, go to progressive
+      if (hasTriedSinglePlaylist || data.fatal) {
+        fallbackToProgressiveVideo(videoElement);
+        return;
+      }
+      
+      // For non-fatal errors, try to recover
+      if (!data.fatal) {
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
-            console.log('Network error, trying to recover...');
             hls?.startLoad();
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
-            console.log('Media error, trying to recover...');
             hls?.recoverMediaError();
-            break;
-          default:
-            console.log('Fatal error, destroying HLS instance');
-            hls?.destroy();
             break;
         }
       }
@@ -211,16 +243,13 @@ async function handleAutoplay(videoElement: HTMLVideoElement) {
     const canAutoplay = await checkAutoplaySupport(videoElement);
     
     if (canAutoplay) {
-      console.log('[AUTOPLAY] Autoplay is supported, starting playback');
       await videoElement.play();
       isPlaying.value = true;
     } else {
-      console.log('[AUTOPLAY] Autoplay blocked by browser policy');
       // Show play button or other UI indication that user needs to interact
       showAutoplayBlockedUI();
     }
   } catch (error) {
-    console.warn('[AUTOPLAY] Autoplay failed:', error);
     // Show play button or other UI indication
     showAutoplayBlockedUI();
   }
@@ -244,14 +273,12 @@ async function checkAutoplaySupport(videoElement: HTMLVideoElement): Promise<boo
     }
     return false;
   } catch (error) {
-    console.log('[AUTOPLAY] Autoplay test failed:', error);
     return false;
   }
 }
 
 // Show UI indication that autoplay is blocked
 function showAutoplayBlockedUI() {
-  console.log('[AUTOPLAY] Showing autoplay blocked UI');
   autoplayBlocked.value = true;
 }
 
@@ -262,10 +289,9 @@ async function handleManualPlay() {
       await video.value.play();
       isPlaying.value = true;
       autoplayBlocked.value = false;
-      console.log('[AUTOPLAY] Manual play successful');
     }
   } catch (error) {
-    console.error('[AUTOPLAY] Manual play failed:', error);
+    // Silent error handling
   }
 }
 
@@ -283,6 +309,47 @@ function getHLSSource(): string {
 function getHLSMasterSource(): string {
   // For HLS videos with multiple resolutions, try master playlist first
   return props.media.mid + '/master.m3u8';
+}
+
+// Fallback to progressive video when HLS streaming fails
+function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
+  // Destroy HLS instance
+  if (hls) {
+    hls.destroy();
+    hls = null;
+  }
+  
+  // Remove any existing sources
+  while (videoElement.firstChild) {
+    videoElement.removeChild(videoElement.firstChild);
+  }
+  
+  // Set the video source to the original URL without extension
+  // This will attempt to play the video as a progressive download
+  const progressiveUrl = props.media.mid;
+  videoElement.src = progressiveUrl;
+  
+  // Add error handling for progressive video
+  videoElement.addEventListener('error', (e) => {
+    // Silent error handling
+  }, { once: true });
+  
+  // Add load event to confirm progressive video loaded
+  videoElement.addEventListener('loadeddata', () => {
+    // Video loaded successfully
+  }, { once: true });
+  
+  // Add canplay event
+  videoElement.addEventListener('canplay', () => {
+    // Video can start playing
+  }, { once: true });
+  
+  // Try to play the video
+  if (props.autoplay) {
+    videoElement.play().catch(error => {
+      // Silent error handling
+    });
+  }
 }
 
 function togglePlay() {
@@ -307,6 +374,36 @@ function checkVideoOrientation() {
 function disableRightClick(event: MouseEvent) {
   if (props.media.downloadable == false)
     event.preventDefault();
+}
+
+// Handle page visibility change
+function handleVisibilityChange() {
+  if (document.hidden) {
+    stopVideo();
+  }
+}
+
+// Stop video playback and clean up resources
+function stopVideo() {
+  if (video.value) {
+    // Pause the video
+    if (!video.value.paused) {
+      video.value.pause();
+      isPlaying.value = false;
+    }
+    
+    // Reset video to beginning
+    video.value.currentTime = 0;
+  }
+  
+  // Clean up HLS instance
+  if (hls) {
+    hls.destroy();
+    hls = null;
+  }
+  
+  // Reset flags
+  hasTriedSinglePlaylist = false;
 }
 </script>
 
