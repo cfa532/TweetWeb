@@ -312,8 +312,9 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
  * @returns string The media type ('Image', 'Video', 'Audio', or 'Unknown')
  */
 export function getMediaType(mimeType: string): string {
-  if (mimeType.startsWith('image/')) return 'Image';
-  if (mimeType.startsWith('video/')) return 'Video';
-  if (mimeType.startsWith('audio/')) return 'Audio';
+  const lowerMimeType = mimeType.toLowerCase();
+  if (lowerMimeType.startsWith('image/')) return 'Image';
+  if (lowerMimeType.startsWith('video/')) return 'Video';
+  if (lowerMimeType.startsWith('audio/')) return 'Audio';
   return 'Unknown';
 } 

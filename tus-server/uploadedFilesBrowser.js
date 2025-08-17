@@ -252,8 +252,9 @@ router.get('/files', (req, res) => {
       res.setHeader('Content-Type', contentType);
       
       // If not downloading, and it's a non-viewable file type, show a simple file viewer
-      if (!isDownload && !contentType.startsWith('image/') && !contentType.startsWith('video/') && 
-          !contentType.startsWith('audio/') && contentType !== 'application/pdf') {
+      const lowerContentType = contentType.toLowerCase();
+      if (!isDownload && !lowerContentType.startsWith('image/') && !lowerContentType.startsWith('video/') && 
+          !lowerContentType.startsWith('audio/') && lowerContentType !== 'application/pdf') {
         return res.send(`
           <!DOCTYPE html>
           <html>

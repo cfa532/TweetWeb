@@ -69,12 +69,12 @@ async function loadTweetsWithMinimum() {
     isLoading.value = true;
     pageNumber.value = 0; // Reset page number for initial load
 
-    // Keep loading more pages until we have at least 6 tweets or no more tweets
-    const minTweets = 6;
+    // Load exactly 3 pages (30 tweets) initially
+    const pagesToLoad = 3;
     let tweetsLoaded = 0;
     let round = 0;
     
-    while (isLoading.value && round < 10) {
+    while (isLoading.value && round < pagesToLoad) {
         // Load initial page
         const loadedPageSize = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
         if (loadedPageSize) {
@@ -82,9 +82,6 @@ async function loadTweetsWithMinimum() {
             round++;
         } else {
             console.warn("Init load failed. Cannot load tweets in round", round);
-            break;
-        }
-        if (tweetsLoaded >= minTweets) {
             break;
         }
         

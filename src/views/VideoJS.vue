@@ -14,7 +14,10 @@ const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
-const isHLS = computed(() => props.media.type === 'hls_video' || props.media.type === 'Video');
+const isHLS = computed(() => {
+  const mediaType = props.media.type?.toLowerCase();
+  return mediaType === 'hls_video' || mediaType === 'video';
+});
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })

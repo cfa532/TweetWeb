@@ -655,7 +655,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
                         aid: this.appId, ver: "last", nodeid: user.hostId
                     })
-                    let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId)
+                    let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId, false)
                     console.log("Host IPs", hostIps, ip)
                     if (!ip) {
                         console.error("No writable host found for user", hostIps, user)
@@ -901,6 +901,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 /^172\.(1[6-9]|2[0-9]|3[0-1])\./ // Class B private
             ];
 
+            // IPv6 local patterns
+            const localIPv6Patterns = [
+                /^::1$/, // IPv6 loopback
+                /^fe80:/, // IPv6 link-local
+                /^fc00:/, // IPv6 unique local
+                /^fd00:/, // IPv6 unique local
+            ];
+
             const portRegex = /:(\d+)$/;
             const portMatch = ip.match(portRegex);
 
@@ -911,7 +919,18 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            return localPatterns.some(pattern => pattern.test(ip));
+            // Check for IPv4 patterns
+            if (localPatterns.some(pattern => pattern.test(ip))) {
+                return true;
+            }
+
+            // Check for IPv6 patterns (remove port first if present)
+            const ipWithoutPort = ip.replace(/:\d+$/, '');
+            if (localIPv6Patterns.some(pattern => pattern.test(ipWithoutPort))) {
+                return true;
+            }
+
+            return false;
         },
 
         /**

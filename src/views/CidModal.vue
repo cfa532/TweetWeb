@@ -18,10 +18,11 @@ const selectFile = () => {
     }
 };
 function getMediaType(t: string) {
-  if (t.startsWith('image/')) return 'Image'
-  if (t.startsWith('video/')) return 'hls_video'
-  if (t.startsWith('audio/')) return 'Audio'
-  return 'Uknown'
+  const lowerType = t.toLowerCase();
+  if (lowerType.startsWith('image/')) return 'Image'
+  if (lowerType.startsWith('video/')) return 'Video'
+  if (lowerType.startsWith('audio/')) return 'Audio'
+  return 'Unknown'
 }
 const getVideoAspectRatio = (file: File): Promise<number> => {
     return new Promise((resolve, reject) => {
@@ -49,7 +50,7 @@ const handleFileSelect = async (event: Event) => {
         const file = target.files[0];
 
         let aspectRatio: number | null = null;
-        if (file.type.startsWith('video')) {
+        if (file.type.toLowerCase().startsWith('video')) {
             try {
                 aspectRatio = await getVideoAspectRatio(file);
             } catch (error) {
