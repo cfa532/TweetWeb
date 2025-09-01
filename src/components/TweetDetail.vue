@@ -81,7 +81,7 @@ async function showTweet() {
     isLoading.value = false
 };
 
-const MAX_TITLE_LENGTH = 30
+const MAX_TITLE_LENGTH = 40
 const formattedTitle = computed(() => {
     let title = tweet.value.title
     if (title)
