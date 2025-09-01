@@ -560,7 +560,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The IP address of the best provider or null if not found
          */
         async getProviderIp(mid: string): Promise<string | null> {
-            let ip = await this.lapi.client.RunMApp("get_provider", {
+            let ip = await this.lapi.client.RunMApp("get_provider_ip", {
                 aid: this.lapi.appId,
                 ver: "last",
                 mid: mid,

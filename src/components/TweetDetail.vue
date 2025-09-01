@@ -81,17 +81,18 @@ async function showTweet() {
     isLoading.value = false
 };
 
+const MAX_TITLE_LENGTH = 30
 const formattedTitle = computed(() => {
     let title = tweet.value.title
     if (title)
         return title
     title = ""
     if (!tweetStore.isEmptyString(tweet.value.content)) {
-        title = tweet.value.content!.substring(0, 20)
+        title = tweet.value.content!.substring(0, MAX_TITLE_LENGTH)
     } else {
         if (tweet.value.originalTweetId) {
             if (!tweetStore.isEmptyString(tweet.value.originalTweet.content)) {
-                title = tweet.value.originalTweet!.content!.substring(0, 20)
+                title = tweet.value.originalTweet!.content!.substring(0, MAX_TITLE_LENGTH)
             } else {
                 tweet.value.originalTweet!.attachments?.forEach((element: any) => {
                     title += '[' + element.type + ']'
