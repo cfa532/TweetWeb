@@ -7,7 +7,7 @@ import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const tweetStore = useTweetStore()
-const qrSize = 80
+const qrSize = 100
 const props = defineProps({
     userId: { type: String, required: false },
 })
@@ -79,7 +79,7 @@ const closeDownloadModal = () => {
 }
 
 const openAppStore = () => {
-    window.open('https://apps.apple.com/app/dtweet/id1234567890', '_blank')
+    window.open('https://apps.apple.com/app/dtweet/id6751131431', '_blank')
 }
 
 const openPlayStore = () => {
@@ -206,12 +206,12 @@ watch(userId, async (nv, ov) => {
                     
                     <!-- Direct Download -->
                     <div class="platform-option" @click="startDirectDownload">
+                        <div class="platform-qr">
+                            <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize="20"></QRCoder>
+                        </div>
                         <div class="platform-info">
                             <h5>{{ directDownloadText }}</h5>
                             <p>{{ isDownloading ? downloadingText : apkText }}</p>
-                        </div>
-                        <div class="platform-qr direct-download-qr">
-                            <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize="20"></QRCoder>
                         </div>
                         <div v-if="isDownloading" class="download-spinner">
                             <span class="spinner-border spinner-border-sm" role="status"></span>
@@ -512,14 +512,7 @@ watch(userId, async (nv, ov) => {
     align-items: center;
 }
 
-.direct-download-qr {
-    position: absolute;
-    left: 20px;
-}
 
-.platform-option:last-child .platform-info {
-    margin-left: 120px;
-}
 
 .download-spinner {
     position: absolute;
