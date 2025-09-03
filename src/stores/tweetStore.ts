@@ -91,38 +91,61 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweets Array of tweets to process and add to the store
          */
         async getTweetReady(tweet: Tweet) {
-            // skip tweet that is in this.tweets already.
-            if (this.tweets.find(e => e.mid == tweet.mid))
-                return
-            let author = await this.getUser(tweet.authorId)
-            if (!author)
-                return
-            
-            tweet.comments = []     // load comments only on detail page
-            tweet.author = author
-            tweet.provider = author.providerIp
-            tweet.attachments = tweet.attachments?.map(e => {
-                return {
-                    mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
-                    type: e.type,
-                    timestamp: e.timestamp,
-                    fileName: e.fileName,
-                    downloadable: tweet.downloadable,
-                    size: e.size,
-                    aspectRatio: e.aspectRatio
+            try {
+                // skip tweet that is in this.tweets already.
+                if (this.tweets.find(e => e.mid == tweet.mid))
+                    return
+                
+                let author = await this.getUser(tweet.authorId)
+                if (!author) {
+                    console.warn("Author not found for tweet:", tweet.mid, "authorId:", tweet.authorId)
+                    return
                 }
-            })
+                
+                tweet.comments = []     // load comments only on detail page
+                tweet.author = author
+                tweet.provider = author.providerIp
+                
+                if (tweet.attachments) {
+                    tweet.attachments = tweet.attachments.map(e => {
+                        return {
+                            mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
+                            type: e.type,
+                            timestamp: e.timestamp,
+                            fileName: e.fileName,
+                            downloadable: tweet.downloadable,
+                            size: e.size,
+                            aspectRatio: e.aspectRatio
+                        }
+                    })
+                }
 
-            if (tweet.originalTweetId) {
-                const originalTweet = this.originalTweets.find(t => t.mid == tweet.originalTweetId)
-                if (originalTweet) {
-                    tweet.originalTweet = originalTweet
-                } else {
-                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                if (tweet.originalTweetId) {
+                    try {
+                        const originalTweet = this.originalTweets.find(t => t.mid == tweet.originalTweetId)
+                        if (originalTweet) {
+                            tweet.originalTweet = originalTweet
+                        } else {
+                            tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                        }
+                    } catch (error) {
+                        console.error("Error fetching original tweet:", tweet.originalTweetId, error)
+                        // Continue without original tweet
+                    }
                 }
+                
+                try {
+                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
+                } catch (error) {
+                    console.error("Error saving tweet to sessionStorage:", error)
+                    // Continue even if sessionStorage fails
+                }
+                
+                this.tweets.push(tweet);
+            } catch (error) {
+                console.error("Error in getTweetReady for tweet:", tweet.mid, error)
+                throw error; // Re-throw to let caller handle it
             }
-            sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
-            this.tweets.push(tweet);
         },
 
         /**
@@ -173,15 +196,21 @@ export const useTweetStore = defineStore('tweetStore', {
                     await this.updateOriginalTweets(originalTweetsData)
                 }
 
-                tweetsData?.forEach(async (tweetJson: any) => {
-                    if (tweetJson != null) {
-                        const tweet = tweetJson as Tweet
-                        const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
-                        if (!cachedTweet) {
-                            await this.getTweetReady(tweet)
+                if (tweetsData) {
+                    for (const tweetJson of tweetsData) {
+                        if (tweetJson != null) {
+                            const tweet = tweetJson as Tweet
+                            const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                            if (!cachedTweet) {
+                                try {
+                                    await this.getTweetReady(tweet)
+                                } catch (error) {
+                                    console.error("Error processing tweet:", tweet.mid, error)
+                                }
+                            }
                         }
                     }
-                })
+                }
                 return tweetsData?.length || null
             } catch (e) {
                 console.error("Error fetching tweets for user:", user.mid)
@@ -228,20 +257,74 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             let pinned = await user.client.RunMApp("get_pinned_tweets", params)
             console.log("Pinned tweets", pinned)
-            pinned?.forEach(async (e: any) => {
-                let tweet = this.tweets.find(t => t.mid == e.tweet)
-                if (tweet) {
-                    tweet.timestamp = Number(e.timestamp)
-                    pinnedTweets.push(tweet)
-                } else {
-                    let t = await this.getTweet(e.tweet, userId)
-                    if (t) {
-                        this.tweets.push(t)
-                        t.timestamp = Number(e.timestamp)
-                        pinnedTweets.push(t)
+            
+            // Validate that pinned is an array
+            if (!Array.isArray(pinned)) {
+                console.warn("Pinned tweets response is not an array:", typeof pinned, pinned)
+                return []
+            }
+            
+            if (pinned.length > 0) {
+                // Create an array to store tweets with their pin timestamps for sorting
+                const tweetsWithPinTime: Array<{tweet: Tweet, pinTimestamp: number}> = []
+                
+                for (const e of pinned) {
+                    try {
+                        const tweetObject = e.tweet
+                        const pinTimestamp = e.timestamp ? Number(e.timestamp) : 0
+                        
+                        console.log("Processing pinned tweet:", tweetObject.mid, "pinned at:", pinTimestamp)
+                        
+                        // Validate tweet object
+                        if (!tweetObject || !tweetObject.mid) {
+                            console.warn("Invalid tweet object:", tweetObject)
+                            continue
+                        }
+
+                        // Check if tweet is already in cache
+                        let existingTweet = this.tweets.find(t => t.mid == tweetObject.mid)
+                        if (existingTweet) {
+                            // Update existing tweet with pin timestamp info
+                            tweetsWithPinTime.push({tweet: existingTweet, pinTimestamp})
+                        } else {
+                            // Ensure the tweet has a proper author object
+                            if (!tweetObject.author || typeof tweetObject.author !== 'object') {
+                                try {
+                                    // Try to get the author from the tweet's authorId
+                                    const author = await this.getUser(tweetObject.authorId)
+                                    if (author) {
+                                        tweetObject.author = author
+                                    } else {
+                                        console.warn("Could not fetch author for pinned tweet:", tweetObject.mid)
+                                        continue
+                                    }
+                                } catch (error) {
+                                    console.error("Error fetching author for pinned tweet:", tweetObject.mid, error)
+                                    continue
+                                }
+                            }
+                            
+                            // Add new tweet to cache and pinned list
+                            this.tweets.push(tweetObject)
+                            tweetsWithPinTime.push({tweet: tweetObject, pinTimestamp})
+                            console.log("Successfully added pinned tweet to cache:", tweetObject.mid)
+                        }
+                    } catch (error) {
+                        console.error("Error processing pinned tweet:", e, error)
+                        continue
                     }
                 }
-            })
+                
+                // Sort by pin timestamp in descending order (most recently pinned first)
+                tweetsWithPinTime.sort((a, b) => b.pinTimestamp - a.pinTimestamp)
+                
+                // Extract just the tweets in the sorted order
+                pinnedTweets = tweetsWithPinTime.map(item => item.tweet)
+                
+                console.log(`Successfully loaded ${pinnedTweets.length} pinned tweets, sorted by pin time`)
+            } else {
+                console.log("No pinned tweets found")
+            }
             return pinnedTweets
         },
         /**
@@ -285,26 +368,33 @@ export const useTweetStore = defineStore('tweetStore', {
                 const tweetsData = response.tweets
 
                 // Process main tweets
-                tweetsData?.forEach(async (tweetJson: any) => {
-                    if (tweetJson != null) {
-                        const tweet = tweetJson as Tweet
-                        const author = await this.getUser(tweet.authorId)
-                        if (!author) {
-                            return
-                        }
-                        tweet.author = author
+                if (tweetsData) {
+                    for (const tweetJson of tweetsData) {
+                        if (tweetJson != null) {
+                            try {
+                                const tweet = tweetJson as Tweet
+                                const author = await this.getUser(tweet.authorId)
+                                if (!author) {
+                                    continue
+                                }
+                                tweet.author = author
 
-                        // Skip private tweets in feed
-                        if (tweet.isPrivate) {
-                            return
-                        } else {
-                            const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
-                            if (!cachedTweet) {
-                                await this.getTweetReady(tweet)
+                                // Skip private tweets in feed
+                                if (tweet.isPrivate) {
+                                    continue
+                                } else {
+                                    const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                                    if (!cachedTweet) {
+                                        await this.getTweetReady(tweet)
+                                    }
+                                }
+                            } catch (error) {
+                                console.error("Error processing tweet in feed:", error)
+                                continue
                             }
                         }
                     }
-                })
+                }
                 return tweetsData?.length || null
             } catch (e) {
                 console.error("Error fetching tweet feed:", e)
@@ -589,23 +679,30 @@ export const useTweetStore = defineStore('tweetStore', {
             }) as any[]
             
             // comment type is a different Tweet type from the definition in this app
-            comments.forEach(async e => {
-                let author = await this.getUser(e.authorId)
-                if (author) {
-                    tweet.comments?.push({
-                        mid: e.mid,
-                        authorId: e.authorId,
-                        author: author,
-                        content: e.content,
-                        timestamp: e.timestamp,
-                        attachments: e.attachments?.map((a: MimeiFileType) => {
-                            // comments on the same node as tweet.
-                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
-                            return a
-                        }),
-                    })
+            if (comments) {
+                for (const e of comments) {
+                    try {
+                        let author = await this.getUser(e.authorId)
+                        if (author) {
+                            tweet.comments?.push({
+                                mid: e.mid,
+                                authorId: e.authorId,
+                                author: author,
+                                content: e.content,
+                                timestamp: e.timestamp,
+                                attachments: e.attachments?.map((a: MimeiFileType) => {
+                                    // comments on the same node as the tweet.
+                                    a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
+                                    return a
+                                }),
+                            })
+                        }
+                    } catch (error) {
+                        console.error("Error processing comment:", e.mid, error)
+                        continue
+                    }
                 }
-            })
+            }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },
 
