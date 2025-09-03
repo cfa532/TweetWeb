@@ -460,6 +460,11 @@ watch(userId, async (nv, ov) => {
     transition: all 0.2s ease;
     background: #fafafa;
     gap: 20px;
+    min-height: 80px;
+}
+
+.platform-option:last-child {
+    padding-left: 20px;
 }
 
 .platform-option:hover {
@@ -477,11 +482,26 @@ watch(userId, async (nv, ov) => {
     flex-shrink: 0;
 }
 
+.platform-icon-placeholder {
+    width: 96px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+}
+
 .platform-info {
     flex: 1;
     margin-right: 0;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
 }
+
+
 
 .platform-info h5 {
     margin: 0 0 4px 0;
