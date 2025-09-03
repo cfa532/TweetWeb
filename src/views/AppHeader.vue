@@ -18,26 +18,7 @@ const user = ref<User>()
 // App download prompt and modal
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
-
-const openDownloadModal = () => {
-    showDownloadModal.value = true
-}
-
-const closeDownloadModal = () => {
-    showDownloadModal.value = false
-}
-
-const openAppStore = () => {
-    window.open('https://apps.apple.com/app/dtweet/id6751131431', '_blank')
-}
-
-const openPlayStore = () => {
-    window.open('https://play.google.com/store/apps/details?id=us.fireshare.tweet', '_blank')
-}
-
-const openDirectDownload = () => {
-    window.open('https://dtweet.app/download', '_blank')
-}
+const isDownloading = ref(false)
 
 // Localization for download prompt
 const downloadText = computed(() => {
@@ -51,6 +32,37 @@ const downloadText = computed(() => {
         return 'Get the best experience with our native app'
     }
 })
+
+const openDownloadModal = () => {
+    showDownloadModal.value = true
+}
+
+const closeDownloadModal = () => {
+    showDownloadModal.value = false
+}
+
+const openAppStore = () => {
+    window.open('https://apps.apple.com/app/dtweet/id1234567890', '_blank')
+}
+
+const openPlayStore = () => {
+    window.open('https://play.google.com/store/apps/details?id=us.fireshare.tweet', '_blank')
+}
+
+const openDirectDownload = () => {
+    window.open('https://dtweet.app/download', '_blank')
+}
+
+const startDirectDownload = async () => {
+    isDownloading.value = true
+    try {
+        await tweetStore.downloadBlob(tweetStore.installApk)
+    } catch (error) {
+        console.error('Download failed:', error)
+    } finally {
+        isDownloading.value = false
+    }
+}
 
 onMounted(async () => {
     if (props.userId) {
@@ -107,7 +119,10 @@ watch(userId, async (nv, ov) => {
                 </div>
             </div>
             <div class="d-flex align-items-start qr-container">
-                <button class="btn btn-link" @click="tweetStore.downloadBlob(tweetStore.installApk)">APP ⬇️</button>
+                <button class="btn btn-link" @click="startDirectDownload" :disabled="isDownloading">
+                    <span v-if="isDownloading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    {{ isDownloading ? 'Downloading...' : 'APP ⬇️' }}
+                </button>
                 <div class="qr-code-container">
                     <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize=20></QRCoder>
                 </div>
@@ -172,14 +187,17 @@ watch(userId, async (nv, ov) => {
                     </div>
                     
                     <!-- Direct Download -->
-                    <div class="platform-option" @click="openDirectDownload">
+                    <div class="platform-option" @click="startDirectDownload">
                         <div class="platform-icon">💻</div>
                         <div class="platform-info">
                             <h5>Direct Download</h5>
-                            <p>APK file for Android</p>
+                            <p>{{ isDownloading ? 'Downloading...' : 'APK file for Android' }}</p>
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://dtweet.app/download" :size="60" :logoSize="10"></QRCoder>
+                            <QRCoder :url="tweetStore.installApk" :size="60" :logoSize="10"></QRCoder>
+                        </div>
+                        <div v-if="isDownloading" class="download-spinner">
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
                         </div>
                     </div>
                 </div>
@@ -514,6 +532,14 @@ watch(userId, async (nv, ov) => {
     display: flex;
     flex-direction: column;
     align-items: center;
+}
+
+.download-spinner {
+    position: absolute;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    color: #667eea;
 }
 
 @keyframes slideDown {
