@@ -38,11 +38,11 @@ const directDownloadText = computed(() => {
     const language = navigator.language || 'en'
     
     if (language.startsWith('zh')) {
-        return '直接下载'
+        return '直接下载安卓 APK'
     } else if (language.startsWith('ja')) {
-        return '直接ダウンロード'
+        return '直接ダウンロード Android APK'
     } else {
-        return 'Direct Download'
+        return 'Download Android APK'
     }
 })
 
@@ -62,11 +62,11 @@ const apkText = computed(() => {
     const language = navigator.language || 'en'
     
     if (language.startsWith('zh')) {
-        return '安卓APK文件'
+        return '在浏览器中打开链接'
     } else if (language.startsWith('ja')) {
-        return 'Android APKファイル'
+        return 'ブラウザでリンクを開く'
     } else {
-        return 'APK file for Android'
+        return 'Open the link in browser'
     }
 })
 
