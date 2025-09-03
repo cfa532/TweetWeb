@@ -28,11 +28,11 @@ const closeDownloadModal = () => {
 }
 
 const openAppStore = () => {
-    window.open('https://apps.apple.com/app/dtweet/id1234567890', '_blank')
+    window.open('https://apps.apple.com/app/dtweet/id6751131431', '_blank')
 }
 
 const openPlayStore = () => {
-    window.open('https://play.google.com/store/apps/details?id=com.dtweet.app', '_blank')
+    window.open('https://play.google.com/store/apps/details?id=us.fireshare.tweet', '_blank')
 }
 
 const openDirectDownload = () => {
@@ -155,7 +155,7 @@ watch(userId, async (nv, ov) => {
                             <p>For iPhone, iPad, and iPod</p>
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://apps.apple.com/app/dtweet/id1234567890" :size="60" :logoSize="10"></QRCoder>
+                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="60" :logoSize="10"></QRCoder>
                         </div>
                     </div>
                     
