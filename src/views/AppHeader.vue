@@ -39,6 +39,19 @@ const openDirectDownload = () => {
     window.open('https://dtweet.app/download', '_blank')
 }
 
+// Localization for download prompt
+const downloadText = computed(() => {
+    const language = navigator.language || 'en'
+    
+    if (language.startsWith('zh')) {
+        return '使用我们的APP获得最佳体验'
+    } else if (language.startsWith('ja')) {
+        return 'ネイティブアプリで最高の体験を'
+    } else {
+        return 'Get the best experience with our native app'
+    }
+})
+
 onMounted(async () => {
     if (props.userId) {
         user.value = await tweetStore.getUser(props.userId)
@@ -117,7 +130,7 @@ watch(userId, async (nv, ov) => {
     <div v-if="showDownloadPrompt" class="download-prompt" @click="openDownloadModal">
         <div class="prompt-content">
             <div class="prompt-text">
-                <p>Get the best experience with our native app</p>
+                <p>{{ downloadText }}</p>
             </div>
             <div class="prompt-icon">
                 <span class="download-icon">⬇️</span>
@@ -154,7 +167,7 @@ watch(userId, async (nv, ov) => {
                             <p>For Android devices</p>
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://play.google.com/store/apps/details?id=com.dtweet.app" :size="60" :logoSize="10"></QRCoder>
+                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="60" :logoSize="10"></QRCoder>
                         </div>
                     </div>
                     
@@ -373,6 +386,7 @@ watch(userId, async (nv, ov) => {
 .prompt-text p {
     margin: 0;
     font-size: 0.9rem;
+    font-weight: 500;
     opacity: 0.9;
     line-height: 1.2;
 }
