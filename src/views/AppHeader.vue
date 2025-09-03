@@ -7,7 +7,7 @@ import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const tweetStore = useTweetStore()
-const qrSize = 60
+const qrSize = 80
 const props = defineProps({
     userId: { type: String, required: false },
 })
@@ -30,6 +30,43 @@ const downloadText = computed(() => {
         return 'ネイティブアプリで最高の体験を'
     } else {
         return 'Get the best experience with our native app'
+    }
+})
+
+// Localization for direct download
+const directDownloadText = computed(() => {
+    const language = navigator.language || 'en'
+    
+    if (language.startsWith('zh')) {
+        return '直接下载'
+    } else if (language.startsWith('ja')) {
+        return '直接ダウンロード'
+    } else {
+        return 'Direct Download'
+    }
+})
+
+const downloadingText = computed(() => {
+    const language = navigator.language || 'en'
+    
+    if (language.startsWith('zh')) {
+        return '下载中...'
+    } else if (language.startsWith('ja')) {
+        return 'ダウンロード中...'
+    } else {
+        return 'Downloading...'
+    }
+})
+
+const apkText = computed(() => {
+    const language = navigator.language || 'en'
+    
+    if (language.startsWith('zh')) {
+        return '安卓APK文件'
+    } else if (language.startsWith('ja')) {
+        return 'Android APKファイル'
+    } else {
+        return 'APK file for Android'
     }
 })
 
@@ -150,36 +187,31 @@ watch(userId, async (nv, ov) => {
                     <!-- iOS/App Store -->
                     <div class="platform-option" @click="openAppStore">
                         <div class="platform-icon">
-                            <img src="/apple-ar21.svg" alt="Apple" height="48" />
-                        </div>
-                        <div class="platform-info">
+                            <img src="/apple-ar21.svg" alt="Apple" height="48" width="96" />
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="60" :logoSize="10"></QRCoder>
+                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="10"></QRCoder>
                         </div>
                     </div>
                     
                     <!-- Android/Google Play -->
                     <div class="platform-option" @click="openPlayStore">
                         <div class="platform-icon">
-                            <img src="/android-ar21.svg" alt="Android" height="48" />
-                        </div>
-                        <div class="platform-info">
+                            <img src="/android-ar21.svg" alt="Android" height="48" width="96" />
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="60" :logoSize="10"></QRCoder>
+                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="10"></QRCoder>
                         </div>
                     </div>
                     
                     <!-- Direct Download -->
                     <div class="platform-option" @click="startDirectDownload">
-                        <div class="platform-icon">💻</div>
                         <div class="platform-info">
-                            <h5>Direct Download</h5>
-                            <p>{{ isDownloading ? 'Downloading...' : 'APK file for Android' }}</p>
+                            <h5>{{ directDownloadText }}</h5>
+                            <p>{{ isDownloading ? downloadingText : apkText }}</p>
                         </div>
                         <div class="platform-qr">
-                            <QRCoder :url="tweetStore.installApk" :size="60" :logoSize="10"></QRCoder>
+                            <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize="10"></QRCoder>
                         </div>
                         <div v-if="isDownloading" class="download-spinner">
                             <span class="spinner-border spinner-border-sm" role="status"></span>
@@ -427,6 +459,7 @@ watch(userId, async (nv, ov) => {
     cursor: pointer;
     transition: all 0.2s ease;
     background: #fafafa;
+    gap: 20px;
 }
 
 .platform-option:hover {
@@ -438,14 +471,16 @@ watch(userId, async (nv, ov) => {
 
 .platform-icon {
     font-size: 2rem;
-    margin-right: 16px;
-    width: 48px;
+    margin-right: 0;
+    width: 96px;
     text-align: center;
+    flex-shrink: 0;
 }
 
 .platform-info {
     flex: 1;
-    margin-right: 16px;
+    margin-right: 0;
+    min-width: 0;
 }
 
 .platform-info h5 {
