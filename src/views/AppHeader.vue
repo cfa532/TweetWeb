@@ -190,7 +190,7 @@ watch(userId, async (nv, ov) => {
                             <img src="/apple-ar21.svg" alt="Apple" height="48" width="96" />
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="10"></QRCoder>
+                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20"></QRCoder>
                         </div>
                     </div>
                     
@@ -200,7 +200,7 @@ watch(userId, async (nv, ov) => {
                             <img src="/android-ar21.svg" alt="Android" height="48" width="96" />
                         </div>
                         <div class="platform-qr">
-                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="10"></QRCoder>
+                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20"></QRCoder>
                         </div>
                     </div>
                     
@@ -210,8 +210,8 @@ watch(userId, async (nv, ov) => {
                             <h5>{{ directDownloadText }}</h5>
                             <p>{{ isDownloading ? downloadingText : apkText }}</p>
                         </div>
-                        <div class="platform-qr">
-                            <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize="10"></QRCoder>
+                        <div class="platform-qr direct-download-qr">
+                            <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize="20"></QRCoder>
                         </div>
                         <div v-if="isDownloading" class="download-spinner">
                             <span class="spinner-border spinner-border-sm" role="status"></span>
@@ -465,6 +465,7 @@ watch(userId, async (nv, ov) => {
 
 .platform-option:last-child {
     padding-left: 20px;
+    position: relative;
 }
 
 .platform-option:hover {
@@ -482,26 +483,15 @@ watch(userId, async (nv, ov) => {
     flex-shrink: 0;
 }
 
-.platform-icon-placeholder {
-    width: 96px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-}
-
 .platform-info {
     flex: 1;
     margin-right: 0;
-    min-width: 0;
+    width: 96px;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: flex-start;
 }
-
-
 
 .platform-info h5 {
     margin: 0 0 4px 0;
@@ -520,6 +510,15 @@ watch(userId, async (nv, ov) => {
     display: flex;
     flex-direction: column;
     align-items: center;
+}
+
+.direct-download-qr {
+    position: absolute;
+    left: 20px;
+}
+
+.platform-option:last-child .platform-info {
+    margin-left: 120px;
 }
 
 .download-spinner {
