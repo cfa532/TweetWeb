@@ -391,7 +391,7 @@ async function startDirectDownload() {
                     <!-- iOS/App Store -->
                     <div class="platform-option" @click="openAppStore">
                         <div class="platform-icon">
-                            <img src="/apple.jpg" alt="Apple" height="48" width="48" />
+                            <img src="/apple.png" alt="Apple" height="48" width="48" />
                         </div>
                         <div class="platform-qr">
                             <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20"></QRCoder>
@@ -401,7 +401,7 @@ async function startDirectDownload() {
                     <!-- Android/Google Play -->
                     <div class="platform-option" @click="openPlayStore">
                         <div class="platform-icon">
-                            <img src="/android.jpg" alt="Android" height="48" width="48" />
+                            <img src="/android.png" alt="Android" height="48" width="48" />
                         </div>
                         <div class="platform-qr">
                             <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20"></QRCoder>
