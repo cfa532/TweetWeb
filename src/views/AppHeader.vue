@@ -118,15 +118,7 @@ watch(userId, async (nv, ov) => {
                     <a href="http://tweet.fireshare.us">HTTP://tweet.fireshare.us</a>
                 </div>
             </div>
-            <div class="d-flex align-items-start qr-container">
-                <button class="btn btn-link" @click="startDirectDownload" :disabled="isDownloading">
-                    <span v-if="isDownloading" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                    {{ isDownloading ? 'Downloading...' : 'APP ⬇️' }}
-                </button>
-                <div class="qr-code-container">
-                    <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize=20></QRCoder>
-                </div>
-            </div>
+
         </div>
         <!-- Followers and Friends Links -->
         <div v-if="user" class="user-actions">
@@ -153,18 +145,14 @@ watch(userId, async (nv, ov) => {
     <!-- Download Modal Popup -->
     <div v-if="showDownloadModal" class="modal-overlay" @click="closeDownloadModal">
         <div class="modal-content" @click.stop>
-            <div class="modal-header">
-                <h4>📱 Download dTweet App</h4>
-                <button class="close-btn" @click="closeDownloadModal">&times;</button>
-            </div>
             <div class="modal-body">
                 <div class="platform-options">
                     <!-- iOS/App Store -->
                     <div class="platform-option" @click="openAppStore">
-                        <div class="platform-icon">🍎</div>
+                        <div class="platform-icon">
+                            <img src="/apple-ar21.svg" alt="Apple" height="48" />
+                        </div>
                         <div class="platform-info">
-                            <h5>iOS App Store</h5>
-                            <p>For iPhone, iPad, and iPod</p>
                         </div>
                         <div class="platform-qr">
                             <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="60" :logoSize="10"></QRCoder>
@@ -173,10 +161,10 @@ watch(userId, async (nv, ov) => {
                     
                     <!-- Android/Google Play -->
                     <div class="platform-option" @click="openPlayStore">
-                        <div class="platform-icon">🤖</div>
+                        <div class="platform-icon">
+                            <img src="/android-ar21.svg" alt="Android" height="48" />
+                        </div>
                         <div class="platform-info">
-                            <h5>Google Play Store</h5>
-                            <p>For Android devices</p>
                         </div>
                         <div class="platform-qr">
                             <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="60" :logoSize="10"></QRCoder>
@@ -204,20 +192,8 @@ watch(userId, async (nv, ov) => {
 </template>
 
 <style scoped>
-.qr-container {
-    display: flex;
-    align-items: flex-end;
-    /* Aligns items to the right */
-}
-
 .btn {
     font-size: 0.8rem;
-}
-
-.qr-code-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
 }
 
 .d-flex {
@@ -311,13 +287,6 @@ watch(userId, async (nv, ov) => {
 }
 
 @media (max-width: 600px) {
-    .qr-container {
-        flex-direction: column;
-        /* Changes direction to column on small screens */
-        align-items: center;
-        /* Centers items horizontally */
-    }
-
     .btn {
         font-size: 0.7rem;
     }
@@ -436,44 +405,11 @@ watch(userId, async (nv, ov) => {
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
 }
 
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px 0;
-    border-bottom: 1px solid #eee;
-    padding-bottom: 16px;
-}
 
-.modal-header h4 {
-    margin: 0;
-    color: #333;
-    font-size: 1.3rem;
-}
-
-.close-btn {
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    color: #999;
-    padding: 0;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    transition: background-color 0.2s ease;
-}
-
-.close-btn:hover {
-    background-color: #f5f5f5;
-    color: #666;
-}
 
 .modal-body {
     padding: 24px;
+    padding-top: 24px;
 }
 
 .platform-options {
