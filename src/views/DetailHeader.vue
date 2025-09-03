@@ -147,7 +147,7 @@ onMounted(() => {
                   <!-- iOS/App Store -->
                   <div class="platform-option" @click="openAppStore">
                       <div class="platform-icon">
-                          <img src="/apple-ar21.svg" alt="Apple" height="48" width="96" />
+                          <img src="/apple.png" alt="Apple" height="48" width="48" />
                       </div>
                       <div class="platform-qr">
                           <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="modalQrSize" :logoSize="20"></QRCoder>
@@ -157,7 +157,7 @@ onMounted(() => {
                   <!-- Android/Google Play -->
                   <div class="platform-option" @click="openPlayStore">
                       <div class="platform-icon">
-                          <img src="/android-ar21.svg" alt="Android" height="48" width="96" />
+                          <img src="/android.png" alt="Android" height="48" width="48" />
                       </div>
                       <div class="platform-qr">
                           <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="modalQrSize" :logoSize="20"></QRCoder>
