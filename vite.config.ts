@@ -33,6 +33,9 @@ export default defineConfig({
   server: {
     proxy: {
     },
-    cors: false
+    cors: false,
+    headers: {
+      'Content-Security-Policy': "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules' chrome-extension://12f15d28-93bc-4657-af5b-e610e459ad52/ https://www.googletagmanager.com https://www.google-analytics.com; object-src 'none';"
+    }
   },
 })

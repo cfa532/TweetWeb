@@ -3,19 +3,14 @@
 
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' 'inline-speculation-rules' chrome-extension://12f15d28-93bc-4657-af5b-e610e459ad52/ https://www.googletagmanager.com https://www.google-analytics.com; object-src 'none';">
   <link rel="icon" href="http://tweet1.fireshare.us/ic_splash.png">
   <link href="/src/assets/bootstrap.min.css" rel="stylesheet" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tweet</title>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-2MSRSGBLC6"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    window.gtag = gtag;
-    gtag('js', new Date());
-    gtag('config', 'G-2MSRSGBLC6');
-  </script>
+  <script src="/gtag.js"></script>
   <script type="text/javascript" src="/hprose.js" crossorigin="anonymous"></script>
   <script type="text/javascript" src="/popper.min.js" crossorigin="anonymous"></script>
   <script type="text/javascript" src="/bootstrap.min.js" crossorigin="anonymous"></script>
