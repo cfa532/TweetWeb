@@ -460,7 +460,7 @@ watch(userId, async (nv, ov) => {
     transition: all 0.2s ease;
     background: #fafafa;
     gap: 20px;
-    min-height: 80px;
+    min-height: 60px;
 }
 
 .platform-option:last-child {
