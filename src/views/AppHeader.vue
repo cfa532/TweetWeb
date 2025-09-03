@@ -145,10 +145,7 @@ watch(userId, async (nv, ov) => {
     <div v-if="showDownloadPrompt" class="download-prompt" @click="openDownloadModal">
         <div class="prompt-content">
             <div class="prompt-text">
-                <p>{{ downloadText }}</p>
-            </div>
-            <div class="prompt-icon">
-                <span class="download-icon">⬇️</span>
+                <p>{{ downloadText }} ⬇️</p>
             </div>
         </div>
     </div>
@@ -403,10 +400,10 @@ watch(userId, async (nv, ov) => {
 
 .prompt-text p {
     margin: 0;
-    font-size: 0.9rem;
+    font-size: 1.0rem;
     font-weight: 500;
     opacity: 0.9;
-    line-height: 1.2;
+    line-height: 1.4;
 }
 
 .prompt-icon {
