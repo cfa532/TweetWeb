@@ -341,7 +341,7 @@ watch(userId, async (nv, ov) => {
 /* App Download Prompt Styles */
 .download-prompt {
     position: relative;
-    width: fit-content;
+    width: 100%;
     background: #1a1a1a;
     color: #ffffff;
     padding: 0 15px;
@@ -351,6 +351,9 @@ watch(userId, async (nv, ov) => {
     border-radius: 8px;
     cursor: pointer;
     transition: transform 0.2s ease;
+    animation: rotateToVertical 0.6s ease-out;
+    transform-style: preserve-3d;
+    perspective: 1000px;
 }
 
 .download-prompt:hover {
@@ -506,6 +509,17 @@ watch(userId, async (nv, ov) => {
     }
     to {
         transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes rotateToVertical {
+    from {
+        transform: rotateX(90deg);
+        opacity: 0;
+    }
+    to {
+        transform: rotateX(0deg);
         opacity: 1;
     }
 }
