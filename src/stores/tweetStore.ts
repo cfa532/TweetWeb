@@ -749,14 +749,13 @@ export const useTweetStore = defineStore('tweetStore', {
                  * Now find the IP of a host where user has write permission
                  */
                 if (user.hostId) {
-                    let hostIps: String = await this.lapi.client.RunMApp("get_node_ip", {
+                    const ip = await this.lapi.client.RunMApp("get_node_ip", {
                         aid: this.appId, ver: "last", nodeid: user.hostId
                     })
-                    let ip = await this.findFirstAccessibleIP(hostIps.trim().split(','), this.lapi.appId, false)
-                    console.log("Host IPs", hostIps, ip)
+                    console.log("Host IPs", ip)
                     if (!ip) {
-                        console.error("No writable host found for user", hostIps, user)
-                        useAlertStore().error(`No writable host found for user. ${hostIps} ${JSON.stringify(user)}`)
+                        console.error("No writable host found for user", ip, user)
+                        useAlertStore().error(`No writable host found for user. ${ip} ${JSON.stringify(user)}`)
                         return
                     }
                     user.providerIp = ip
