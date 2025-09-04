@@ -505,12 +505,12 @@ watch(userId, async (nv, ov) => {
 }
 
 .platform-qr {
+    flex-shrink: 0;
+    margin-left: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
 }
-
-
 
 .download-spinner {
     position: absolute;
