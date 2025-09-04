@@ -478,7 +478,6 @@ watch(userId, async (nv, ov) => {
 .platform-icon {
     font-size: 2rem;
     margin-right: 0;
-    width: 96px;
     text-align: center;
     flex-shrink: 0;
 }
@@ -486,7 +485,6 @@ watch(userId, async (nv, ov) => {
 .platform-info {
     flex: 1;
     margin-right: 0;
-    width: 96px;
     display: flex;
     flex-direction: column;
     justify-content: center;
