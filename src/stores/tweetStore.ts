@@ -727,47 +727,69 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The user object if login successful
          */
         async login(username: string, password: string) {
-            // given username, get UserId
-            let userId = await this.lapi.client.RunMApp("get_userid", {
-                aid: this.appId, ver: "last", username: username
-            })
-            let user = await this.getUser(userId)
-            if (!user) {
-                console.error("Login failed", userId, user)
-                return
-            }
-            let ret = await user.client.RunMApp("login", {
-                aid: this.appId, ver: "last", username: username, password: password
-            })
-            if (!ret) {
-                console.error("Login failed", userId)
-                useAlertStore().error("Login failed")
-                return
-            }
-            if (ret["status"] === 'success') {
-                /**
-                 * Now find the IP of a host where user has write permission
-                 */
-                if (user.hostId) {
-                    const ip = await this.lapi.client.RunMApp("get_node_ip", {
-                        aid: this.appId, ver: "last", nodeid: user.hostId
-                    })
-                    console.log("Host IPs", ip)
-                    if (!ip) {
-                        console.error("No writable host found for user", ip, user)
-                        useAlertStore().error(`No writable host found for user. ${ip} ${JSON.stringify(user)}`)
+            try {
+                // given username, get UserId
+                let userId = await this.lapi.client.RunMApp("get_userid", {
+                    aid: this.appId, ver: "last", username: username
+                })
+                
+                if (!userId) {
+                    console.error("Login failed: User not found", username)
+                    useAlertStore().error("User not found. Please check your username.")
+                    return
+                }
+                
+                let user = await this.getUser(userId)
+                if (!user) {
+                    console.error("Login failed: Could not fetch user data", userId)
+                    useAlertStore().error("Could not fetch user data. Please try again.")
+                    return
+                }
+                
+                let ret = await user.client.RunMApp("login", {
+                    aid: this.appId, ver: "last", username: username, password: password
+                })
+                if (!ret) {
+                    console.error("Login failed: Authentication failed", userId)
+                    useAlertStore().error("Authentication failed. Please check your credentials.")
+                    return
+                }
+                
+                if (ret["status"] === 'success') {
+                    /**
+                     * Now find the IP of a host where user has write permission
+                     */
+                    if (user.hostId) {
+                        const ip = await this.lapi.client.RunMApp("get_node_ip", {
+                            aid: this.appId, ver: "last", nodeid: user.hostId
+                        })
+                        console.log("Host IPs", ip)
+                        if (!ip) {
+                            console.error("No writable host found for user", ip, user)
+                            useAlertStore().error("No writable host found for user. Please contact support.")
+                            return
+                        }
+                        user.providerIp = ip
+                        sessionStorage.setItem("user", JSON.stringify(user))
+                        user.client = this.lapi.getClient(ip)
+                        this._user = user
+                        this.addFollowing(userId)
+                        useAlertStore().success("Login successful!")
+                        return user
+                    } else {
+                        console.error("Login failed: User has no host ID", user)
+                        useAlertStore().error("User account configuration error. Please contact support.")
                         return
                     }
-                    user.providerIp = ip
-                    sessionStorage.setItem("user", JSON.stringify(user))
-                    user.client = this.lapi.getClient(ip)
-                    this._user = user
-                    this.addFollowing(userId)
-                    return user
+                } else {
+                    console.error("Login failed", ret["reason"])
+                    useAlertStore().error(ret["reason"] || "Login failed. Please check your credentials.")
+                    return
                 }
-            } else {
-                console.error("Login failed", ret["reason"])
-                useAlertStore().error(ret["reason"])
+            } catch (error) {
+                console.error("Login error:", error)
+                useAlertStore().error("Login failed due to network error. Please try again.")
+                return
             }
         },
         /**
