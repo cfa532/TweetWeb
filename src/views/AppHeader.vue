@@ -430,7 +430,7 @@ watch(userId, async (nv, ov) => {
 .modal-content {
     background: white;
     border-radius: 12px;
-    max-width: 600px;
+    max-width: 400px;
     width: 100%;
     max-height: 90vh;
     overflow-y: auto;
