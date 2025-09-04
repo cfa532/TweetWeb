@@ -90,7 +90,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
          */
-        async getTweetReady(tweet: Tweet) {
+        async addTweetToStore(tweet: Tweet) {
             try {
                 // skip tweet that is in this.tweets already.
                 if (this.tweets.find(e => e.mid == tweet.mid))
@@ -203,7 +203,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
                             if (!cachedTweet) {
                                 try {
-                                    await this.getTweetReady(tweet)
+                                    await this.addTweetToStore(tweet)
                                 } catch (error) {
                                     console.error("Error processing tweet:", tweet.mid, error)
                                 }
@@ -385,7 +385,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 } else {
                                     const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
                                     if (!cachedTweet) {
-                                        await this.getTweetReady(tweet)
+                                        await this.addTweetToStore(tweet)
                                     }
                                 }
                             } catch (error) {
@@ -395,10 +395,96 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                     }
                 }
+
+                // If this is the first page (pageNumber === 0), also update following tweets in background
+                if (pageNumber === 0) {
+                    // Call updateFollowingTweets in background without blocking the main flow
+                    this.updateFollowingTweets().catch(error => {
+                        console.error("Background updateFollowingTweets failed:", error)
+                        // Don't throw the error as this is a background operation
+                    })
+                }
+
                 return tweetsData?.length || null
             } catch (e) {
                 console.error("Error fetching tweet feed:", e)
                 return null
+            }
+        },
+
+        /**
+         * Updates following tweets by calling the update_following_tweets endpoint.
+         * This function can only be called after user has logged in.
+         * Processes tweets exactly like getTweetFeed() and updates state.tweets directly.
+         */
+        async updateFollowingTweets(): Promise<void> {
+            // Check if user is logged in
+            if (!this.loginUser) {
+                console.error("updateFollowingTweets: User must be logged in to call this function")
+                useAlertStore().error("You must be logged in to update following tweets")
+                return
+            }
+
+            try {
+                const params = {
+                    aid: this.appId,
+                    ver: "last",
+                    appuserid: this.loginUser.mid,
+                    hostid: this.loginUser.hostId
+                }
+
+                console.log("Calling update_following_tweets with params:", params)
+                const response = await this.loginUser.client.RunMApp("update_following_tweets", params)
+
+                // Check success status first
+                const success = response?.success
+                if (success !== true) {
+                    const errorMessage = response?.message || "Unknown error occurred"
+                    console.error("Update following tweets failed:", errorMessage)
+                    console.error("Response:", response)
+                    return
+                }
+
+                // Cache original tweets first (same as getTweetFeed)
+                if (response.originalTweets) {
+                    await this.updateOriginalTweets(response.originalTweets)
+                }
+
+                // Extract tweets from the response format (same as getTweetFeed)
+                const tweetsData = response.tweets
+
+                // Process main tweets (exactly like getTweetFeed)
+                if (tweetsData) {
+                    for (const tweetJson of tweetsData) {
+                        if (tweetJson != null) {
+                            try {
+                                const tweet = tweetJson as Tweet
+                                const author = await this.getUser(tweet.authorId)
+                                if (!author) {
+                                    continue
+                                }
+                                tweet.author = author
+
+                                // Skip private tweets in feed (same as getTweetFeed)
+                                if (tweet.isPrivate) {
+                                    continue
+                                } else {
+                                    const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                                    if (!cachedTweet) {
+                                        await this.addTweetToStore(tweet)
+                                    }
+                                }
+                            } catch (error) {
+                                console.error("Error processing tweet in updateFollowingTweets:", error)
+                                continue
+                            }
+                        }
+                    }
+                }
+
+                console.log(`Successfully updated following tweets: ${tweetsData?.length || 0} tweets processed`)
+            } catch (e) {
+                console.error("Error calling update_following_tweets:", e)
             }
         },
         /**
