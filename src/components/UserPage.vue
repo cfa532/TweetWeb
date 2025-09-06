@@ -17,6 +17,7 @@ const initialLoad = ref(true);
 onMounted(async () => {
     tweetStore.removeUser(authorId.value);  // force reload user data from its host.
     await initialLoadTweets(authorId.value);
+    console.log('UserPage mounted', await tweetStore.getUser(authorId.value));
     window.addEventListener('scroll', handleScroll);
     // Scroll to top when page is opened
     window.scrollTo(0, 0);

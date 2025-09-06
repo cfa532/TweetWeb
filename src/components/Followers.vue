@@ -8,16 +8,15 @@ const route = useRoute();
 const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
 const followerIds = ref([] as MimeiId[])
-const loadedUsers = ref([] as User[])
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
 const currentIndex = ref(0)
 const batchSize = 15 // Number of users to load at once
 const containerRef = ref<HTMLElement>()
 
-// Computed property for currently visible users
-const visibleUsers = computed(() => {
-    return loadedUsers.value.slice(0, currentIndex.value)
+// Computed property for currently visible user IDs
+const visibleUserIds = computed(() => {
+    return followerIds.value.slice(0, currentIndex.value)
 })
 
 // Check if there are more users to load
@@ -25,28 +24,14 @@ const hasMoreUsers = computed(() => {
     return currentIndex.value < followerIds.value.length
 })
 
-// Load the next batch of users
+// Load the next batch of user IDs
 const loadNextBatch = async () => {
     if (isLoadingMore.value || !hasMoreUsers.value) return
     
     isLoadingMore.value = true
     const endIndex = Math.min(currentIndex.value + batchSize, followerIds.value.length)
     
-    // Load users for the current batch
-    const batchPromises = followerIds.value.slice(currentIndex.value, endIndex).map(async (mid: MimeiId) => {
-        const user = await tweetStore.getUser(mid)
-        return user
-    })
-    
-    const batchUsers = await Promise.all(batchPromises)
-    
-    // Add valid users to the loaded users array
-    batchUsers.forEach(user => {
-        if (user) {
-            loadedUsers.value.push(user)
-        }
-    })
-    
+    // Simply update the current index to show more user IDs
     currentIndex.value = endIndex
     isLoadingMore.value = false
 }
@@ -95,7 +80,6 @@ watch(() => route.params.userId, async (newUserId) => {
     if (newUserId !== userId) {
         cleanup()
         followerIds.value = []
-        loadedUsers.value = []
         currentIndex.value = 0
         isLoading.value = true
         
@@ -125,9 +109,9 @@ onUnmounted(() => {
     
     <div ref="containerRef" class="users-container">
         <UserRow 
-            v-for="user in visibleUsers" 
-            :user="user" 
-            :key="user.mid" 
+            v-for="userId in visibleUserIds" 
+            :userId="userId" 
+            :key="userId" 
             class="user-row" 
         />
         
@@ -146,7 +130,7 @@ onUnmounted(() => {
         </div>
         
         <!-- End of list indicator -->
-        <div v-if="!hasMoreUsers && visibleUsers.length > 0" class="text-center text-muted my-3">
+        <div v-if="!hasMoreUsers && visibleUserIds.length > 0" class="text-center text-muted my-3">
             <small>No more users to load</small>
         </div>
         
