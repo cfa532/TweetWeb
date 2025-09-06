@@ -145,19 +145,20 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       console.error(`Error uploading file ${file.name}:`, error);
       
       // Provide more specific error messages
-      let errorMessage = error.message || 'Unknown error occurred';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      let finalErrorMessage = errorMessage;
       
-      if (error.message.includes('Network error')) {
-        errorMessage = `Network error uploading ${file.name}. Please check your connection and try again.`;
-      } else if (error.message.includes('timeout')) {
-        errorMessage = `Upload timeout for ${file.name}. The file may be too large or the server is busy.`;
-      } else if (error.message.includes('exceeds the maximum')) {
-        errorMessage = `File ${file.name} is too large. Maximum size is 1GB.`;
-      } else if (error.message.includes('No CID returned')) {
-        errorMessage = `Video processing failed for ${file.name}. Please try again.`;
+      if (errorMessage.includes('Network error')) {
+        finalErrorMessage = `Network error uploading ${file.name}. Please check your connection and try again.`;
+      } else if (errorMessage.includes('timeout')) {
+        finalErrorMessage = `Upload timeout for ${file.name}. The file may be too large or the server is busy.`;
+      } else if (errorMessage.includes('exceeds the maximum')) {
+        finalErrorMessage = `File ${file.name} is too large. Maximum size is 1GB.`;
+      } else if (errorMessage.includes('No CID returned')) {
+        finalErrorMessage = `Video processing failed for ${file.name}. Please try again.`;
       }
       
-      results.push({ status: 'rejected', reason: new Error(errorMessage) });
+      results.push({ status: 'rejected', reason: new Error(finalErrorMessage) });
     }
   }
 
