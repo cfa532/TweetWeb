@@ -953,23 +953,53 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async uploadTweet(tweet: any, tweetId: MimeiId) {
             var ret: any
-            const timeout = this.loginUser?.client.timeout
-            this.loginUser!.client.timeout = 0
-            if (tweetId) {
-                ret = await this.loginUser?.client.RunMApp("add_comment",
-                    {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: this.loginUser?.hostId}
-                )
-            } else {
-                ret = await this.loginUser?.client.RunMApp("add_tweet",
-                    {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
-                        hostid: this.loginUser?.hostId})
+            const originalTimeout = this.loginUser?.client.timeout
+            
+            // Use normal timeout for tweet upload (tweet is just a small JSON object)
+            const effectiveTimeout = 30 * 1000 // 30 seconds
+            
+            try {
+                // Set timeout for this operation
+                this.loginUser!.client.timeout = effectiveTimeout
+                
+                // Create a timeout promise to handle long-running operations
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => {
+                        const timeoutHours = Math.round(effectiveTimeout / (60 * 60 * 1000))
+                        reject(new Error(`Tweet upload timeout after ${timeoutHours} hours. This may be due to extensive video processing on the backend.`))
+                    }, effectiveTimeout)
+                })
+                
+                // Create the upload promise
+                const uploadPromise = (async () => {
+                    if (tweetId) {
+                        return await this.loginUser?.client.RunMApp("add_comment",
+                            {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: this.loginUser?.hostId}
+                        )
+                    } else {
+                        return await this.loginUser?.client.RunMApp("add_tweet",
+                            {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
+                                hostid: this.loginUser?.hostId})
+                    }
+                })()
+                
+                // Race between upload and timeout
+                ret = await Promise.race([uploadPromise, timeoutPromise])
+                
+            } catch (error) {
+                console.error(`Upload ${tweetId ? 'comment' : 'tweet'} failed:`, error)
+                throw error
+            } finally {
+                // Restore original timeout
+                this.loginUser!.client.timeout = originalTimeout
             }
-            this.loginUser!.client.timeout = timeout
-            console.log(`Upload ${tweetId ? 'comment' : 'tweet'}`, tweetId, ret)
+            
+            console.log(`Upload ${tweetId ? 'comment' : 'tweet'} result:`, tweetId, ret)
                 
             // Check if the backend returned null, indicating failure
             if (ret === null || ret === undefined || !ret.success) {
-                throw new Error(ret.message);
+                const errorMessage = ret?.message || 'Unknown error occurred during tweet upload'
+                throw new Error(errorMessage);
             }
             return ret.mid
         },
