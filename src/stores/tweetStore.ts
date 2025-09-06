@@ -807,7 +807,8 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Authenticates a user with username and password
+         * Authenticates a user with username and password. Also assign the hostIP
+         * to login user.
          * @param username The username to login with
          * @param password The password for authentication
          * @returns The user object if login successful
@@ -826,6 +827,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 
                 let user = await this.getUser(userId)
+                console.log("Login user", user)
                 if (!user) {
                     console.error("Login failed: Could not fetch user data", userId)
                     useAlertStore().error("Could not fetch user data. Please try again.")
@@ -846,10 +848,8 @@ export const useTweetStore = defineStore('tweetStore', {
                      * Now find the IP of a host where user has write permission
                      */
                     if (user.hostId) {
-                        const ip = await this.lapi.client.RunMApp("get_node_ip", {
-                            aid: this.appId, ver: "last", nodeid: user.hostId
-                        })
-                        console.log("Host IPs", ip)
+                        const ip = await this.getNodeIp(user, true)
+                        console.log("Host IP", ip)
                         if (!ip) {
                             console.error("No writable host found for user", ip, user)
                             useAlertStore().error("No writable host found for user. Please contact support.")
@@ -920,7 +920,7 @@ export const useTweetStore = defineStore('tweetStore', {
             let user = await this.getUser(authorId)
             if (user) {
                 await this.loginUser?.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
-                    tweetid: tweetId, authorid: authorId
+                    tweetid: tweetId, userid: authorId
                 })
             }
         },
@@ -1266,18 +1266,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param nodeId The node ID to get IPs for
          * @returns The first non-local IP address found
          */
-        async getNodeIp(nodeId: MimeiId): Promise<string | null> {
-            let ips = await this.loginUser?.client.RunMApp("get_node_ip", {
+        async getNodeIp(
+            user: User,
+            v4Only = false
+        ): Promise<string | null> {
+            return await user.client.RunMApp("get_node_ip", {
                 aid: this.lapi.appId,
                 ver: "last",
-                nodeid: nodeId
+                nodeid: user.hostId,
+                v4only: v4Only ? "true" : "false"
             })
-            for (let ip of ips) {
-                if (!this.isEmptyString(ip) && !this.isLocalIP(ip)) {
-                    return ip
-                }
-            }
-            return null
         },
 
         /**
