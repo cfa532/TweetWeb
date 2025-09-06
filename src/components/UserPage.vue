@@ -103,11 +103,15 @@ async function loadMoreTweets() {
 
 const tweetFeed = computed(() => {
     const filteredTweets = tweetStore.tweets.filter(e => {
-        if (e.isPrivate) {
-            return tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value;
-        } else {
-            return e.authorId === authorId.value;
-        }
+        // Filter by author
+        const isAuthorMatch = e.isPrivate 
+            ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
+            : e.authorId === authorId.value;
+        
+        // Filter out tweets that have originalTweetId but originalTweet is null
+        const hasValidOriginalTweet = !e.originalTweetId || e.originalTweet !== null;
+        
+        return isAuthorMatch && hasValidOriginalTweet;
     });
     
     // Sort by timestamp in descending order (newest first)

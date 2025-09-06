@@ -110,7 +110,15 @@ async function loadTweets() {
 }
 
 const tweetFeed = computed(() => {
-    const filteredTweets = tweetStore.tweets.filter(e => !e.isPrivate);
+    const filteredTweets = tweetStore.tweets.filter(e => {
+        // Filter out private tweets
+        const isNotPrivate = !e.isPrivate;
+        
+        // Filter out tweets that have originalTweetId but originalTweet is null
+        const hasValidOriginalTweet = !e.originalTweetId || e.originalTweet !== null;
+        
+        return isNotPrivate && hasValidOriginalTweet;
+    });
     
     // Sort by timestamp in descending order (newest first)
     return filteredTweets.sort((a, b) => (b.timestamp as number) - (a.timestamp as number));

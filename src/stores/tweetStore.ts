@@ -128,9 +128,17 @@ export const useTweetStore = defineStore('tweetStore', {
                         } else {
                             tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
                         }
+                        
+                        // If originalTweetId exists but originalTweet is null, skip this tweet
+                        if (!tweet.originalTweet) {
+                            console.warn("Skipping tweet with missing original tweet:", tweet.mid, "originalTweetId:", tweet.originalTweetId)
+                            return
+                        }
                     } catch (error) {
                         console.error("Error fetching original tweet:", tweet.originalTweetId, error)
-                        // Continue without original tweet
+                        // Skip this tweet if original tweet cannot be fetched
+                        console.warn("Skipping tweet due to original tweet fetch error:", tweet.mid)
+                        return
                     }
                 }
                 
