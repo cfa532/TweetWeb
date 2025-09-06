@@ -955,8 +955,8 @@ export const useTweetStore = defineStore('tweetStore', {
             var ret: any
             const originalTimeout = this.loginUser?.client.timeout
             
-            // Use normal timeout for tweet upload (tweet is just a small JSON object)
-            const effectiveTimeout = 30 * 1000 // 30 seconds
+            // Use longer timeout for tweet upload (Leither service may be busy after video processing)
+            const effectiveTimeout = 5 * 60 * 1000 // 5 minutes
             
             try {
                 // Set timeout for this operation
@@ -965,8 +965,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Create a timeout promise to handle long-running operations
                 const timeoutPromise = new Promise((_, reject) => {
                     setTimeout(() => {
+                        const timeoutMinutes = Math.round(effectiveTimeout / (60 * 1000))
                         const timeoutHours = Math.round(effectiveTimeout / (60 * 60 * 1000))
-                        reject(new Error(`Tweet upload timeout after ${timeoutHours} hours. This may be due to extensive video processing on the backend.`))
+                        const timeoutText = timeoutHours > 0 ? `${timeoutHours} hours` : `${timeoutMinutes} minutes`
+                        reject(new Error(`Tweet upload timeout after ${timeoutText}. This may be due to extensive video processing on the backend.`))
                     }, effectiveTimeout)
                 })
                 
