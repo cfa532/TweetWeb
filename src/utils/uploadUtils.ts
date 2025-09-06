@@ -60,129 +60,6 @@ export async function compressImage(file: File): Promise<File> {
   });
 }
 
-/**
- * Uploads a large video file in chunks for better reliability
- * @param file The video file to upload
- * @param baseUrl The base URL (with port) to construct the endpoint URL
- * @param cloudDrivePort The cloud drive port to use for the endpoint
- * @param onProgress Optional progress callback function
- * @param chunkSize Size of each chunk in bytes (default: 10MB)
- * @param maxRetries Maximum number of retries for failed chunks (default: 3)
- * @returns Promise<string> The CID of the uploaded video
- */
-export async function uploadVideoChunked(
-  file: File,
-  baseUrl: string,
-  cloudDrivePort: string,
-  onProgress?: (progress: number) => void,
-  chunkSize: number = 10 * 1024 * 1024, // 10MB chunks
-  maxRetries: number = 3
-): Promise<string> {
-  const url = new URL(baseUrl);
-  const videoUploadUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video-chunked`;
-  
-  console.log('Uploading large video in chunks to:', videoUploadUrl, 'File size:', file.size);
-  
-  const totalChunks = Math.ceil(file.size / chunkSize);
-  let uploadedChunks = 0;
-  
-  // First, initiate the upload session
-  const initResponse = await fetch(`${videoUploadUrl}/init`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      filename: file.name,
-      filesize: file.size,
-      contentType: file.type,
-      totalChunks: totalChunks
-    })
-  });
-  
-  if (!initResponse.ok) {
-    throw new Error(`Failed to initiate upload: ${initResponse.status}`);
-  }
-  
-  const initResult = await initResponse.json();
-  if (!initResult.success) {
-    throw new Error(initResult.message || 'Failed to initiate upload');
-  }
-  
-  const uploadId = initResult.uploadId;
-  
-  // Helper function to upload a single chunk with retry logic
-  const uploadChunkWithRetry = async (chunkIndex: number, retryCount: number = 0): Promise<void> => {
-    const start = chunkIndex * chunkSize;
-    const end = Math.min(start + chunkSize, file.size);
-    const chunk = file.slice(start, end);
-    
-    const formData = new FormData();
-    formData.append('chunk', chunk);
-    formData.append('uploadId', uploadId);
-    formData.append('chunkIndex', chunkIndex.toString());
-    formData.append('totalChunks', totalChunks.toString());
-    
-    try {
-      const chunkResponse = await fetch(`${videoUploadUrl}/chunk`, {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!chunkResponse.ok) {
-        throw new Error(`HTTP ${chunkResponse.status}: ${chunkResponse.statusText}`);
-      }
-      
-      const chunkResult = await chunkResponse.json();
-      if (!chunkResult.success) {
-        throw new Error(chunkResult.message || `Chunk ${chunkIndex} upload failed`);
-      }
-      
-      uploadedChunks++;
-      if (onProgress) {
-        const progress = Math.round((uploadedChunks / totalChunks) * 100);
-        onProgress(progress);
-      }
-      
-    } catch (error) {
-      if (retryCount < maxRetries) {
-        console.warn(`Retrying chunk ${chunkIndex} (attempt ${retryCount + 1}/${maxRetries}):`, error);
-        // Wait before retry (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-        return uploadChunkWithRetry(chunkIndex, retryCount + 1);
-      } else {
-        throw new Error(`Failed to upload chunk ${chunkIndex} after ${maxRetries} retries: ${error}`);
-      }
-    }
-  };
-  
-  // Upload chunks sequentially to avoid overwhelming the server
-  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-    await uploadChunkWithRetry(chunkIndex);
-  }
-  
-  // Finalize the upload
-  const finalizeResponse = await fetch(`${videoUploadUrl}/finalize`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      uploadId: uploadId
-    })
-  });
-  
-  if (!finalizeResponse.ok) {
-    throw new Error(`Failed to finalize upload: ${finalizeResponse.status}`);
-  }
-  
-  const finalizeResult = await finalizeResponse.json();
-  if (!finalizeResult.success) {
-    throw new Error(finalizeResult.message || 'Failed to finalize upload');
-  }
-  
-  return finalizeResult.cid;
-}
 
 /**
  * Uploads a video file to the convert-video endpoint using multipart form data
@@ -198,8 +75,15 @@ export async function uploadVideo(
   baseUrl: string, 
   cloudDrivePort: string,
   onProgress?: (progress: number) => void,
-  noResample: boolean = false
+  noResample: boolean = false,
+  retryCount: number = 0
 ): Promise<string> {
+  // Validate file size (1GB limit to match backend)
+  const maxFileSize = 1024 * 1024 * 1024; // 1GB
+  if (file.size > maxFileSize) {
+    throw new Error(`File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 1GB.`);
+  }
+  
   // Validate baseUrl
   if (!baseUrl || (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://'))) {
     throw new Error(`Invalid baseUrl: ${baseUrl}. Must be a valid HTTP/HTTPS URL.`);
@@ -214,8 +98,9 @@ export async function uploadVideo(
   }
   
   const videoUploadUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video`;
+  const statusUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video/status`;
   
-  console.log('Uploading video to:', videoUploadUrl, 'File size:', file.size, 'noResample:', noResample);
+  console.log('Uploading video to:', videoUploadUrl, 'File size:', file.size, 'noResample:', noResample, 'retry:', retryCount);
   
   // Create multipart form data
   const formData = new FormData();
@@ -225,59 +110,73 @@ export async function uploadVideo(
   formData.append('contentType', file.type);
   formData.append('noResample', noResample.toString());
   
-  // Use XMLHttpRequest for better progress tracking and multipart support
+  // Step 1: Start the upload and get job ID
+  const uploadResponse = await fetch(videoUploadUrl, {
+    method: 'POST',
+    body: formData
+  });
+  
+  if (!uploadResponse.ok) {
+    throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+  }
+  
+  const uploadResult = await uploadResponse.json();
+  if (!uploadResult.success || !uploadResult.jobId) {
+    throw new Error(uploadResult.message || 'Failed to start video processing');
+  }
+  
+  const jobId = uploadResult.jobId;
+  console.log('Video upload started, job ID:', jobId);
+  
+  // Show initial progress
+  if (onProgress) {
+    onProgress(25); // Show 25% for upload completion
+  }
+  
+  // Step 2: Poll for completion
   return new Promise<string>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    
-    // Progress tracking
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && onProgress) {
-        const progress = Math.round((event.loaded / event.total) * 100);
-        onProgress(progress);
-      }
-    });
-    
-    // Handle response
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const result: VideoUploadResponse = JSON.parse(xhr.responseText);
-          if (result.success) {
-            resolve(result.cid);
-          } else {
-            reject(new Error(result.message || 'Video upload failed'));
-          }
-        } catch (error) {
-          reject(new Error('Invalid response format'));
+    const pollInterval = setInterval(async () => {
+      try {
+        const statusResponse = await fetch(`${statusUrl}/${jobId}`);
+        if (!statusResponse.ok) {
+          throw new Error(`Status check failed: ${statusResponse.status}`);
         }
-      } else {
-        reject(new Error(`HTTP error! status: ${xhr.status}`));
+        
+        const statusResult = await statusResponse.json();
+        console.log('Job status:', statusResult.status, 'Progress:', statusResult.progress + '%', 'Message:', statusResult.message);
+        
+        // Update progress if callback provided (map job progress to 25-95% range)
+        if (onProgress && statusResult.progress) {
+          const mappedProgress = 25 + Math.round((statusResult.progress * 70) / 100);
+          onProgress(mappedProgress);
+        }
+        
+        if (statusResult.status === 'completed') {
+          clearInterval(pollInterval);
+          if (statusResult.cid) {
+            console.log('Video processing completed, CID:', statusResult.cid);
+            resolve(statusResult.cid);
+          } else {
+            reject(new Error('Video processing completed but no CID returned'));
+          }
+        } else if (statusResult.status === 'failed') {
+          clearInterval(pollInterval);
+          reject(new Error(statusResult.message || 'Video processing failed'));
+        }
+        // Continue polling for 'uploading' and 'processing' statuses
+        
+      } catch (error) {
+        console.error('Error checking job status:', error);
+        clearInterval(pollInterval);
+        reject(new Error(`Failed to check processing status: ${error instanceof Error ? error.message : String(error)}`));
       }
-    });
+    }, 5000); // Poll every 5 seconds
     
-    // Handle errors
-    xhr.addEventListener('error', () => {
-      reject(new Error('Network error during upload'));
-    });
-    
-    xhr.addEventListener('abort', () => {
-      reject(new Error('Upload was aborted'));
-    });
-    
-    // Set timeout for large files (24 hours)
-    xhr.timeout = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-    xhr.addEventListener('timeout', () => {
-      reject(new Error('Upload timeout after 24 hours'));
-    });
-    
-    // Open and send request
-    xhr.open('POST', videoUploadUrl);
-    
-    // Set headers for multipart form data
-    xhr.setRequestHeader('Accept', 'application/json');
-    
-    // Send the form data
-    xhr.send(formData);
+    // Set overall timeout (10 hours)
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      reject(new Error('Video processing timeout after 10 hours'));
+    }, 10 * 60 * 60 * 1000);
   });
 }
 

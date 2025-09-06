@@ -99,16 +99,24 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
         
         // Always use regular multipart upload for videos
+        console.log(`Starting video upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
         cid = await uploadVideo(
           file, 
           baseUrl, 
           cloudDrivePort,
           (progress) => {
-            // Update progress from 25% to 95% based on upload progress
-            uploadProgress[i] = 25 + Math.round((progress * 70) / 100);
+            // Update progress based on job processing progress
+            uploadProgress[i] = progress;
+            console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
           },
           noResample.value
         );
+        
+        // Validate that we received a valid CID
+        if (!cid || cid.trim() === '') {
+          throw new Error('Video upload failed: No CID returned from server');
+        }
+        
         uploadProgress[i] = 100; // Complete
         
       } else {
@@ -135,7 +143,21 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
     } catch (error) {
       console.error(`Error uploading file ${file.name}:`, error);
-      results.push({ status: 'rejected', reason: error });
+      
+      // Provide more specific error messages
+      let errorMessage = error.message || 'Unknown error occurred';
+      
+      if (error.message.includes('Network error')) {
+        errorMessage = `Network error uploading ${file.name}. Please check your connection and try again.`;
+      } else if (error.message.includes('timeout')) {
+        errorMessage = `Upload timeout for ${file.name}. The file may be too large or the server is busy.`;
+      } else if (error.message.includes('exceeds the maximum')) {
+        errorMessage = `File ${file.name} is too large. Maximum size is 1GB.`;
+      } else if (error.message.includes('No CID returned')) {
+        errorMessage = `Video processing failed for ${file.name}. Please try again.`;
+      }
+      
+      results.push({ status: 'rejected', reason: new Error(errorMessage) });
     }
   }
 

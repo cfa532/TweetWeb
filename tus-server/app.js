@@ -36,8 +36,8 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
   
-  // Skip authorization for the video conversion endpoint
-  if (req.path === '/convert-video') {
+  // Skip authorization for the video conversion endpoint and status checks
+  if (req.path === '/convert-video' || req.path.startsWith('/convert-video/status/')) {
     return next();
   }
   
@@ -122,12 +122,20 @@ app.use((req, res, next) => {
   // Use 1GB limit for video conversion, 50MB for other routes
   const fileSizeLimit = req.path === '/convert-video' ? 1024 * 1024 * 1024 : 50 * 1024 * 1024;
   
+  // Set longer timeout for video uploads
+  if (req.path === '/convert-video') {
+    req.setTimeout(6 * 60 * 60 * 1000); // 6 hours for video processing
+    res.setTimeout(6 * 60 * 60 * 1000); // 6 hours for video processing
+  }
+  
   fileUpload({
     limits: { fileSize: fileSizeLimit },
     abortOnLimit: true,
     useTempFiles: true,
     tempFileDir: '/tmp/',
-    debug: false
+    debug: false,
+    // Add response timeout for large files
+    responseTimeout: req.path === '/convert-video' ? 6 * 60 * 60 * 1000 : 30000
   })(req, res, next);
 });
 
@@ -144,7 +152,11 @@ app.use(cors({
     'Upload-Offset',
     'Upload-Defer-Length',
     'x-username',
-    'X-Username'  // Add both lowercase and uppercase versions
+    'X-Username',  // Add both lowercase and uppercase versions
+    'Accept',
+    'Cache-Control',
+    'Connection',
+    'Keep-Alive'
   ],
   exposedHeaders: [
     'Location',
