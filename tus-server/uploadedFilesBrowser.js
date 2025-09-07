@@ -367,6 +367,7 @@ router.get('/files/:filepath(*)', (req, res) => {
     }
     
     // Set appropriate headers
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Length', stats.size);
 
     // Encode the filename for Content-Disposition
@@ -383,8 +384,27 @@ router.get('/files/:filepath(*)', (req, res) => {
     const contentType = getContentType(filename, fileMetadata);
     res.setHeader('Content-Type', contentType);
     
-    // Send the file
-    fs.createReadStream(fullPath).pipe(res);
+    // Support HTTP Range requests for large files/media
+    const range = req.headers.range;
+    if (range) {
+      const size = stats.size;
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : size - 1;
+      if (isNaN(start) || isNaN(end) || start > end || end >= size) {
+        res.status(416).setHeader('Content-Range', `bytes */${size}`).end();
+        return;
+      }
+      const chunkSize = (end - start) + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
+      res.setHeader('Content-Length', chunkSize);
+      const fileStream = fs.createReadStream(fullPath, { start, end });
+      fileStream.pipe(res);
+    } else {
+      // Send the whole file
+      fs.createReadStream(fullPath).pipe(res);
+    }
     
   } catch (error) {
     console.error('Error serving file:', error);

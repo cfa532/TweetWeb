@@ -3,7 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const hprose = require('hprose');
 const { getLeitherPort } = require('./leitherDetector');
@@ -21,6 +21,7 @@ let isProcessingQueue = false;
 let hardwareEncoderCache = null;
 let hardwareEncoderCacheTime = 0;
 const HARDWARE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+let hardwareDetectionInFlight = null; // singleflight guard
 
 // Leither connection pool
 const leitherConnections = new Map();
@@ -167,8 +168,7 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
       const minutes = Math.floor(elapsed / 60000);
       const seconds = Math.floor((elapsed % 60000) / 1000);
       
-      // Update progress based on elapsed time (rough estimation)
-      const timeProgress = Math.min(elapsed / (5 * 60 * 1000), 1); // Assume 5 minutes max
+      const timeProgress = Math.min(elapsed / (5 * 60 * 1000), 1);
       const currentProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
       
       processingJobs.set(jobId, {
@@ -178,19 +178,36 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
       });
       
       console.log(`[${jobId}] [PROGRESS] ${message}: ${currentProgress}% (${minutes}m ${seconds}s elapsed)`);
-    }, 10000); // Update every 10 seconds
-    
-    execAsync(command, { timeout: 4 * 60 * 60 * 1000 })
-      .then((result) => {
-        clearInterval(progressInterval);
+    }, 10000);
+
+    // Spawn ffmpeg instead of exec to avoid large stdout buffering
+    const child = spawn('/bin/sh', ['-c', command], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    let stderrBuffer = '';
+    child.stderr.on('data', (chunk) => {
+      // Keep minimal stderr to avoid memory pressure
+      if (stderrBuffer.length < 10000) {
+        stderrBuffer += chunk.toString();
+      }
+    });
+
+    child.on('error', (error) => {
+      clearInterval(progressInterval);
+      console.error(`[${jobId}] [PROGRESS] ${message} failed to start:`, error.message);
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      clearInterval(progressInterval);
+      if (code === 0) {
         console.log(`[${jobId}] [PROGRESS] ${message} completed successfully`);
-        resolve(result);
-      })
-      .catch((error) => {
-        clearInterval(progressInterval);
-        console.error(`[${jobId}] [PROGRESS] ${message} failed:`, error.message);
-        reject(error);
-      });
+        resolve({ code, stderr: stderrBuffer });
+      } else {
+        const err = new Error(`Command exited with code ${code}`);
+        console.error(`[${jobId}] [PROGRESS] ${message} failed:`, err.message);
+        reject(err);
+      }
+    });
   });
 }
 
@@ -281,41 +298,49 @@ function cleanupOldTempFiles() {
 
 // Helper function to detect available hardware encoders
 function detectHardwareEncoders() {
-  return new Promise((resolve) => {
-    if (hardwareEncoderCache && (Date.now() - hardwareEncoderCacheTime) < HARDWARE_CACHE_DURATION) {
-      console.log('[HARDWARE] Using cached encoder detection');
-      resolve(hardwareEncoderCache);
-      return;
-    }
-    
-    console.log('[HARDWARE] Detecting available hardware encoders...');
-    const command = 'ffmpeg -hide_banner -encoders | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)"';
-    console.log('[HARDWARE] Running command:', command);
-    
-    execAsync(command, { timeout: 10000 })
-      .then(result => {
-        console.log('[HARDWARE] Encoder detection command completed');
-        const encoders = result.stdout.toLowerCase();
-        const available = {
-          nvidia: encoders.includes('h264_nvenc'),
-          intel: encoders.includes('h264_qsv'),
-          apple: encoders.includes('h264_videotoolbox'),
-          amd: encoders.includes('h264_amf')
-        };
-        console.log('[HARDWARE] Available encoders:', available);
-        
-        hardwareEncoderCache = available;
-        hardwareEncoderCacheTime = Date.now();
-        resolve(available);
-      })
-      .catch((error) => {
-        console.log('[HARDWARE] No hardware encoders detected, using software encoding. Error:', error.message);
-        const available = { nvidia: false, intel: false, apple: false, amd: false };
-        hardwareEncoderCache = available;
-        hardwareEncoderCacheTime = Date.now();
-        resolve(available);
-      });
-  });
+  if (hardwareEncoderCache && (Date.now() - hardwareEncoderCacheTime) < HARDWARE_CACHE_DURATION) {
+    console.log('[HARDWARE] Using cached encoder detection');
+    return Promise.resolve(hardwareEncoderCache);
+  }
+
+  if (hardwareDetectionInFlight) {
+    console.log('[HARDWARE] Reusing in-flight encoder detection');
+    return hardwareDetectionInFlight;
+  }
+
+  console.log('[HARDWARE] Detecting available hardware encoders...');
+  const command = 'ffmpeg -hide_banner -encoders | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)"';
+  console.log('[HARDWARE] Running command:', command);
+
+  hardwareDetectionInFlight = execAsync(command, { timeout: 10000 })
+    .then(result => {
+      console.log('[HARDWARE] Encoder detection command completed');
+      const encoders = result.stdout.toLowerCase();
+      const available = {
+        nvidia: encoders.includes('h264_nvenc'),
+        intel: encoders.includes('h264_qsv'),
+        apple: encoders.includes('h264_videotoolbox'),
+        amd: encoders.includes('h264_amf')
+      };
+      console.log('[HARDWARE] Available encoders:', available);
+
+      hardwareEncoderCache = available;
+      hardwareEncoderCacheTime = Date.now();
+      return available;
+    })
+    .catch((error) => {
+      console.log('[HARDWARE] No hardware encoders detected, using software encoding. Error:', error.message);
+      const available = { nvidia: false, intel: false, apple: false, amd: false };
+      hardwareEncoderCache = available;
+      hardwareEncoderCacheTime = Date.now();
+      return available;
+    })
+    .finally(() => {
+      // allow new detections after fulfillment
+      hardwareDetectionInFlight = null;
+    });
+
+  return hardwareDetectionInFlight;
 }
 
 // Helper function to test if a hardware encoder actually works
@@ -659,7 +684,7 @@ async function processVideoUpload(req, res) {
     if (noResample) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await execAsync(ffmpegCommand, { timeout: 4 * 60 * 60 * 1000 });
+      await executeWithProgress(ffmpegCommand, requestId, 40, 60, 'Converting video to HLS format...');
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
     } else {
       const availableEncoders = await detectHardwareEncoders();
@@ -669,8 +694,8 @@ async function processVideoUpload(req, res) {
       const commands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, encoderConfig);
       
       await Promise.all([
-        execAsync(commands[0], { timeout: 4 * 60 * 60 * 1000 }),
-        execAsync(commands[1], { timeout: 4 * 60 * 60 * 1000 })
+        executeWithProgress(commands[0], requestId, 40, 50, 'Converting video to 720p HLS...'),
+        executeWithProgress(commands[1], requestId, 50, 60, 'Converting video to 480p HLS...')
       ]);
       console.log(`[${requestId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
