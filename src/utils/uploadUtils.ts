@@ -206,6 +206,29 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
 }
 
 /**
+ * Gets the aspect ratio of an image file
+ * @param file The image file to analyze
+ * @returns Promise<number> The aspect ratio (width/height)
+ */
+export async function getImageAspectRatio(file: File): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const img = new Image();
+    
+    img.onload = () => {
+      // Calculate aspect ratio
+      const aspectRatio = img.width / img.height;
+      resolve(aspectRatio);
+    };
+    
+    img.onerror = () => {
+      reject(new Error('Failed to load image'));
+    };
+    
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+/**
  * Determines the media type of a file based on its MIME type
  * @param mimeType The MIME type of the file
  * @returns string The media type ('Image', 'Video', 'Audio', or 'Unknown')

@@ -44,6 +44,25 @@ const getVideoAspectRatio = (file: File): Promise<number> => {
     });
 };
 
+const getImageAspectRatio = (file: File): Promise<number> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        
+        img.onload = () => {
+            window.URL.revokeObjectURL(img.src);
+            const aspectRatio = img.width / img.height;
+            resolve(aspectRatio);
+        };
+        
+        img.onerror = (error) => {
+            window.URL.revokeObjectURL(img.src);
+            reject(error);
+        };
+        
+        img.src = URL.createObjectURL(file);
+    });
+};
+
 const handleFileSelect = async (event: Event) => {
     const target = event.target as HTMLInputElement;
     if (target.files && target.files.length > 0) {
@@ -55,6 +74,14 @@ const handleFileSelect = async (event: Event) => {
                 aspectRatio = await getVideoAspectRatio(file);
             } catch (error) {
                 console.error("Error getting video aspect ratio:", error);
+                // Handle the error appropriately, maybe set a default value or inform the user
+                aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
+            }
+        } else if (file.type.toLowerCase().startsWith('image')) {
+            try {
+                aspectRatio = await getImageAspectRatio(file);
+            } catch (error) {
+                console.error("Error getting image aspect ratio:", error);
                 // Handle the error appropriately, maybe set a default value or inform the user
                 aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
             }

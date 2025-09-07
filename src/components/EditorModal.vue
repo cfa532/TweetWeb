@@ -5,7 +5,7 @@ import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
-import { compressImage, uploadVideo, getVideoAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { compressImage, uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
@@ -128,7 +128,8 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         hproseClient.timeout = defaultTimeout;
       }
 
-      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : null;
+      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : 
+                         fileType === 'Image' ? await getImageAspectRatio(file) : null;
       const fi = {
         mid: cid,
         type: fileType === 'Video' ? 'hls_video' : fileType,  // all videos are converted to hls_video
