@@ -185,7 +185,8 @@ app.get('/', (req, res) => {
 });
 
 // Start the server
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, '::', () => {
   console.log(`Server listening on port ${port}`);
   console.log(`File browser available at http://server-ip:${port}/files`);
+  console.log(`IPv6 support enabled - listening on all interfaces`);
 });
