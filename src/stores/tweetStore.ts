@@ -1120,12 +1120,20 @@ export const useTweetStore = defineStore('tweetStore', {
                     return response.blob(); // Convert the response to a Blob
                 })
                 .then(blob => {
+                    // Create a new blob with the correct MIME type for APK files
+                    const apkBlob = new Blob([blob], { 
+                        type: 'application/vnd.android.package-archive' 
+                    });
+                    
                     const link = document.createElement('a');
-                    link.href = window.URL.createObjectURL(blob);
+                    link.href = window.URL.createObjectURL(apkBlob);
                     link.download = 'tweet_install.apk';
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
+                    
+                    // Clean up the object URL
+                    window.URL.revokeObjectURL(link.href);
                 })
                 .catch(error => {
                     console.error('There was a problem with the fetch operation:', error);
