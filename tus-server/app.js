@@ -184,7 +184,7 @@ app.get('/', (req, res) => {
   res.redirect('/files');
 });
 
-// Start the server
+// Start the server for both IPv4 and IPv6
 app.listen(port, '::', () => {
   console.log(`Server listening on port ${port}`);
   console.log(`File browser available at http://server-ip:${port}/files`);
