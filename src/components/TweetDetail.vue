@@ -159,6 +159,10 @@ const apkText = computed(() => {
     }
 })
 
+const downloadPageUrl = computed(() => {
+    return `${window.location.origin}/download`
+})
+
 const downloadingText = computed(() => {
     const language = navigator.language || 'en'
     
@@ -411,7 +415,7 @@ async function startDirectDownload() {
                     <!-- Direct Download -->
                     <div class="platform-option" @click="startDirectDownload">
                         <div class="platform-qr">
-                            <QRCoder :url="tweetStore.installApk" :size="qrSize" :logoSize="20"></QRCoder>
+                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20"></QRCoder>
                         </div>
                         <div class="platform-info">
                             <h5>{{ directDownloadText }}</h5>

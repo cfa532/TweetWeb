@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
-  IPs, UploadPackage, DownloadPackage, Followings, Followers, Contact, UploadFile
+  IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile
 } from "@/components"
 import { useAlertStore } from '@/stores';
 
@@ -93,6 +93,11 @@ export const router = createRouter({
       path: '/downloadApk',
       name: "downloadApk",
       component: DownloadPackage,
+    },
+    {
+      path: '/download',
+      name: "download",
+      component: DownloadPage,
     },
     {
       // for user sending message to App contact.
