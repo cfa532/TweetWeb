@@ -5,12 +5,13 @@
         <div class="app-info">
           <img src="/src/ic_splash.png" alt="App Icon" class="app-icon" />
           <h1 class="app-name">DTweet</h1>
-          <p class="app-description">Get the best experience with our native app</p>
         </div>
         
         <div class="download-section">
-          <h2>{{ downloadTitle }}</h2>
-          <p class="download-description">{{ downloadDescription }}</p>
+          <div class="browser-notice">
+            <div class="notice-icon">🌐</div>
+            <p class="notice-text">{{ browserNoticeText }}</p>
+          </div>
           
           <div class="download-button-container">
             <button 
@@ -69,33 +70,23 @@ const isDownloading = ref(false)
 // Localization
 const language = computed(() => navigator.language || 'en')
 
-const downloadTitle = computed(() => {
+const browserNoticeText = computed(() => {
   if (language.value.startsWith('zh')) {
-    return '下载 Android APK'
+    return '请在浏览器中打开此页面以获得最佳下载体验。点击右上角的 ... 选择 "在浏览器中打开"'
   } else if (language.value.startsWith('ja')) {
-    return 'Android APK をダウンロード'
+    return '最適なダウンロード体験のために、ブラウザでこのページを開いてください。右上の ... をクリックし、"ブラウザで開く" を選択してください。'
   } else {
-    return 'Download Android APK'
-  }
-})
-
-const downloadDescription = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return '点击下方按钮下载最新版本的 DTweet Android 应用'
-  } else if (language.value.startsWith('ja')) {
-    return '下のボタンをクリックして最新バージョンの DTweet Android アプリをダウンロード'
-  } else {
-    return 'Click the button below to download the latest version of DTweet Android app'
+    return 'Please open this page in a browser for the best download experience. Click the ... in the top right corner and select "Open in browser".'
   }
 })
 
 const downloadButtonText = computed(() => {
   if (language.value.startsWith('zh')) {
-    return '下载 APK'
+    return '下载安卓 APK'
   } else if (language.value.startsWith('ja')) {
-    return 'APK をダウンロード'
+    return 'Android APK をダウンロード'
   } else {
-    return 'Download APK'
+    return 'Download Android APK'
   }
 })
 
@@ -203,73 +194,101 @@ onMounted(() => {
 
 .download-card {
   background: white;
-  border-radius: 20px;
-  padding: 40px 30px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  border-radius: 15px;
+  padding: 25px 20px;
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.1);
   text-align: center;
 }
 
 .app-info {
-  margin-bottom: 30px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  justify-content: center;
 }
 
 .app-icon {
-  width: 80px;
-  height: 80px;
-  border-radius: 15px;
-  margin-bottom: 15px;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .app-name {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: bold;
   color: #333;
-  margin: 0 0 10px 0;
+  margin: 0;
 }
 
 .app-description {
   color: #666;
-  font-size: 16px;
+  font-size: 14px;
   margin: 0;
 }
 
 .download-section {
-  margin-bottom: 30px;
+  margin-bottom: 20px;
+}
+
+.browser-notice {
+  background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+  border: 1px solid #bbdefb;
+  border-radius: 10px;
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notice-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.notice-text {
+  color: #1976d2;
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+  line-height: 1.4;
 }
 
 .download-section h2 {
-  font-size: 24px;
+  font-size: 20px;
   color: #333;
-  margin: 0 0 10px 0;
+  margin: 0 0 8px 0;
 }
 
 .download-description {
   color: #666;
-  font-size: 14px;
-  margin: 0 0 25px 0;
-  line-height: 1.5;
+  font-size: 13px;
+  margin: 0 0 18px 0;
+  line-height: 1.4;
 }
 
 .download-button-container {
-  margin-bottom: 25px;
+  margin-bottom: 18px;
 }
 
 .download-button {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: 50px;
-  padding: 15px 40px;
-  font-size: 18px;
+  border-radius: 25px;
+  padding: 12px 30px;
+  font-size: 16px;
   font-weight: bold;
   cursor: pointer;
   transition: transform 0.2s, box-shadow 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   margin: 0 auto;
-  min-width: 200px;
+  min-width: 180px;
 }
 
 .download-button:hover:not(:disabled) {
@@ -298,40 +317,40 @@ onMounted(() => {
 
 .instructions {
   background: #f8f9fa;
-  border-radius: 15px;
-  padding: 20px;
+  border-radius: 12px;
+  padding: 15px;
   text-align: left;
-  margin-top: 20px;
+  margin-top: 15px;
 }
 
 .instructions h3 {
-  font-size: 18px;
+  font-size: 16px;
   color: #333;
-  margin: 0 0 15px 0;
+  margin: 0 0 12px 0;
   text-align: center;
 }
 
 .instruction-steps {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 18px;
 }
 
 .instruction-steps li {
   color: #666;
-  font-size: 14px;
-  line-height: 1.5;
-  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 6px;
 }
 
 .alternative-options {
   border-top: 1px solid #eee;
-  padding-top: 25px;
+  padding-top: 18px;
 }
 
 .alternative-options h3 {
-  font-size: 18px;
+  font-size: 16px;
   color: #333;
-  margin: 0 0 20px 0;
+  margin: 0 0 15px 0;
 }
 
 .store-buttons {
@@ -344,13 +363,14 @@ onMounted(() => {
 .store-button {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  border-radius: 25px;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: 20px;
   text-decoration: none;
   font-weight: bold;
   transition: transform 0.2s;
   border: 2px solid transparent;
+  font-size: 14px;
 }
 
 .store-button.apple {
@@ -368,23 +388,23 @@ onMounted(() => {
 }
 
 .store-button img {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 
 @media (max-width: 480px) {
   .download-card {
-    padding: 30px 20px;
+    padding: 20px 15px;
   }
   
   .app-name {
-    font-size: 24px;
+    font-size: 22px;
   }
   
   .download-button {
-    padding: 12px 30px;
-    font-size: 16px;
-    min-width: 180px;
+    padding: 10px 25px;
+    font-size: 15px;
+    min-width: 160px;
   }
   
   .store-buttons {
@@ -393,7 +413,7 @@ onMounted(() => {
   }
   
   .store-button {
-    width: 200px;
+    width: 180px;
     justify-content: center;
   }
 }
