@@ -72,11 +72,11 @@ const language = computed(() => navigator.language || 'en')
 
 const browserNoticeText = computed(() => {
   if (language.value.startsWith('zh')) {
-    return '请在浏览器中打开此页面以获得最佳下载体验。点击右上角的 ... 选择 "在浏览器中打开"'
+    return '点击右上角的 ... 选择 "在浏览器中打开"，以获得最佳下载体验。'
   } else if (language.value.startsWith('ja')) {
-    return '最適なダウンロード体験のために、ブラウザでこのページを開いてください。右上の ... をクリックし、"ブラウザで開く" を選択してください。'
+    return '最適なダウンロード体験のために、右上の ... をクリックし、"ブラウザで開く" を選択してください。'
   } else {
-    return 'Please open this page in a browser for the best download experience. Click the ... in the top right corner and select "Open in browser".'
+    return 'Click the ... in the top right corner and select "Open in browser" for the best download experience.'
   }
 })
 

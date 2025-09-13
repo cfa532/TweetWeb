@@ -100,6 +100,21 @@ export const router = createRouter({
       component: DownloadPage,
     },
     {
+      path: '/apk',
+      name: "apk",
+      component: DownloadPage,
+    },
+    {
+      path: '/app',
+      name: "app",
+      component: DownloadPage,
+    },
+    {
+      path: '/install',
+      name: "install",
+      component: DownloadPage,
+    },
+    {
       // for user sending message to App contact.
       path: '/contact',
       name: "contact",

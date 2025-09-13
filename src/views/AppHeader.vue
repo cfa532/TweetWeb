@@ -71,7 +71,7 @@ const apkText = computed(() => {
 })
 
 const downloadPageUrl = computed(() => {
-    return `${window.location.origin}/download`
+    return `${window.location.origin}/apk`
 })
 
 const openDownloadModal = () => {
