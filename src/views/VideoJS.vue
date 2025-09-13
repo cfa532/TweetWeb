@@ -467,6 +467,21 @@ function stopVideo() {
   display: block;
 }
 
+/* Full-screen video styles */
+.fullscreen-video {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+}
+
+.fullscreen-video .video {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+}
+
 /* Hardware acceleration styles */
 .hardware-accelerated {
   transform: translateZ(0);

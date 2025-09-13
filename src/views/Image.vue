@@ -31,4 +31,14 @@ const props = defineProps({
     max-height: 90vh;
     object-fit: contain; /* Add this line to maintain aspect ratio */
 }
+
+/* Full-screen image styles */
+.fullscreen-image {
+    width: 100vw !important;
+    height: auto !important;
+    max-height: 100vh;
+    object-fit: contain;
+    object-position: center;
+    display: block;
+}
 </style>

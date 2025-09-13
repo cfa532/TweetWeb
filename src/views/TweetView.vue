@@ -112,6 +112,8 @@ const attachmentGridRows = computed(() => {
           <MediaView
             :media='displayedTweet.attachments[0]'
             :tweet='displayedTweet'
+            :media-list='displayedTweet.attachments'
+            :media-index='0'
             class='img-fluid portrait-center'
           ></MediaView>
         </div>
@@ -120,6 +122,8 @@ const attachmentGridRows = computed(() => {
             v-for='(media, index) in displayedTweet.attachments.slice(0, 4)'
             :media='media'
             :tweet='displayedTweet'
+            :media-list='displayedTweet.attachments'
+            :media-index='index'
             :key='index'
             class='img-fluid'
             :addtional-items='

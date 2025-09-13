@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
-  IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile
+  IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
+  MediaViewerModal
 } from "@/components"
 import { useAlertStore } from '@/stores';
 
@@ -119,6 +120,12 @@ export const router = createRouter({
       path: '/contact',
       name: "contact",
       component: Contact,
+    },
+    {
+      // Media viewer modal for full-screen image/video viewing
+      path: '/media-viewer',
+      name: "mediaViewer",
+      component: MediaViewerModal,
     },
   ],
 })
