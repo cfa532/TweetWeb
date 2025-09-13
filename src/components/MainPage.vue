@@ -9,6 +9,7 @@ const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
 const pageNumber = ref(0);
 const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
+const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
@@ -21,29 +22,74 @@ function debounce<T extends Function>(func: T, delay: number) {
     };
 }
 
-async function loadMoreTweets() {
-    if (isLoading.value)
-        return; // Prevent multiple loads
-    isLoading.value = true;
-    const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+async function loadMoreTweets(isManualRetry = false) {
+    if (isLoading.value) return; // Prevent multiple loads
     
-    // If fewer tweets than requested were loaded, there are no more tweets
-    if (tweetsLoaded && tweetsLoaded < pageSize) {
-        console.log('No more tweets available from backend', tweetsLoaded, pageNumber.value);
-        // Optionally, you could disable scroll loading here
+    // For automatic loading, stop immediately if no more tweets
+    if (!isManualRetry && !hasMoreTweets.value) {
+        return;
     }
-    pageNumber.value++;
-    isLoading.value = false;
+    
+    isLoading.value = true;
+    try {
+        const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+        
+        if (tweetsLoaded && tweetsLoaded > 0) {
+            hasMoreTweets.value = true; // Re-enable loading if we got tweets
+            pageNumber.value++;
+        } else {
+            // For automatic loading, stop immediately
+            if (!isManualRetry) {
+                console.log('No more tweets available from backend');
+                hasMoreTweets.value = false;
+            }
+            // For manual retries, do nothing - let user keep trying
+        }
+    } catch (error) {
+        console.error('Error loading more tweets:', error);
+        
+        // For automatic loading, stop on error
+        if (!isManualRetry) {
+            hasMoreTweets.value = false;
+        }
+        // For manual retries, do nothing - let user keep trying
+    } finally {
+        isLoading.value = false;
+    }
 }
 
 const handleScroll = debounce(async () => {
+    // Prevent multiple simultaneous loads
+    if (isLoading.value) return;
+    
     const scrollPosition = window.innerHeight + window.scrollY;
     const documentHeight = document.documentElement.scrollHeight;
 
     if (documentHeight - scrollPosition < scrollThreshold) {
-        await loadMoreTweets();
+        // Store current scroll position before loading
+        const currentScrollY = window.scrollY;
+        const currentDocumentHeight = documentHeight;
+        
+        // Only load more tweets if we have more tweets available
+        if (hasMoreTweets.value) {
+            await loadMoreTweets(false); // Automatic loading
+        }
+        
+        // Restore scroll position after loading to prevent jumping
+        // Only if the document height increased (new content was added)
+        const newDocumentHeight = document.documentElement.scrollHeight;
+        if (newDocumentHeight > currentDocumentHeight) {
+            // Use requestAnimationFrame for smooth scroll restoration
+            requestAnimationFrame(() => {
+                const heightDifference = newDocumentHeight - currentDocumentHeight;
+                window.scrollTo({
+                    top: currentScrollY + heightDifference,
+                    behavior: 'instant' // Use instant to prevent animation conflicts
+                });
+            });
+        }
     }
-}, 250); // Adjust debounce delay as needed
+}, 300); // Increased debounce delay to reduce conflicts
 
 onMounted(async () => {
     if (sessionStorage['isBot'] != 'No') {
@@ -64,10 +110,11 @@ onUnmounted(() => {
 });
 
 async function loadTweetsWithMinimum() {
-    if (isLoading.value)
-        return; // Prevent multiple loads
+    if (isLoading.value) return; // Prevent multiple loads
+    
     isLoading.value = true;
     pageNumber.value = 0; // Reset page number for initial load
+    hasMoreTweets.value = true; // Reset the flag for initial load
 
     // Load exactly 3 pages (30 tweets) initially
     const pagesToLoad = 3;
