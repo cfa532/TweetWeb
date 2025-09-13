@@ -61,7 +61,7 @@ const tweet = computed(() => props.tweet || mediaViewerData.value?.tweet);
 
 // Filter media to only include images (videos have their own full-screen)
 const mediaItems = computed(() => 
-  mediaList.value.filter(media => 
+  mediaList.value.filter((media: MimeiFileType) => 
     media.type?.toLowerCase().includes('image')
   )
 );
@@ -78,7 +78,9 @@ onUnmounted(() => {
 });
 
 watch(() => props.initialIndex, (newIndex) => {
-  currentIndex.value = newIndex;
+  if (newIndex !== undefined) {
+    currentIndex.value = newIndex;
+  }
 });
 
 function handleKeydown(event: KeyboardEvent) {
