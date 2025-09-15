@@ -8,17 +8,35 @@ The ZIP processing endpoint takes a ZIP file containing HLS (HTTP Live Streaming
 
 ## Endpoint Details
 
-- **URL**: `POST /process-zip`
+- **Upload URL**: `POST /process-zip`
+- **Status URL**: `GET /process-zip/status/:jobId`
 - **Content-Type**: `multipart/form-data`
 - **File Field**: `zipFile`
 - **Max File Size**: 500MB
-- **Timeout**: 6 hours
+- **Processing Mode**: Asynchronous with status polling
 
 ## Request Format
+
+### 1. Upload ZIP File
 
 ```bash
 curl -X POST http://localhost:3000/process-zip \
   -F "zipFile=@your-hls-content.zip"
+```
+
+**Immediate Response:**
+```json
+{
+  "success": true,
+  "message": "ZIP upload started",
+  "jobId": "abc123def"
+}
+```
+
+### 2. Check Processing Status
+
+```bash
+curl http://localhost:3000/process-zip/status/abc123def
 ```
 
 ### Form Data Parameters
@@ -54,25 +72,56 @@ hls-content.zip
 
 ## Response Format
 
-### Success Response
+### Upload Response (Immediate)
 
 ```json
 {
   "success": true,
-  "message": "ZIP file extracted and HLS content added to IPFS successfully",
-  "cid": "QmXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-  "tempDir": "/tmp/hls-zip-1234567890-abc123/extracted"
+  "message": "ZIP upload started",
+  "jobId": "abc123def"
 }
 ```
 
-### Error Response
+### Status Response
 
+#### Processing (In Progress)
 ```json
 {
-  "success": false,
-  "message": "Error description",
+  "success": true,
+  "jobId": "abc123def",
+  "status": "processing",
+  "progress": 45,
+  "message": "Adding to IPFS...",
+  "startTime": 1642123456789
+}
+```
+
+#### Completed Successfully
+```json
+{
+  "success": true,
+  "jobId": "abc123def",
+  "status": "completed",
+  "progress": 100,
+  "message": "ZIP processing completed successfully",
+  "cid": "QmXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "tempDir": "/tmp/hls-zip-1234567890-abc123/extracted",
+  "startTime": 1642123456789,
+  "endTime": 1642124456789
+}
+```
+
+#### Failed
+```json
+{
+  "success": true,
+  "jobId": "abc123def",
+  "status": "failed",
+  "progress": 0,
+  "message": "ZIP processing failed",
   "error": "Detailed error information",
-  "tempDir": "/tmp/hls-zip-1234567890-abc123"
+  "startTime": 1642123456789,
+  "endTime": 1642124456789
 }
 ```
 
@@ -81,10 +130,15 @@ hls-content.zip
 | Field | Type | Description |
 |-------|------|-------------|
 | `success` | boolean | Whether the operation was successful |
+| `jobId` | string | Unique job identifier for status polling |
+| `status` | string | Job status: `uploading`, `processing`, `completed`, `failed` |
+| `progress` | number | Processing progress percentage (0-100) |
 | `message` | string | Human-readable status message |
-| `cid` | string | IPFS Content Identifier (only on success) |
+| `cid` | string | IPFS Content Identifier (only when completed) |
 | `tempDir` | string | Path to extracted files (for debugging) |
-| `error` | string | Detailed error information (only on error) |
+| `error` | string | Detailed error information (only when failed) |
+| `startTime` | number | Job start timestamp |
+| `endTime` | number | Job end timestamp (only when completed/failed) |
 
 ## Error Handling
 
@@ -99,12 +153,17 @@ The endpoint handles various error scenarios:
 
 ## Processing Steps
 
-1. **Validation**: Check file type and size
-2. **Extraction**: Extract ZIP contents to temporary directory
-3. **HLS Validation**: Verify HLS structure contains valid playlists
-4. **Leither Connection**: Connect to Leither service for IPFS operations
-5. **IPFS Upload**: Upload extracted HLS content to IPFS
-6. **Cleanup**: Remove temporary files and return CID
+1. **Upload**: Receive ZIP file and generate unique job ID
+2. **Immediate Response**: Return job ID to client for status polling
+3. **Background Processing**:
+   - **Validation**: Check file type and size
+   - **Extraction**: Extract ZIP contents to temporary directory
+   - **HLS Validation**: Verify HLS structure contains valid playlists
+   - **Content Discovery**: Find actual HLS content directory
+   - **Leither Connection**: Connect to Leither service for IPFS operations
+   - **IPFS Upload**: Upload extracted HLS content to IPFS
+   - **Cleanup**: Remove temporary files
+4. **Status Updates**: Client polls status endpoint for progress updates
 
 ## Concurrency and Performance
 

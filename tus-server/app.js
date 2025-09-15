@@ -42,8 +42,8 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
   
-  // Skip authorization for the zip processing endpoint
-  if (req.path === '/process-zip') {
+  // Skip authorization for the zip processing endpoint and status checks
+  if (req.path === '/process-zip' || req.path.startsWith('/process-zip/status/')) {
     return next();
   }
   

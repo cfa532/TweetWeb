@@ -597,6 +597,250 @@ async function processZipUpload(req, res) {
   }
 }
 
+// Internal ZIP processing function (no response object)
+async function processZipUploadInternal(req, jobId) {
+  const routeStartTime = Date.now();
+  console.log(`\n[${new Date().toISOString()}] [${jobId}] --- /process-zip internal processing started ---`);
+  
+  let tempDir = null;
+  let uploadedFile = null;
+  let leitherClient = null;
+  let hlsContentPath = null;
+
+  try {
+    if (activeUploads <= 1) {
+      console.log(`[${jobId}] [CLEANUP] Cleaning up old temporary files...`);
+      cleanupOldTempFiles();
+    }
+
+    // Validate upload
+    if (!req.files || !req.files.zipFile) {
+      console.error(`[${jobId}] [ERROR] No zip file found in request. Expected a file with field name "zipFile".`);
+      throw new Error('No zip file uploaded. Please use the "zipFile" field name.');
+    }
+
+    uploadedFile = req.files.zipFile;
+    console.log(`[${jobId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+
+    const maxFileSize = 500 * 1024 * 1024; // 500MB for zip files
+    if (uploadedFile.size > maxFileSize) {
+      console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
+      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 500MB.`);
+    }
+
+    const allowedTypes = [
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/octet-stream'
+    ];
+    
+    // Allow zip files even if MIME type is not detected correctly
+    const isZipFile = allowedTypes.includes(uploadedFile.mimetype) || 
+                     uploadedFile.name.toLowerCase().endsWith('.zip');
+    
+    if (!isZipFile) {
+      console.error(`[${jobId}] [ERROR] Unsupported file type: '${uploadedFile.mimetype}'.`);
+      throw new Error(`Invalid file type. Only ZIP files are allowed.`);
+    }
+
+    // Create temporary directory
+    tempDir = path.join(os.tmpdir(), `hls-zip-${Date.now()}-${jobId}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+    console.log(`[${jobId}] [INFO] Created temporary directory: ${tempDir}`);
+
+    // Update progress
+    processingJobs.set(jobId, {
+      ...processingJobs.get(jobId),
+      progress: 20,
+      message: 'Extracting ZIP file...'
+    });
+
+    // Extract zip file
+    console.log(`\n[${jobId}] [STEP 1] Extracting zip file...`);
+    console.time(`[${jobId}] zip-extraction`);
+    
+    try {
+      const zip = new AdmZip(uploadedFile.tempFilePath);
+      const extractedPath = path.join(tempDir, 'extracted');
+      fs.mkdirSync(extractedPath, { recursive: true });
+      
+      zip.extractAllTo(extractedPath, true);
+      console.log(`[${jobId}] [SUCCESS] Zip file extracted successfully to: ${extractedPath}`);
+      
+      // Update progress
+      processingJobs.set(jobId, {
+        ...processingJobs.get(jobId),
+        progress: 30,
+        message: 'Validating HLS structure...'
+      });
+      
+      // Validate HLS structure
+      console.log(`[${jobId}] [STEP 2] Validating HLS structure...`);
+      if (!validateHLSStructure(extractedPath, jobId)) {
+        console.error(`[${jobId}] [ERROR] Invalid HLS structure in zip file`);
+        throw new Error('Invalid HLS structure in zip file. Expected at least one playlist.m3u8 or master.m3u8 file.');
+      }
+      
+      console.log(`[${jobId}] [SUCCESS] HLS structure validated`);
+      
+      // Find the actual HLS content directory (might be nested)
+      hlsContentPath = findHLSContentDirectory(extractedPath, jobId);
+      if (!hlsContentPath) {
+        console.error(`[${jobId}] [ERROR] Could not find HLS content directory`);
+        throw new Error('Could not locate HLS content in extracted ZIP file.');
+      }
+      
+      console.log(`[${jobId}] [INFO] HLS content found at: ${hlsContentPath}`);
+      
+    } catch (extractError) {
+      console.error(`[${jobId}] [ERROR] Failed to extract zip file:`, extractError);
+      throw new Error('Failed to extract zip file. Please ensure it is a valid ZIP archive.');
+    }
+    
+    console.timeEnd(`[${jobId}] zip-extraction`);
+
+    // Process with Leither
+    console.log(`\n[${jobId}] [STEP 3] Processing with Leither service...`);
+    console.time(`[${jobId}] leither-total-time`);
+    let timingLabels = new Set();
+    
+    // Update progress
+    processingJobs.set(jobId, {
+      ...processingJobs.get(jobId),
+      progress: 40,
+      message: 'Connecting to Leither service...'
+    });
+    
+    try {
+      console.time(`[${jobId}] leither-port-detection`);
+      timingLabels.add('leither-port-detection');
+      const leitherPort = await getLeitherPort();
+      console.timeEnd(`[${jobId}] leither-port-detection`);
+      timingLabels.delete('leither-port-detection');
+      console.log(`[${jobId}] [INFO] Detected Leither service on port: ${leitherPort}`);
+
+      leitherClient = await getLeitherConnection();
+      
+      console.time(`[${jobId}] leither-get-ppt`);
+      timingLabels.add('leither-get-ppt');
+      console.log(`[${jobId}] [INFO] Getting PPT from Leither service...`);
+      
+      const executeLeitherOperation = async (operation, operationName, timeoutMs = 4 * 60 * 60 * 1000) => {
+        try {
+          console.log(`[${jobId}] [LEITHER] ${operationName}`);
+          const result = await Promise.race([
+            operation(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error(`${operationName} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`)), timeoutMs)
+            )
+          ]);
+          console.log(`[${jobId}] [LEITHER] ${operationName} completed successfully`);
+          return result;
+        } catch (error) {
+          console.error(`[${jobId}] [LEITHER] ${operationName} failed:`, error.message);
+          throw error;
+        }
+      };
+      
+      const leitherVersion = await executeLeitherOperation(
+        () => leitherClient.Getvar("", "ver"),
+        "Getvar version",
+        30000 // 30 seconds for version check
+      );
+      console.log(`[${jobId}] [DEBUG] Leither version: ${leitherVersion}`);
+      
+      const ppt = await executeLeitherOperation(
+        () => leitherClient.GetVarByContext("", "context_ppt", []),
+        "GetVarByContext PPT",
+        60000 // 1 minute for PPT retrieval
+      );
+      console.timeEnd(`[${jobId}] leither-get-ppt`);
+      timingLabels.delete('leither-get-ppt');
+      if (!ppt) throw new Error("Failed to get PPT from Leither service.");
+      console.log(`[${jobId}] [SUCCESS] PPT received.`);
+
+      console.time(`[${jobId}] leither-login`);
+      timingLabels.add('leither-login');
+      console.log(`[${jobId}] [INFO] Logging in to Leither service...`);
+      const api = await executeLeitherOperation(
+        () => leitherClient.Login(ppt),
+        "Login",
+        60000 // 1 minute for login
+      );
+      console.timeEnd(`[${jobId}] leither-login`);
+      timingLabels.delete('leither-login');
+      if (!api || !api.sid) throw new Error("Login to Leither service failed.");
+      console.log(`[${jobId}] [SUCCESS] Login successful. SID:`, api.sid);
+
+      console.time(`[${jobId}] leither-ipfs-add`);
+      timingLabels.add('leither-ipfs-add');
+      console.log(`[${jobId}] [INFO] Adding HLS content to IPFS from path: '${hlsContentPath}'`);
+      
+      // Update progress
+      processingJobs.set(jobId, {
+        ...processingJobs.get(jobId),
+        progress: 80,
+        message: 'Adding to IPFS...'
+      });
+
+      const defaultTimeout = leitherClient.timeout;
+      leitherClient.timeout = 0;
+      const cid = await executeLeitherOperation(
+        () => leitherClient.IpfsAdd(api.sid, hlsContentPath),
+        "IpfsAdd",
+        4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
+      );
+      leitherClient.timeout = defaultTimeout;
+      console.timeEnd(`[${jobId}] leither-ipfs-add`);
+      timingLabels.delete('leither-ipfs-add');
+      console.log(`[${jobId}] [SUCCESS] IPFS CID received:`, cid);
+
+      console.timeEnd(`[${jobId}] leither-total-time`);
+      timingLabels.delete('leither-total-time');
+      
+      return { cid, tempDir };
+
+    } catch (leitherError) {
+      console.error(`[${jobId}] [FATAL] Leither service error:`, leitherError);
+      
+      // Clean up any active timing labels
+      const labelsToClean = ['leither-total-time', 'leither-get-ppt', 'leither-login', 'leither-ipfs-add', 'leither-port-detection'];
+      labelsToClean.forEach(label => {
+        if (timingLabels.has(label)) {
+          console.timeEnd(`[${jobId}] ${label}`);
+          timingLabels.delete(label);
+        }
+      });
+      
+      throw leitherError;
+    }
+
+  } catch (error) {
+    console.error(`[${jobId}] [FATAL] An unexpected error occurred in /process-zip route:`, error);
+    throw error;
+  } finally {
+    if (leitherClient) {
+      releaseLeitherConnection(leitherClient);
+    }
+    
+    if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
+      try {
+        fs.unlinkSync(uploadedFile.tempFilePath);
+        console.log(`[${jobId}] [CLEANUP] Removed temporary uploaded file: ${uploadedFile.tempFilePath}`);
+      } catch (cleanupError) {
+        console.error(`[${jobId}] [ERROR] Failed to cleanup uploaded file:`, cleanupError);
+      }
+    }
+    
+    console.log(`[${jobId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
+    console.log(`[${jobId}] [INFO] Extracted HLS files preserved in: ${tempDir}`);
+    console.log(`[${new Date().toISOString()}] [${jobId}] --- /process-zip route processing finished ---\n`);
+  }
+}
+
+// Store for tracking ZIP processing status
+const processingJobs = new Map();
+
 // ZIP processing endpoint
 router.post('/process-zip', async (req, res) => {
   // Set longer timeout for ZIP processing
@@ -616,26 +860,103 @@ router.post('/process-zip', async (req, res) => {
     console.log('[PROCESS-ZIP] Response closed');
   });
   
-  // Check if we can process immediately or need to queue
-  if (activeUploads >= maxConcurrentUploads) {
-    console.log('[PROCESS-ZIP] Queueing request due to concurrency limit');
-    return new Promise((resolve, reject) => {
-      uploadQueue.push({ req, res, resolve, reject });
-      processUploadQueue();
+  // Generate a unique job ID
+  const jobId = Math.random().toString(36).substr(2, 9);
+  
+  // Store job status
+  processingJobs.set(jobId, {
+    status: 'uploading',
+    progress: 0,
+    message: 'Starting ZIP upload...',
+    startTime: Date.now()
+  });
+  
+  // Send immediate response with job ID
+  res.json({
+    success: true,
+    message: 'ZIP upload started',
+    jobId: jobId
+  });
+  
+  // Process ZIP in background
+  processZipUploadAsync(req, jobId);
+});
+
+// Async ZIP processing function
+async function processZipUploadAsync(req, jobId) {
+  console.log(`[${jobId}] Starting background ZIP processing...`);
+  
+  try {
+    // Update job status to processing
+    processingJobs.set(jobId, {
+      status: 'processing',
+      progress: 10,
+      message: 'Starting ZIP processing...',
+      startTime: processingJobs.get(jobId).startTime
+    });
+    
+    console.log(`[${jobId}] Calling processZipUploadInternal...`);
+    
+    // Process the ZIP (reuse existing logic)
+    const result = await processZipUploadInternal(req, jobId);
+    
+    console.log(`[${jobId}] ZIP processing completed, CID:`, result.cid);
+    
+    // Update job status with success
+    processingJobs.set(jobId, {
+      status: 'completed',
+      progress: 100,
+      message: 'ZIP processing completed successfully',
+      cid: result.cid,
+      tempDir: result.tempDir,
+      startTime: processingJobs.get(jobId).startTime,
+      endTime: Date.now()
+    });
+    
+  } catch (error) {
+    console.error(`[${jobId}] Background processing failed:`, error);
+    
+    // Update job status with error
+    processingJobs.set(jobId, {
+      status: 'failed',
+      progress: 0,
+      message: error.message || 'ZIP processing failed',
+      error: error.message,
+      startTime: processingJobs.get(jobId).startTime,
+      endTime: Date.now()
+    });
+  }
+}
+
+// Status check endpoint
+router.get('/process-zip/status/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const job = processingJobs.get(jobId);
+  
+  console.log(`[${jobId}] Status check requested, current job:`, job ? {
+    status: job.status,
+    progress: job.progress,
+    message: job.message
+  } : 'Job not found');
+  
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      message: 'Job not found'
     });
   }
   
-  // Process immediately
-  activeUploads++;
-  console.log(`[PROCESS-ZIP] Processing immediately. Active uploads: ${activeUploads}/${maxConcurrentUploads}`);
-  
-  try {
-    await processZipUpload(req, res);
-  } finally {
-    activeUploads--;
-    console.log(`[PROCESS-ZIP] Processing completed. Active uploads: ${activeUploads}/${maxConcurrentUploads}`);
-    processUploadQueue(); // Process any queued requests
-  }
+  res.json({
+    success: true,
+    jobId: jobId,
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    cid: job.cid,
+    tempDir: job.tempDir,
+    startTime: job.startTime,
+    endTime: job.endTime
+  });
 });
 
 module.exports = router;
