@@ -13,6 +13,7 @@ const uploadRouter = require('./uploadRoutes');
 const fileBrowserRouter = require('./uploadedFilesBrowser');
 const netdisk = require('./netdisk');
 const videoRouter = require('./videoRoutes');
+const zipRouter = require('./zipRoutes');
 const app = express();
 
 // Get the port from the environment variable, or default to 3000
@@ -38,6 +39,11 @@ function checkAuthorizedUser(req, res, next) {
   
   // Skip authorization for the video conversion endpoint and status checks
   if (req.path === '/convert-video' || req.path.startsWith('/convert-video/status/')) {
+    return next();
+  }
+  
+  // Skip authorization for the zip processing endpoint
+  if (req.path === '/process-zip') {
     return next();
   }
   
@@ -119,13 +125,18 @@ app.use(express.json());
 
 // Configure file upload middleware with different limits for different routes
 app.use((req, res, next) => {
-  // Use 1GB limit for video conversion, 50MB for other routes
-  const fileSizeLimit = req.path === '/convert-video' ? 1024 * 1024 * 1024 : 50 * 1024 * 1024;
-  
-  // Set longer timeout for video uploads
+  // Use 1GB limit for video conversion, 500MB for zip processing, 50MB for other routes
+  let fileSizeLimit = 50 * 1024 * 1024; // Default 50MB
   if (req.path === '/convert-video') {
-    req.setTimeout(6 * 60 * 60 * 1000); // 6 hours for video processing
-    res.setTimeout(6 * 60 * 60 * 1000); // 6 hours for video processing
+    fileSizeLimit = 1024 * 1024 * 1024; // 1GB for video conversion
+  } else if (req.path === '/process-zip') {
+    fileSizeLimit = 500 * 1024 * 1024; // 500MB for zip processing
+  }
+  
+  // Set longer timeout for video and zip uploads
+  if (req.path === '/convert-video' || req.path === '/process-zip') {
+    req.setTimeout(6 * 60 * 60 * 1000); // 6 hours for processing
+    res.setTimeout(6 * 60 * 60 * 1000); // 6 hours for processing
   }
   
   fileUpload({
@@ -135,7 +146,7 @@ app.use((req, res, next) => {
     tempFileDir: '/tmp/',
     debug: false,
     // Add response timeout for large files
-    responseTimeout: req.path === '/convert-video' ? 6 * 60 * 60 * 1000 : 30000
+    responseTimeout: (req.path === '/convert-video' || req.path === '/process-zip') ? 6 * 60 * 60 * 1000 : 30000
   })(req, res, next);
 });
 
@@ -178,6 +189,7 @@ app.use('/', uploadRouter);     // TUS upload handling
 app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
+app.use('/', zipRouter);         // ZIP processing routes
 
 // Redirect root to file browser
 app.get('/', (req, res) => {
