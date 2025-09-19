@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
-const emit = defineEmits(["fileCanceled"])
+const emit = defineEmits(["fileCanceled", "dragStart", "dragOver", "dragLeave", "drop", "dragEnd"])
 const props = defineProps({
     src: {type: File, required: true},
     progress: {type: Number, required: false, default:100},     // uploading progress bar
+    dragged: {type: Boolean, required: false, default: false},  // whether this item is being dragged
+    dragOver: {type: Boolean, required: false, default: false}, // whether this item is being dragged over
 })
 const imageUrl = ref("")
 const caption = ref("")
@@ -19,6 +21,28 @@ watch(()=>props.src, (newVal, oldVal)=>{
 })
 function cancel() {
     emit("fileCanceled")
+}
+
+// Drag and drop event handlers
+function onDragStart(e: DragEvent) {
+    emit("dragStart")
+    e.dataTransfer!.effectAllowed = 'move'
+}
+
+function onDragOver(e: DragEvent) {
+    emit("dragOver", e)
+}
+
+function onDragLeave(e: DragEvent) {
+    emit("dragLeave")
+}
+
+function onDrop(e: DragEvent) {
+    emit("drop", e)
+}
+
+function onDragEnd(e: DragEvent) {
+    emit("dragEnd")
 }
 function thumbnail() {
     if (props.src.type.includes("image")) {
@@ -63,7 +87,17 @@ const generateVideoThumbnail = (file: File) => {
 </script>
 
 <template>
-    <div class="postbox_media_photo_wrapper" :style="{position: 'relative', opacity: props.progress === 100 ? 1 : 0.7}">
+    <div 
+        class="postbox_media_photo_wrapper" 
+        :class="{
+            'dragging': props.dragged,
+            'drag-over': props.dragOver
+        }"
+        :style="{position: 'relative', opacity: props.progress === 100 ? 1 : 0.7}"
+        @dragover="onDragOver"
+        @dragleave="onDragLeave"
+        @drop="onDrop"
+    >
         <div style="position: absolute; display: flex; top: -5px; right: -5px; z-index: 20;">
             <button @click="cancel" title="Close" class="btn-reset" type="button">
             <svg style="width:20px; height:20px;">
@@ -73,7 +107,12 @@ const generateVideoThumbnail = (file: File) => {
             </svg>
             </button>
         </div>
-        <div class="postbox_media_photo_img_wrapper" draggable="true">
+        <div 
+            class="postbox_media_photo_img_wrapper" 
+            draggable="true"
+            @dragstart="onDragStart"
+            @dragend="onDragEnd"
+        >
             <img :src="imageUrl" class="postbox_media_photo_img" draggable="false">
         </div>
         <div style="overflow:hidden; height:40px; position:absolute; bottom: 0px; left: 0px; padding: 5px 2px 0px 3px;">
@@ -129,6 +168,17 @@ const generateVideoThumbnail = (file: File) => {
     flex-grow: 1;
     margin-right: 15px;
     margin-top: 5px;
+}
+
+.postbox_media_photo_wrapper.dragging {
+    opacity: 0.5;
+    transform: rotate(5deg);
+    z-index: 1000;
+}
+
+.postbox_media_photo_wrapper.drag-over {
+    border: 2px dashed #007bff;
+    background-color: #f8f9fa;
 }
 .postbox_media_photo_img {
     /* display: block; */
