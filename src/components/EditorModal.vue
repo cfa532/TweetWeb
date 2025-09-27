@@ -20,6 +20,8 @@ const textArea = ref<HTMLTextAreaElement>()
 const sliceSize = 1024 * 1024 * 10 // 10MB per slice of file
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
+const draggedIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
 const loading = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
@@ -332,6 +334,54 @@ function removeMimei(m: MimeiFileType) {
     divAttach.value.hidden = true
   }
 }
+
+// Drag and drop handlers for reordering files
+function handleDragStart(index: number) {
+  draggedIndex.value = index
+}
+
+function handleDragOver(e: DragEvent, index: number) {
+  e.preventDefault()
+  dragOverIndex.value = index
+}
+
+function handleDragLeave() {
+  dragOverIndex.value = null
+}
+
+function handleDrop(e: DragEvent, dropIndex: number) {
+  e.preventDefault()
+  
+  if (draggedIndex.value === null || draggedIndex.value === dropIndex) {
+    draggedIndex.value = null
+    dragOverIndex.value = null
+    return
+  }
+  
+  // Reorder files
+  const draggedFile = filesUpload.value[draggedIndex.value]
+  const draggedProgress = uploadProgress[draggedIndex.value]
+  
+  // Remove from original position
+  filesUpload.value.splice(draggedIndex.value, 1)
+  uploadProgress.splice(draggedIndex.value, 1)
+  
+  // Adjust drop index if needed (since we removed an item)
+  const adjustedDropIndex = draggedIndex.value < dropIndex ? dropIndex - 1 : dropIndex
+  
+  // Insert at new position
+  filesUpload.value.splice(adjustedDropIndex, 0, draggedFile)
+  uploadProgress.splice(adjustedDropIndex, 0, draggedProgress)
+  
+  // Reset drag state
+  draggedIndex.value = null
+  dragOverIndex.value = null
+}
+
+function handleDragEnd() {
+  draggedIndex.value = null
+  dragOverIndex.value = null
+}
 </script>
 
 <template>
@@ -376,8 +426,20 @@ function removeMimei(m: MimeiFileType) {
         </form>
       </div>
       <div ref='divAttach' hidden class='preview-container'>
-        <Preview @file-canceled='removeFile(file)' v-for='(file, index) in filesUpload' :key='index' v-bind:src='file'
-          v-bind:progress='uploadProgress[index]'></Preview>
+        <Preview 
+          @file-canceled='removeFile(file)' 
+          v-for='(file, index) in filesUpload' 
+          :key='index' 
+          v-bind:src='file'
+          v-bind:progress='uploadProgress[index]'
+          :dragged="draggedIndex === index"
+          :drag-over="dragOverIndex === index"
+          @drag-start="handleDragStart(index)"
+          @drag-over="handleDragOver($event, index)"
+          @drag-leave="handleDragLeave"
+          @drop="handleDrop($event, index)"
+          @drag-end="handleDragEnd"
+        ></Preview>
         <CidPreview @link-removed="removeMimei(m)" v-for="(m, index) in mmFiles" :key="index"
           :src="m.fileName as string" />
       </div>

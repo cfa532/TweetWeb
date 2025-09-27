@@ -40,7 +40,7 @@ async function loadMoreTweets(isManualRetry = false) {
         } else {
             // For automatic loading, stop immediately
             if (!isManualRetry) {
-                console.log('No more tweets available from backend');
+                console.log('No more tweets available from backend.');
                 hasMoreTweets.value = false;
             }
             // For manual retries, do nothing - let user keep trying
