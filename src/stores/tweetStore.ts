@@ -705,6 +705,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return this.users.get(userId)
 
             let providerIp = await this.getProviderIp(userId)
+            console.log("Get user provider IP", providerIp)
             if (!providerIp) {
                 console.warn("No provider found for user", userId)
                 return
@@ -714,18 +715,30 @@ export const useTweetStore = defineStore('tweetStore', {
             let user = await providerClient.RunMApp("get_user", {
                 aid: this.appId, ver: "last", userid: userId,
             })
-            // cache the user data
-            if (user) {
-                user.providerIp = providerIp
-                user.hostId = user.hostIds[0]
-                user.cloudDrivePort = import.meta.env.VITE_CLOUD_DRIVE_PORT
-                sessionStorage.setItem(userId, JSON.stringify(user))
-                user.client = providerClient
-                user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
-                delete user.baseUrl
-                delete user.writableUrl
-                this.users.set(userId, user)
+            
+            // Check if user is a string (error message) or not a proper User object
+            if (typeof user === 'string') {
+                console.error("get_user returned string instead of User object:", user)
+                return undefined
             }
+            
+            // Ensure user has required properties for a User object
+            if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
+                console.error("get_user returned invalid User object:", user)
+                return undefined
+            }
+            
+            // cache the user data
+            user.providerIp = providerIp
+            user.hostId = user.hostIds[0]
+            user.cloudDrivePort = import.meta.env.VITE_CLOUD_DRIVE_PORT
+            sessionStorage.setItem(userId, JSON.stringify(user))
+            user.client = providerClient
+            user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
+            delete user.baseUrl
+            delete user.writableUrl
+            this.users.set(userId, user)
+            
             return user
         },
         
@@ -827,7 +840,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 let userId = await this.lapi.client.RunMApp("get_userid", {
                     aid: this.appId, ver: "last", username: username
                 })
-                
+                console.log("Login user ID", userId)
                 if (!userId) {
                     console.error("Login failed: User not found", username)
                     useAlertStore().error("User not found. Please check your username.")

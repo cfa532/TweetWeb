@@ -55,7 +55,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       // Assign initial progress value
       uploadProgress[i] = 0;
 
-      const fileType = getMediaType(file.type);
+      const fileType = getMediaType(file.type, file.name);
       let processedFile = file;
       let cid: string;
 

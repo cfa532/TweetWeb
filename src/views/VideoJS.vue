@@ -14,10 +14,15 @@ const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
-const isHLS = computed(() => {
-  const mediaType = props.media.type?.toLowerCase();
-  return mediaType === 'hls_video' || mediaType === 'video';
-});
+  const isHLS = computed(() => {
+    const mediaType = props.media.type?.toLowerCase();
+    return mediaType === 'hls_video';
+  });
+
+  const isRegularVideo = computed(() => {
+    const mediaType = props.media.type?.toLowerCase();
+    return mediaType === 'video';
+  });
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
@@ -66,12 +71,16 @@ let hasTriedSinglePlaylist = false;
 onMounted(() => {
   vdiv.value.hidden = false;
   
-  // Wait for next tick to ensure video element is created
-  setTimeout(() => {
-    if (video.value && isHLS.value) {
-      setupHLS();
-    }
-  }, 100);
+    // Wait for next tick to ensure video element is created
+    setTimeout(() => {
+      if (video.value) {
+        if (isHLS.value) {
+          setupHLS();
+        } else if (isRegularVideo.value) {
+          setupRegularVideo();
+        }
+      }
+    }, 100);
   
   // Add page visibility change listener
   document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -167,17 +176,31 @@ function setupHLS() {
     
     hls = new Hls(hlsConfig);
     
-    // Try master playlist first
-    hasTriedSinglePlaylist = false;
-    hls.loadSource(getHLSMasterSource());
-    hls.attachMedia(videoElement);
-    
-    // Add timeout fallback in case HLS hangs
-    const hlsTimeout = setTimeout(() => {
-      if (hls && !videoElement.src) {
-        fallbackToProgressiveVideo(videoElement);
-      }
-    }, 10000); // 10 second timeout
+      // Try master playlist first
+      hasTriedSinglePlaylist = false;
+      console.log('Loading master playlist:', getHLSMasterSource());
+      hls.loadSource(getHLSMasterSource());
+      hls.attachMedia(videoElement);
+      
+      // Add timeout fallback in case HLS hangs
+      const hlsTimeout = setTimeout(() => {
+        if (hls && !hasTriedSinglePlaylist) {
+          console.log('Master playlist timeout, falling back to playlist.m3u8');
+          hasTriedSinglePlaylist = true;
+          hls?.destroy();
+          hls = new Hls(hlsConfig);
+          
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            console.log('Playlist.m3u8 timeout error:', data);
+            if (data.fatal) {
+              console.log('Playlist.m3u8 also failed after timeout');
+            }
+          });
+          
+          hls.loadSource(getHLSSource());
+          hls.attachMedia(videoElement);
+        }
+      }, 5000); // 5 second timeout
     
     // Clear timeout when manifest is parsed
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -202,25 +225,34 @@ function setupHLS() {
     // });
     
     hls.on(Hls.Events.ERROR, (event, data) => {
+      console.log('HLS Error:', data);
+      
       // If master playlist fails, try single playlist
       if (!hasTriedSinglePlaylist && data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR && 
-          data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR) {
+          (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || 
+           data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+           data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR ||
+           (data.response && data.response.code && data.response.code >= 400))) {
+        console.log('Master playlist failed, falling back to playlist.m3u8');
         hasTriedSinglePlaylist = true;
         hls?.destroy();
         hls = new Hls(hlsConfig); // Use same config for fallback
+        
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          console.log('Playlist.m3u8 error:', data);
+          if (data.fatal) {
+            console.log('Playlist.m3u8 also failed');
+          }
+        });
+        
         hls.loadSource(getHLSSource());
         hls.attachMedia(videoElement);
-        
-        // Add error handler for single playlist
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          fallbackToProgressiveVideo(videoElement);
-        });
         return;
       }
       
-      // If we've already tried single playlist or this is a different error, go to progressive
+      // If we've already tried single playlist or this is a different error, keep HLS mode
       if (hasTriedSinglePlaylist || data.fatal) {
-        fallbackToProgressiveVideo(videoElement);
+        console.log('HLS error occurred, but keeping HLS mode for hls_video type');
         return;
       }
       
@@ -228,14 +260,52 @@ function setupHLS() {
       if (!data.fatal) {
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
+            console.log('Network error, attempting to recover...');
             hls?.startLoad();
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
+            console.log('Media error, attempting to recover...');
             hls?.recoverMediaError();
             break;
         }
       }
     });
+  }
+}
+
+// Setup regular video playback (non-HLS)
+function setupRegularVideo() {
+  if (!video.value) return;
+  
+  const videoElement = video.value;
+  
+  // Enable hardware acceleration if supported
+  if (supportsHardwareAcceleration.value) {
+    videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
+    videoElement.style.willChange = 'transform'; // Optimize for animations
+  }
+  
+  // Set the video source directly
+  videoElement.src = getVideoSource();
+  
+  // Add error handling for regular video
+  videoElement.addEventListener('error', (e: Event) => {
+    // Silent error handling
+  }, { once: true });
+  
+  // Add load event to confirm video loaded
+  videoElement.addEventListener('loadeddata', () => {
+    // Video loaded successfully
+  }, { once: true });
+  
+  // Add canplay event
+  videoElement.addEventListener('canplay', () => {
+    // Video can start playing
+  }, { once: true });
+  
+  // Handle autoplay for regular videos
+  if (props.autoplay) {
+    handleAutoplay(videoElement);
   }
 }
 
@@ -306,12 +376,16 @@ function getVideoSource(): string {
 function getHLSSource(): string {
   // For HLS videos, props.media.mid already contains the full IPFS URL
   // We need to append the playlist filename
-  return props.media.mid + '/playlist.m3u8';
+  const playlistUrl = props.media.mid + '/playlist.m3u8';
+  console.log('Trying playlist.m3u8:', playlistUrl);
+  return playlistUrl;
 }
 
 function getHLSMasterSource(): string {
   // For HLS videos with multiple resolutions, try master playlist first
-  return props.media.mid + '/master.m3u8';
+  const masterUrl = props.media.mid + '/master.m3u8';
+  console.log('Trying master.m3u8:', masterUrl);
+  return masterUrl;
 }
 
 // Fallback to progressive video when HLS streaming fails
@@ -445,9 +519,9 @@ function stopVideo() {
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
     >
-      <!-- For regular videos only - HLS videos are handled by HLS.js -->
-      <source v-if="!isHLS" :src="getVideoSource()" type="video/mp4" />
-      <source v-if="!isHLS" :src="getVideoSource()" type="video/mp4" />
+        <!-- For regular videos only - HLS videos are handled by HLS.js -->
+        <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
+        <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
       Your browser does not support the video tag.
     </video>
     <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 1%; position: relative;">
