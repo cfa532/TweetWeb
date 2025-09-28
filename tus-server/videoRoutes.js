@@ -543,12 +543,12 @@ async function processVideoUpload(req, res) {
     uploadedFile = req.files.videoFile;
     console.log(`[${requestId}] [INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
 
-    const maxFileSize = 1024 * 1024 * 1024; // 1GB
+    const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
     if (uploadedFile.size > maxFileSize) {
       console.error(`[${requestId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
       return res.status(400).json({
         success: false,
-        message: `File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 1GB.`
+        message: `File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 4GB.`
       });
     }
 
@@ -887,19 +887,15 @@ async function processVideoUploadInternal(req, jobId) {
       cleanupOldTempFiles();
     }
 
-    // Validate upload
-    if (!req.files || !req.files.videoFile) {
-      console.error(`[${jobId}] [ERROR] No video file found in request. Expected a file with field name "videoFile".`);
-      throw new Error('No video file uploaded. Please use the "videoFile" field name.');
-    }
+    // File validation already done in main route handler
 
     uploadedFile = req.files.videoFile;
     console.log(`[${jobId}] [INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
 
-    const maxFileSize = 1024 * 1024 * 1024; // 1GB
+    const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
     if (uploadedFile.size > maxFileSize) {
       console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
-      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 1GB.`);
+      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 4GB.`);
     }
 
     const noResample = req.body.noResample === 'true' || req.body.noResample === true;
@@ -1243,15 +1239,33 @@ router.post('/convert-video', async (req, res) => {
     startTime: Date.now()
   });
   
-  // Send immediate response with job ID
-  res.json({
-    success: true,
-    message: 'Video upload started',
-    jobId: jobId
-  });
-  
-  // Process video in background
-  processVideoUploadAsync(req, jobId);
+  try {
+    // Validate upload BEFORE sending response
+    if (!req.files || !req.files.videoFile) {
+      console.error(`[${jobId}] [ERROR] No video file found in request. Expected a file with field name "videoFile".`);
+      return res.status(400).json({
+        success: false,
+        message: 'No video file uploaded. Please use the "videoFile" field name.'
+      });
+    }
+    
+    // Send immediate response with job ID
+    res.json({
+      success: true,
+      message: 'Video upload started',
+      jobId: jobId
+    });
+    
+    // Process video in background
+    processVideoUploadAsync(req, jobId);
+    
+  } catch (error) {
+    console.error(`[${jobId}] [ERROR] Failed to process video upload:`, error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process video upload: ' + error.message
+    });
+  }
 });
 
 // Async video processing function

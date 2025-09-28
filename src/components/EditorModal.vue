@@ -156,7 +156,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       } else if (errorMessage.includes('timeout')) {
         finalErrorMessage = `Upload timeout for ${file.name}. The file may be too large or the server is busy.`;
       } else if (errorMessage.includes('exceeds the maximum')) {
-        finalErrorMessage = `File ${file.name} is too large. Maximum size is 1GB.`;
+        finalErrorMessage = `File ${file.name} is too large. Maximum size is 4GB.`;
       } else if (errorMessage.includes('No CID returned')) {
         finalErrorMessage = `Video processing failed for ${file.name}. Please try again.`;
       }

@@ -78,10 +78,10 @@ export async function uploadVideo(
   noResample: boolean = false,
   retryCount: number = 0
 ): Promise<string> {
-  // Validate file size (1GB limit to match backend)
-  const maxFileSize = 1024 * 1024 * 1024; // 1GB
+  // Validate file size (4GB limit to match backend)
+  const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
   if (file.size > maxFileSize) {
-    throw new Error(`File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 1GB.`);
+    throw new Error(`File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 4GB.`);
   }
   
   // Validate baseUrl
