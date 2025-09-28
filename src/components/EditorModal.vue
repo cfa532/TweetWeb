@@ -55,7 +55,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       // Assign initial progress value
       uploadProgress[i] = 0;
 
-      const fileType = getMediaType(file.type);
+      const fileType = getMediaType(file.type, file.name);
       let processedFile = file;
       let cid: string;
 
@@ -156,7 +156,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       } else if (errorMessage.includes('timeout')) {
         finalErrorMessage = `Upload timeout for ${file.name}. The file may be too large or the server is busy.`;
       } else if (errorMessage.includes('exceeds the maximum')) {
-        finalErrorMessage = `File ${file.name} is too large. Maximum size is 1GB.`;
+        finalErrorMessage = `File ${file.name} is too large. Maximum size is 4GB.`;
       } else if (errorMessage.includes('No CID returned')) {
         finalErrorMessage = `Video processing failed for ${file.name}. Please try again.`;
       }

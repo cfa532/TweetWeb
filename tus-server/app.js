@@ -128,7 +128,7 @@ app.use((req, res, next) => {
   // Use 1GB limit for video conversion, 500MB for zip processing, 50MB for other routes
   let fileSizeLimit = 50 * 1024 * 1024; // Default 50MB
   if (req.path === '/convert-video') {
-    fileSizeLimit = 1024 * 1024 * 1024; // 1GB for video conversion
+    fileSizeLimit = 4 * 1024 * 1024 * 1024; // 4GB for video conversion
   } else if (req.path === '/process-zip') {
     fileSizeLimit = 500 * 1024 * 1024; // 500MB for zip processing
   }

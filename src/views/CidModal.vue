@@ -9,6 +9,7 @@ const props = defineProps<{
 const selectedFiles = ref<MimeiFileType[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null); // Ref for the file input element
 const showFileInput = ref(false);
+const originalFileStates = ref<Map<number, MimeiFileType>>(new Map());
 
 const selectFile = () => {
     showFileInput.value = true;
@@ -17,12 +18,27 @@ const selectFile = () => {
         fileInput.value.click();
     }
 };
-function getMediaType(t: string) {
+function getMediaType(t: string, filename?: string) {
   const lowerType = t.toLowerCase();
   if (lowerType.startsWith('image/')) return 'Image'
-  if (lowerType.startsWith('video/')) return 'Video'
+  if (lowerType.startsWith('video/')) return 'hls_video' // Default to hls_video
   if (lowerType.startsWith('audio/')) return 'Audio'
-  return 'Unknown'
+  
+  // Fallback to file extension if MIME type is not recognized
+  if (filename) {
+    const ext = filename.toLowerCase().split('.').pop();
+    if (['mkv', 'avi', 'mp4', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'].includes(ext || '')) {
+      return 'hls_video'; // Default to hls_video for video files
+    }
+    if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff'].includes(ext || '')) {
+      return 'Image';
+    }
+    if (['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a', 'wma'].includes(ext || '')) {
+      return 'Audio';
+    }
+  }
+  
+  return 'hls_video' // Default to hls_video for unknown types
 }
 const getVideoAspectRatio = (file: File): Promise<number> => {
     return new Promise((resolve, reject) => {
@@ -69,7 +85,9 @@ const handleFileSelect = async (event: Event) => {
         const file = target.files[0];
 
         let aspectRatio: number | null = null;
-        if (file.type.toLowerCase().startsWith('video')) {
+        const mediaType = getMediaType(file.type, file.name);
+        
+        if (mediaType === 'hls_video') {
             try {
                 aspectRatio = await getVideoAspectRatio(file);
             } catch (error) {
@@ -77,7 +95,7 @@ const handleFileSelect = async (event: Event) => {
                 // Handle the error appropriately, maybe set a default value or inform the user
                 aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
             }
-        } else if (file.type.toLowerCase().startsWith('image')) {
+        } else if (mediaType === 'Image') {
             try {
                 aspectRatio = await getImageAspectRatio(file);
             } catch (error) {
@@ -89,7 +107,7 @@ const handleFileSelect = async (event: Event) => {
 
         const mimeiFile: MimeiFileType = {
             mid: '',
-            type: getMediaType(file.type),
+            type: getMediaType(file.type, file.name),
             size: file.size,
             fileName: file.name,
             timestamp: Date.now(),
@@ -97,15 +115,35 @@ const handleFileSelect = async (event: Event) => {
         };
 
         selectedFiles.value.push(mimeiFile);
+        // Store original state for cancel functionality
+        const fileIndex = selectedFiles.value.length - 1;
+        originalFileStates.value.set(fileIndex, { ...mimeiFile });
         showFileInput.value = false;
     }
 };
 
 const removeFile = (index: number) => {
-    if (selectedFiles.value.length > 1) {
-        selectedFiles.value.splice(index, 1);
+    selectedFiles.value.splice(index, 1);
+    originalFileStates.value.delete(index);
+    // Reindex the remaining original states
+    const newStates = new Map();
+    selectedFiles.value.forEach((file, newIndex) => {
+        const oldState = originalFileStates.value.get(newIndex + 1);
+        if (oldState) {
+            newStates.set(newIndex, oldState);
+        }
+    });
+    originalFileStates.value = newStates;
+};
+
+const updateAspectRatio = (file: MimeiFileType, event: Event) => {
+    const target = event.target as HTMLInputElement;
+    const value = parseFloat(target.value);
+    if (!isNaN(value)) {
+        file.aspectRatio = value;
     }
 };
+
 const emitSelectFiles = () => {
     // Check if all selected files have a non-empty 'mid'
     const allMidsFilled = selectedFiles.value.every(file => file.mid.trim() !== '');
@@ -119,31 +157,65 @@ const emitSelectFiles = () => {
     }
 };
 const cancel = () => {
+    selectedFiles.value = [];
+    originalFileStates.value.clear();
+    showFileInput.value = false;
     emit('cancel');
 };
 watch(() => props.isVisible, (isVisible) => {
     if (isVisible) {
         selectedFiles.value = [];
+        originalFileStates.value.clear();
     }
 });
 </script>
 
 <template>
-    <div v-if="isVisible" class="link-input-modal">
-        <div class="modal-content">
+    <div v-if="isVisible" class="link-input-modal" @click="cancel">
+        <div class="modal-content" @click.stop>
             <input
                 type="file"
                 style="display: none"
                 @change="handleFileSelect"
                 ref="fileInput"
-                accept="image/*,video/*"
+                accept="image/*,video/*,.mkv,.avi"
             />
-            <div v-for="(file, index) in selectedFiles" :key="index" class="input-group">
-                <p>{{ file.fileName }}</p>
-                <p v-if="file.aspectRatio">Aspect Ratio: {{ file.aspectRatio.toFixed(2) }}</p>
-                <div class="cid-container">
-                    <input type="text" v-model="file.mid" placeholder="Enter Cid" />
+            <div v-for="(file, index) in selectedFiles" :key="index" class="file-card">
+                <div class="file-header">
+                    <h4>{{ file.fileName }}</h4>
                     <button @click="removeFile(index)" class="delete-button">×</button>
+                </div>
+                
+                <div class="file-fields">
+                    <div class="field-row">
+                        <div class="field-group full-width">
+                            <label>File Name</label>
+                            <input type="text" v-model="file.fileName" />
+                        </div>
+                    </div>
+                    
+                    <div class="field-row">
+                        <div class="field-group" v-if="file.aspectRatio">
+                            <label>Aspect Ratio</label>
+                            <input type="number" :value="file.aspectRatio ? file.aspectRatio.toFixed(2) : ''" @input="updateAspectRatio(file, $event)" step="0.01" />
+                        </div>
+                        <div class="field-group">
+                            <label>Type</label>
+                            <select v-model="file.type">
+                                <option value="hls_video">HLS Video</option>
+                                <option value="video">Video</option>
+                                <option value="Image">Image</option>
+                                <option value="Audio">Audio</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="field-row">
+                        <div class="field-group full-width">
+                            <label>CID</label>
+                            <input type="text" v-model="file.mid" placeholder="Enter CID" />
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="button-group">
@@ -177,10 +249,84 @@ watch(() => props.isVisible, (isVisible) => {
     width: 600px;
 }
 
-.input-group {
+.file-card {
+    background: #fff;
+    border: 1px solid #e1e5e9;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+}
+
+.file-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e1e5e9;
+}
+
+.file-header h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+    word-break: break-all;
+}
+
+.file-fields {
+    padding: 20px;
+}
+
+.field-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.field-row:last-child {
+    margin-bottom: 0;
+}
+
+.field-group {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    margin-bottom: 10px;
+}
+
+.field-group.full-width {
+    flex: 1;
+}
+
+.field-group label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.field-group input,
+.field-group select {
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background: #fff;
+}
+
+.field-group input:focus,
+.field-group select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.field-group input[type="number"] {
+    max-width: none;
 }
 
 .input-group input {
@@ -192,16 +338,25 @@ watch(() => props.isVisible, (isVisible) => {
 }
 
 .delete-button {
-    background-color: #f44336;
+    background-color: #ef4444;
     color: white;
     border: none;
-    padding: 0px 12px;
-    border-radius: 4px;
+    padding: 8px 12px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 24px;
-    /* Adjust size as needed */
+    font-size: 18px;
+    font-weight: bold;
     line-height: 1;
-    /* Remove extra spacing */
+    transition: background-color 0.2s;
+    min-width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-button:hover {
+    background-color: #dc2626;
 }
 
 .add-button {
