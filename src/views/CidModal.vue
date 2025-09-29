@@ -21,7 +21,7 @@ const selectFile = () => {
 function getMediaType(t: string, filename?: string) {
   const lowerType = t.toLowerCase();
   if (lowerType.startsWith('image/')) return 'Image'
-  if (lowerType.startsWith('video/')) return 'hls_video' // Default to hls_video
+  if (lowerType.startsWith('video/')) return 'hls_video' // Default to hls_video for video MIME types
   if (lowerType.startsWith('audio/')) return 'Audio'
   
   // Fallback to file extension if MIME type is not recognized
@@ -38,7 +38,7 @@ function getMediaType(t: string, filename?: string) {
     }
   }
   
-  return 'hls_video' // Default to hls_video for unknown types
+  return 'Unknown' // Return 'Unknown' for unrecognized types to match uploadUtils.ts
 }
 const getVideoAspectRatio = (file: File): Promise<number> => {
     return new Promise((resolve, reject) => {
@@ -119,6 +119,9 @@ const handleFileSelect = async (event: Event) => {
         const fileIndex = selectedFiles.value.length - 1;
         originalFileStates.value.set(fileIndex, { ...mimeiFile });
         showFileInput.value = false;
+        
+        // Clear the file input to allow reselecting the same file
+        target.value = '';
     }
 };
 
@@ -128,7 +131,10 @@ const removeFile = (index: number) => {
     // Reindex the remaining original states
     const newStates = new Map();
     selectedFiles.value.forEach((file, newIndex) => {
-        const oldState = originalFileStates.value.get(newIndex + 1);
+        // Files that were at positions >= index+1 are now at positions >= index
+        // So we need to look for original states at oldIndex = newIndex + (newIndex >= index ? 1 : 0)
+        const oldIndex = newIndex >= index ? newIndex + 1 : newIndex;
+        const oldState = originalFileStates.value.get(oldIndex);
         if (oldState) {
             newStates.set(newIndex, oldState);
         }
@@ -206,6 +212,7 @@ watch(() => props.isVisible, (isVisible) => {
                                 <option value="video">Video</option>
                                 <option value="Image">Image</option>
                                 <option value="Audio">Audio</option>
+                                <option value="Unknown">Unknown</option>
                             </select>
                         </div>
                     </div>
