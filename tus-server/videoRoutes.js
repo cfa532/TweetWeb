@@ -560,8 +560,14 @@ async function processVideoUpload(req, res) {
       'video/wmv', 'video/flv', 'video/webm', 'video/x-msvideo', 
       'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv'
     ];
-    if (!allowedTypes.includes(uploadedFile.mimetype)) {
-      console.error(`[${requestId}] [ERROR] Unsupported video type: '${uploadedFile.mimetype}'.`);
+    const allowedExtensions = ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'];
+    const fileExtension = uploadedFile.name.toLowerCase().split('.').pop();
+    
+    const isValidType = allowedTypes.includes(uploadedFile.mimetype) || 
+                        allowedExtensions.includes(fileExtension);
+    
+    if (!isValidType) {
+      console.error(`[${requestId}] [ERROR] Unsupported video type: '${uploadedFile.mimetype}' with extension '.${fileExtension}'.`);
       return res.status(400).json({
         success: false,
         message: `Invalid video type. Allowed types are: ${allowedTypes.join(', ')}`
@@ -906,8 +912,14 @@ async function processVideoUploadInternal(req, jobId) {
       'video/wmv', 'video/flv', 'video/webm', 'video/x-msvideo', 
       'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv'
     ];
-    if (!allowedTypes.includes(uploadedFile.mimetype)) {
-      console.error(`[${jobId}] [ERROR] Unsupported video type: '${uploadedFile.mimetype}'.`);
+    const allowedExtensions = ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'];
+    const fileExtension = uploadedFile.name.toLowerCase().split('.').pop();
+    
+    const isValidType = allowedTypes.includes(uploadedFile.mimetype) || 
+                        allowedExtensions.includes(fileExtension);
+    
+    if (!isValidType) {
+      console.error(`[${jobId}] [ERROR] Unsupported video type: '${uploadedFile.mimetype}' with extension '.${fileExtension}'.`);
       throw new Error(`Invalid video type. Allowed types are: ${allowedTypes.join(', ')}`);
     }
 
