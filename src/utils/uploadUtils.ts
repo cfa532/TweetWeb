@@ -191,13 +191,19 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
     video.preload = 'metadata';
 
     video.onloadedmetadata = () => {
+      // Clean up the object URL
+      window.URL.revokeObjectURL(video.src);
       // Calculate aspect ratio
       const aspectRatio = video.videoWidth / video.videoHeight;
       resolve(aspectRatio);
     };
 
-    video.onerror = () => {
-      reject(new Error('Failed to load video metadata'));
+    video.onerror = (error) => {
+      // Clean up the object URL
+      window.URL.revokeObjectURL(video.src);
+      // For unsupported formats like .wmv, return a default aspect ratio instead of rejecting
+      console.warn('Failed to load video metadata, using default aspect ratio:', error);
+      resolve(16/9); // Default to 16:9 aspect ratio for unsupported formats
     };
 
     // Set video source
