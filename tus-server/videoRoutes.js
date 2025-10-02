@@ -367,6 +367,37 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
   const is10Bit = videoInfo && videoInfo.bitDepth && videoInfo.bitDepth > 8;
   console.log('[HARDWARE] Video is 10-bit:', is10Bit);
   
+  // Check if video resolution is no bigger than target resolution to use COPY preset
+  let useCopyPreset = false;
+  if (videoInfo) {
+    const displayWidth = videoInfo.displayWidth || videoInfo.width;
+    const displayHeight = videoInfo.displayHeight || videoInfo.height;
+    const isPortrait = displayHeight > displayWidth;
+    
+    // For landscape: check width ≤ 1280 AND height ≤ 720 (1280x720)
+    // For portrait: check width ≤ 720 AND height ≤ 1280 (720x1280)
+    if (isPortrait) {
+      useCopyPreset = displayWidth <= 720 && displayHeight <= 1280;
+      console.log(`[HARDWARE] Portrait video: ${displayWidth}x${displayHeight} - COPY preset: ${useCopyPreset} (width ≤ 720: ${displayWidth <= 720}, height ≤ 1280: ${displayHeight <= 1280})`);
+    } else {
+      useCopyPreset = displayWidth <= 1280 && displayHeight <= 720;
+      console.log(`[HARDWARE] Landscape video: ${displayWidth}x${displayHeight} - COPY preset: ${useCopyPreset} (width ≤ 1280: ${displayWidth <= 1280}, height ≤ 720: ${displayHeight <= 720})`);
+    }
+  }
+  
+  if (useCopyPreset) {
+    console.log('[HARDWARE] Video resolution ≤1280p, using COPY preset for optimal performance');
+    return {
+      encoder: 'copy',
+      preset: 'copy',
+      profile: 'main',
+      level: '4.1',
+      hardware: false,
+      is10Bit: is10Bit,
+      useCopy: true
+    };
+  }
+  
   if (availableEncoders.nvidia) {
     console.log('[HARDWARE] Testing NVIDIA encoder...');
     const nvidiaWorks = await testHardwareEncoder('h264_nvenc');
@@ -378,7 +409,8 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
         profile: is10Bit ? 'high' : 'main',
         level: '4.1',
         hardware: true,
-        is10Bit: is10Bit
+        is10Bit: is10Bit,
+        useCopy: false
       };
     }
   }
@@ -394,7 +426,8 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
         profile: is10Bit ? 'high' : 'main',
         level: '4.1',
         hardware: true,
-        is10Bit: is10Bit
+        is10Bit: is10Bit,
+        useCopy: false
       };
     }
   }
@@ -410,7 +443,8 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
         profile: is10Bit ? 'high' : 'main',
         level: '4.1',
         hardware: true,
-        is10Bit: is10Bit
+        is10Bit: is10Bit,
+        useCopy: false
       };
     }
   }
@@ -426,7 +460,8 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
         profile: is10Bit ? 'high' : 'main',
         level: '4.1',
         hardware: true,
-        is10Bit: is10Bit
+        is10Bit: is10Bit,
+        useCopy: false
       };
     }
   }
@@ -438,7 +473,8 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
     profile: is10Bit ? 'high10' : 'main',
     level: '4.1',
     hardware: false,
-    is10Bit: is10Bit
+    is10Bit: is10Bit,
+    useCopy: false
   };
 }
 
@@ -540,9 +576,18 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
 
   const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
 
-  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v ${bitrate720}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-
-  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v ${bitrate480}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  let cmd720p, cmd480p;
+  
+  if (encoderConfig.useCopy) {
+    // Use COPY preset - no scaling needed since video is already ≤720p
+    console.log('[HLS-CONVERSION] Using COPY preset - no scaling required');
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v copy -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v copy -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  } else {
+    // Use normal encoding with scaling
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v ${bitrate720}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v ${bitrate480}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  }
 
   commands.push(cmd720p, cmd480p);
   
@@ -774,7 +819,15 @@ async function processVideoUpload(req, res) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       console.log(`[${requestId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
       
-      const singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -preset fast -profile:v main -level 4.1 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      let singleQualityCommand;
+      if (encoderConfig.useCopy) {
+        // Use COPY preset - no scaling needed since video is already ≤720p
+        console.log(`[${requestId}] [HLS-CONVERSION] Using COPY preset for single quality conversion - no scaling required`);
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      } else {
+        // Use normal encoding with scaling
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -preset fast -profile:v main -level 4.1 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      }
       
       console.log(`[${requestId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
       await executeWithProgress(singleQualityCommand, requestId, 40, 60, 'Converting large video to 720p HLS...');
@@ -1157,7 +1210,15 @@ async function processVideoUploadInternal(req, jobId) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       console.log(`[${jobId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
       
-      const singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -preset fast -profile:v main -level 4.1 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      let singleQualityCommand;
+      if (encoderConfig.useCopy) {
+        // Use COPY preset - no scaling needed since video is already ≤720p
+        console.log(`[${jobId}] [HLS-CONVERSION] Using COPY preset for single quality conversion - no scaling required`);
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      } else {
+        // Use normal encoding with scaling
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -preset fast -profile:v main -level 4.1 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      }
       
       console.log(`[${jobId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
       await executeWithProgress(singleQualityCommand, jobId, 40, 60, 'Converting large video to 720p HLS...');
