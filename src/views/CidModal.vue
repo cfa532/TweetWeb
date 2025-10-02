@@ -10,6 +10,7 @@ function getAspectRatioDisplayName(ratio: number): string {
   if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
   if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
   if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
+  if (Math.abs(ratio - (3/2)) < tolerance) return '3:2';
   if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
   if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
   return `${ratio.toFixed(3)}:1`;
@@ -53,44 +54,7 @@ function getMediaType(t: string, filename?: string) {
   
   return 'Unknown' // Return 'Unknown' for unrecognized types to match uploadUtils.ts
 }
-const getVideoAspectRatio = (file: File): Promise<number> => {
-    return new Promise((resolve, reject) => {
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-
-        video.onloadedmetadata = () => {
-            window.URL.revokeObjectURL(video.src);
-            const aspectRatio = video.videoWidth / video.videoHeight;
-            resolve(aspectRatio);
-        };
-
-        video.onerror = (error) => {
-            window.URL.revokeObjectURL(video.src);
-            reject(error);
-        };
-
-        video.src = URL.createObjectURL(file);
-    });
-};
-
-const getImageAspectRatio = (file: File): Promise<number> => {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        
-        img.onload = () => {
-            window.URL.revokeObjectURL(img.src);
-            const aspectRatio = img.width / img.height;
-            resolve(aspectRatio);
-        };
-        
-        img.onerror = (error) => {
-            window.URL.revokeObjectURL(img.src);
-            reject(error);
-        };
-        
-        img.src = URL.createObjectURL(file);
-    });
-};
+// Note: getVideoAspectRatio and getImageAspectRatio are imported from uploadUtils.ts
 
 const handleFileSelect = async (event: Event) => {
     const target = event.target as HTMLInputElement;
@@ -107,9 +71,18 @@ const handleFileSelect = async (event: Event) => {
                 console.log(`📐 [FILE SELECTION] Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
             } catch (error) {
                 console.error("Error getting video aspect ratio:", error);
-                // Handle the error appropriately, maybe set a default value or inform the user
-                aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
-                console.log(`⚠️ [FILE SELECTION] Using default aspect ratio 1:1 for ${file.name}`);
+                // The getVideoAspectRatio from uploadUtils.ts already has fallback logic and should not fail
+                // If it still fails, use a more reasonable default based on file extension
+                const fileName = file.name.toLowerCase();
+                if (fileName.endsWith('.avi')) {
+                    // AVI files can have various aspect ratios, but 3:2 (1.5) and 4:3 (1.333) are common
+                    aspectRatio = 3/2; // 1.5 - common for many AVI files
+                } else if (fileName.endsWith('.mov')) {
+                    aspectRatio = 4/3; // 1.333... - common for older video formats
+                } else {
+                    aspectRatio = 16/9; // 1.777... - common for modern video formats
+                }
+                console.log(`⚠️ [FILE SELECTION] Using fallback aspect ratio ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)}) for ${file.name}`);
             }
         } else if (mediaType === 'Image') {
             try {
@@ -118,7 +91,7 @@ const handleFileSelect = async (event: Event) => {
                 console.log(`📐 [FILE SELECTION] Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
             } catch (error) {
                 console.error("Error getting image aspect ratio:", error);
-                // Handle the error appropriately, maybe set a default value or inform the user
+                // Default to 1:1 for images if detection fails
                 aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
                 console.log(`⚠️ [FILE SELECTION] Using default aspect ratio 1:1 for ${file.name}`);
             }

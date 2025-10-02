@@ -238,6 +238,7 @@ function getAspectRatioName(ratio: number): string {
   if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
   if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
   if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
+  if (Math.abs(ratio - (3/2)) < tolerance) return '3:2';
   if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
   if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
   return `${ratio.toFixed(3)}:1`;
@@ -321,6 +322,7 @@ async function tryFileNameAnalysis(file: File): Promise<number> {
     { pattern: /720x1280/, ratio: 9/16 },
     { pattern: /square|1x1/, ratio: 1/1 },
     { pattern: /4x3|4:3/, ratio: 4/3 },
+    { pattern: /3x2|3:2/, ratio: 3/2 },
     { pattern: /16x9|16:9/, ratio: 16/9 },
     { pattern: /21x9|21:9|ultrawide/, ratio: 21/9 }
   ];
@@ -396,6 +398,11 @@ function parseQuickTimeDimensions(uint8Array: Uint8Array): number | null {
     { width: 1280, height: 960 },  // SXGA-
     { width: 1400, height: 1050 }, // SXGA+
     { width: 1600, height: 1200 }, // UXGA
+    
+    // 3:2 aspect ratio
+    { width: 720, height: 480 },   // NTSC DVD
+    { width: 1440, height: 960 },  // 3:2 HD
+    { width: 1920, height: 1280 }, // 3:2 Full HD
     
     // 16:9 aspect ratio
     { width: 1920, height: 1080 }, // Full HD
