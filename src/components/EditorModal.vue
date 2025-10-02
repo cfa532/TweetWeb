@@ -7,6 +7,18 @@ import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
 import { compressImage, uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 
+// Helper function to get human-readable aspect ratio names
+function getAspectRatioDisplayName(ratio: number): string {
+  const tolerance = 0.01;
+  if (Math.abs(ratio - (4/3)) < tolerance) return '4:3';
+  if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
+  if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
+  if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
+  if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
+  if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
+  return `${ratio.toFixed(3)}:1`;
+}
+
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
@@ -132,6 +144,16 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
       const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : 
                          fileType === 'Image' ? await getImageAspectRatio(file) : null;
+      
+      // Log aspect ratio detection result
+      if (fileType === 'Video' && aspectRatio) {
+        console.log(`🎬 [VIDEO PREVIEW] File: ${file.name}`);
+        console.log(`📐 [VIDEO PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
+      } else if (fileType === 'Image' && aspectRatio) {
+        console.log(`🖼️ [IMAGE PREVIEW] File: ${file.name}`);
+        console.log(`📐 [IMAGE PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
+      }
+      
       const fi = {
         mid: cid,
         type: fileType === 'Video' ? 'hls_video' : fileType,  // all videos are converted to hls_video
@@ -141,7 +163,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         aspectRatio: aspectRatio
       } as MimeiFileType;
 
-      console.log(fi);
+      console.log(`📋 [PREVIEW RESULT]`, fi);
       results.push({ status: 'fulfilled', value: fi });
 
     } catch (error) {

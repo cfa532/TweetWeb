@@ -78,12 +78,31 @@ const generateVideoThumbnail = (file: File) => {
       let ctx = canvas.getContext("2d");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
+      
+      // Log video dimensions and aspect ratio for thumbnail generation
+      const aspectRatio = video.videoWidth / video.videoHeight;
+      console.log(`🎬 [VIDEO THUMBNAIL] File: ${file.name}`);
+      console.log(`📐 [VIDEO THUMBNAIL] Dimensions: ${video.videoWidth}x${video.videoHeight}`);
+      console.log(`📐 [VIDEO THUMBNAIL] Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
+      
       ctx!.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
       video.pause();
       return resolve(canvas.toDataURL("image/png"));
     };
   });
 };
+
+// Helper function to get human-readable aspect ratio names
+function getAspectRatioDisplayName(ratio: number): string {
+  const tolerance = 0.01;
+  if (Math.abs(ratio - (4/3)) < tolerance) return '4:3';
+  if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
+  if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
+  if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
+  if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
+  if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
+  return `${ratio.toFixed(3)}:1`;
+}
 </script>
 
 <template>

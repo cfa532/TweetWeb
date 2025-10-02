@@ -28,3 +28,7 @@ coverage
 *.sw?
 
 *.tsbuildinfo
+
+
+.cursor/rules/kluster-code-verify.mdc
+.kluster

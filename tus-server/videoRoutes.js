@@ -442,6 +442,46 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
   };
 }
 
+// Helper function to calculate aspect-ratio-preserving dimensions for single quality conversion
+function calculateSingleQualityDimensions(videoInfo, targetDimension = 720) {
+  const displayWidth = videoInfo.displayWidth || videoInfo.width;
+  const displayHeight = videoInfo.displayHeight || videoInfo.height;
+  
+  console.log(`[ASPECT-RATIO] Original video dimensions: ${displayWidth}x${displayHeight}`);
+  
+  // Calculate exact aspect ratio
+  const aspectRatio = displayWidth / displayHeight;
+  console.log(`[ASPECT-RATIO] Original aspect ratio: ${aspectRatio.toFixed(6)}`);
+  
+  let targetWidth, targetHeight;
+  if (displayHeight > displayWidth) {
+    // Portrait video - maintain height, calculate width
+    targetHeight = targetDimension;
+    targetWidth = Math.round((targetHeight * displayWidth) / displayHeight);
+  } else {
+    // Landscape video - maintain width, calculate height  
+    targetWidth = targetDimension;
+    targetHeight = Math.round((targetWidth * displayHeight) / displayWidth);
+  }
+  
+  // Verify aspect ratio is preserved
+  const newAspectRatio = targetWidth / targetHeight;
+  const aspectRatioDifference = Math.abs(aspectRatio - newAspectRatio);
+  console.log(`[ASPECT-RATIO] Target dimensions: ${targetWidth}x${targetHeight}`);
+  console.log(`[ASPECT-RATIO] New aspect ratio: ${newAspectRatio.toFixed(6)}`);
+  console.log(`[ASPECT-RATIO] Aspect ratio difference: ${aspectRatioDifference.toFixed(6)}`);
+  
+  if (aspectRatioDifference > 0.001) {
+    console.warn(`[ASPECT-RATIO] WARNING: Aspect ratio changed by ${aspectRatioDifference.toFixed(6)}`);
+  }
+  
+  const result = ensureEvenDimensions(targetWidth, targetHeight);
+  const finalAspectRatio = result.width / result.height;
+  console.log(`[ASPECT-RATIO] Final dimensions: ${result.width}x${result.height}, Final aspect ratio: ${finalAspectRatio.toFixed(6)}`);
+  
+  return result;
+}
+
 // Helper function to create HLS conversion commands
 function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfig) {
   const commands = [];
@@ -452,17 +492,43 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const displayWidth = videoInfo.displayWidth || videoInfo.width;
   const displayHeight = videoInfo.displayHeight || videoInfo.height;
 
+  console.log(`[ASPECT-RATIO] Multi-quality - Original dimensions: ${displayWidth}x${displayHeight}`);
+  
+  // Calculate exact aspect ratio
+  const aspectRatio = displayWidth / displayHeight;
+  console.log(`[ASPECT-RATIO] Multi-quality - Original aspect ratio: ${aspectRatio.toFixed(6)}`);
+
   let targetWidth720, targetHeight720, targetWidth480, targetHeight480;
   if (displayHeight > displayWidth) {
+    // Portrait video - maintain height, calculate width
     targetHeight720 = 720;
     targetWidth720 = Math.round((720 * displayWidth) / displayHeight);
     targetHeight480 = 480;
     targetWidth480 = Math.round((480 * displayWidth) / displayHeight);
   } else {
+    // Landscape video - maintain width, calculate height
     targetWidth720 = 720;
     targetHeight720 = Math.round((720 * displayHeight) / displayWidth);
     targetWidth480 = 480;
     targetHeight480 = Math.round((480 * displayHeight) / displayWidth);
+  }
+  
+  // Verify aspect ratio preservation for both qualities
+  const aspect720 = targetWidth720 / targetHeight720;
+  const aspect480 = targetWidth480 / targetHeight480;
+  const diff720 = Math.abs(aspectRatio - aspect720);
+  const diff480 = Math.abs(aspectRatio - aspect480);
+  
+  console.log(`[ASPECT-RATIO] 720p: ${targetWidth720}x${targetHeight720}, aspect ratio: ${aspect720.toFixed(6)}, diff: ${diff720.toFixed(6)}`);
+  console.log(`[ASPECT-RATIO] 480p: ${targetWidth480}x${targetHeight480}, aspect ratio: ${aspect480.toFixed(6)}, diff: ${diff480.toFixed(6)}`);
+  
+  // Additional verification for 480p specifically
+  const original480Ratio = displayWidth / displayHeight;
+  const calculated480Ratio = targetWidth480 / targetHeight480;
+  console.log(`[ASPECT-RATIO] 480p VERIFICATION - Original: ${original480Ratio.toFixed(6)}, Calculated: ${calculated480Ratio.toFixed(6)}, Match: ${Math.abs(original480Ratio - calculated480Ratio) < 0.001 ? 'YES' : 'NO'}`);
+  
+  if (diff720 > 0.001 || diff480 > 0.001) {
+    console.warn(`[ASPECT-RATIO] WARNING: Aspect ratio changed significantly in multi-quality conversion`);
   }
 
   const dim720 = ensureEvenDimensions(targetWidth720, targetHeight720);
@@ -474,9 +540,9 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
 
   const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
 
-  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos" -b:v ${bitrate720}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v ${bitrate720}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
 
-  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos" -b:v ${bitrate480}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -preset ${encoderConfig.preset} -profile:v ${encoderConfig.profile} -level ${encoderConfig.level} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v ${bitrate480}k ${hwParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
   commands.push(cmd720p, cmd480p);
   
@@ -687,12 +753,34 @@ async function processVideoUpload(req, res) {
     console.log(`\n[${requestId}] [STEP 4] Converting video to HLS format...`);
     console.time(`[${requestId}] hls-conversion`);
     
+    // Check file size to determine conversion strategy
+    const fileSizeMB = uploadedFile.size / (1024 * 1024);
+    const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
+    
     if (noResample) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       await executeWithProgress(ffmpegCommand, requestId, 40, 60, 'Converting video to HLS format...');
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
+    } else if (useSingleQuality) {
+      // For large files (>256MB), use single quality 720p conversion to save memory
+      console.log(`[${requestId}] [INFO] Large file detected (${fileSizeMB.toFixed(2)}MB), using single-quality 720p conversion`);
+      
+      const availableEncoders = await detectHardwareEncoders();
+      const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
+      console.log(`[${requestId}] [HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
+      
+      // Calculate aspect-ratio-preserving dimensions for 720p
+      const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
+      console.log(`[${requestId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
+      
+      const singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -preset fast -profile:v main -level 4.1 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      
+      console.log(`[${requestId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
+      await executeWithProgress(singleQualityCommand, requestId, 40, 60, 'Converting large video to 720p HLS...');
+      console.log(`[${requestId}] [SUCCESS] Single-quality HLS conversion completed`);
     } else {
+      // For smaller files, use multi-quality conversion
       const availableEncoders = await detectHardwareEncoders();
       const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
       console.log(`[${requestId}] [HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
@@ -1043,13 +1131,39 @@ async function processVideoUploadInternal(req, jobId) {
       message: 'Converting video to HLS format...'
     });
     
+    // Check file size to determine conversion strategy
+    const fileSizeMB = uploadedFile.size / (1024 * 1024);
+    const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
+    
     if (noResample) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       console.log(`[${jobId}] [FFMPEG] Starting no-resample conversion with command: ${ffmpegCommand}`);
       await executeWithProgress(ffmpegCommand, jobId, 40, 60, 'Converting video to HLS format...');
       console.log(`[${jobId}] [SUCCESS] HLS conversion completed`);
+    } else if (useSingleQuality) {
+      // For large files (>500MB), use single quality 720p conversion to save memory
+      console.log(`[${jobId}] [INFO] Large file detected (${fileSizeMB.toFixed(2)}MB), using single-quality 720p conversion`);
+      
+      console.log(`[${jobId}] [HARDWARE] Detecting available encoders...`);
+      const availableEncoders = await detectHardwareEncoders();
+      console.log(`[${jobId}] [HARDWARE] Available encoders:`, availableEncoders);
+      
+      console.log(`[${jobId}] [HARDWARE] Getting optimal encoder...`);
+      const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
+      console.log(`[${jobId}] [HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
+      
+      // Calculate aspect-ratio-preserving dimensions for 720p
+      const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
+      console.log(`[${jobId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
+      
+      const singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -preset fast -profile:v main -level 4.1 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease" -b:v 3000k -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      
+      console.log(`[${jobId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
+      await executeWithProgress(singleQualityCommand, jobId, 40, 60, 'Converting large video to 720p HLS...');
+      console.log(`[${jobId}] [SUCCESS] Single-quality HLS conversion completed`);
     } else {
+      // For smaller files, use multi-quality conversion
       console.log(`[${jobId}] [HARDWARE] Detecting available encoders...`);
       const availableEncoders = await detectHardwareEncoders();
       console.log(`[${jobId}] [HARDWARE] Available encoders:`, availableEncoders);

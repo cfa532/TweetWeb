@@ -1,6 +1,19 @@
 <script setup lang="ts">
 import { useAlertStore } from '@/stores';
 import { watch, ref } from 'vue';
+import { getVideoAspectRatio, getImageAspectRatio } from '@/utils/uploadUtils';
+
+// Helper function to get human-readable aspect ratio names
+function getAspectRatioDisplayName(ratio: number): string {
+  const tolerance = 0.01;
+  if (Math.abs(ratio - (4/3)) < tolerance) return '4:3';
+  if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
+  if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
+  if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
+  if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
+  if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
+  return `${ratio.toFixed(3)}:1`;
+}
 
 const emit = defineEmits(['save', 'cancel']);
 const props = defineProps<{
@@ -90,18 +103,24 @@ const handleFileSelect = async (event: Event) => {
         if (mediaType === 'hls_video') {
             try {
                 aspectRatio = await getVideoAspectRatio(file);
+                console.log(`🎬 [FILE SELECTION] Video: ${file.name}`);
+                console.log(`📐 [FILE SELECTION] Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
             } catch (error) {
                 console.error("Error getting video aspect ratio:", error);
                 // Handle the error appropriately, maybe set a default value or inform the user
                 aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
+                console.log(`⚠️ [FILE SELECTION] Using default aspect ratio 1:1 for ${file.name}`);
             }
         } else if (mediaType === 'Image') {
             try {
                 aspectRatio = await getImageAspectRatio(file);
+                console.log(`🖼️ [FILE SELECTION] Image: ${file.name}`);
+                console.log(`📐 [FILE SELECTION] Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
             } catch (error) {
                 console.error("Error getting image aspect ratio:", error);
                 // Handle the error appropriately, maybe set a default value or inform the user
                 aspectRatio = 1; // Default to 1 if we can't get the aspect ratio
+                console.log(`⚠️ [FILE SELECTION] Using default aspect ratio 1:1 for ${file.name}`);
             }
         }
 
