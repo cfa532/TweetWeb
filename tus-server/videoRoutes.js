@@ -388,14 +388,14 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null) {
     const displayHeight = videoInfo.displayHeight || videoInfo.height;
     const isPortrait = displayHeight > displayWidth;
     
-    // For landscape: check width ≤ 1280 AND height ≤ 720 (1280x720)
-    // For portrait: check width ≤ 720 AND height ≤ 1280 (720x1280)
+    // For landscape: check width ≤ 1280 (x-dimension)
+    // For portrait: check height ≤ 1280 (y-dimension)
     if (isPortrait) {
-      useCopyPreset = displayWidth <= 720 && displayHeight <= 1280;
-      console.log(`[HARDWARE] Portrait video: ${displayWidth}x${displayHeight} - COPY preset: ${useCopyPreset} (width ≤ 720: ${displayWidth <= 720}, height ≤ 1280: ${displayHeight <= 1280})`);
+      useCopyPreset = displayHeight <= 1280;
+      console.log(`[HARDWARE] Portrait video: ${displayWidth}x${displayHeight} - COPY preset: ${useCopyPreset} (height ≤ 1280: ${displayHeight <= 1280})`);
     } else {
-      useCopyPreset = displayWidth <= 1280 && displayHeight <= 720;
-      console.log(`[HARDWARE] Landscape video: ${displayWidth}x${displayHeight} - COPY preset: ${useCopyPreset} (width ≤ 1280: ${displayWidth <= 1280}, height ≤ 720: ${displayHeight <= 720})`);
+      useCopyPreset = displayWidth <= 1280;
+      console.log(`[HARDWARE] Landscape video: ${displayWidth}x${displayHeight} - COPY preset: ${useCopyPreset} (width ≤ 1280: ${displayWidth <= 1280})`);
     }
   }
   
