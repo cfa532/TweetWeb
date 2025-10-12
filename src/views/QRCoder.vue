@@ -7,6 +7,7 @@ const props = defineProps({
   url: { type: String, required: true },  // QR data url
   size: { type: Number, required: false, default: 100 },  // QR size in pixels
   logoSize: { type: Number, required: false, default: 20 }, // logo size in pixels
+  disableModal: { type: Boolean, required: false, default: false }, // disable zoom modal
 });
 
 const level = ref<Level>('M');
@@ -44,7 +45,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="qrcode-container" @click="showModal = true">
+  <div class="qrcode-container" :class="{ 'clickable': !props.disableModal }" @click="!props.disableModal && (showModal = true)">
     <qrcode-vue
       :value="props.url"
       :size="props.size"
@@ -60,7 +61,7 @@ onMounted(async () => {
     />
   </div>
 
-  <div v-if="showModal" class="modal" @click="showModal = false">
+  <div v-if="showModal && !props.disableModal" class="modal" @click="showModal = false">
     <div class="modal-content" @click.stop>
       <qrcode-vue
         :value="props.url"
@@ -78,6 +79,9 @@ onMounted(async () => {
 <style scoped>
 .qrcode-container {
   position: relative;
+}
+
+.qrcode-container.clickable {
   cursor: pointer;
 }
 

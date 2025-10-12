@@ -195,7 +195,7 @@ watch(userId, async (nv, ov) => {
                     <!-- Direct Download -->
                     <div class="platform-option">
                         <div class="platform-qr" @click="startDirectDownload">
-                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20"></QRCoder>
+                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
                         </div>
                         <div class="platform-info">
                             <h5>{{ directDownloadText }}</h5>
@@ -213,7 +213,7 @@ watch(userId, async (nv, ov) => {
                             <img src="/src/apple.png" alt="Apple" height="48" width="48" />
                         </div>
                         <div class="platform-qr" @click="openAppStore">
-                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20"></QRCoder>
+                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
                         </div>
                     </div>
                     
@@ -223,7 +223,7 @@ watch(userId, async (nv, ov) => {
                             <img src="/src/android.png" alt="Android" height="48" width="48" />
                         </div>
                         <div class="platform-qr" @click="openPlayStore">
-                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20"></QRCoder>
+                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
                         </div>
                     </div>
                 </div>
