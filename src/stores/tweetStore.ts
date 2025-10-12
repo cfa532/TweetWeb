@@ -108,9 +108,25 @@ export const useTweetStore = defineStore('tweetStore', {
                 
                 if (tweet.attachments) {
                     tweet.attachments = tweet.attachments.map(e => {
+                        // Ensure type has a default value to prevent undefined errors
+                        let mediaType = e.type || '';
+                        // Try to infer type from fileName if type is missing
+                        if (!mediaType && e.fileName) {
+                            const ext = e.fileName.toLowerCase().split('.').pop();
+                            if (ext) {
+                                if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
+                                    mediaType = 'image/' + ext;
+                                } else if (['mp4', 'webm', 'ogg'].includes(ext)) {
+                                    mediaType = 'video/' + ext;
+                                } else if (ext === 'pdf') {
+                                    mediaType = 'application/pdf';
+                                }
+                            }
+                        }
+                        
                         return {
                             mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
-                            type: e.type,
+                            type: mediaType,
                             timestamp: e.timestamp,
                             fileName: e.fileName,
                             downloadable: tweet.downloadable,
@@ -731,7 +747,8 @@ export const useTweetStore = defineStore('tweetStore', {
             // cache the user data
             user.providerIp = providerIp
             user.hostId = user.hostIds[0]
-            user.cloudDrivePort = import.meta.env.VITE_CLOUD_DRIVE_PORT
+            // Use server's cloudDrivePort if available, otherwise fall back to env or default
+            user.cloudDrivePort = user.cloudDrivePort || user.clouddriveport || import.meta.env.VITE_CLOUD_DRIVE_PORT || 8010
             sessionStorage.setItem(userId, JSON.stringify(user))
             user.client = providerClient
             user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)

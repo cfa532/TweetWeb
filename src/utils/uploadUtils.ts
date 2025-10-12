@@ -339,7 +339,7 @@ async function tryFileNameAnalysis(file: File): Promise<number> {
 // Method 4: Analyze file extension and MIME type for hints
 async function tryFileExtensionAnalysis(file: File): Promise<number> {
   const fileName = file.name.toLowerCase();
-  const mimeType = file.type.toLowerCase();
+  const mimeType = (file.type || '').toLowerCase();
   
   console.log(`[ASPECT-RATIO] Analyzing file extension: ${fileName}, MIME: ${mimeType}`);
   

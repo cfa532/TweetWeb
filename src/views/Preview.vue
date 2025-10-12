@@ -45,10 +45,11 @@ function onDragEnd(e: DragEvent) {
     emit("dragEnd")
 }
 function thumbnail() {
-    if (props.src.type.includes("image")) {
+    const fileType = props.src.type || '';
+    if (fileType.includes("image")) {
         imageUrl.value = URL.createObjectURL(props.src)
         caption.value = props.src.name
-    } else if (props.src.type.includes("video")) {
+    } else if (fileType.includes("video")) {
         generateVideoThumbnail(props.src).then(url=>{
             imageUrl.value = url
             caption.value = props.src.name
@@ -81,9 +82,9 @@ const generateVideoThumbnail = (file: File) => {
       
       // Log video dimensions and aspect ratio for thumbnail generation
       const aspectRatio = video.videoWidth / video.videoHeight;
-      console.log(`🎬 [VIDEO THUMBNAIL] File: ${file.name}`);
-      console.log(`📐 [VIDEO THUMBNAIL] Dimensions: ${video.videoWidth}x${video.videoHeight}`);
-      console.log(`📐 [VIDEO THUMBNAIL] Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
+      console.log(`🎬 File: ${file.name}`);
+      console.log(`📐 Dimensions: ${video.videoWidth}x${video.videoHeight}`);
+      console.log(`📐 Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
       
       ctx!.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
       video.pause();

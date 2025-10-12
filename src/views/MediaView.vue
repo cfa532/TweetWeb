@@ -20,7 +20,7 @@ const mediaMid = computed(() => {
 })
 
 const userComponent = computed(() => {
-    let p = props.media.type.toLowerCase()
+    let p = props.media.type?.toLowerCase() || ''
     if (p.includes("image")) {
         return Image
     } else if (p.includes("pdf")) {
@@ -33,7 +33,7 @@ const userComponent = computed(() => {
 })
 
 const isMediaViewable = computed(() => {
-    const mediaType = props.media.type.toLowerCase();
+    const mediaType = props.media.type?.toLowerCase() || '';
     // Only allow tap gesture for images, not videos since they have native full-screen
     return mediaType.includes("image");
 });
