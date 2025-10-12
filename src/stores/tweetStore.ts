@@ -1146,40 +1146,46 @@ export const useTweetStore = defineStore('tweetStore', {
             // Check if it's a mobile device
             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
             
-            if (isMobile) {
-                // For mobile devices, open the URL directly in a new tab
-                // This allows the browser to handle the download natively
-                window.open(url, '_blank');
+            // If URL already ends with .apk, use direct download for both mobile and desktop
+            if (url.toLowerCase().endsWith('.apk')) {
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'tweet_install.apk';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
                 return Promise.resolve();
             }
             
-            // For desktop browsers, use the blob download method
-            return fetch(url) // Return the promise from fetch
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.blob(); // Convert the response to a Blob
-                })
-                .then(blob => {
-                    // Create a new blob with the correct MIME type for APK files
-                    const apkBlob = new Blob([blob], { 
-                        type: 'application/vnd.android.package-archive' 
-                    });
-                    
-                    const link = document.createElement('a');
-                    link.href = window.URL.createObjectURL(apkBlob);
-                    link.download = 'tweet_install.apk';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    
-                    // Clean up the object URL
-                    window.URL.revokeObjectURL(link.href);
-                })
-                .catch(error => {
-                    console.error('There was a problem with the fetch operation:', error);
+            // For URLs that don't end with .apk (like zip files), fetch and rename
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                
+                const blob = await response.blob();
+                
+                // Create a new blob with APK MIME type
+                const apkBlob = new Blob([blob], { 
+                    type: 'application/vnd.android.package-archive' 
                 });
+                
+                // Create download link
+                const link = document.createElement('a');
+                link.href = window.URL.createObjectURL(apkBlob);
+                link.download = 'tweet_install.apk';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // Clean up
+                window.URL.revokeObjectURL(link.href);
+            } catch (error) {
+                console.error('Download failed:', error);
+                // Fallback: try opening in new window
+                window.open(url, '_blank');
+            }
         },
 
         /**

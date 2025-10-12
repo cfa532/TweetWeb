@@ -233,9 +233,9 @@ async function startDirectDownload() {
     if (tweetStore.installApk) {
         isDownloading.value = true
         try {
-            window.open(tweetStore.installApk, '_blank')
+            await tweetStore.downloadBlob(tweetStore.installApk)
         } catch (error) {
-            console.error('Failed to open download link:', error)
+            console.error('Download failed:', error)
         } finally {
             isDownloading.value = false
         }
