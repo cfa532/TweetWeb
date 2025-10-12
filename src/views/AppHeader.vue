@@ -94,6 +94,10 @@ const openDirectDownload = () => {
     window.open('https://dtweet.app/download', '_blank')
 }
 
+const openInBrowser = () => {
+    window.open(downloadPageUrl.value, '_blank')
+}
+
 const startDirectDownload = async () => {
     isDownloading.value = true
     try {
@@ -188,37 +192,38 @@ watch(userId, async (nv, ov) => {
         <div class="modal-content" @click.stop>
             <div class="modal-body">
                 <div class="platform-options">
+                    <!-- Direct Download -->
+                    <div class="platform-option">
+                        <div class="platform-qr" @click="startDirectDownload">
+                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20"></QRCoder>
+                        </div>
+                        <div class="platform-info">
+                            <h5>{{ directDownloadText }}</h5>
+                            <p v-if="isDownloading">{{ downloadingText }}</p>
+                            <a v-else href="#" @click.prevent="openInBrowser" class="browser-link">{{ apkText }}</a>
+                        </div>
+                        <div v-if="isDownloading" class="download-spinner">
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                        </div>
+                    </div>
+                    
                     <!-- iOS/App Store -->
-                    <div class="platform-option" @click="openAppStore">
+                    <div class="platform-option">
                         <div class="platform-icon">
                             <img src="/src/apple.png" alt="Apple" height="48" width="48" />
                         </div>
-                        <div class="platform-qr">
+                        <div class="platform-qr" @click="openAppStore">
                             <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20"></QRCoder>
                         </div>
                     </div>
                     
                     <!-- Android/Google Play -->
-                    <div class="platform-option" @click="openPlayStore">
+                    <div class="platform-option">
                         <div class="platform-icon">
                             <img src="/src/android.png" alt="Android" height="48" width="48" />
                         </div>
-                        <div class="platform-qr">
+                        <div class="platform-qr" @click="openPlayStore">
                             <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20"></QRCoder>
-                        </div>
-                    </div>
-                    
-                    <!-- Direct Download -->
-                    <div class="platform-option" @click="startDirectDownload">
-                        <div class="platform-qr">
-                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20"></QRCoder>
-                        </div>
-                        <div class="platform-info">
-                            <h5>{{ directDownloadText }}</h5>
-                            <p>{{ isDownloading ? downloadingText : apkText }}</p>
-                        </div>
-                        <div v-if="isDownloading" class="download-spinner">
-                            <span class="spinner-border spinner-border-sm" role="status"></span>
                         </div>
                     </div>
                 </div>
@@ -460,7 +465,6 @@ watch(userId, async (nv, ov) => {
     padding: 20px;
     border: 2px solid #f0f0f0;
     border-radius: 12px;
-    cursor: pointer;
     transition: all 0.2s ease;
     background: #fafafa;
     gap: 20px;
@@ -514,6 +518,7 @@ watch(userId, async (nv, ov) => {
     display: flex;
     flex-direction: column;
     align-items: center;
+    cursor: pointer;
 }
 
 .download-spinner {
@@ -522,6 +527,18 @@ watch(userId, async (nv, ov) => {
     right: 20px;
     transform: translateY(-50%);
     color: #667eea;
+}
+
+.browser-link {
+    color: #667eea;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.browser-link:hover {
+    color: #5a6fd8;
+    text-decoration: underline;
 }
 
 @keyframes slideDown {

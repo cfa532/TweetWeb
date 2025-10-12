@@ -1142,6 +1142,18 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async downloadBlob(url: string) {
             console.log("Download", url)
+            
+            // Check if it's a mobile device
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
+            if (isMobile) {
+                // For mobile devices, open the URL directly in a new tab
+                // This allows the browser to handle the download natively
+                window.open(url, '_blank');
+                return Promise.resolve();
+            }
+            
+            // For desktop browsers, use the blob download method
             return fetch(url) // Return the promise from fetch
                 .then(response => {
                     if (!response.ok) {
