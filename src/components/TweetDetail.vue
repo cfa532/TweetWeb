@@ -402,7 +402,6 @@ function openInBrowser() {
                             <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
                         </div>
                         <div class="platform-info">
-                            <h5>{{ directDownloadText }}</h5>
                             <p v-if="isDownloading">{{ downloadingText }}</p>
                             <a v-else href="#" @click.prevent="openInBrowser" class="browser-link">{{ apkText }}</a>
                         </div>
