@@ -94,8 +94,8 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         let fallbackReason = '';
         let isHLSConverted = false; // Track if video was converted to HLS
         
-        // Check 1: Is cloudDrivePort null or empty?
-        if (!cloudDrivePort || cloudDrivePort.trim() === '') {
+        // Check 1: Is cloudDrivePort null, empty, or 0?
+        if (!cloudDrivePort || cloudDrivePort.trim() === '' || cloudDrivePort === '0') {
           useIPFSFallback = true;
           fallbackReason = 'cloudDrivePort is not configured';
           console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
