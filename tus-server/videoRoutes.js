@@ -598,6 +598,11 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const bitrate480 = 1000; // Match Swift: "1000k"
 
   const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+  
+  // Software encoder parameters (only for libx264)
+  const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset} -tune zerolatency -threads 2`;
+  
+  console.log(`[HLS-CONVERSION] Encoder: ${encoderConfig.encoder}, Hardware: ${encoderConfig.hardware}, HW Params: "${hwParams}", SW Params: "${softwareParams}"`);
 
   let cmd720p, cmd480p;
   
@@ -608,8 +613,8 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
     cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
   } else {
     // Use normal encoding with scaling and HLS compatibility parameters
-    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k -preset ${encoderConfig.preset} -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k -preset ${encoderConfig.preset} -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
   }
 
   commands.push(cmd720p, cmd480p);
@@ -637,7 +642,12 @@ function getHardwareEncodingParams(encoder, is10Bit = false) {
     case 'h264_qsv':
       return is10Bit ? '-global_quality 23 -look_ahead 1 -pix_fmt yuv420p10le' : '-global_quality 23 -look_ahead 1';
     case 'h264_videotoolbox':
-      return is10Bit ? '-allow_sw 1 -b:v 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -b:v 0';
+      // VideoToolbox optimized for Apple Silicon (M1/M2/M3/M4)
+      // -allow_sw 1: Allow software fallback if needed
+      // -q:v 65: Quality level (0-100, ~65 for good quality/size balance)
+      // -realtime 0: Disable real-time encoding for better quality
+      // -prio_speed 0: Prioritize quality over speed
+      return is10Bit ? '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0';
     case 'h264_amf':
       return is10Bit ? '-rc cqp -qp_i 23 -qp_p 23 -pix_fmt yuv420p10le' : '-rc cqp -qp_i 23 -qp_p 23';
     default:
@@ -842,6 +852,12 @@ async function processVideoUpload(req, res) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       console.log(`[${requestId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
       
+      // Get hardware-specific parameters
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+      
+      console.log(`[${requestId}] [ENCODER-INFO] Using encoder: ${encoderConfig.encoder}, Hardware: ${encoderConfig.hardware}, HW Params: "${hwParams}", SW Params: "${softwareParams}"`);
+      
       let singleQualityCommand;
       if (encoderConfig.useCopy) {
         // Use COPY encoder with HLS compatibility parameters
@@ -849,7 +865,7 @@ async function processVideoUpload(req, res) {
         singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       } else {
         // Use normal encoding with scaling and HLS compatibility parameters
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       }
       
       console.log(`[${requestId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
@@ -1245,6 +1261,12 @@ async function processVideoUploadInternal(req, jobId) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       console.log(`[${jobId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
       
+      // Get hardware-specific parameters
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+      
+      console.log(`[${jobId}] [ENCODER-INFO] Using encoder: ${encoderConfig.encoder}, Hardware: ${encoderConfig.hardware}, HW Params: "${hwParams}", SW Params: "${softwareParams}"`);
+      
       let singleQualityCommand;
       if (encoderConfig.useCopy) {
         // Use COPY encoder with HLS compatibility parameters
@@ -1252,7 +1274,7 @@ async function processVideoUploadInternal(req, jobId) {
         singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       } else {
         // Use normal encoding with scaling and HLS compatibility parameters
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       }
       
       console.log(`[${jobId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
