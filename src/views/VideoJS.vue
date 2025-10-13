@@ -14,6 +14,7 @@ const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
+const showPlayOverlay = ref(true); // Show play overlay initially
   const isHLS = computed(() => {
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'hls_video';
@@ -74,10 +75,29 @@ onMounted(() => {
     // Wait for next tick to ensure video element is created
     setTimeout(() => {
       if (video.value) {
+        // Add play/pause event listeners to track state
+        video.value.addEventListener('play', () => {
+          isPlaying.value = true;
+          showPlayOverlay.value = false;
+        });
+        video.value.addEventListener('pause', () => {
+          isPlaying.value = false;
+          showPlayOverlay.value = true;
+        });
+        video.value.addEventListener('ended', () => {
+          isPlaying.value = false;
+          showPlayOverlay.value = true;
+        });
+        
         if (isHLS.value) {
           setupHLS();
         } else if (isRegularVideo.value) {
           setupRegularVideo();
+        }
+        
+        // Hide overlay if autoplay is enabled
+        if (props.autoplay) {
+          showPlayOverlay.value = false;
         }
       }
     }, 100);
@@ -318,6 +338,7 @@ async function handleAutoplay(videoElement: HTMLVideoElement) {
     if (canAutoplay) {
       await videoElement.play();
       isPlaying.value = true;
+      showPlayOverlay.value = false;
     } else {
       // Show play button or other UI indication that user needs to interact
       showAutoplayBlockedUI();
@@ -429,13 +450,41 @@ function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
   }
 }
 
-function togglePlay() {
+function togglePlay(event?: Event) {
+  // Prevent event bubbling if this is from a click/tap
+  if (event) {
+    event.stopPropagation();
+  }
+  
   if (video.value.paused) {
     video.value.play();
     isPlaying.value = true;
   } else {
     video.value.pause();
     isPlaying.value = false;
+  }
+}
+
+// Handle video element tap/click for mobile
+function handleVideoTap(event: Event) {
+  // Don't interfere with native controls
+  // Only handle taps on the video surface itself when paused
+  const target = event.target as HTMLVideoElement;
+  if (target.tagName === 'VIDEO' && video.value?.paused) {
+    // Only prevent default and handle manually if video is paused
+    // This allows native controls to work when video is playing
+    event.stopPropagation();
+  }
+}
+
+// Handle play overlay click
+function handlePlayOverlayClick(event: Event) {
+  event.stopPropagation();
+  event.preventDefault();
+  if (video.value) {
+    video.value.play();
+    isPlaying.value = true;
+    showPlayOverlay.value = false;
   }
 }
 
@@ -503,6 +552,18 @@ function stopVideo() {
       </div>
     </div>
     
+    <!-- Play overlay for paused videos (mobile-friendly) -->
+    <div v-if="!isPlaying && showPlayOverlay && !autoplayBlocked" 
+         class="play-overlay" 
+         @click="handlePlayOverlayClick"
+         @touchend.prevent="handlePlayOverlayClick">
+      <div class="play-overlay-button">
+        <svg viewBox="0 0 24 24" width="64" height="64" fill="white">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+      </div>
+    </div>
+    
     <video
       ref="video"
       class="video"
@@ -518,6 +579,8 @@ function stopVideo() {
       x5-video-player-fullscreen="true"
       @loadedmetadata="checkVideoOrientation"
       @contextmenu="disableRightClick"
+      @click="handleVideoTap"
+      @touchend="handleVideoTap"
     >
         <!-- For regular videos only - HLS videos are handled by HLS.js -->
         <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
@@ -539,6 +602,17 @@ function stopVideo() {
 .video {
   width: 100%;
   display: block;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Ensure video controls are accessible on mobile */
+.video::-webkit-media-controls {
+  z-index: 20;
+}
+
+.video::-webkit-media-controls-panel {
+  z-index: 20;
 }
 
 /* Full-screen video styles */
@@ -637,5 +711,66 @@ function stopVideo() {
   margin: 0;
   opacity: 0.8;
   font-weight: 500;
+}
+
+/* Play overlay styles for mobile */
+.play-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 15;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.play-overlay:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.play-overlay:active {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.play-overlay-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.play-overlay:hover .play-overlay-button {
+  transform: scale(1.1);
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.play-overlay:active .play-overlay-button {
+  transform: scale(0.95);
+}
+
+/* Make the play button more visible on mobile */
+@media (max-width: 768px) {
+  .play-overlay-button {
+    width: 70px;
+    height: 70px;
+  }
+  
+  .play-overlay-button svg {
+    width: 48px;
+    height: 48px;
+  }
 }
 </style>
