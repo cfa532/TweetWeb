@@ -14,7 +14,7 @@ const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
-const showPlayOverlay = ref(true); // Show play overlay initially
+const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
   const isHLS = computed(() => {
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'hls_video';
@@ -82,22 +82,23 @@ onMounted(() => {
         });
         video.value.addEventListener('pause', () => {
           isPlaying.value = false;
-          showPlayOverlay.value = true;
+          // Don't show overlay if autoplay is enabled (use native controls)
+          if (!props.autoplay) {
+            showPlayOverlay.value = true;
+          }
         });
         video.value.addEventListener('ended', () => {
           isPlaying.value = false;
-          showPlayOverlay.value = true;
+          // Don't show overlay if autoplay is enabled (use native controls)
+          if (!props.autoplay) {
+            showPlayOverlay.value = true;
+          }
         });
         
         if (isHLS.value) {
           setupHLS();
         } else if (isRegularVideo.value) {
           setupRegularVideo();
-        }
-        
-        // Hide overlay if autoplay is enabled
-        if (props.autoplay) {
-          showPlayOverlay.value = false;
         }
       }
     }, 100);
@@ -226,9 +227,12 @@ function setupHLS() {
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       clearTimeout(hlsTimeout);
       
-      // Handle autoplay with proper error handling
+      // Start playing if autoplay is enabled
       if (props.autoplay) {
-        handleAutoplay(videoElement);
+        videoElement.play().catch(() => {
+          // Autoplay was prevented, user will need to use native controls
+          showPlayOverlay.value = false; // Still hide overlay, rely on native controls
+        });
       }
     });
     
@@ -318,14 +322,22 @@ function setupRegularVideo() {
     // Video loaded successfully
   }, { once: true });
   
-  // Add canplay event
+  // Add canplay event and start playing if autoplay is enabled
   videoElement.addEventListener('canplay', () => {
     // Video can start playing
+    if (props.autoplay) {
+      videoElement.play().catch(() => {
+        // Autoplay was prevented, user will need to use native controls
+        showPlayOverlay.value = false; // Still hide overlay, rely on native controls
+      });
+    }
   }, { once: true });
   
-  // Handle autoplay for regular videos
+  // Try to play immediately if autoplay is enabled
   if (props.autoplay) {
-    handleAutoplay(videoElement);
+    videoElement.play().catch(() => {
+      // Will retry when canplay event fires
+    });
   }
 }
 
@@ -558,7 +570,7 @@ function stopVideo() {
          @click="handlePlayOverlayClick"
          @touchend.prevent="handlePlayOverlayClick">
       <div class="play-overlay-button">
-        <svg viewBox="0 0 24 24" width="64" height="64" fill="white">
+        <svg viewBox="0 0 24 24" fill="white">
           <path d="M8 5v14l11-7z"/>
         </svg>
       </div>
@@ -713,64 +725,60 @@ function stopVideo() {
   font-weight: 500;
 }
 
-/* Play overlay styles for mobile */
+/* Play overlay styles - positioned at top */
 .play-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.3);
+  top: 10px;
+  left: 10px;
+  width: auto;
+  height: auto;
+  background: transparent;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   z-index: 15;
   cursor: pointer;
-  transition: background-color 0.3s ease;
   -webkit-tap-highlight-color: transparent;
   pointer-events: auto;
   touch-action: manipulation;
-}
-
-.play-overlay:hover {
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.play-overlay:active {
-  background: rgba(0, 0, 0, 0.5);
 }
 
 .play-overlay-button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 80px;
-  height: 80px;
-  background: rgba(0, 0, 0, 0.6);
+  width: 48px;
+  height: 48px;
+  background: rgba(0, 0, 0, 0.7);
   border-radius: 50%;
   transition: all 0.3s ease;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .play-overlay:hover .play-overlay-button {
   transform: scale(1.1);
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.85);
 }
 
 .play-overlay:active .play-overlay-button {
   transform: scale(0.95);
 }
 
-/* Make the play button more visible on mobile */
+.play-overlay-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Mobile adjustments */
 @media (max-width: 768px) {
   .play-overlay-button {
-    width: 70px;
-    height: 70px;
+    width: 44px;
+    height: 44px;
   }
   
   .play-overlay-button svg {
-    width: 48px;
-    height: 48px;
+    width: 22px;
+    height: 22px;
   }
 }
 </style>
