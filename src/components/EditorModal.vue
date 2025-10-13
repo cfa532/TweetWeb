@@ -69,7 +69,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
       const fileType = getMediaType(file.type, file.name);
       let processedFile = file;
-      let cid: string;
+      let cid: string = '';
 
       // Handle different file types
       if (fileType === 'Image') {
@@ -85,53 +85,83 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         hproseClient.timeout = defaultTimeout;
         
       } else if (fileType === 'Video') {
-        // Upload video through new endpoint
+        // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
         
-        // Validate required parameters
-        if (!author.providerIp) {
-          throw new Error('Provider IP is not available for video upload');
+        // Check if cloudDrivePort is available
+        const cloudDrivePort = author.cloudDrivePort?.toString();
+        let useIPFSFallback = false;
+        let fallbackReason = '';
+        let isHLSConverted = false; // Track if video was converted to HLS
+        
+        // Check 1: Is cloudDrivePort null or empty?
+        if (!cloudDrivePort || cloudDrivePort.trim() === '') {
+          useIPFSFallback = true;
+          fallbackReason = 'cloudDrivePort is not configured';
+          console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+        } else {
+          // Extract IP address from providerIp (which might include a port)
+          let ipAddress = author.providerIp || '';
+          if (ipAddress.includes(':')) {
+            // Remove port from providerIp if it exists
+            ipAddress = ipAddress.split(':')[0];
+          }
+          
+          // Check 2: Is the service available at the cloudDrivePort?
+          const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
+          const serviceAvailable = await checkServiceAvailability(baseUrl);
+          
+          if (!serviceAvailable) {
+            useIPFSFallback = true;
+            fallbackReason = `Service at ${baseUrl} is not available`;
+            console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+          } else {
+            console.log('Video upload parameters:', {
+              originalProviderIp: author.providerIp,
+              extractedIpAddress: ipAddress,
+              cloudDrivePort: cloudDrivePort,
+              noResample: noResample.value
+            });
+            
+            // Service is available, use regular video upload
+            console.log(`Starting video upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+            cid = await uploadVideo(
+              file, 
+              baseUrl, 
+              cloudDrivePort,
+              (progress) => {
+                // Update progress based on job processing progress
+                uploadProgress[i] = progress;
+                console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
+              },
+              noResample.value
+            );
+            
+            // Validate that we received a valid CID
+            if (!cid || cid.trim() === '') {
+              throw new Error('Video upload failed: No CID returned from server');
+            }
+            
+            isHLSConverted = true; // Video was successfully converted to HLS
+            uploadProgress[i] = 100; // Complete
+          }
         }
         
-        const cloudDrivePort = author.cloudDrivePort?.toString() || '8010';
-        
-        // Extract IP address from providerIp (which might include a port)
-        let ipAddress = author.providerIp;
-        if (ipAddress.includes(':')) {
-          // Remove port from providerIp if it exists
-          ipAddress = ipAddress.split(':')[0];
+        // Use IPFS fallback if needed
+        if (useIPFSFallback) {
+          console.log(`Falling back to IPFS upload for video: ${file.name} (Reason: ${fallbackReason})`);
+          useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
+          
+          // Use the same IPFS upload method as other files
+          const fsid = await tweetStore.openTempFile();
+          const defaultTimeout = hproseClient.timeout;
+          hproseClient.timeout = 0;
+          cid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i);
+          hproseClient.timeout = defaultTimeout;
         }
         
-        console.log('Video upload parameters:', {
-          originalProviderIp: author.providerIp,
-          extractedIpAddress: ipAddress,
-          cloudDrivePort: cloudDrivePort,
-          noResample: noResample.value
-        });
-        
-        // Construct baseUrl using extracted IP and cloudDrivePort
-        const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
-        
-        // Always use regular multipart upload for videos
-        console.log(`Starting video upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-        cid = await uploadVideo(
-          file, 
-          baseUrl, 
-          cloudDrivePort,
-          (progress) => {
-            // Update progress based on job processing progress
-            uploadProgress[i] = progress;
-            console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
-          },
-          noResample.value
-        );
-        
-        // Validate that we received a valid CID
-        if (!cid || cid.trim() === '') {
-          throw new Error('Video upload failed: No CID returned from server');
-        }
-        
-        uploadProgress[i] = 100; // Complete
+        // Store HLS conversion status for later use
+        (file as any).__isHLSConverted = isHLSConverted;
         
       } else {
         // Handle other file types with existing method
@@ -156,7 +186,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       
       const fi = {
         mid: cid,
-        type: fileType === 'Video' ? 'hls_video' : fileType,  // all videos are converted to hls_video
+        type: fileType === 'Video' ? ((file as any).__isHLSConverted ? 'hls_video' : 'Video') : fileType,
         size: processedFile.size,
         fileName: file.name,
         timestamp: file.lastModified,
@@ -267,6 +297,37 @@ async function readFileSlice(
   } else {
     // recursive call
     return await readFileSlice(fsid, arr, start + count, index)
+  }
+}
+
+// Check if the cloud drive service is available at the specified URL
+async function checkServiceAvailability(baseUrl: string): Promise<boolean> {
+  try {
+    console.log(`Checking service availability at: ${baseUrl}`);
+    
+    // Try to make a simple health check request with a reasonable timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
+    const response = await fetch(`${baseUrl}/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    }).catch(() => null); // Catch any errors and return null
+    
+    clearTimeout(timeoutId);
+    
+    // Consider the service available if we get any response
+    // Even a 404 means the server is reachable
+    if (response) {
+      console.log(`Service availability check: AVAILABLE (status: ${response.status})`);
+      return true;
+    }
+    
+    console.warn(`Service availability check: NOT AVAILABLE (no response)`);
+    return false;
+  } catch (error) {
+    console.warn(`Service availability check: ERROR - ${error}`);
+    return false;
   }
 }
 

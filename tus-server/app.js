@@ -32,6 +32,11 @@ const port = process.env.PORT || 3000;
  * @param {Function} next - Express next middleware function
  */
 function checkAuthorizedUser(req, res, next) {
+  // Skip authorization for the health check endpoint
+  if (req.path === '/health') {
+    return next();
+  }
+  
   // Skip authorization for the register endpoint
   if (req.path === '/files/register') {
     return next();
@@ -190,6 +195,15 @@ app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
 app.use('/', zipRouter);         // ZIP processing routes
+
+// Health check endpoint (no authorization required)
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    message: 'Server is running',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Redirect root to file browser
 app.get('/', (req, res) => {
