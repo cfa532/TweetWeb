@@ -694,7 +694,7 @@ function stopVideo() {
 </script>
 
 <template>
-  <div ref="vdiv" hidden class="video-container">
+  <div ref="vdiv" hidden class="video-container" :class="{ 'tweet-list': isInTweetList }">
     <div class="video-wrapper">
       
       <!-- Autoplay blocked overlay -->
@@ -926,6 +926,15 @@ function stopVideo() {
 .play-overlay-button svg {
   width: 24px;
   height: 24px;
+}
+
+/* Full height video in detail view with aspect ratio */
+.video-container:not(.tweet-list) .video {
+  height: 100vh !important;
+  width: auto !important;
+  max-height: 100vh !important;
+  max-width: none !important;
+  object-fit: contain !important;
 }
 
 /* Mobile adjustments */
