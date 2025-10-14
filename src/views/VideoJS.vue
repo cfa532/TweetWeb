@@ -510,6 +510,14 @@ function handleVideoTap(event: Event) {
   event.stopPropagation();
   
   if (video.value) {
+    // Stop all other videos on the page before going fullscreen
+    const allVideos = document.querySelectorAll('video');
+    allVideos.forEach(v => {
+      if (v !== video.value && !v.paused) {
+        v.pause();
+      }
+    });
+    
     // Controls are already enabled
     
     // Keep unmuted for full audio experience
