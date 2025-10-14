@@ -547,59 +547,61 @@ function stopVideo() {
 
 <template>
   <div ref="vdiv" hidden class="video-container">
-    <div v-if="isPortrait" class="custom-controls">
-      <button @click.stop="togglePlay">
-        <font-awesome-icon :icon='isPlaying ? "pause" : "play"' />
-      </button>
-      <!-- Add more custom control buttons as needed -->
-    </div>
-    
-    <!-- Autoplay blocked overlay -->
-    <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
-      <div class="autoplay-blocked-content">
-        <div class="play-button">
-          <font-awesome-icon icon="play" />
+    <div class="video-wrapper">
+      <div v-if="isPortrait" class="custom-controls">
+        <button @click.stop="togglePlay">
+          <font-awesome-icon :icon='isPlaying ? "pause" : "play"' />
+        </button>
+        <!-- Add more custom control buttons as needed -->
+      </div>
+      
+      <!-- Autoplay blocked overlay -->
+      <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
+        <div class="autoplay-blocked-content">
+          <div class="play-button">
+            <font-awesome-icon icon="play" />
+          </div>
+          <p class="autoplay-message">Click to play video</p>
         </div>
-        <p class="autoplay-message">Click to play video</p>
       </div>
-    </div>
-    
-    <!-- Play overlay for paused videos (mobile-friendly) -->
-    <div v-if="!isPlaying && showPlayOverlay && !autoplayBlocked" 
-         class="play-overlay" 
-         @click="handlePlayOverlayClick"
-         @touchend.prevent="handlePlayOverlayClick">
-      <div class="play-overlay-button">
-        <svg viewBox="0 0 24 24" fill="white">
-          <path d="M8 5v14l11-7z"/>
-        </svg>
+      
+      <!-- Play overlay for paused videos (mobile-friendly) -->
+      <div v-if="!isPlaying && showPlayOverlay && !autoplayBlocked" 
+           class="play-overlay" 
+           @click="handlePlayOverlayClick"
+           @touchend.prevent="handlePlayOverlayClick">
+        <div class="play-overlay-button">
+          <svg viewBox="0 0 24 24" fill="white">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        </div>
       </div>
+      
+      <video
+        ref="video"
+        class="video"
+        :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
+        :autoplay=props.autoplay
+        controls
+        :controlslist=controls
+        preload="auto"
+        playsinline
+        webkit-playsinline
+        x5-playsinline
+        x5-video-player-type="h5"
+        x5-video-player-fullscreen="true"
+        @loadedmetadata="checkVideoOrientation"
+        @contextmenu="disableRightClick"
+        @click="handleVideoTap"
+        @touchend="handleVideoTap"
+      >
+          <!-- For regular videos only - HLS videos are handled by HLS.js -->
+          <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
+          <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
     </div>
-    
-    <video
-      ref="video"
-      class="video"
-      :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
-      :autoplay=props.autoplay
-      controls
-      :controlslist=controls
-      preload="auto"
-      playsinline
-      webkit-playsinline
-      x5-playsinline
-      x5-video-player-type="h5"
-      x5-video-player-fullscreen="true"
-      @loadedmetadata="checkVideoOrientation"
-      @contextmenu="disableRightClick"
-      @click="handleVideoTap"
-      @touchend="handleVideoTap"
-    >
-        <!-- For regular videos only - HLS videos are handled by HLS.js -->
-        <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
-        <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
-      Your browser does not support the video tag.
-    </video>
-    <p style="margin-top: 5px; font-size: small; color: darkslategray; left: 1%; position: relative;">
+    <p class="video-filename">
       {{ media.fileName }}
     </p>
   </div>
@@ -607,15 +609,45 @@ function stopVideo() {
 
 <style>
 .video-container {
-  position: relative;
   max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.video-wrapper {
+  position: relative;
+  width: 100%;
+  /* This wrapper will size itself based on the video */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #000;
 }
 
 .video {
   width: 100%;
+  max-width: 100%;
+  height: auto;
   display: block;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  /* Ensure video has minimum dimensions */
+  min-height: 200px;
+  /* Set default aspect ratio to prevent layout shifts before metadata loads */
+  aspect-ratio: 16 / 9;
+  object-fit: cover; /* Change from 'contain' to 'cover' to fill container and hide black bars */
+  object-position: center; /* Center the video content within the container */
+  background-color: #000;
+  /* Center the video */
+  margin: 0 auto;
+}
+
+.video-filename {
+  margin-top: 5px;
+  font-size: small;
+  color: darkslategray;
+  padding-left: 1%;
 }
 
 /* Ensure video controls are accessible on mobile */
@@ -650,10 +682,15 @@ function stopVideo() {
   will-change: transform;
 }
 
-/* Add this style */
+/* Portrait video overrides aspect ratio */
 .video-portrait {
   max-height: 80vh; /* Adjust this value as needed */
-  object-fit: contain; /*  Prevent the video from being cropped */
+  width: 100%; /* Use full width to fill container */
+  max-width: 100%;
+  object-fit: cover; /* Use cover to fill container and center content */
+  object-position: center; /* Center the video content vertically and horizontally */
+  aspect-ratio: auto; /* Let the actual video dimensions define the aspect ratio */
+  margin: 0 auto; /* Center horizontally */
 }
 
 .custom-controls {
@@ -687,8 +724,8 @@ function stopVideo() {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
+  right: 0;
+  bottom: 0;
   background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
@@ -696,6 +733,8 @@ function stopVideo() {
   z-index: 20;
   cursor: pointer;
   transition: background-color 0.3s ease;
+  /* Prevent overlay from expanding container */
+  pointer-events: auto;
 }
 
 .autoplay-blocked-overlay:hover {
@@ -741,6 +780,9 @@ function stopVideo() {
   -webkit-tap-highlight-color: transparent;
   pointer-events: auto;
   touch-action: manipulation;
+  /* Ensure overlay doesn't affect layout */
+  margin: 0;
+  padding: 0;
 }
 
 .play-overlay-button {
