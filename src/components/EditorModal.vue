@@ -98,7 +98,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
           useIPFSFallback = true;
           fallbackReason = 'cloudDrivePort is null or undefined';
           console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
-        } else if (author.cloudDrivePort === 0 || author.cloudDrivePort === '0') {
+        } else if (author.cloudDrivePort === 0) {
           useIPFSFallback = true;
           fallbackReason = 'cloudDrivePort is 0 (no service available)';
           console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
