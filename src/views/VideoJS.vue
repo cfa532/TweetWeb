@@ -502,20 +502,6 @@ function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
   }
 }
 
-function togglePlay(event?: Event) {
-  // Prevent event bubbling if this is from a click/tap
-  if (event) {
-    event.stopPropagation();
-  }
-  
-  if (video.value.paused) {
-    video.value.play();
-    isPlaying.value = true;
-  } else {
-    video.value.pause();
-    isPlaying.value = false;
-  }
-}
 
 // Handle video element tap/click for mobile
 function handleVideoTap(event: Event) {
@@ -525,8 +511,7 @@ function handleVideoTap(event: Event) {
     event.stopPropagation();
     
     if (video.value) {
-      // Enable controls for fullscreen
-      video.value.controls = true;
+      // Controls are already enabled
       
       // Keep unmuted for full audio experience
       video.value.muted = false;
@@ -615,7 +600,7 @@ function handleFullscreenChange() {
   if (!isFullscreen && video.value) {
     // Exited fullscreen - stop the video and hide controls
     video.value.pause();
-    video.value.controls = !isInTweetList.value; // Restore original controls state
+    // Controls remain enabled
     video.value.muted = false; // Restore unmuted state
     isPlaying.value = false;
   }
@@ -711,12 +696,6 @@ function stopVideo() {
 <template>
   <div ref="vdiv" hidden class="video-container">
     <div class="video-wrapper">
-      <div v-if="isPortrait" class="custom-controls">
-        <button @click.stop="togglePlay">
-          <font-awesome-icon :icon='isPlaying ? "pause" : "play"' />
-        </button>
-        <!-- Add more custom control buttons as needed -->
-      </div>
       
       <!-- Autoplay blocked overlay -->
       <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
@@ -745,7 +724,7 @@ function stopVideo() {
         class="video"
         :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
         :autoplay=props.autoplay
-        :controls="!isInTweetList"
+        controls
         :controlslist=controls
         preload="auto"
         playsinline
@@ -856,31 +835,6 @@ function stopVideo() {
   margin: 0 auto; /* Center horizontally */
 }
 
-.custom-controls {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  display: flex;
-  justify-content: flex-start;
-  background: rgba(0, 0, 0, 0.2);
-  color: white;
-  padding: 5px;
-  z-index: 10;
-}
-
-.custom-controls button {
-  background: none;
-  border: none;
-  color: white;
-  font-size: 16px;
-  cursor: pointer;
-  margin-right: 10px;
-}
-
-.custom-controls button:hover {
-  text-decoration: underline;
-}
 
 /* Autoplay blocked overlay styles */
 .autoplay-blocked-overlay {
