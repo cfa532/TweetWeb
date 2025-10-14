@@ -88,18 +88,25 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
         
-        // Check if cloudDrivePort is available
-        const cloudDrivePort = author.cloudDrivePort?.toString();
         let useIPFSFallback = false;
         let fallbackReason = '';
         let isHLSConverted = false; // Track if video was converted to HLS
         
-        // Check 1: Is cloudDrivePort null, empty, or 0?
-        if (!cloudDrivePort || cloudDrivePort.trim() === '' || cloudDrivePort === '0') {
+        // Check 1: Is cloudDrivePort null, undefined, or 0?
+        // Note: 0 explicitly means "no service available"
+        if (author.cloudDrivePort === null || author.cloudDrivePort === undefined) {
           useIPFSFallback = true;
-          fallbackReason = 'cloudDrivePort is not configured';
+          fallbackReason = 'cloudDrivePort is null or undefined';
+          console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+        } else if (author.cloudDrivePort === 0 || author.cloudDrivePort === '0') {
+          useIPFSFallback = true;
+          fallbackReason = 'cloudDrivePort is 0 (no service available)';
           console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
         } else {
+          // cloudDrivePort has a valid value - check if backend service is available
+          // Call /health endpoint to verify service is running
+          const cloudDrivePort = author.cloudDrivePort.toString();
+          
           // Extract IP address from providerIp (which might include a port)
           let ipAddress = author.providerIp || '';
           if (ipAddress.includes(':')) {
@@ -107,19 +114,20 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
             ipAddress = ipAddress.split(':')[0];
           }
           
-          // Check 2: Is the service available at the cloudDrivePort?
+          // Check 2: Call /health endpoint to verify service is alive
           const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
           const serviceAvailable = await checkServiceAvailability(baseUrl);
           
           if (!serviceAvailable) {
             useIPFSFallback = true;
-            fallbackReason = `Service at ${baseUrl} is not available`;
+            fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
             console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
           } else {
             console.log('Video upload parameters:', {
               originalProviderIp: author.providerIp,
               extractedIpAddress: ipAddress,
               cloudDrivePort: cloudDrivePort,
+              baseUrl: baseUrl,
               noResample: noResample.value
             });
             
@@ -303,27 +311,44 @@ async function readFileSlice(
 // Check if the cloud drive service is available at the specified URL
 async function checkServiceAvailability(baseUrl: string): Promise<boolean> {
   try {
-    console.log(`Checking service availability at: ${baseUrl}`);
+    console.log(`Checking service availability at: ${baseUrl}/health`);
     
-    // Try to make a simple health check request with a reasonable timeout
+    // Try to make a health check request with a reasonable timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
     
     const response = await fetch(`${baseUrl}/health`, {
       method: 'GET',
       signal: controller.signal,
-    }).catch(() => null); // Catch any errors and return null
+      headers: {
+        'Accept': 'application/json',
+      }
+    }).catch((error) => {
+      console.warn(`Health check fetch failed: ${error.message}`);
+      return null;
+    });
     
     clearTimeout(timeoutId);
     
-    // Consider the service available if we get any response
-    // Even a 404 means the server is reachable
-    if (response) {
-      console.log(`Service availability check: AVAILABLE (status: ${response.status})`);
-      return true;
+    // Service must return a successful response with JSON
+    if (response && response.ok) {
+      try {
+        const data = await response.json();
+        // Validate that the response has the expected structure
+        if (data && data.status === 'ok') {
+          console.log(`Service availability check: AVAILABLE (status: ${data.status}, timestamp: ${data.timestamp})`);
+          return true;
+        } else {
+          console.warn(`Service availability check: Invalid health response format:`, data);
+          return false;
+        }
+      } catch (jsonError) {
+        console.warn(`Service availability check: Failed to parse JSON response:`, jsonError);
+        return false;
+      }
     }
     
-    console.warn(`Service availability check: NOT AVAILABLE (no response)`);
+    console.warn(`Service availability check: NOT AVAILABLE (status: ${response?.status || 'no response'})`);
     return false;
   } catch (error) {
     console.warn(`Service availability check: ERROR - ${error}`);

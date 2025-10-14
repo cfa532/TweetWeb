@@ -22,11 +22,11 @@ interface User {
     hostId?: MimeiId;
     providerIp?: string;  // Provider's IP that has write permission
     client?: any;       // Hprose client handler
-    timestamp: string | number = Date.now();
+    timestamp: string | number;
     followingCount?: number;
     followersCount?: number;
     tweetCount?: number;
-    cloudDrivePort?: number = 8010;
+    cloudDrivePort?: number;  // Port for backend service (undefined/null/0 means no service)
     hostUrl?: string;
 };
 
@@ -37,7 +37,7 @@ interface Tweet {
     content?: string;
     title?: string;
     attachments?: MimeiFileType[];
-    timestamp: string | number = Date.now();
+    timestamp: string | number;
     originalTweetId?: MimeiId;
     originalTweet?: Tweet | null;
     originalAuthorId?: MimeiId;
@@ -69,12 +69,12 @@ interface MimeiFileType {
     type: string
     size?: number
     fileName?: string
-    timestamp: string | number = Date.now()
+    timestamp: string | number
     aspectRatio?: number    // for video files
 
     // not saved in Mimei DB, for display only. The value is assigned from Tweet's downloadable
     // upload render the attachment.
-    downloadable?: boolean = true
+    downloadable?: boolean
 };
 
 // File type returned by network drive
@@ -83,7 +83,7 @@ type FileSystemItem = {
     name: string;
     path: string;
     isDirectory: boolean;
-    size: number = 0;
-    modified: string = Date.now(); // ISO 8601 date string
+    size: number;
+    modified: string; // ISO 8601 date string
     url: string;
 };

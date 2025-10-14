@@ -747,8 +747,10 @@ export const useTweetStore = defineStore('tweetStore', {
             // cache the user data
             user.providerIp = providerIp
             user.hostId = user.hostIds[0]
-            // Use server's cloudDrivePort if available, otherwise fall back to env or default
-            user.cloudDrivePort = user.cloudDrivePort || user.clouddriveport || import.meta.env.VITE_CLOUD_DRIVE_PORT || 8010
+            // Use server's cloudDrivePort if available
+            // IMPORTANT: Use nullish coalescing (??) to allow 0 as a valid value (meaning no service)
+            // If cloudDrivePort is not set by server, it remains undefined (no backend service)
+            user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
             sessionStorage.setItem(userId, JSON.stringify(user))
             user.client = providerClient
             user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)

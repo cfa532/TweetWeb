@@ -1,119 +1,238 @@
-# TUS Server with Tar Extraction
+# TUS Server - TweetWeb Backend
 
-This server provides TUS (Tus Resumable Upload) functionality along with a new tar file extraction feature.
+Backend server for TweetWeb providing video conversion, file upload, and IPFS integration.
 
-## Features
+## 📚 Documentation
 
-- **TUS Upload**: Resumable file uploads using the TUS protocol
-- **File Browser**: Web interface for browsing uploaded files
-- **Network Disk**: Access to files stored in a network disk directory
-- **Tar Extraction**: Extract tar/tar.gz files to temporary directories
+**Complete documentation has been moved to the `/docs` directory.**
 
-## Setup
+### Main Documentation
 
-1. Install dependencies:
+- **[Complete Server Documentation](../docs/TUS_SERVER.md)** - Full backend server documentation
+- **[Setup & Installation](../docs/SETUP.md)** - Installation and configuration guide
+- **[API Documentation](../docs/API.md)** - Complete API reference
+- **[Video Conversion Guide](../docs/VIDEO_CONVERSION.md)** - Video processing details
+- **[ZIP Processing](../docs/ZIP_PROCESSING.md)** - ZIP file processing
+- **[Architecture Overview](../docs/ARCHITECTURE.md)** - System design
+
+## Quick Start
+
+### Installation
+
 ```bash
-cd src/tus-server
+# Install dependencies
 npm install
+
+# Create .env file
+cp .env.example .env
+# Edit .env with your configuration
+
+# Start server
+npm start
 ```
 
-2. Create a `.env` file with the following variables:
+### Environment Variables
+
+Create a `.env` file:
+
 ```env
 PORT=3000
 AUTHORIZED_USERNAME=your_username
 NET_DISK=/path/to/your/network/disk
 ```
 
-3. Start the server:
-```bash
-npm start
-```
+See [Setup Guide - Environment Configuration](../docs/SETUP.md#environment-configuration) for complete configuration options.
+
+## Features
+
+- **Video Conversion**: Automatic HLS conversion with adaptive bitrate
+- **Hardware Acceleration**: Support for NVIDIA, Intel, Apple, and AMD encoders
+- **File Upload**: TUS resumable upload protocol
+- **ZIP Processing**: Process pre-converted HLS content
+- **TAR Extraction**: Extract tar/tar.gz files
+- **IPFS Integration**: Upload to IPFS via Leither service
+- **Concurrent Processing**: Up to 3 simultaneous video conversions
 
 ## API Endpoints
 
-### Tar File Extraction
+### Video Conversion
 
-**POST** `/extract-tar`
-
-Extracts a tar or tar.gz file to a temporary directory and returns the path.
-
-**Request:**
-- Content-Type: `multipart/form-data`
-- Body: Form data with field name `tarFile` containing the tar file
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Tar file extracted successfully",
-  "extractedPath": "/tmp/tar-extract-1234567890-abc123def",
-  "originalFileName": "example.tar.gz",
-  "extractedSize": 1024000,
-  "extractedAt": "2024-01-01T12:00:00.000Z"
-}
-```
-
-**Error Response:**
-```json
-{
-  "success": false,
-  "message": "Error message",
-  "error": "Detailed error information"
-}
-```
-
-### Example Usage
-
-Using curl:
 ```bash
-curl -X POST \
-  -F "tarFile=@/path/to/your/file.tar.gz" \
-  http://localhost:3000/extract-tar
+# Upload and convert video
+POST /convert-video
+
+# Check conversion status
+GET /convert-video/status/:jobId
 ```
 
-Using JavaScript/Fetch:
+### ZIP Processing
+
+```bash
+# Process ZIP with HLS content
+POST /process-zip
+
+# Check processing status  
+GET /process-zip/status/:jobId
+```
+
+### File Upload
+
+```bash
+# TUS resumable upload
+POST/PATCH /files/*
+
+# Register uploaded file
+POST /files/register
+```
+
+### Tar Extraction
+
+```bash
+# Extract tar/tar.gz file
+POST /extract-tar
+```
+
+See [API Documentation](../docs/API.md) for complete endpoint details.
+
+## Video Conversion Algorithm
+
+The server uses intelligent encoder selection:
+
+1. **No Resample Mode**: Direct stream copy (fastest)
+2. **Large Files (>256MB)**: Single quality 720p conversion
+3. **Regular Files (≤256MB)**: Multi-quality 720p + 480p conversion
+
+**Encoder Priority**:
+1. Copy encoder (for compatible videos ≤1280p)
+2. Hardware encoders (NVIDIA → Intel → Apple → AMD)
+3. Software encoder (libx264)
+
+**Important**: Copy encoder is **never used for multi-quality conversion** as it cannot scale video.
+
+See [Video Conversion Guide](../docs/VIDEO_CONVERSION.md) for full details.
+
+## Requirements
+
+### Software
+
+- Node.js 16+
+- FFmpeg with H.264 support
+- Leither service (for IPFS integration)
+
+### Optional (for hardware acceleration)
+
+- NVIDIA GPU with NVENC support
+- Intel CPU with QuickSync support
+- Apple Silicon (M1/M2/M3/M4)
+- AMD GPU with AMF support
+
+See [Setup Guide - FFmpeg Installation](../docs/SETUP.md#ffmpeg-installation) for installation instructions.
+
+## Configuration
+
+### Concurrency
+
+Default limits (configured in code):
+
 ```javascript
-const formData = new FormData();
-formData.append('tarFile', fileInput.files[0]);
-
-fetch('/extract-tar', {
-  method: 'POST',
-  body: formData
-})
-.then(response => response.json())
-.then(data => {
-  if (data.success) {
-    console.log('Extracted to:', data.extractedPath);
-  } else {
-    console.error('Error:', data.message);
-  }
-});
+maxConcurrentUploads = 3       // Video conversions
+maxLeitherConnections = 2       // IPFS connections
+uploadTimeout = 21600000        // 6 hours
 ```
 
-## Security Notes
+### File Size Limits
 
-- The extracted files are placed in temporary directories that should be cleaned up by the client
-- File size is limited to 50MB by default
-- Only tar and tar.gz files are accepted
-- Authorization is required for most endpoints (except file access and tar extraction)
+```javascript
+maxVideoSize = 4GB              // Video files
+maxZipSize = 500MB              // ZIP files
+maxTarSize = 50MB               // TAR files
+```
 
-## File Types Supported
+## Development
 
-- `application/x-tar` - Standard tar files
-- `application/gzip` - Gzipped files
-- `application/x-gzip` - Alternative gzip MIME type
+```bash
+# Start in development mode
+npm run dev
 
-## Authorization
+# Run tests (if available)
+npm test
 
-The following endpoints do NOT require authorization:
-- `/extract-tar` - Tar file extraction
-- `/netd/*` - File access paths
-- `/files/register` - File registration
+# Check logs
+tail -f logs/server.log
+```
 
-All other endpoints require the `AUTHORIZED_USERNAME` to be provided via query params, request body, or headers.
+## Production Deployment
 
-## Temporary Directory Cleanup
+### Using PM2
 
-The server creates temporary directories in the system's temp directory (e.g., `/tmp` on Linux/macOS). These directories are not automatically cleaned up by the server. It's the client's responsibility to clean up the extracted files when they're no longer needed.
+```bash
+npm install -g pm2
+pm2 start app.js --name tweetweb-backend
+pm2 save
+pm2 startup
+```
 
-The temporary directory path is returned in the response and can be used by the client to access the extracted files or clean them up. 
+### Using Docker
+
+See [Setup Guide - Production Deployment](../docs/SETUP.md#production-deployment)
+
+## Troubleshooting
+
+### Common Issues
+
+**FFmpeg not found**:
+```bash
+which ffmpeg
+# If not found, install FFmpeg
+brew install ffmpeg  # macOS
+sudo apt install ffmpeg  # Ubuntu
+```
+
+**Port already in use**:
+```bash
+# Change PORT in .env file
+PORT=3001
+```
+
+**Leither connection failed**:
+- Verify Leither service is running
+- Check firewall settings
+- Review port configuration
+
+See [Setup Guide - Troubleshooting](../docs/SETUP.md#troubleshooting) for more solutions.
+
+## File Structure
+
+```
+tus-server/
+├── app.js                  # Main application
+├── videoRoutes.js          # Video conversion endpoints
+├── zipRoutes.js            # ZIP processing endpoints
+├── uploadRoutes.js         # File upload endpoints
+├── leitherDetector.js      # Leither port detection
+├── netdisk.js              # Network disk routes
+├── uploadedFilesBrowser.js # File browsing
+├── package.json            # Dependencies
+└── README.md              # This file
+```
+
+## License
+
+MIT License
+
+## Support
+
+- **Documentation**: See [/docs](../docs/)
+- **Issues**: Open an issue on GitHub
+- **API Reference**: [API Documentation](../docs/API.md)
+- **Architecture**: [Architecture Overview](../docs/ARCHITECTURE.md)
+
+## Related Documentation
+
+- [Main Project README](../README.md)
+- [Complete Documentation Index](../docs/README.md)
+- [Setup & Installation Guide](../docs/SETUP.md)
+- [API Documentation](../docs/API.md)
+- [Video Conversion Guide](../docs/VIDEO_CONVERSION.md)
+- [Architecture Overview](../docs/ARCHITECTURE.md)
+- [Privacy Policy](../docs/PRIVACY.md)
