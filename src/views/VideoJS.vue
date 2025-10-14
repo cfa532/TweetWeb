@@ -102,7 +102,7 @@ onMounted(() => {
           console.log('Video metadata loaded, duration:', video.value?.duration);
         });
         
-        video.value.addEventListener('error', (e) => {
+        video.value.addEventListener('error', (e: Event) => {
           console.log('Video error:', e);
         });
         
@@ -588,10 +588,12 @@ function handleVisibilityChange() {
 
 // Handle fullscreen change
 function handleFullscreenChange() {
-  const isFullscreen = !!(document.fullscreenElement || 
-                         document.webkitFullscreenElement || 
-                         document.mozFullScreenElement || 
-                         document.msFullscreenElement);
+  const isFullscreen = !!(
+    document.fullscreenElement ||
+    (document as any).webkitFullscreenElement ||
+    (document as any).mozFullScreenElement ||
+    (document as any).msFullscreenElement
+  );
   
   if (!isFullscreen && video.value) {
     // Exited fullscreen - stop the video and hide controls
