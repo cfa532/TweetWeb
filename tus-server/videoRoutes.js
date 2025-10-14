@@ -597,6 +597,18 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const bitrate720 = 2000; // Match Swift: "2000k"
   const bitrate480 = 1000; // Match Swift: "1000k"
 
+  // IMPORTANT: For multi-quality conversion, NEVER use copy encoder
+  // Copy encoder cannot scale video, so both streams would be identical
+  // Override useCopy to false for multi-quality scenarios
+  if (encoderConfig.useCopy) {
+    console.log('[HLS-CONVERSION] Multi-quality conversion detected - overriding COPY encoder to ensure proper scaling');
+    encoderConfig = {
+      ...encoderConfig,
+      useCopy: false,
+      encoder: encoderConfig.hardware ? encoderConfig.encoder : 'libx264'
+    };
+  }
+
   const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
   
   // Software encoder parameters (only for libx264)
@@ -604,18 +616,9 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   
   console.log(`[HLS-CONVERSION] Encoder: ${encoderConfig.encoder}, Hardware: ${encoderConfig.hardware}, HW Params: "${hwParams}", SW Params: "${softwareParams}"`);
 
-  let cmd720p, cmd480p;
-  
-  if (encoderConfig.useCopy) {
-    // Use COPY encoder with HLS compatibility parameters
-    console.log('[HLS-CONVERSION] Using COPY encoder with HLS compatibility parameters');
-    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
-  } else {
-    // Use normal encoding with scaling and HLS compatibility parameters
-    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
-  }
+  // Use normal encoding with scaling and HLS compatibility parameters
+  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
   commands.push(cmd720p, cmd480p);
   
@@ -883,17 +886,12 @@ async function processVideoUpload(req, res) {
       
       const commands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, encoderConfig);
       
-      // Create fallback commands for COPY preset failures
-      const fallbackCommands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, {
-        ...encoderConfig,
-        useCopy: false,
-        encoder: 'libx264',
-        preset: 'fast'
-      });
+      // Note: Copy encoder is never used in multi-quality conversion (handled in createHLSConversionCommands)
+      // So no fallback is needed here - copy encoder fallback is only for single-quality scenarios
       
       await Promise.all([
-        executeWithProgressWithFallback(commands[0], fallbackCommands[0], requestId, 40, 50, 'Converting video to 720p HLS...', encoderConfig.useCopy),
-        executeWithProgressWithFallback(commands[1], fallbackCommands[1], requestId, 50, 60, 'Converting video to 480p HLS...', encoderConfig.useCopy)
+        executeWithProgress(commands[0], requestId, 40, 50, 'Converting video to 720p HLS...'),
+        executeWithProgress(commands[1], requestId, 50, 60, 'Converting video to 480p HLS...')
       ]);
       console.log(`[${requestId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
@@ -1301,18 +1299,13 @@ async function processVideoUploadInternal(req, jobId) {
       console.log(`[${jobId}] [FFMPEG] Command 1: ${commands[0]}`);
       console.log(`[${jobId}] [FFMPEG] Command 2: ${commands[1]}`);
       
-      // Create fallback commands for COPY preset failures
-      const fallbackCommands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, {
-        ...encoderConfig,
-        useCopy: false,
-        encoder: 'libx264',
-        preset: 'fast'
-      });
+      // Note: Copy encoder is never used in multi-quality conversion (handled in createHLSConversionCommands)
+      // So no fallback is needed here - copy encoder fallback is only for single-quality scenarios
       
-      // Execute both commands with progress tracking and fallback
+      // Execute both commands with progress tracking
       await Promise.all([
-        executeWithProgressWithFallback(commands[0], fallbackCommands[0], jobId, 40, 50, 'Converting video to 720p HLS...', encoderConfig.useCopy),
-        executeWithProgressWithFallback(commands[1], fallbackCommands[1], jobId, 50, 60, 'Converting video to 480p HLS...', encoderConfig.useCopy)
+        executeWithProgress(commands[0], jobId, 40, 50, 'Converting video to 720p HLS...'),
+        executeWithProgress(commands[1], jobId, 50, 60, 'Converting video to 480p HLS...')
       ]);
       console.log(`[${jobId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
