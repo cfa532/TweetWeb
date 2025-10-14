@@ -68,6 +68,7 @@ const supportsHardwareAcceleration = computed(() => {
 
 let hls: Hls | null = null;
 let hasTriedSinglePlaylist = false;
+let intersectionObserver: IntersectionObserver | null = null;
 
 onMounted(() => {
   vdiv.value.hidden = false;
@@ -95,10 +96,39 @@ onMounted(() => {
           }
         });
         
-        if (isHLS.value) {
-          setupHLS();
-        } else if (isRegularVideo.value) {
-          setupRegularVideo();
+        // Add metadata loaded event listener
+        video.value.addEventListener('loadedmetadata', () => {
+          // Metadata loaded successfully
+          console.log('Video metadata loaded, duration:', video.value?.duration);
+        });
+        
+        video.value.addEventListener('error', (e) => {
+          console.log('Video error:', e);
+        });
+        
+        // Add fullscreen change listeners
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+        
+        // Delay source loading for mobile HLS compatibility
+        setTimeout(() => {
+          if (isHLS.value) {
+            setupHLS();
+          } else if (isRegularVideo.value) {
+            setupRegularVideo();
+          }
+          
+          // Force load metadata for mobile
+          if (video.value) {
+            video.value.load();
+          }
+        }, 200);
+        
+        // Set up intersection observer for autoplay in tweet list
+        if (isInTweetList.value) {
+          setupIntersectionObserver();
         }
       }
     }, 100);
@@ -116,6 +146,16 @@ onMounted(() => {
 onUnmounted(() => {
   // Clean up event listeners
   document.removeEventListener('visibilitychange', handleVisibilityChange);
+  document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+  document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+  document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+  
+  // Clean up intersection observer
+  if (intersectionObserver) {
+    intersectionObserver.disconnect();
+    intersectionObserver = null;
+  }
   
   // Stop video and clean up HLS
   stopVideo();
@@ -403,7 +443,7 @@ async function handleManualPlay() {
 
 function getVideoSource(): string {
   // For regular videos, use the existing logic
-  return props.media.mid + '#t=3';
+  return props.media.mid + '#t=1';
 }
 
 function getHLSSource(): string {
@@ -479,7 +519,51 @@ function togglePlay(event?: Event) {
 
 // Handle video element tap/click for mobile
 function handleVideoTap(event: Event) {
-  // Don't interfere with native controls
+  // On mobile in tweet list, open video in fullscreen
+  if (isInTweetList.value) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    if (video.value) {
+      // Enable controls for fullscreen
+      video.value.controls = true;
+      
+      // Keep unmuted for full audio experience
+      video.value.muted = false;
+      
+      // Try to enter fullscreen
+      if (video.value.requestFullscreen) {
+        video.value.requestFullscreen();
+      } else if (video.value.webkitRequestFullscreen) {
+        video.value.webkitRequestFullscreen();
+      } else if (video.value.mozRequestFullScreen) {
+        video.value.mozRequestFullScreen();
+      } else if (video.value.msRequestFullscreen) {
+        video.value.msRequestFullscreen();
+      }
+      
+      // Start playing after a short delay to ensure fullscreen is ready
+      setTimeout(() => {
+        if (video.value) {
+          video.value.play().catch(() => {
+            // If autoplay fails due to policy, try muted first then unmute
+            video.value.muted = true;
+            video.value.play().then(() => {
+              // Successfully started muted, now unmute
+              setTimeout(() => {
+                video.value.muted = false;
+              }, 100);
+            }).catch(() => {
+              // Still failed, keep muted
+            });
+          });
+        }
+      }, 300);
+    }
+    return;
+  }
+  
+  // Don't interfere with native controls in detail view
   // Only handle taps on the video surface itself when paused
   const target = event.target as HTMLVideoElement;
   if (target.tagName === 'VIDEO' && video.value?.paused) {
@@ -519,6 +603,85 @@ function handleVisibilityChange() {
   if (document.hidden) {
     stopVideo();
   }
+}
+
+// Handle fullscreen change
+function handleFullscreenChange() {
+  const isFullscreen = !!(document.fullscreenElement || 
+                         document.webkitFullscreenElement || 
+                         document.mozFullScreenElement || 
+                         document.msFullscreenElement);
+  
+  if (!isFullscreen && video.value) {
+    // Exited fullscreen - stop the video and hide controls
+    video.value.pause();
+    video.value.controls = !isInTweetList.value; // Restore original controls state
+    video.value.muted = false; // Restore unmuted state
+    isPlaying.value = false;
+  }
+}
+
+// Set up intersection observer for autoplay in tweet list
+function setupIntersectionObserver() {
+  if (!video.value || !vdiv.value) return;
+  
+  // Add click handler to enable autoplay on first user interaction
+  const enableAutoplay = () => {
+    if (video.value) {
+      video.value.muted = true;
+      video.value.volume = 0;
+      video.value.play().catch(() => {});
+    }
+    document.removeEventListener('touchstart', enableAutoplay);
+    document.removeEventListener('click', enableAutoplay);
+  };
+  
+  document.addEventListener('touchstart', enableAutoplay, { once: true });
+  document.addEventListener('click', enableAutoplay, { once: true });
+  
+  intersectionObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        // Video is visible - start muted autoplay
+        if (video.value && video.value.paused) {
+          // Ensure video is muted for mobile compatibility
+          video.value.muted = true;
+          video.value.volume = 0;
+          
+          // Ensure video is loaded before playing
+          if (video.value.readyState >= 1) {
+            // Metadata is loaded, can play
+            video.value.play().catch(() => {
+              // If fails, show play button overlay instead
+              showPlayOverlay.value = true;
+            });
+          } else {
+            // Metadata not loaded yet, wait for it
+            const onLoadedMetadata = () => {
+              video.value.removeEventListener('loadedmetadata', onLoadedMetadata);
+              video.value.play().catch(() => {
+                showPlayOverlay.value = true;
+              });
+            };
+            video.value.addEventListener('loadedmetadata', onLoadedMetadata);
+            video.value.load(); // Force load if not already loading
+          }
+        }
+      } else {
+        // Video is not visible - pause it
+        if (video.value && !video.value.paused) {
+          video.value.pause();
+        }
+        // Hide play overlay when not visible
+        showPlayOverlay.value = false;
+      }
+    });
+  }, {
+    threshold: 0.5, // Video must be 50% visible
+    rootMargin: '0px'
+  });
+  
+  intersectionObserver.observe(vdiv.value);
 }
 
 // Stop video playback and clean up resources
@@ -582,7 +745,7 @@ function stopVideo() {
         class="video"
         :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
         :autoplay=props.autoplay
-        controls
+        :controls="!isInTweetList"
         :controlslist=controls
         preload="auto"
         playsinline
