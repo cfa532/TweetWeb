@@ -505,56 +505,44 @@ function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
 
 // Handle video element tap/click for mobile
 function handleVideoTap(event: Event) {
-  // On mobile in tweet list, open video in fullscreen
-  if (isInTweetList.value) {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    if (video.value) {
-      // Controls are already enabled
-      
-      // Keep unmuted for full audio experience
-      video.value.muted = false;
-      
-      // Try to enter fullscreen
-      if (video.value.requestFullscreen) {
-        video.value.requestFullscreen();
-      } else if (video.value.webkitRequestFullscreen) {
-        video.value.webkitRequestFullscreen();
-      } else if (video.value.mozRequestFullScreen) {
-        video.value.mozRequestFullScreen();
-      } else if (video.value.msRequestFullscreen) {
-        video.value.msRequestFullscreen();
-      }
-      
-      // Start playing after a short delay to ensure fullscreen is ready
-      setTimeout(() => {
-        if (video.value) {
-          video.value.play().catch(() => {
-            // If autoplay fails due to policy, try muted first then unmute
-            video.value.muted = true;
-            video.value.play().then(() => {
-              // Successfully started muted, now unmute
-              setTimeout(() => {
-                video.value.muted = false;
-              }, 100);
-            }).catch(() => {
-              // Still failed, keep muted
-            });
-          });
-        }
-      }, 300);
-    }
-    return;
-  }
+  // Open video in fullscreen for both tweet list and detail view
+  event.preventDefault();
+  event.stopPropagation();
   
-  // Don't interfere with native controls in detail view
-  // Only handle taps on the video surface itself when paused
-  const target = event.target as HTMLVideoElement;
-  if (target.tagName === 'VIDEO' && video.value?.paused) {
-    // Only prevent default and handle manually if video is paused
-    // This allows native controls to work when video is playing
-    event.stopPropagation();
+  if (video.value) {
+    // Controls are already enabled
+    
+    // Keep unmuted for full audio experience
+    video.value.muted = false;
+    
+    // Try to enter fullscreen
+    if (video.value.requestFullscreen) {
+      video.value.requestFullscreen();
+    } else if (video.value.webkitRequestFullscreen) {
+      video.value.webkitRequestFullscreen();
+    } else if (video.value.mozRequestFullScreen) {
+      video.value.mozRequestFullScreen();
+    } else if (video.value.msRequestFullscreen) {
+      video.value.msRequestFullscreen();
+    }
+    
+    // Start playing after a short delay to ensure fullscreen is ready
+    setTimeout(() => {
+      if (video.value) {
+        video.value.play().catch(() => {
+          // If autoplay fails due to policy, try muted first then unmute
+          video.value.muted = true;
+          video.value.play().then(() => {
+            // Successfully started muted, now unmute
+            setTimeout(() => {
+              video.value.muted = false;
+            }, 100);
+          }).catch(() => {
+            // Still failed, keep muted
+          });
+        });
+      }
+    }, 300);
   }
 }
 
