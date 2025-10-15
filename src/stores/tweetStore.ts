@@ -1040,12 +1040,17 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Upload App upgrade package file.
          * @param cid IPFS id of the install package
+         * @param mini If true, upload as mini package
          * @returns MimeiId of the install package
          */
-        async uploadPackage(cid: string) {
-            let mid = await this.loginUser?.client.RunMApp("upload_package", {
+        async uploadPackage(cid: string, mini: boolean = false) {
+            const params: any = {
                 aid: this.lapi.appId, ver: "last", cid: cid
-            })
+            }
+            if (mini) {
+                params.mini = "mini"
+            }
+            let mid = await this.loginUser?.client.RunMApp("upload_package", params)
             return mid
         },
         /**

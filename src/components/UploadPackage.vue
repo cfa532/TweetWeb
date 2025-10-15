@@ -20,6 +20,7 @@ const selectFiles = ref()
 const tweetStore = useTweetStore()
 const hproseClient = tweetStore.loginUser?.client
 const isAppPackage = ref(true)
+const isMini = ref(false)
 
 onMounted(() => {
 })
@@ -79,7 +80,7 @@ async function readFileSlice(
         hproseClient.timeout = t
         if (isAppPackage.value)
             // upload app installation package.
-            return await tweetStore.uploadPackage(cid)
+            return await tweetStore.uploadPackage(cid, isMini.value)
         else
             return await tweetStore.uploadFile(cid, filesUpload.value[0].name)
     } else {
@@ -133,6 +134,7 @@ function removeFile(f: File) {
     <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
     <div class="card-header d-flex align-items-center">
         <input v-model="isAppPackage" type="checkbox" unchecked>&nbsp;Upload App package</input>
+        <input v-model="isMini" type="checkbox" unchecked style="margin-left: 15px;">&nbsp;Mini</input>
     </div>
     <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
         <div class="input-container">
