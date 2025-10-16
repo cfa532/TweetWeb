@@ -1262,7 +1262,7 @@ export const useTweetStore = defineStore('tweetStore', {
             filterIPv6 = true,     // filter IPv6 address.
         ): Promise<string | null> {
             if (!ipList?.length) {
-                console.error('No IP addresses provided in findFirstAccessibleIP()');
+                console.error('No IP addresses provided in findFirstAccessibleIP.');
                 return null;
             }
             
@@ -1288,7 +1288,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     
                     fetch(url, { signal: controller.signal })
                         .then(response => {
-                            if (!response.ok) throw new Error('Network response was not ok');
+                            if (!response.ok) throw new Error('Network response was not OK');
                             return response.json();
                         })
                         .then(data => {
