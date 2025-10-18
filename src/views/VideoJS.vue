@@ -120,10 +120,7 @@ onMounted(() => {
             setupRegularVideo();
           }
           
-          // Force load metadata for mobile
-          if (video.value) {
-            video.value.load();
-          }
+          // Source elements will load automatically, no need to force load
         }, 200);
         
         // Set up intersection observer for autoplay in tweet list
@@ -349,8 +346,8 @@ function setupRegularVideo() {
     videoElement.style.willChange = 'transform'; // Optimize for animations
   }
   
-  // Set the video source directly
-  videoElement.src = getVideoSource();
+  // Source is already set via the <source> element in template
+  // No need to set src here to avoid conflicts
   
   // Add error handling for regular video
   videoElement.addEventListener('error', (e: Event) => {
@@ -736,7 +733,6 @@ function stopVideo() {
         @touchend="handleVideoTap"
       >
           <!-- For regular videos only - HLS videos are handled by HLS.js -->
-          <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
           <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
         Your browser does not support the video tag.
       </video>
