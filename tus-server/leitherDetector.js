@@ -9,35 +9,14 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 
 /**
- * Detect Leither service port using lsof to find listening processes
+ * Detect Leither service port using netstat to find listening processes
  * @returns {Promise<number|null>} The port number or null if not found
  */
 async function detectLeitherPort() {
   try {
     console.log('Detecting Leither service port...');
     
-    // Method 1: Use lsof to find processes listening on common Leither ports
-    const commonPorts = [8081, 4800, 8080, 8000, 8500, 9000];
-    
-    for (const port of commonPorts) {
-      try {
-        const { stdout } = await execAsync(`lsof -i :${port} -sTCP:LISTEN`);
-        if (stdout && stdout.trim()) {
-          console.log(`Found process listening on port ${port}:`, stdout.trim());
-          
-          // Test if this port has a webapi endpoint
-          const isWebApi = await testWebApiEndpoint(port);
-          if (isWebApi) {
-            console.log(`Port ${port} has webapi endpoint - likely Leither service`);
-            return port;
-          }
-        }
-      } catch (error) {
-        // Port not in use, continue to next
-      }
-    }
-    
-    // Method 2: Use netstat to find all listening ports and check for webapi
+    // Use netstat to find all listening ports and check for webapi
     try {
       const { stdout } = await execAsync('netstat -tlnp | grep LISTEN');
       if (stdout) {
