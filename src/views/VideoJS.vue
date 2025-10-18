@@ -745,6 +745,7 @@ function stopVideo() {
 
 <style>
 .video-container {
+  width: 100%;
   max-width: 100%;
   display: flex;
   flex-direction: column;
@@ -772,7 +773,7 @@ function stopVideo() {
   min-height: 200px;
   /* Set default aspect ratio to prevent layout shifts before metadata loads */
   aspect-ratio: 16 / 9;
-  object-fit: cover; /* Change from 'contain' to 'cover' to fill container and hide black bars */
+  object-fit: contain; /* Use 'contain' to maintain aspect ratio and fit within container */
   object-position: center; /* Center the video content within the container */
   background-color: #000;
   /* Center the video */
@@ -922,12 +923,12 @@ function stopVideo() {
   height: 24px;
 }
 
-/* Full height video in detail view with aspect ratio */
+/* Responsive video in detail view - adapts to screen width */
 .video-container:not(.tweet-list) .video {
-  height: 100vh !important;
-  width: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
   max-height: 100vh !important;
-  max-width: none !important;
   object-fit: contain !important;
 }
 
