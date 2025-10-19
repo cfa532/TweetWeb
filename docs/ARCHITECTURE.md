@@ -195,14 +195,74 @@ const routes = [
 
 ```
 tus-server/
-├── app.js                  # Main application
+├── app.js                  # Main application + Centralized Leither Management
 ├── videoRoutes.js          # Video conversion endpoints
 ├── zipRoutes.js            # ZIP processing endpoints
 ├── uploadRoutes.js         # File upload endpoints
-├── leitherDetector.js      # Leither port detection
+├── leitherDetector.js      # Leither port detection utility
 ├── netdisk.js              # Network disk routes
 └── uploadedFilesBrowser.js # File browsing
 ```
+
+### Leither Connection Architecture
+
+The leither connection management follows a centralized architecture pattern:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Application Startup                      │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  app.js - initializeLeither()                      │    │
+│  │  ├── Detect Leither port (once)                    │    │
+│  │  ├── Test connection                               │    │
+│  │  ├── Cache port in memory                          │    │
+│  │  └── Set leitherInitialized = true                 │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Global Connection Pool                       │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  leitherConnections Map                             │    │
+│  │  ├── Connection 1: {client, isAvailable, port}     │    │
+│  │  ├── Connection 2: {client, isAvailable, port}     │    │
+│  │  └── Max: 2 connections                             │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Service Modules                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │ videoRoutes  │  │  zipRoutes   │  │ Other Routes │      │
+│  │              │  │              │  │              │      │
+│  │ global.      │  │ global.      │  │ global.      │      │
+│  │ getLeither   │  │ getLeither   │  │ getLeither   │      │
+│  │ Connection() │  │ Connection() │  │ Connection() │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Components**:
+
+1. **Startup Initialization** (`app.js`):
+   - Detects Leither port once at startup
+   - Tests connection to ensure service is available
+   - Caches port information in memory
+   - Sets initialization flag
+
+2. **Global Connection Pool**:
+   - Shared across all service modules
+   - Maximum 2 concurrent connections
+   - Connection availability tracking
+   - Automatic connection reuse
+
+3. **Service Integration**:
+   - All modules use `global.getLeitherConnection()`
+   - Consistent connection management
+   - Automatic connection release
+   - No duplicate port detection
 
 ### Video Processing Pipeline
 
@@ -279,11 +339,15 @@ function processUploadQueue() {
 
 ### Connection Pooling
 
-#### Leither Connection Pool
+#### Centralized Leither Connection Management
+
+The leither connection management is centralized in `app.js` and initialized once at startup for optimal performance:
 
 ```typescript
-// Connection pooling for Leither
-const leitherConnections = new Map();
+// Centralized in app.js - initialized at startup
+let leitherConnections = new Map();
+let leitherPort = null;
+let leitherInitialized = false;
 const maxLeitherConnections = 2;
 
 interface LeitherConnection {
@@ -292,22 +356,51 @@ interface LeitherConnection {
   port: number;
 }
 
+// Startup initialization
+async function initializeLeither() {
+  if (leitherInitialized) return;
+  
+  try {
+    console.log('[LEITHER-INIT] Initializing Leither connection...');
+    leitherPort = await getLeitherPort();
+    console.log(`[LEITHER-INIT] Detected Leither service on port: ${leitherPort}`);
+    
+    // Test connection by creating a client
+    const testClient = await createLeitherClient(leitherPort);
+    if (testClient) {
+      console.log('[LEITHER-INIT] Leither connection test successful');
+      leitherInitialized = true;
+    }
+  } catch (error) {
+    console.error('[LEITHER-INIT] Failed to initialize Leither connection:', error.message);
+    leitherInitialized = false;
+  }
+}
+
+// Global functions available to all modules
 async function getLeitherConnection(): Promise<HproseClient> {
+  if (!leitherInitialized || !leitherPort) {
+    throw new Error('Leither service not initialized');
+  }
+  
+  const connectionKey = `port-${leitherPort}`;
+  
   // Check for available connection
-  for (const [key, conn] of leitherConnections) {
-    if (conn.isAvailable) {
-      conn.isAvailable = false;
-      return conn.client;
+  if (leitherConnections.has(connectionKey)) {
+    const connection = leitherConnections.get(connectionKey);
+    if (connection.isAvailable) {
+      connection.isAvailable = false;
+      return connection.client;
     }
   }
   
   // Create new connection if under limit
   if (leitherConnections.size < maxLeitherConnections) {
-    const client = await createLeitherClient();
+    const client = await createLeitherClient(leitherPort);
     leitherConnections.set(connectionKey, {
       client,
       isAvailable: false,
-      port
+      port: leitherPort
     });
     return client;
   }
@@ -315,7 +408,20 @@ async function getLeitherConnection(): Promise<HproseClient> {
   // Wait for available connection
   return waitForConnection();
 }
+
+// Make functions globally available
+global.getLeitherConnection = getLeitherConnection;
+global.releaseLeitherConnection = releaseLeitherConnection;
+global.getCurrentLeitherPort = getCurrentLeitherPort;
+global.isLeitherInitialized = isLeitherInitialized;
 ```
+
+**Benefits of Centralized Management**:
+- **Single Port Detection**: Leither port detected once at startup, cached in memory
+- **Shared Connection Pool**: All services (video, ZIP) share the same connection pool
+- **Better Performance**: No repeated port detection delays during processing
+- **Consistent Behavior**: All modules use identical leither connection patterns
+- **Easier Maintenance**: Single point of control for leither connection logic
 
 ### Job Status Tracking
 
@@ -629,18 +735,26 @@ QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG
 
 1. **Caching**
    - Encoder detection cache (5 min)
+   - **Leither port cache** (startup initialization)
    - IPFS content cache
    - Static asset caching
 
 2. **Concurrency**
    - Parallel video conversion (max 3)
-   - Connection pooling (Leither)
+   - **Centralized Leither connection pooling** (max 2 connections)
    - Async I/O operations
 
 3. **Resource Management**
    - Memory limits on FFmpeg buffers
    - Cleanup of old temp files
    - Queue management
+   - **Shared connection pool** across all services
+
+4. **Leither Connection Optimization**
+   - **Single port detection** at startup (vs. per-request detection)
+   - **Connection reuse** across video and ZIP processing
+   - **Reduced connection overhead** (no repeated port scanning)
+   - **Faster service startup** (cached port information)
 
 ### Bottlenecks
 

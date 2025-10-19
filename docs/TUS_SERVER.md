@@ -137,7 +137,8 @@ The server uses an intelligent encoder selection algorithm with the following de
 
 - Maximum concurrent conversions: 3
 - Queue system for handling multiple requests
-- Connection pooling for Leither service (max 2 connections)
+- **Centralized Leither Connection Pool**: Shared across all services (max 2 connections)
+- **Startup Initialization**: Leither port detected once at startup, cached in memory
 - Automatic cleanup of temporary files older than 1 hour
 
 #### Error Handling & Fallback

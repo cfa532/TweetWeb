@@ -16,30 +16,70 @@ async function detectLeitherPort() {
   try {
     console.log('Detecting Leither service port...');
     
-    // Use netstat to find all listening ports and check for webapi
-    try {
-      const { stdout } = await execAsync('netstat -tlnp | grep LISTEN');
-      if (stdout) {
-        const lines = stdout.split('\n').filter(line => line.trim());
-        console.log('Found listening ports:', lines.length);
-        
-        for (const line of lines) {
-          const portMatch = line.match(/:(\d{4,5})\s/);
-          if (portMatch) {
-            const port = parseInt(portMatch[1]);
-            if (port >= 8000 && port <= 9000) { // Leither port range
-              console.log(`Testing port ${port} for webapi endpoint...`);
-              const isWebApi = await testWebApiEndpoint(port);
-              if (isWebApi) {
-                console.log(`Found webapi endpoint on port ${port} - likely Leither service`);
-                return port;
+    // Try different commands for different operating systems
+    const detectionCommands = [
+      // lsof is available on both macOS and Linux and is more reliable
+      'lsof -i -P -n | grep LISTEN',
+      // Linux style netstat
+      'netstat -tlnp | grep LISTEN',
+      // macOS style netstat (without -p flag)
+      'netstat -an | grep LISTEN',
+      // Alternative macOS style
+      'netstat -an | grep "\.80[0-9][0-9].*LISTEN"'
+    ];
+    
+    for (const command of detectionCommands) {
+      try {
+        console.log(`Trying command: ${command}`);
+        const { stdout } = await execAsync(command);
+        if (stdout) {
+          const lines = stdout.split('\n').filter(line => line.trim());
+          console.log(`Found ${lines.length} listening ports with command: ${command}`);
+          
+          for (const line of lines) {
+            // For lsof output, check if the process name is "Leither" (case-sensitive)
+            if (command.includes('lsof')) {
+              // lsof format: Leither 1234 user 23u IPv4 0x1234567890 0t0 TCP *:8081 (LISTEN)
+              const leitherMatch = line.match(/^Leither\s+\d+\s+\w+\s+\d+u\s+IPv[46]\s+\w+\s+\d+t\d+\s+TCP\s+\*:(\d{4,5})\s*\(LISTEN\)/);
+              if (leitherMatch) {
+                const port = parseInt(leitherMatch[1]);
+                if (port >= 8000 && port <= 9000) { // Leither port range
+                  console.log(`Found Leither process listening on port ${port}`);
+                  return port;
+                }
+              }
+            } else {
+              // For netstat output, use the old method but with webapi endpoint verification
+              const portMatches = [
+                // Linux netstat format: tcp 0 0 0.0.0.0:8081 0.0.0.0:* LISTEN
+                line.match(/:(\d{4,5})\s/),
+                // macOS netstat format: tcp4 0 0 *.8081 *.* LISTEN
+                line.match(/\.(\d{4,5})\s/),
+                // Alternative format: tcp 0 0 127.0.0.1:8081 0.0.0.0:* LISTEN
+                line.match(/127\.0\.0\.1:(\d{4,5})/),
+                line.match(/0\.0\.0\.0:(\d{4,5})/)
+              ];
+              
+              for (const match of portMatches) {
+                if (match) {
+                  const port = parseInt(match[1]);
+                  if (port >= 8000 && port <= 9000) { // Leither port range
+                    console.log(`Testing port ${port} for webapi endpoint...`);
+                    const isWebApi = await testWebApiEndpoint(port);
+                    if (isWebApi) {
+                      console.log(`Found webapi endpoint on port ${port} - likely Leither service`);
+                      return port;
+                    }
+                  }
+                }
               }
             }
           }
         }
+      } catch (error) {
+        console.log(`Command failed: ${command} - ${error.message}`);
+        continue; // Try next command
       }
-    } catch (error) {
-      console.log('Error using netstat:', error.message);
     }
     
     console.log('Could not detect Leither service port automatically');

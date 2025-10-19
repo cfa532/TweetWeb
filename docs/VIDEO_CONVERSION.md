@@ -400,8 +400,8 @@ EOF
 #### 5. IPFS Upload (60-95%)
 
 ```javascript
-// Connect to Leither service
-const leitherClient = await getLeitherConnection();
+// Connect to Leither service using centralized connection manager
+const leitherClient = await global.getLeitherConnection();
 
 // Login
 const ppt = await leitherClient.GetVarByContext("", "context_ppt", []);
@@ -409,6 +409,9 @@ const api = await leitherClient.Login(ppt);
 
 // Upload to IPFS
 const cid = await leitherClient.IpfsAdd(api.sid, tempDir);
+
+// Release connection back to pool
+global.releaseLeitherConnection(leitherClient);
 
 console.log('IPFS CID:', cid);
 ```

@@ -4,7 +4,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const AdmZip = require('adm-zip');
-const hprose = require('hprose');
 const { getLeitherPort } = require('./leitherDetector');
 
 // Concurrency management
@@ -13,9 +12,7 @@ const maxConcurrentUploads = 3;
 const uploadQueue = [];
 let isProcessingQueue = false;
 
-// Leither connection pool
-const leitherConnections = new Map();
-const maxLeitherConnections = 2;
+// Leither connection management is now handled in app.js
 
 // Helper function to manage upload concurrency
 function processUploadQueue() {
@@ -49,98 +46,7 @@ function processUploadQueue() {
   isProcessingQueue = false;
 }
 
-// Helper function to get or create Leither connection
-async function getLeitherConnection() {
-  const port = await getLeitherPort();
-  const connectionKey = `port-${port}`;
-  
-  if (leitherConnections.has(connectionKey)) {
-    const connection = leitherConnections.get(connectionKey);
-    if (connection.isAvailable) {
-      connection.isAvailable = false;
-      return connection.client;
-    }
-  }
-  
-  if (leitherConnections.size < maxLeitherConnections) {
-    const client = await createLeitherClient(port);
-    leitherConnections.set(connectionKey, {
-      client,
-      isAvailable: false,
-      port
-    });
-    return client;
-  }
-  
-  return new Promise((resolve) => {
-    const checkConnection = () => {
-      for (const [key, conn] of leitherConnections) {
-        if (conn.isAvailable) {
-          conn.isAvailable = false;
-          resolve(conn.client);
-          return;
-        }
-      }
-      setTimeout(checkConnection, 100);
-    };
-    checkConnection();
-  });
-}
-
-// Helper function to release Leither connection
-function releaseLeitherConnection(client) {
-  for (const [key, conn] of leitherConnections) {
-    if (conn.client === client) {
-      conn.isAvailable = true;
-      break;
-    }
-  }
-}
-
-// Leither client creation without retry logic
-function createLeitherClient(port) {
-  return new Promise((resolve, reject) => {
-    try {
-      console.log(`[LEITHER] Creating client connection to port ${port}`);
-      
-      const client = hprose.Client.create(`ws://127.0.0.1:${port}/ws/`, ayApi);
-      client.timeout = 30000;
-      
-      if (client.connection) {
-        client.connection.on('open', () => {
-          console.log(`[LEITHER] WebSocket connection established to port ${port}`);
-          resolve(client);
-        });
-        
-        client.connection.on('close', (code, reason) => {
-          console.log(`[LEITHER] WebSocket connection closed: code=${code}, reason=${reason}`);
-          reject(new Error(`WebSocket connection closed: code=${code}, reason=${reason}`));
-        });
-        
-        client.connection.on('error', (error) => {
-          console.error(`[LEITHER] WebSocket connection error:`, error);
-          reject(new Error(`WebSocket connection failed: ${error.message}`));
-        });
-      } else {
-        resolve(client);
-      }
-      
-    } catch (error) {
-      console.error(`[LEITHER] Error creating client:`, error);
-      reject(error);
-    }
-  });
-}
-
-// Leither API array for IPFS integration
-const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "Getnodeip", "SwarmLocal", "DhtGetAllKeys","MFOpenByPath",
-  "DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs", "MFOpenTempFile", "MFTemp2MacFile", "MFSetData",
-  "MFGetData", "MMCreate", "MMOpen", "Hset", "Hget", "Hmset", "Hmget", "Zadd", "Zrangebyscore", "Zrange", "MFOpenMacFile",
-  "MFReaddir", "MFGetMimeType", "MFSetObject", "MFGetObject", "Zcount", "Zrevrange", "Hlen", "Hscan", "Hrevscan",
-  "MMRelease", "MMBackup", "MFStat", "Zrem", "Zremrangebyscore", "MiMeiPublish", "PullMsg", "MFTemp2Ipfs", "MFSetCid",
-  "MMSum", "MiMeiSync", "IpfsAdd", "MMAddRef", "MMDelRef", "MMDelVers", "MMRelease", "MMGetRef", "MMGetRefs", "Hdel",
-  "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight"
-];
+// Leither connection functions are now available globally from app.js
 
 // Helper function to safely escape file paths for shell commands
 function escapeShellArg(arg) {
@@ -435,12 +341,12 @@ async function processZipUpload(req, res) {
     try {
       console.time(`[${requestId}] leither-port-detection`);
       timingLabels.add('leither-port-detection');
-      const leitherPort = await getLeitherPort();
+      const leitherPort = global.getCurrentLeitherPort();
       console.timeEnd(`[${requestId}] leither-port-detection`);
       timingLabels.delete('leither-port-detection');
-      console.log(`[${requestId}] [INFO] Detected Leither service on port: ${leitherPort}`);
+      console.log(`[${requestId}] [INFO] Using Leither service on port: ${leitherPort}`);
 
-      leitherClient = await getLeitherConnection();
+      leitherClient = await global.getLeitherConnection();
       
       console.time(`[${requestId}] leither-get-ppt`);
       timingLabels.add('leither-get-ppt');
@@ -579,7 +485,7 @@ async function processZipUpload(req, res) {
     res.end(errorResponse);
   } finally {
     if (leitherClient) {
-      releaseLeitherConnection(leitherClient);
+      global.releaseLeitherConnection(leitherClient);
     }
     
     if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
@@ -714,12 +620,12 @@ async function processZipUploadInternal(req, jobId) {
     try {
       console.time(`[${jobId}] leither-port-detection`);
       timingLabels.add('leither-port-detection');
-      const leitherPort = await getLeitherPort();
+      const leitherPort = global.getCurrentLeitherPort();
       console.timeEnd(`[${jobId}] leither-port-detection`);
       timingLabels.delete('leither-port-detection');
-      console.log(`[${jobId}] [INFO] Detected Leither service on port: ${leitherPort}`);
+      console.log(`[${jobId}] [INFO] Using Leither service on port: ${leitherPort}`);
 
-      leitherClient = await getLeitherConnection();
+      leitherClient = await global.getLeitherConnection();
       
       console.time(`[${jobId}] leither-get-ppt`);
       timingLabels.add('leither-get-ppt');
@@ -820,7 +726,7 @@ async function processZipUploadInternal(req, jobId) {
     throw error;
   } finally {
     if (leitherClient) {
-      releaseLeitherConnection(leitherClient);
+      global.releaseLeitherConnection(leitherClient);
     }
     
     if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {

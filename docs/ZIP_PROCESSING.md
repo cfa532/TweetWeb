@@ -169,7 +169,8 @@ The endpoint handles various error scenarios:
 
 - Maximum concurrent uploads: 3
 - Queue system for handling multiple requests
-- Connection pooling for Leither service
+- **Centralized Leither Connection Pool**: Shared with video processing service
+- **Startup Initialization**: Leither port detected once at startup, cached in memory
 - Automatic cleanup of old temporary files
 
 ## Testing
@@ -210,4 +211,5 @@ This endpoint integrates seamlessly with the existing TUS server:
 - Uses the same authorization middleware
 - Follows the same error handling patterns
 - Compatible with existing CORS configuration
-- Shares Leither service connection pool with video processing
+- **Shares centralized Leither connection pool** with video processing
+- **Uses cached Leither port** from startup initialization for better performance

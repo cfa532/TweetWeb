@@ -19,6 +19,7 @@ Complete documentation for the TweetWeb decentralized social media platform.
 
 - **[TUS Server Documentation](TUS_SERVER.md)** - Backend server documentation
 - **[ZIP Processing](ZIP_PROCESSING.md)** - ZIP file processing for HLS content
+- **[Leither Connection Management](LEITHER_CONNECTION.md)** - Centralized IPFS connection management
 
 ### Legal & Privacy
 
@@ -74,6 +75,10 @@ open http://localhost:5173
 **Working with Files:**
 1. [API Documentation - File Upload](API.md#file-upload-api)
 2. [ZIP Processing](ZIP_PROCESSING.md)
+
+**Backend Architecture:**
+1. [Leither Connection Management](LEITHER_CONNECTION.md)
+2. [Architecture Overview](ARCHITECTURE.md)
 
 ### For System Administrators
 

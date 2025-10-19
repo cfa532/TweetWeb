@@ -9,15 +9,171 @@ require('dotenv').config()
 const cors = require('cors');
 const express = require('express');
 const fileUpload = require('express-fileupload');
+const hprose = require('hprose');
 const uploadRouter = require('./uploadRoutes');
 const fileBrowserRouter = require('./uploadedFilesBrowser');
 const netdisk = require('./netdisk');
 const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
+const { getLeitherPort } = require('./leitherDetector');
 const app = express();
 
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
+
+// Leither connection management
+let leitherConnections = new Map();
+let leitherPort = null;
+let leitherInitialized = false;
+const maxLeitherConnections = 2;
+
+// Leither API array for IPFS integration
+const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "Getnodeip", "SwarmLocal", "DhtGetAllKeys","MFOpenByPath",
+  "DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs", "MFOpenTempFile", "MFTemp2MacFile", "MFSetData",
+  "MFGetData", "MMCreate", "MMOpen", "Hset", "Hget", "Hmset", "Hmget", "Zadd", "Zrangebyscore", "Zrange", "MFOpenMacFile",
+  "MFReaddir", "MFGetMimeType", "MFSetObject", "MFGetObject", "Zcount", "Zrevrange", "Hlen", "Hscan", "Hrevscan",
+  "MMRelease", "MMBackup", "MFStat", "Zrem", "Zremrangebyscore", "MiMeiPublish", "PullMsg", "MFTemp2Ipfs", "MFSetCid",
+  "MMSum", "MiMeiSync", "IpfsAdd", "MMAddRef", "MMDelRef", "MMDelVers", "MMRelease", "MMGetRef", "MMGetRefs", "Hdel",
+  "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight"
+];
+
+/**
+ * Initialize Leither connection on app startup
+ */
+async function initializeLeither() {
+  if (leitherInitialized) {
+    return;
+  }
+  
+  try {
+    console.log('[LEITHER-INIT] Initializing Leither connection...');
+    leitherPort = await getLeitherPort();
+    console.log(`[LEITHER-INIT] Detected Leither service on port: ${leitherPort}`);
+    
+    // Test connection by creating a client
+    const testClient = await createLeitherClient(leitherPort);
+    if (testClient) {
+      console.log('[LEITHER-INIT] Leither connection test successful');
+      leitherInitialized = true;
+    }
+  } catch (error) {
+    console.error('[LEITHER-INIT] Failed to initialize Leither connection:', error.message);
+    console.log('[LEITHER-INIT] Leither service may not be available, but app will continue');
+    leitherInitialized = false;
+  }
+}
+
+/**
+ * Create a Leither client connection
+ */
+function createLeitherClient(port) {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`[LEITHER] Creating client connection to port ${port}`);
+      
+      const client = hprose.Client.create(`ws://127.0.0.1:${port}/ws/`, ayApi);
+      client.timeout = 30000;
+      
+      if (client.connection) {
+        client.connection.on('open', () => {
+          console.log(`[LEITHER] WebSocket connection established to port ${port}`);
+          resolve(client);
+        });
+        
+        client.connection.on('close', (code, reason) => {
+          console.log(`[LEITHER] WebSocket connection closed: code=${code}, reason=${reason}`);
+          reject(new Error(`WebSocket connection closed: code=${code}, reason=${reason}`));
+        });
+        
+        client.connection.on('error', (error) => {
+          console.error(`[LEITHER] WebSocket connection error:`, error);
+          reject(new Error(`WebSocket connection failed: ${error.message}`));
+        });
+      } else {
+        resolve(client);
+      }
+      
+    } catch (error) {
+      console.error(`[LEITHER] Error creating client:`, error);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Get or create a Leither connection from the pool
+ */
+async function getLeitherConnection() {
+  if (!leitherInitialized || !leitherPort) {
+    throw new Error('Leither service not initialized');
+  }
+  
+  const connectionKey = `port-${leitherPort}`;
+  
+  if (leitherConnections.has(connectionKey)) {
+    const connection = leitherConnections.get(connectionKey);
+    if (connection.isAvailable) {
+      connection.isAvailable = false;
+      return connection.client;
+    }
+  }
+  
+  if (leitherConnections.size < maxLeitherConnections) {
+    const client = await createLeitherClient(leitherPort);
+    leitherConnections.set(connectionKey, {
+      client,
+      isAvailable: false,
+      port: leitherPort
+    });
+    return client;
+  }
+  
+  return new Promise((resolve) => {
+    const checkConnection = () => {
+      for (const [key, conn] of leitherConnections) {
+        if (conn.isAvailable) {
+          conn.isAvailable = false;
+          resolve(conn.client);
+          return;
+        }
+      }
+      setTimeout(checkConnection, 100);
+    };
+    checkConnection();
+  });
+}
+
+/**
+ * Release a Leither connection back to the pool
+ */
+function releaseLeitherConnection(client) {
+  for (const [key, conn] of leitherConnections) {
+    if (conn.client === client) {
+      conn.isAvailable = true;
+      break;
+    }
+  }
+}
+
+/**
+ * Get the current Leither port
+ */
+function getCurrentLeitherPort() {
+  return leitherPort;
+}
+
+/**
+ * Check if Leither is initialized
+ */
+function isLeitherInitialized() {
+  return leitherInitialized;
+}
+
+// Make leither functions available globally
+global.getLeitherConnection = getLeitherConnection;
+global.releaseLeitherConnection = releaseLeitherConnection;
+global.getCurrentLeitherPort = getCurrentLeitherPort;
+global.isLeitherInitialized = isLeitherInitialized;
 
 /**
  * Authorization Middleware
@@ -211,8 +367,11 @@ app.get('/', (req, res) => {
 });
 
 // Start the server for both IPv4 and IPv6
-app.listen(port, '::', () => {
+app.listen(port, '::', async () => {
   console.log(`Server listening on port ${port}`);
   console.log(`File browser available at http://server-ip:${port}/files`);
   console.log(`IPv6 support enabled - listening on all interfaces`);
+  
+  // Initialize Leither connection on startup
+  await initializeLeither();
 });
