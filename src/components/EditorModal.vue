@@ -315,7 +315,7 @@ async function checkServiceAvailability(baseUrl: string): Promise<boolean> {
     
     // Try to make a health check request with a reasonable timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout for slow networks
     
     const response = await fetch(`${baseUrl}/health`, {
       method: 'GET',

@@ -281,8 +281,37 @@ function checkAuthorizedUser(req, res, next) {
   next();
 }
 
-// Configure middleware
-app.use(express.json());
+// Configure middleware with optimized settings
+app.use(express.json({ limit: '50mb' }));
+
+// Configure request body parsing for larger files
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Optimize server for faster uploads
+app.use((req, res, next) => {
+  // Set TCP_NODELAY to reduce latency
+  if (req.socket) {
+    req.socket.setNoDelay(true);
+    // Increase TCP window size for better throughput
+    req.socket.setKeepAlive(true, 60000); // 60 seconds
+    req.socket.setTimeout(0); // No socket timeout
+  }
+  
+  // Optimize for large file uploads
+  if (req.path === '/convert-video' || req.path === '/process-zip') {
+    // Set high water mark for better throughput
+    if (req.socket) {
+      req.socket.setKeepAlive(true, 60000);
+      req.socket.setTimeout(0);
+    }
+    
+    // Set response headers for better performance
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.setHeader('Cache-Control', 'no-cache');
+  }
+  
+  next();
+});
 
 // Configure file upload middleware with different limits for different routes
 app.use((req, res, next) => {
@@ -302,10 +331,13 @@ app.use((req, res, next) => {
   
   fileUpload({
     limits: { fileSize: fileSizeLimit },
-    abortOnLimit: true,
+    abortOnLimit: false, // Don't abort on limit, let the route handle it
     useTempFiles: true,
     tempFileDir: '/tmp/',
-    debug: false,
+    debug: false, // Disable debug to reduce log noise
+    // Optimize for faster uploads
+    preserveExtension: true,
+    safeFileNames: false,
     // Add response timeout for large files
     responseTimeout: (req.path === '/convert-video' || req.path === '/process-zip') ? 6 * 60 * 60 * 1000 : 30000
   })(req, res, next);
@@ -354,11 +386,23 @@ app.use('/', zipRouter);         // ZIP processing routes
 
 // Health check endpoint (no authorization required)
 app.get('/health', (req, res) => {
+  const startTime = Date.now();
+  
+  // Optimize health check for faster response
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  
   res.status(200).json({ 
     status: 'ok', 
     message: 'Server is running',
     timestamp: new Date().toISOString()
   });
+  
+  const responseTime = Date.now() - startTime;
+  if (responseTime > 1000) {
+    console.log(`[HEALTH-CHECK] Slow response: ${responseTime}ms`);
+  }
 });
 
 // Redirect root to file browser

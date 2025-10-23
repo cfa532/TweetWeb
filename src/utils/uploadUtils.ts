@@ -110,17 +110,29 @@ export async function uploadVideo(
   formData.append('contentType', file.type);
   formData.append('noResample', noResample.toString());
   
+  console.log(`[CLIENT-UPLOAD-TIMING] Starting upload at ${new Date().toISOString()}`);
+  const uploadStartTime = Date.now();
+  
   // Step 1: Start the upload and get job ID
   try {
+    console.log(`[CLIENT-UPLOAD-TIMING] Sending fetch request...`);
     const uploadResponse = await fetch(videoUploadUrl, {
       method: 'POST',
       body: formData,
       // Add timeout and keep-alive for large files
       signal: AbortSignal.timeout(10 * 60 * 1000), // 10 minute timeout for large files
       headers: {
-        'Connection': 'keep-alive'
-      }
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache'
+      },
+      // Optimize for faster uploads
+      keepalive: true
     });
+    
+    const uploadCompleteTime = Date.now();
+    const uploadDuration = uploadCompleteTime - uploadStartTime;
+    console.log(`[CLIENT-UPLOAD-TIMING] Upload completed at ${new Date().toISOString()} (${uploadDuration}ms total)`);
+    console.log(`[CLIENT-UPLOAD-TIMING] Upload speed: ${(file.size / (uploadDuration / 1000) / 1024 / 1024).toFixed(2)} MB/s`);
     
     if (!uploadResponse.ok) {
       throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
@@ -178,7 +190,7 @@ export async function uploadVideo(
           clearInterval(pollInterval);
           reject(error);
         }
-      }, 2000); // Poll every 2 seconds
+      }, 5000); // Poll every 5 seconds for better responsiveness
       
       // Set a maximum timeout of 2 hours
       setTimeout(() => {

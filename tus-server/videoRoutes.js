@@ -64,20 +64,20 @@ function escapeShellArg(arg) {
 }
 
 // Helper function to execute commands with fallback for COPY preset failures
-async function executeWithProgressWithFallback(command, fallbackCommand, jobId, startProgress, endProgress, message, useCopy = false) {
+async function executeWithProgressWithFallback(command, fallbackCommand, jobId, startProgress, endProgress, message, useCopy = false, fileSize = 0) {
   try {
-    return await executeWithProgress(command, jobId, startProgress, endProgress, message);
+    return await executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize);
   } catch (error) {
     if (useCopy && error.message.includes('Command exited with code')) {
       console.log(`[${jobId}] [FALLBACK] COPY preset failed, retrying with normal encoding: ${error.message}`);
-      return await executeWithProgress(fallbackCommand, jobId, startProgress, endProgress, `${message} (fallback)`);
+      return await executeWithProgress(fallbackCommand, jobId, startProgress, endProgress, `${message} (fallback)`, fileSize);
     }
     throw error;
   }
 }
 
 // Helper function to execute long-running commands with progress updates
-function executeWithProgress(command, jobId, startProgress, endProgress, message) {
+function executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize = 0) {
   return new Promise((resolve, reject) => {
     console.log(`[${jobId}] [PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
@@ -97,10 +97,33 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
       });
       
       console.log(`[${jobId}] [PROGRESS] ${message}: ${currentProgress}% (${minutes}m ${seconds}s elapsed)`);
-    }, 10000);
+    }, 5000); // Update progress every 5 seconds for better responsiveness
 
     // Spawn ffmpeg instead of exec to avoid large stdout buffering
     const child = spawn('/bin/sh', ['-c', command], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    // Add dynamic timeout for FFmpeg commands based on file size
+    // For small files (<10MB): 10 minutes
+    // For medium files (10MB-100MB): 30 minutes  
+    // For large files (100MB-1GB): 2 hours
+    // For very large files (>1GB): 4 hours
+    let timeoutMs;
+    if (fileSize < 10 * 1024 * 1024) {
+      timeoutMs = 10 * 60 * 1000; // 10 minutes for small files
+    } else if (fileSize < 100 * 1024 * 1024) {
+      timeoutMs = 30 * 60 * 1000; // 30 minutes for medium files
+    } else if (fileSize < 1024 * 1024 * 1024) {
+      timeoutMs = 2 * 60 * 60 * 1000; // 2 hours for large files (1GB)
+    } else {
+      timeoutMs = 4 * 60 * 60 * 1000; // 4 hours for very large files (>1GB)
+    }
+    console.log(`[${jobId}] [TIMEOUT] File size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB, Timeout: ${timeoutMs / (60 * 1000)} minutes`);
+    const timeoutId = setTimeout(() => {
+      console.log(`[${jobId}] [TIMEOUT] FFmpeg command timed out after ${timeoutMs / 60000} minutes, killing process`);
+      child.kill('SIGKILL');
+      clearInterval(progressInterval);
+      reject(new Error(`FFmpeg command timed out after ${timeoutMs / 60000} minutes`));
+    }, timeoutMs);
 
     let stderrBuffer = '';
     child.stderr.on('data', (chunk) => {
@@ -112,12 +135,14 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
 
     child.on('error', (error) => {
       clearInterval(progressInterval);
+      clearTimeout(timeoutId); // Clear the timeout
       console.error(`[${jobId}] [PROGRESS] ${message} failed to start:`, error.message);
       reject(error);
     });
 
     child.on('close', (code) => {
       clearInterval(progressInterval);
+      clearTimeout(timeoutId); // Clear the timeout
       if (code === 0) {
         console.log(`[${jobId}] [PROGRESS] ${message} completed successfully`);
         resolve({ code, stderr: stderrBuffer });
@@ -153,7 +178,7 @@ function executeLeitherOperationWithProgress(operation, operationName, jobId, st
       });
       
       console.log(`[${jobId}] [LEITHER-PROGRESS] ${message}: ${currentProgress}% (${minutes}m ${seconds}s elapsed)`);
-    }, 15000); // Update every 15 seconds for Leither operations
+    }, 10000); // Update every 10 seconds for Leither operations
     
     const timeoutPromise = new Promise((_, timeoutReject) => 
       setTimeout(() => {
@@ -454,6 +479,11 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
   fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
   
+  // Get file size for optimization
+  const fileSize = fs.statSync(inputPath).size;
+  const isSmallFile = fileSize < 10 * 1024 * 1024; // Less than 10MB
+  console.log(`[HLS-CONVERSION] File size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB, Small file optimization: ${isSmallFile}`);
+  
   const displayWidth = videoInfo.displayWidth || videoInfo.width;
   const displayHeight = videoInfo.displayHeight || videoInfo.height;
 
@@ -511,20 +541,36 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
     encoderConfig = {
       ...encoderConfig,
       useCopy: false,
-      encoder: encoderConfig.hardware ? encoderConfig.encoder : 'libx264'
+      encoder: encoderConfig.hardware ? encoderConfig.encoder : 'libx264',
+      preset: encoderConfig.hardware ? encoderConfig.preset : 'fast' // Ensure preset is set for software encoding
     };
   }
 
   const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
   
   // Software encoder parameters (only for libx264)
-  const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset} -tune zerolatency -threads 2`;
+  const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
   
   console.log(`[HLS-CONVERSION] Encoder: ${encoderConfig.encoder}, Hardware: ${encoderConfig.hardware}, HW Params: "${hwParams}", SW Params: "${softwareParams}"`);
 
-  // Use normal encoding with scaling and HLS compatibility parameters
-  const cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-  const cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  // Ensure parameters are properly formatted with spaces
+  const formattedHwParams = hwParams ? ` ${hwParams}` : '';
+  const formattedSoftwareParams = softwareParams ? ` ${softwareParams}` : '';
+
+  // Use optimized commands for small files
+  let cmd720p, cmd480p;
+  
+  if (isSmallFile) {
+    // Simplified commands for small files (faster processing)
+    console.log('[HLS-CONVERSION] Using optimized commands for small file');
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  } else {
+    // Full commands for larger files
+    console.log('[HLS-CONVERSION] Using full commands for large file');
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  }
 
   commands.push(cmd720p, cmd480p);
   
@@ -611,19 +657,39 @@ async function processVideoUpload(req, res) {
     const allowedTypes = [
       'video/mp4', 'video/avi', 'video/mov', 'video/quicktime', 'video/mkv', 
       'video/wmv', 'video/flv', 'video/webm', 'video/x-msvideo', 
-      'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv'
+      'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv', 'video/3gpp', 'video/ogg'
     ];
     const allowedExtensions = ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'];
     const fileExtension = uploadedFile.name.toLowerCase().split('.').pop();
     
-    const isValidType = allowedTypes.includes(uploadedFile.mimetype) || 
+    // If MIME type is empty or generic, try to detect from extension
+    let detectedMimeType = uploadedFile.mimetype;
+    if (!detectedMimeType || detectedMimeType === 'application/octet-stream' || detectedMimeType === '') {
+      console.log(`[${requestId}] [DEBUG] MIME type is empty or generic, detecting from extension: ${fileExtension}`);
+      const mimeTypeMap = {
+        'mp4': 'video/mp4',
+        'avi': 'video/avi',
+        'mov': 'video/quicktime',
+        'mkv': 'video/x-matroska',
+        'wmv': 'video/x-ms-wmv',
+        'flv': 'video/x-flv',
+        'webm': 'video/webm',
+        'm4v': 'video/mp4',
+        '3gp': 'video/3gpp',
+        'ogv': 'video/ogg'
+      };
+      detectedMimeType = mimeTypeMap[fileExtension] || 'video/mp4';
+      console.log(`[${requestId}] [DEBUG] Detected MIME type: ${detectedMimeType}`);
+    }
+    
+    const isValidType = allowedTypes.includes(detectedMimeType) || 
                         allowedExtensions.includes(fileExtension);
     
     if (!isValidType) {
-      console.error(`[${requestId}] [ERROR] Unsupported video type: '${uploadedFile.mimetype}' with extension '.${fileExtension}'.`);
+      console.error(`[${requestId}] [ERROR] Unsupported video type: '${detectedMimeType}' (original: '${uploadedFile.mimetype}') with extension '.${fileExtension}'.`);
       return res.status(400).json({
         success: false,
-        message: `Invalid video type. Allowed types are: ${allowedTypes.join(', ')}`
+        message: `Invalid video type. Detected: ${detectedMimeType}, Extension: .${fileExtension}. Allowed types are: ${allowedTypes.join(', ')}`
       });
     }
 
@@ -747,7 +813,7 @@ async function processVideoUpload(req, res) {
     if (noResample) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await executeWithProgress(ffmpegCommand, requestId, 40, 60, 'Converting video to HLS format...');
+      await executeWithProgress(ffmpegCommand, requestId, 40, 60, 'Converting video to HLS format...', uploadedFile.size);
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
     } else if (useSingleQuality) {
       // For large files (>256MB), use single quality 720p conversion to save memory
@@ -774,7 +840,9 @@ async function processVideoUpload(req, res) {
         singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       } else {
         // Use normal encoding with scaling and HLS compatibility parameters
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        // Ensure softwareParams is properly formatted with spaces
+        const formattedSoftwareParams = softwareParams ? ` ${softwareParams}` : '';
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       }
       
       console.log(`[${requestId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
@@ -782,7 +850,7 @@ async function processVideoUpload(req, res) {
       // Create fallback command for COPY preset failures
       const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, requestId, 40, 60, 'Converting large video to 720p HLS...', encoderConfig.useCopy);
+      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, requestId, 40, 60, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size);
       console.log(`[${requestId}] [SUCCESS] Single-quality HLS conversion completed`);
     } else {
       // For smaller files, use multi-quality conversion
@@ -796,8 +864,8 @@ async function processVideoUpload(req, res) {
       // So no fallback is needed here - copy encoder fallback is only for single-quality scenarios
       
       await Promise.all([
-        executeWithProgress(commands[0], requestId, 40, 50, 'Converting video to 720p HLS...'),
-        executeWithProgress(commands[1], requestId, 50, 60, 'Converting video to 480p HLS...')
+        executeWithProgress(commands[0], requestId, 40, 50, 'Converting video to 720p HLS...', uploadedFile.size),
+        executeWithProgress(commands[1], requestId, 50, 60, 'Converting video to 480p HLS...', uploadedFile.size)
       ]);
       console.log(`[${requestId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
@@ -1006,17 +1074,37 @@ async function processVideoUploadInternal(req, jobId) {
     const allowedTypes = [
       'video/mp4', 'video/avi', 'video/mov', 'video/quicktime', 'video/mkv', 
       'video/wmv', 'video/flv', 'video/webm', 'video/x-msvideo', 
-      'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv'
+      'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv', 'video/3gpp', 'video/ogg'
     ];
     const allowedExtensions = ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'];
     const fileExtension = uploadedFile.name.toLowerCase().split('.').pop();
     
-    const isValidType = allowedTypes.includes(uploadedFile.mimetype) || 
+    // If MIME type is empty or generic, try to detect from extension
+    let detectedMimeType = uploadedFile.mimetype;
+    if (!detectedMimeType || detectedMimeType === 'application/octet-stream' || detectedMimeType === '') {
+      console.log(`[${jobId}] [DEBUG] MIME type is empty or generic, detecting from extension: ${fileExtension}`);
+      const mimeTypeMap = {
+        'mp4': 'video/mp4',
+        'avi': 'video/avi',
+        'mov': 'video/quicktime',
+        'mkv': 'video/x-matroska',
+        'wmv': 'video/x-ms-wmv',
+        'flv': 'video/x-flv',
+        'webm': 'video/webm',
+        'm4v': 'video/mp4',
+        '3gp': 'video/3gpp',
+        'ogv': 'video/ogg'
+      };
+      detectedMimeType = mimeTypeMap[fileExtension] || 'video/mp4';
+      console.log(`[${jobId}] [DEBUG] Detected MIME type: ${detectedMimeType}`);
+    }
+    
+    const isValidType = allowedTypes.includes(detectedMimeType) || 
                         allowedExtensions.includes(fileExtension);
     
     if (!isValidType) {
-      console.error(`[${jobId}] [ERROR] Unsupported video type: '${uploadedFile.mimetype}' with extension '.${fileExtension}'.`);
-      throw new Error(`Invalid video type. Allowed types are: ${allowedTypes.join(', ')}`);
+      console.error(`[${jobId}] [ERROR] Unsupported video type: '${detectedMimeType}' (original: '${uploadedFile.mimetype}') with extension '.${fileExtension}'.`);
+      throw new Error(`Invalid video type. Detected: ${detectedMimeType}, Extension: .${fileExtension}. Allowed types are: ${allowedTypes.join(', ')}`);
     }
 
     // Create temporary directory
@@ -1147,7 +1235,7 @@ async function processVideoUploadInternal(req, jobId) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       console.log(`[${jobId}] [FFMPEG] Starting no-resample conversion with command: ${ffmpegCommand}`);
-      await executeWithProgress(ffmpegCommand, jobId, 40, 60, 'Converting video to HLS format...');
+      await executeWithProgress(ffmpegCommand, jobId, 40, 60, 'Converting video to HLS format...', uploadedFile.size);
       console.log(`[${jobId}] [SUCCESS] HLS conversion completed`);
     } else if (useSingleQuality) {
       // For large files (>500MB), use single quality 720p conversion to save memory
@@ -1178,7 +1266,9 @@ async function processVideoUploadInternal(req, jobId) {
         singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       } else {
         // Use normal encoding with scaling and HLS compatibility parameters
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder} ${hwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k ${softwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        // Ensure softwareParams is properly formatted with spaces
+        const formattedSoftwareParams = softwareParams ? ` ${softwareParams}` : '';
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       }
       
       console.log(`[${jobId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
@@ -1186,7 +1276,7 @@ async function processVideoUploadInternal(req, jobId) {
       // Create fallback command for COPY preset failures
       const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, jobId, 40, 60, 'Converting large video to 720p HLS...', encoderConfig.useCopy);
+      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, jobId, 40, 60, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size);
       console.log(`[${jobId}] [SUCCESS] Single-quality HLS conversion completed`);
     } else {
       // For smaller files, use multi-quality conversion
@@ -1210,8 +1300,8 @@ async function processVideoUploadInternal(req, jobId) {
       
       // Execute both commands with progress tracking
       await Promise.all([
-        executeWithProgress(commands[0], jobId, 40, 50, 'Converting video to 720p HLS...'),
-        executeWithProgress(commands[1], jobId, 50, 60, 'Converting video to 480p HLS...')
+        executeWithProgress(commands[0], jobId, 40, 50, 'Converting video to 720p HLS...', uploadedFile.size),
+        executeWithProgress(commands[1], jobId, 50, 60, 'Converting video to 480p HLS...', uploadedFile.size)
       ]);
       console.log(`[${jobId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
@@ -1366,6 +1456,9 @@ const processingJobs = new Map();
 
 // Video conversion endpoint
 router.post('/convert-video', async (req, res) => {
+  const uploadStartTime = Date.now();
+  console.log(`[UPLOAD-TIMING] Upload request received at ${new Date().toISOString()}`);
+  
   // Set longer timeout for video processing
   req.setTimeout(6 * 60 * 60 * 1000); // 6 hours
   res.setTimeout(6 * 60 * 60 * 1000); // 6 hours
@@ -1395,21 +1488,44 @@ router.post('/convert-video', async (req, res) => {
   });
   
   try {
+    const requestReceivedTime = Date.now();
+    console.log(`[UPLOAD-TIMING] Request processing started at ${new Date().toISOString()} (${requestReceivedTime - uploadStartTime}ms after request received)`);
+    
+    // Debug: Log request details
+    console.log(`[${jobId}] [DEBUG] Request method: ${req.method}`);
+    console.log(`[${jobId}] [DEBUG] Request path: ${req.path}`);
+    console.log(`[${jobId}] [DEBUG] Request headers:`, req.headers);
+    console.log(`[${jobId}] [DEBUG] Request files:`, req.files ? Object.keys(req.files) : 'No files');
+    console.log(`[${jobId}] [DEBUG] Request body keys:`, req.body ? Object.keys(req.body) : 'No body');
+    
     // Validate upload BEFORE sending response
     if (!req.files || !req.files.videoFile) {
       console.error(`[${jobId}] [ERROR] No video file found in request. Expected a file with field name "videoFile".`);
+      console.error(`[${jobId}] [ERROR] Available files:`, req.files ? Object.keys(req.files) : 'No files object');
+      console.error(`[${jobId}] [ERROR] Request body:`, req.body);
+      console.error(`[${jobId}] [ERROR] Request headers:`, req.headers);
       return res.status(400).json({
         success: false,
         message: 'No video file uploaded. Please use the "videoFile" field name.'
       });
     }
     
+    // Log file details for debugging
+    const uploadedFile = req.files.videoFile;
+    console.log(`[${jobId}] [UPLOAD-DEBUG] File received: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+    console.log(`[${jobId}] [UPLOAD-DEBUG] File path: ${uploadedFile.tempFilePath}`);
+    
     // Send immediate response with job ID
+    const responseSentTime = Date.now();
+    console.log(`[UPLOAD-TIMING] Sending response at ${new Date().toISOString()} (${responseSentTime - uploadStartTime}ms total upload time)`);
+    
     res.json({
       success: true,
       message: 'Video upload started',
       jobId: jobId
     });
+    
+    console.log(`[UPLOAD-TIMING] Response sent successfully, starting background processing`);
     
     // Process video in background
     processVideoUploadAsync(req, jobId);
