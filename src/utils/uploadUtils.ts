@@ -120,7 +120,7 @@ export async function uploadVideo(
       method: 'POST',
       body: formData,
       // Add timeout and keep-alive for large files
-      signal: AbortSignal.timeout(10 * 60 * 1000), // 10 minute timeout for large files
+      signal: AbortSignal.timeout(30 * 60 * 1000), // 30 minute timeout for large files
       headers: {
         'Connection': 'keep-alive',
         'Cache-Control': 'no-cache'
@@ -192,11 +192,11 @@ export async function uploadVideo(
         }
       }, 5000); // Poll every 5 seconds for better responsiveness
       
-      // Set a maximum timeout of 2 hours
+      // Set a maximum timeout of 4 hours for large files
       setTimeout(() => {
         clearInterval(pollInterval);
-        reject(new Error('Video processing timeout after 2 hours'));
-      }, 2 * 60 * 60 * 1000);
+        reject(new Error('Video processing timeout after 4 hours'));
+      }, 4 * 60 * 60 * 1000);
     });
   } catch (error: any) {
     // Log connection errors for debugging

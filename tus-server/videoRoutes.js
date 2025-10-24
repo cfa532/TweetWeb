@@ -157,7 +157,7 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
 }
 
 // Helper function to execute Leither operations with progress updates
-function executeLeitherOperationWithProgress(operation, operationName, jobId, startProgress, endProgress, message, timeoutMs = 4 * 60 * 60 * 1000) {
+function executeLeitherOperationWithProgress(operation, operationName, jobId, startProgress, endProgress, message, timeoutMs = 6 * 60 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     console.log(`[${jobId}] [LEITHER-PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
@@ -530,8 +530,18 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const dim480 = ensureEvenDimensions(targetWidth480, targetHeight480);
 
   const isDisplayPortrait = displayHeight > displayWidth;
-  const bitrate720 = 2000; // Match Swift: "2000k"
-  const bitrate480 = 1000; // Match Swift: "1000k"
+  // Use original bitrate if it's lower than our target bitrates
+  // For streaming, cap at reasonable limits to prevent buffer stalls
+  const maxStreamingBitrate720 = 3000; // Cap at 3Mbps for better streaming
+  const maxStreamingBitrate480 = 1500; // Cap at 1.5Mbps for better streaming
+  
+  const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
+  const originalBitrate480 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate480, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate480;
+  
+  const bitrate720 = originalBitrate720; // Use original bitrate if lower, otherwise use capped value
+  const bitrate480 = originalBitrate480; // Use original bitrate if lower, otherwise use capped value
+  
+  console.log(`[HLS-CONVERSION] Using bitrates - 720p: ${bitrate720}k, 480p: ${bitrate480}k (original: ${videoInfo && videoInfo.bitrate ? (videoInfo.bitrate / 1000).toFixed(0) + 'k' : 'unknown'})`);
 
   // IMPORTANT: For multi-quality conversion, NEVER use copy encoder
   // Copy encoder cannot scale video, so both streams would be identical
@@ -563,13 +573,13 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   if (isSmallFile) {
     // Simplified commands for small files (faster processing)
     console.log('[HLS-CONVERSION] Using optimized commands for small file');
-    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
   } else {
     // Full commands for larger files
     console.log('[HLS-CONVERSION] Using full commands for large file');
-    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+    cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate720}k -maxrate ${bitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+    cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${bitrate480}k -maxrate ${bitrate480}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
   }
 
   commands.push(cmd720p, cmd480p);
@@ -768,6 +778,13 @@ async function processVideoUpload(req, res) {
                 console.log(`[${requestId}] [INFO] Rotation: ${rotation} degrees`);
                 console.log(`[${requestId}] [INFO] Detected video bit depth: ${bitDepth}-bit`);
                 
+                // Extract bitrate information
+                const bitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
+                const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
+                const originalBitrate = bitrate || formatBitrate;
+                
+                console.log(`[${requestId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
+                
                 resolve({
                   width: videoStream.width,
                   height: videoStream.height,
@@ -778,7 +795,8 @@ async function processVideoUpload(req, res) {
                   bitDepth: bitDepth,
                   pixelFormat: videoStream.pix_fmt,
                   profile: videoStream.profile,
-                  codec: videoStream.codec_name
+                  codec: videoStream.codec_name,
+                  bitrate: originalBitrate
                 });
               } catch (parseError) {
                 console.error(`[${requestId}] [ERROR] Failed to parse ffprobe JSON:`, parseError);
@@ -811,7 +829,7 @@ async function processVideoUpload(req, res) {
     const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
     
     if (noResample) {
-      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       await executeWithProgress(ffmpegCommand, requestId, 40, 60, 'Converting video to HLS format...', uploadedFile.size);
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
@@ -827,6 +845,12 @@ async function processVideoUpload(req, res) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       console.log(`[${requestId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
       
+      // Calculate optimal bitrate based on original video bitrate
+      // Cap at 3Mbps for better streaming performance
+      const maxStreamingBitrate = 3000;
+      const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate;
+      console.log(`[${requestId}] [BITRATE] Using 720p bitrate: ${originalBitrate720}k (original: ${videoInfo && videoInfo.bitrate ? (videoInfo.bitrate / 1000).toFixed(0) + 'k' : 'unknown'})`);
+      
       // Get hardware-specific parameters
       const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
@@ -837,18 +861,18 @@ async function processVideoUpload(req, res) {
       if (encoderConfig.useCopy) {
         // Use COPY encoder with HLS compatibility parameters
         console.log(`[${requestId}] [HLS-CONVERSION] Using COPY encoder for single quality conversion with HLS compatibility parameters`);
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       } else {
         // Use normal encoding with scaling and HLS compatibility parameters
         // Ensure softwareParams is properly formatted with spaces
         const formattedSoftwareParams = softwareParams ? ` ${softwareParams}` : '';
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${originalBitrate720}k -maxrate ${originalBitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       }
       
       console.log(`[${requestId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
       
       // Create fallback command for COPY preset failures
-      const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${originalBitrate720}k -maxrate ${originalBitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, requestId, 40, 60, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size);
       console.log(`[${requestId}] [SUCCESS] Single-quality HLS conversion completed`);
@@ -891,7 +915,7 @@ async function processVideoUpload(req, res) {
       timingLabels.add('leither-get-ppt');
       console.log(`[${requestId}] [INFO] Getting PPT from Leither service...`);
       
-      const executeLeitherOperation = async (operation, operationName, timeoutMs = 4 * 60 * 60 * 1000) => {
+      const executeLeitherOperation = async (operation, operationName, timeoutMs = 6 * 60 * 60 * 1000) => {
         try {
           console.log(`[${requestId}] [LEITHER] ${operationName}`);
           const result = await Promise.race([
@@ -944,15 +968,24 @@ async function processVideoUpload(req, res) {
 
       const defaultTimeout = leitherClient.timeout;
       leitherClient.timeout = 0;
-      const cid = await executeLeitherOperation(
-        () => leitherClient.IpfsAdd(api.sid, tempDir),
-        "IpfsAdd",
-        4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
-      );
-      leitherClient.timeout = defaultTimeout;
-      console.timeEnd(`[${requestId}] leither-ipfs-add`);
-      timingLabels.delete('leither-ipfs-add');
-      console.log(`[${requestId}] [SUCCESS] IPFS CID received:`, cid);
+      console.log(`[${requestId}] [DEBUG] Starting IPFS add operation...`);
+      let cid;
+      try {
+        cid = await executeLeitherOperation(
+          () => leitherClient.IpfsAdd(api.sid, tempDir),
+          "IpfsAdd",
+          6 * 60 * 60 * 1000 // 6 hours for IPFS add (can be very large)
+        );
+        leitherClient.timeout = defaultTimeout;
+        console.timeEnd(`[${requestId}] leither-ipfs-add`);
+        timingLabels.delete('leither-ipfs-add');
+        console.log(`[${requestId}] [DEBUG] IPFS add operation completed, result:`, cid);
+        console.log(`[${requestId}] [DEBUG] CID type:`, typeof cid, 'Value:', cid);
+        console.log(`[${requestId}] [SUCCESS] IPFS CID received:`, cid);
+      } catch (ipfsError) {
+        console.error(`[${requestId}] [ERROR] IPFS add operation failed:`, ipfsError);
+        throw ipfsError;
+      }
 
       console.timeEnd(`[${requestId}] leither-total-time`);
       timingLabels.delete('leither-total-time');
@@ -1182,6 +1215,13 @@ async function processVideoUploadInternal(req, jobId) {
                 console.log(`[${jobId}] [INFO] Rotation: ${rotation} degrees`);
                 console.log(`[${jobId}] [INFO] Detected video bit depth: ${bitDepth}-bit`);
                 
+                // Extract bitrate information
+                const bitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
+                const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
+                const originalBitrate = bitrate || formatBitrate;
+                
+                console.log(`[${jobId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
+                
                 resolve({
                   width: videoStream.width,
                   height: videoStream.height,
@@ -1192,7 +1232,8 @@ async function processVideoUploadInternal(req, jobId) {
                   bitDepth: bitDepth,
                   pixelFormat: videoStream.pix_fmt,
                   profile: videoStream.profile,
-                  codec: videoStream.codec_name
+                  codec: videoStream.codec_name,
+                  bitrate: originalBitrate
                 });
               } catch (parseError) {
                 console.error(`[${jobId}] [ERROR] Failed to parse ffprobe JSON:`, parseError);
@@ -1232,7 +1273,7 @@ async function processVideoUploadInternal(req, jobId) {
     const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
     
     if (noResample) {
-      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       console.log(`[${jobId}] [FFMPEG] Starting no-resample conversion with command: ${ffmpegCommand}`);
       await executeWithProgress(ffmpegCommand, jobId, 40, 60, 'Converting video to HLS format...', uploadedFile.size);
@@ -1253,6 +1294,12 @@ async function processVideoUploadInternal(req, jobId) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       console.log(`[${jobId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
       
+      // Calculate optimal bitrate based on original video bitrate
+      // Cap at 3Mbps for better streaming performance
+      const maxStreamingBitrate = 3000;
+      const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate;
+      console.log(`[${jobId}] [BITRATE] Using 720p bitrate: ${originalBitrate720}k (original: ${videoInfo && videoInfo.bitrate ? (videoInfo.bitrate / 1000).toFixed(0) + 'k' : 'unknown'})`);
+      
       // Get hardware-specific parameters
       const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
@@ -1263,18 +1310,18 @@ async function processVideoUploadInternal(req, jobId) {
       if (encoderConfig.useCopy) {
         // Use COPY encoder with HLS compatibility parameters
         console.log(`[${jobId}] [HLS-CONVERSION] Using COPY encoder for single quality conversion with HLS compatibility parameters`);
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       } else {
         // Use normal encoding with scaling and HLS compatibility parameters
         // Ensure softwareParams is properly formatted with spaces
         const formattedSoftwareParams = softwareParams ? ` ${softwareParams}` : '';
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k${formattedSoftwareParams} -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${originalBitrate720}k -maxrate ${originalBitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       }
       
       console.log(`[${jobId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
       
       // Create fallback command for COPY preset failures
-      const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v 2000k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize 2000k -maxrate 2000k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k -preset fast -tune zerolatency -threads 2 -max_muxing_queue_size 1024 -fflags +genpts+igndts -avoid_negative_ts make_zero -max_interleave_delta 0 -bufsize ${originalBitrate720}k -maxrate ${originalBitrate720}k -g 30 -keyint_min 30 -sc_threshold 0 -metadata:s:v:0 rotate=0 -f hls -hls_time 6 -hls_list_size 3 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags delete_segments+independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, jobId, 40, 60, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size);
       console.log(`[${jobId}] [SUCCESS] Single-quality HLS conversion completed`);
@@ -1334,7 +1381,7 @@ async function processVideoUploadInternal(req, jobId) {
       timingLabels.add('leither-get-ppt');
       console.log(`[${jobId}] [INFO] Getting PPT from Leither service...`);
       
-      const executeLeitherOperation = async (operation, operationName, timeoutMs = 4 * 60 * 60 * 1000) => {
+      const executeLeitherOperation = async (operation, operationName, timeoutMs = 6 * 60 * 60 * 1000) => {
         try {
           console.log(`[${jobId}] [LEITHER] ${operationName}`);
           const result = await Promise.race([
@@ -1394,19 +1441,28 @@ async function processVideoUploadInternal(req, jobId) {
 
       const defaultTimeout = leitherClient.timeout;
       leitherClient.timeout = 0;
-      const cid = await executeLeitherOperationWithProgress(
-        () => leitherClient.IpfsAdd(api.sid, tempDir),
-        "IpfsAdd",
-        jobId,
-        80,
-        95,
-        "Adding to IPFS...",
-        4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
-      );
-      leitherClient.timeout = defaultTimeout;
-      console.timeEnd(`[${jobId}] leither-ipfs-add`);
-      timingLabels.delete('leither-ipfs-add');
-      console.log(`[${jobId}] [SUCCESS] IPFS CID received:`, cid);
+      console.log(`[${jobId}] [DEBUG] Starting IPFS add operation...`);
+      let cid;
+      try {
+        cid = await executeLeitherOperationWithProgress(
+          () => leitherClient.IpfsAdd(api.sid, tempDir),
+          "IpfsAdd",
+          jobId,
+          80,
+          95,
+          "Adding to IPFS...",
+          6 * 60 * 60 * 1000 // 6 hours for IPFS add (can be very large)
+        );
+        leitherClient.timeout = defaultTimeout;
+        console.timeEnd(`[${jobId}] leither-ipfs-add`);
+        timingLabels.delete('leither-ipfs-add');
+        console.log(`[${jobId}] [DEBUG] IPFS add operation completed, result:`, cid);
+        console.log(`[${jobId}] [DEBUG] CID type:`, typeof cid, 'Value:', cid);
+        console.log(`[${jobId}] [SUCCESS] IPFS CID received:`, cid);
+      } catch (ipfsError) {
+        console.error(`[${jobId}] [ERROR] IPFS add operation failed:`, ipfsError);
+        throw ipfsError;
+      }
 
       console.timeEnd(`[${jobId}] leither-total-time`);
       timingLabels.delete('leither-total-time');
