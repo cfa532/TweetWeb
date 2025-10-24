@@ -45,7 +45,7 @@ TweetWeb automatically converts uploaded videos to HLS (HTTP Live Streaming) for
 - **Container**: HLS (HTTP Live Streaming)
 - **Video Codec**: H.264
 - **Audio Codec**: AAC
-- **Segment Duration**: 10 seconds
+- **Segment Duration**: Adaptive (4-15 seconds based on resolution/bitrate)
 - **Playlist Format**: M3U8
 
 ## Conversion Algorithm
@@ -79,7 +79,7 @@ When `noResample=true`:
 ```javascript
 // Direct stream copy - fastest, no quality change
 -c:v copy -c:a copy
--f hls -hls_time 10 -hls_list_size 0
+-f hls -hls_time 6 -hls_list_size 0
 ```
 
 **Use Cases**:
@@ -230,6 +230,62 @@ Fallback when no hardware acceleration available.
 - Slower than hardware
 - Higher CPU usage
 
+## Adaptive Segment Duration
+
+The system automatically calculates optimal HLS segment duration based on video characteristics:
+
+### Segment Duration Algorithm
+
+```javascript
+function calculateOptimalSegmentDuration(videoInfo, bitrate) {
+  const resolution = width * height;
+  let segmentDuration = 6; // Default 6 seconds
+  
+  // Adjust based on resolution
+  if (resolution >= 1920 * 1080) {
+    segmentDuration = 12; // 1080p+: 12 seconds
+  } else if (resolution >= 1280 * 720) {
+    segmentDuration = 10; // 720p: 10 seconds
+  } else if (resolution >= 854 * 480) {
+    segmentDuration = 8;  // 480p: 8 seconds
+  } else {
+    segmentDuration = 6;  // Lower: 6 seconds
+  }
+  
+  // Adjust based on bitrate
+  if (bitrate > 2000) {
+    segmentDuration = Math.min(segmentDuration + 2, 15); // Cap at 15s
+  } else if (bitrate < 500) {
+    segmentDuration = Math.max(segmentDuration - 2, 4);   // Cap at 4s
+  }
+  
+  return segmentDuration;
+}
+```
+
+### Segment Duration Table
+
+| Resolution | Base Duration | High Bitrate (>2Mbps) | Low Bitrate (<500kbps) |
+|------------|---------------|------------------------|-------------------------|
+| **1080p+** | 12 seconds | 14 seconds | 10 seconds |
+| **720p** | 10 seconds | 12 seconds | 8 seconds |
+| **480p** | 8 seconds | 10 seconds | 6 seconds |
+| **Lower** | 6 seconds | 8 seconds | 4 seconds |
+
+### Benefits of Adaptive Segments
+
+**Longer Segments (High Resolution)**:
+- Better compression efficiency
+- Fewer HTTP requests
+- Reduced overhead
+- Better for high-quality content
+
+**Shorter Segments (Low Resolution)**:
+- Faster initial loading
+- Better for mobile networks
+- More responsive seeking
+- Better for low-bandwidth scenarios
+
 ## Quality Profiles
 
 ### 720p Stream
@@ -370,7 +426,7 @@ ffmpeg -i input.mp4 \
   -vf "scale=1280:720:flags=lanczos" \
   -b:v 2000k -maxrate 2000k -bufsize 2000k \
   -g 30 -keyint_min 30 -sc_threshold 0 \
-  -f hls -hls_time 10 -hls_list_size 0 \
+  -f hls -hls_time ${segmentDuration} -hls_list_size 0 \
   -hls_segment_filename 'segment%03d.ts' \
   playlist.m3u8
 ```
@@ -513,16 +569,16 @@ ffmpeg -encoders | grep amf
 
 ```bash
 -f hls                          # HLS format
--hls_time 10                    # 10-second segments
+-hls_time ${segmentDuration}    # Adaptive segment duration (4-15s)
 -hls_list_size 0                # Unlimited playlist
 -hls_segment_filename 'seg%03d.ts'  # Segment naming
--hls_flags delete_segments+independent_segments+discont_start
+-hls_flags independent_segments+discont_start+split_by_time
 ```
 
 **Flags Explained**:
-- `delete_segments`: Delete old segments
 - `independent_segments`: Each segment is independently decodable
 - `discont_start`: Mark discontinuity at start
+- `split_by_time`: Split segments at exact time boundaries
 
 ### Timing Parameters
 
@@ -698,8 +754,8 @@ ffmpeg -version
 # Ensure keyframe alignment
 -g 30 -keyint_min 30 -sc_threshold 0
 
-# Force segment duration
--hls_time 10 -hls_flags split_by_time
+# Force segment duration (adaptive)
+-hls_time ${segmentDuration} -hls_flags split_by_time
 
 # Fix timestamp issues
 -fflags +genpts

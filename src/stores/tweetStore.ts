@@ -902,11 +902,23 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a mid of the uploaded object
          */
         async uploadTweet(tweet: any, tweetId: MimeiId) {
+            console.log('[TWEET-STORE] Starting uploadTweet...');
+            console.log('[TWEET-STORE] Tweet data:', {
+                authorId: tweet.authorId,
+                title: tweet.title,
+                contentLength: tweet.content?.length || 0,
+                attachmentsCount: tweet.attachments?.length || 0,
+                isPrivate: tweet.isPrivate,
+                downloadable: tweet.downloadable,
+                tweetId: tweetId
+            });
+            
             var ret: any
             const originalTimeout = this.loginUser?.client.timeout
             
             // Use longer timeout for tweet upload (Leither service may be busy after video processing)
             const effectiveTimeout = 5 * 60 * 1000 // 5 minutes
+            console.log('[TWEET-STORE] Using timeout:', effectiveTimeout / (60 * 1000), 'minutes');
             
             try {
                 // Set timeout for this operation
@@ -925,10 +937,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Create the upload promise
                 const uploadPromise = (async () => {
                     if (tweetId) {
+                        console.log('[TWEET-STORE] Calling add_comment API...');
                         return await this.loginUser?.client.RunMApp("add_comment",
                             {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: this.loginUser?.hostId}
                         )
                     } else {
+                        console.log('[TWEET-STORE] Calling add_tweet API...');
                         return await this.loginUser?.client.RunMApp("add_tweet",
                             {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
                                 hostid: this.loginUser?.hostId})
@@ -936,14 +950,18 @@ export const useTweetStore = defineStore('tweetStore', {
                 })()
                 
                 // Race between upload and timeout
+                console.log('[TWEET-STORE] Starting Promise.race between upload and timeout...');
                 ret = await Promise.race([uploadPromise, timeoutPromise])
+                console.log('[TWEET-STORE] Promise.race completed, result:', ret);
                 
             } catch (error) {
+                console.error('[TWEET-STORE] Upload failed:', error);
                 console.error(`Upload ${tweetId ? 'comment' : 'tweet'} failed:`, error)
                 throw error
             } finally {
                 // Restore original timeout
                 this.loginUser!.client.timeout = originalTimeout
+                console.log('[TWEET-STORE] Restored original timeout');
             }
             
             console.log(`Upload ${tweetId ? 'comment' : 'tweet'} result:`, tweetId, ret)

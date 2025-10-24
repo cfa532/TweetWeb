@@ -229,10 +229,15 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 }
 
 async function onSubmit() {
+  console.log('[TWEET-SUBMIT] Starting tweet submission...');
   loading.value = true
   let attachments = <MimeiFileType[]>[]
   try {
+    console.log('[TWEET-SUBMIT] File uploads to process:', filesUpload.value.length);
+    console.log('[TWEET-SUBMIT] CID modal files:', mmFiles.value.length);
+    
     if (filesUpload.value.length > 0) {
+      console.log('[TWEET-SUBMIT] Processing file uploads...');
       // with attachments to be uploaded
       // reopen the DB mimei as cur version, for writing
       attachments = (await uploadAttachedFiles(filesUpload.value))
@@ -240,11 +245,13 @@ async function onSubmit() {
         .map((v: any) => {
           return v.value    // get FileInfo of each attachment
         })
+      console.log('[TWEET-SUBMIT] File uploads completed:', attachments.length);
       if (attachments?.length < filesUpload.value.length) {
         // uploading files failed
         throw 'Attachments uploading failed' + attachments.toString()
       }
     }
+    
     // upload tweet
     let tweet = {
       authorId: tweetStore.loginUser?.mid,
@@ -256,10 +263,31 @@ async function onSubmit() {
       timestamp: Date.now()
     }
     
+    console.log('[TWEET-SUBMIT] Tweet object created:', {
+      authorId: tweet.authorId,
+      title: tweet.title,
+      contentLength: tweet.content?.length || 0,
+      totalAttachments: tweet.attachments.length,
+      uploadedAttachments: attachments.length,
+      cidModalAttachments: mmFiles.value.length,
+      isPrivate: tweet.isPrivate,
+      downloadable: tweet.downloadable
+    });
+    
+    console.log('[TWEET-SUBMIT] CID modal attachments details:', mmFiles.value.map(f => ({
+      fileName: f.fileName,
+      mid: f.mid,
+      type: f.type,
+      size: f.size
+    })));
+    
+    console.log('[TWEET-SUBMIT] Calling tweetStore.uploadTweet...');
     const result = await tweetStore.uploadTweet(tweet, tweetId as MimeiId)
     
     // Check if tweet upload was successful
+    console.log('[TWEET-SUBMIT] Tweet upload result:', result);
     if (result) {
+      console.log('[TWEET-SUBMIT] Tweet upload successful!');
       useAlertStore().success("Tweet uploaded successfully!")
       
       // Clear form only on success
@@ -273,14 +301,17 @@ async function onSubmit() {
       emit('uploaded', result)
       emit('hide')
     } else {
+      console.log('[TWEET-SUBMIT] Tweet upload failed: No response from server');
       throw new Error("Tweet upload failed: No response from server")
     }
     
   } catch (err) {
     // something wrong uploading files or tweet, show error
+    console.error('[TWEET-SUBMIT] Error occurred:', err);
     console.error('onSubmit err:', err)
     useAlertStore().error(err instanceof Error ? err.message : String(err))
   } finally {
+    console.log('[TWEET-SUBMIT] Submission process completed, setting loading to false');
     loading.value = false
   }
 }

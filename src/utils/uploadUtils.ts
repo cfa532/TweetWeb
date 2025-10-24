@@ -113,20 +113,49 @@ export async function uploadVideo(
   console.log(`[CLIENT-UPLOAD-TIMING] Starting upload at ${new Date().toISOString()}`);
   const uploadStartTime = Date.now();
   
-  // Step 1: Start the upload and get job ID
+  // Step 1: Start the upload and get job ID with progress tracking
   try {
-    console.log(`[CLIENT-UPLOAD-TIMING] Sending fetch request...`);
-    const uploadResponse = await fetch(videoUploadUrl, {
-      method: 'POST',
-      body: formData,
-      // Add timeout and keep-alive for large files
-      signal: AbortSignal.timeout(30 * 60 * 1000), // 30 minute timeout for large files
-      headers: {
-        'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache'
-      },
-      // Optimize for faster uploads
-      keepalive: true
+    console.log(`[CLIENT-UPLOAD-TIMING] Sending upload request with progress tracking...`);
+    
+    // Use XMLHttpRequest for upload progress tracking
+    const uploadResult = await new Promise<any>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      // Track upload progress (0-40% of total progress bar)
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          const uploadProgress = Math.floor((event.loaded / event.total) * 40); // 0-40% for upload
+          console.log(`[UPLOAD-PROGRESS] ${uploadProgress}% (${(event.loaded / 1024 / 1024).toFixed(2)}MB / ${(event.total / 1024 / 1024).toFixed(2)}MB)`);
+          onProgress(uploadProgress);
+        }
+      });
+      
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const result = JSON.parse(xhr.responseText);
+            resolve(result);
+          } catch (parseError) {
+            reject(new Error('Invalid response format'));
+          }
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+        }
+      });
+      
+      xhr.addEventListener('error', () => {
+        reject(new Error('Network error during upload'));
+      });
+      
+      xhr.addEventListener('timeout', () => {
+        reject(new Error('Upload timeout'));
+      });
+      
+      xhr.open('POST', videoUploadUrl);
+      xhr.timeout = 30 * 60 * 1000; // 30 minute timeout for large files
+      xhr.setRequestHeader('Connection', 'keep-alive');
+      xhr.setRequestHeader('Cache-Control', 'no-cache');
+      xhr.send(formData);
     });
     
     const uploadCompleteTime = Date.now();
@@ -134,11 +163,6 @@ export async function uploadVideo(
     console.log(`[CLIENT-UPLOAD-TIMING] Upload completed at ${new Date().toISOString()} (${uploadDuration}ms total)`);
     console.log(`[CLIENT-UPLOAD-TIMING] Upload speed: ${(file.size / (uploadDuration / 1000) / 1024 / 1024).toFixed(2)} MB/s`);
     
-    if (!uploadResponse.ok) {
-      throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
-    }
-    
-    const uploadResult = await uploadResponse.json();
     if (!uploadResult.success || !uploadResult.jobId) {
       throw new Error(uploadResult.message || 'Failed to start video processing');
     }
@@ -146,9 +170,9 @@ export async function uploadVideo(
     const jobId = uploadResult.jobId;
     console.log('Video upload started, job ID:', jobId);
     
-    // Show initial progress
+    // Show upload completion progress (40% of total progress bar)
     if (onProgress) {
-      onProgress(25); // Show 25% for upload completion
+      onProgress(40); // Show 40% for upload completion
     }
     
     // Step 2: Poll for completion
@@ -163,9 +187,16 @@ export async function uploadVideo(
           const statusResult = await statusResponse.json();
           console.log('Job status:', statusResult.status, 'Progress:', statusResult.progress + '%', 'Message:', statusResult.message);
           
-          // Update progress if callback provided (map job progress to 25-95% range)
+          // Update progress if callback provided (map job progress to 40-70% range for processing, 70-100% for IPFS)
           if (onProgress && statusResult.progress) {
-            const mappedProgress = Math.floor(25 + (statusResult.progress * 0.7)); // Map 0-100% to 25-95%
+            let mappedProgress;
+            if (statusResult.progress <= 50) {
+              // First 50% of server progress maps to 40-70% (video processing)
+              mappedProgress = Math.floor(40 + (statusResult.progress * 0.6)); // Map 0-50% to 40-70%
+            } else {
+              // Second 50% of server progress maps to 70-100% (IPFS upload)
+              mappedProgress = Math.floor(70 + ((statusResult.progress - 50) * 0.6)); // Map 50-100% to 70-100%
+            }
             onProgress(mappedProgress);
           }
           
