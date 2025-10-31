@@ -16,11 +16,7 @@ const maxConcurrentUploads = 3;
 const uploadQueue = [];
 let isProcessingQueue = false;
 
-// Hardware encoder cache to avoid repeated detection
-let hardwareEncoderCache = null;
-let hardwareEncoderCacheTime = 0;
-const HARDWARE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-let hardwareDetectionInFlight = null; // singleflight guard
+// Hardware encoder detection is now handled in app.js
 
 // Leither connection management is now handled in app.js
 
@@ -305,102 +301,10 @@ function cleanupOldTempFiles() {
   }
 }
 
-// Helper function to detect available hardware encoders
+// Helper function to detect available hardware encoders (now uses global from app.js)
 function detectHardwareEncoders() {
-  if (hardwareEncoderCache && (Date.now() - hardwareEncoderCacheTime) < HARDWARE_CACHE_DURATION) {
-    console.log('[HARDWARE] Using cached encoder detection');
-    return Promise.resolve(hardwareEncoderCache);
-  }
-
-  if (hardwareDetectionInFlight) {
-    console.log('[HARDWARE] Reusing in-flight encoder detection');
-    return hardwareDetectionInFlight;
-  }
-
-  console.log('[HARDWARE] Detecting available hardware encoders...');
-  // Use shell command that doesn't fail on grep no-match, and handle stderr properly
-  const command = 'ffmpeg -hide_banner -encoders 2>&1 | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)" || true';
-  console.log('[HARDWARE] Running command:', command);
-
-  hardwareDetectionInFlight = execAsync(command, { timeout: 10000, maxBuffer: 10 * 1024 * 1024 })
-    .then(result => {
-      console.log('[HARDWARE] Encoder detection command completed');
-      const encoders = result.stdout.toLowerCase();
-      const available = {
-        nvidia: encoders.includes('h264_nvenc'),
-        intel: encoders.includes('h264_qsv'),
-        apple: encoders.includes('h264_videotoolbox'),
-        amd: encoders.includes('h264_amf')
-      };
-      console.log('[HARDWARE] Available encoders:', available);
-
-      hardwareEncoderCache = available;
-      hardwareEncoderCacheTime = Date.now();
-      return available;
-    })
-    .catch((error) => {
-      console.log('[HARDWARE] Encoder detection failed. Error:', error.message);
-      const available = { nvidia: false, intel: false, apple: false, amd: false };
-      hardwareEncoderCache = available;
-      hardwareEncoderCacheTime = Date.now();
-      return available;
-    })
-    .finally(() => {
-      // allow new detections after fulfillment
-      hardwareDetectionInFlight = null;
-    });
-
-  return hardwareDetectionInFlight;
-}
-
-// Helper function to test if a hardware encoder actually works
-function testHardwareEncoder(encoder) {
-  return new Promise((resolve) => {
-    const testFile = path.join(os.tmpdir(), `encoder_test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
-    // Get encoder-specific parameters for testing
-    let hwParams = getHardwareEncodingParams(encoder, false);
-    // For VideoToolbox, add bitrate requirement for testing
-    if (encoder === 'h264_videotoolbox') {
-      hwParams += ' -b:v 2M';
-    }
-    const formattedHwParams = hwParams ? ` ${hwParams}` : '';
-    const testCommand = `ffmpeg -f lavfi -i testsrc=duration=0.5:size=320x240:rate=1 -c:v ${encoder}${formattedHwParams} -t 0.5 ${escapeShellArg(testFile)} -y 2>&1`;
-    console.log(`[HARDWARE] Testing encoder ${encoder} with command: ${testCommand}`);
-    
-    execAsync(testCommand, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 })
-      .then(() => {
-        // Clean up test file
-        try {
-          if (fs.existsSync(testFile)) {
-            fs.unlinkSync(testFile);
-          }
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-        console.log(`[HARDWARE] Encoder ${encoder} test passed`);
-        resolve(true);
-      })
-      .catch((error) => {
-        // Clean up test file on error too
-        try {
-          if (fs.existsSync(testFile)) {
-            fs.unlinkSync(testFile);
-          }
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-        console.log(`[HARDWARE] Encoder ${encoder} test failed:`, error.message);
-        console.log(`[HARDWARE] Error code:`, error.code);
-        console.log(`[HARDWARE] Error signal:`, error.signal);
-        if (error.stdout) {
-          console.log(`[HARDWARE] Test stdout full:`, error.stdout);
-        }
-        if (error.stderr) {
-          console.log(`[HARDWARE] Test stderr full:`, error.stderr);
-        }
-        resolve(false);
-      });
-  });
+  console.log('[HARDWARE] Getting hardware encoders from app.js global cache');
+  return Promise.resolve(global.getAvailableHardwareEncoders());
 }
 
 // Helper function to get optimal encoder settings
@@ -450,71 +354,55 @@ async function getOptimalEncoder(availableEncoders, videoInfo = null, allowCopy 
   }
   
   if (availableEncoders.nvidia) {
-    console.log('[HARDWARE] Testing NVIDIA encoder...');
-    const nvidiaWorks = await testHardwareEncoder('h264_nvenc');
-    if (nvidiaWorks) {
-      console.log('[HARDWARE] NVIDIA encoder works, using it');
-      return {
-        encoder: 'h264_nvenc',
-        preset: 'fast',
-        profile: is10Bit ? 'high' : 'main',
-        level: '4.1',
-        hardware: true,
-        is10Bit: is10Bit,
-        useCopy: false
-      };
-    }
+    console.log('[HARDWARE] Using NVIDIA encoder (already tested at startup)');
+    return {
+      encoder: 'h264_nvenc',
+      preset: 'fast',
+      profile: is10Bit ? 'high' : 'main',
+      level: '4.1',
+      hardware: true,
+      is10Bit: is10Bit,
+      useCopy: false
+    };
   }
   
   if (availableEncoders.intel) {
-    console.log('[HARDWARE] Testing Intel encoder...');
-    const intelWorks = await testHardwareEncoder('h264_qsv');
-    if (intelWorks) {
-      console.log('[HARDWARE] Intel encoder works, using it');
-      return {
-        encoder: 'h264_qsv',
-        preset: 'fast',
-        profile: is10Bit ? 'high' : 'main',
-        level: '4.1',
-        hardware: true,
-        is10Bit: is10Bit,
-        useCopy: false
-      };
-    }
+    console.log('[HARDWARE] Using Intel encoder (already tested at startup)');
+    return {
+      encoder: 'h264_qsv',
+      preset: 'fast',
+      profile: is10Bit ? 'high' : 'main',
+      level: '4.1',
+      hardware: true,
+      is10Bit: is10Bit,
+      useCopy: false
+    };
   }
   
   if (availableEncoders.apple) {
-    console.log('[HARDWARE] Testing Apple encoder...');
-    const appleWorks = await testHardwareEncoder('h264_videotoolbox');
-    if (appleWorks) {
-      console.log('[HARDWARE] Apple encoder works, using it');
-      return {
-        encoder: 'h264_videotoolbox',
-        preset: 'fast',
-        profile: is10Bit ? 'high' : 'main',
-        level: '4.1',
-        hardware: true,
-        is10Bit: is10Bit,
-        useCopy: false
-      };
-    }
+    console.log('[HARDWARE] Using Apple encoder (already tested at startup)');
+    return {
+      encoder: 'h264_videotoolbox',
+      preset: 'fast',
+      profile: is10Bit ? 'high' : 'main',
+      level: '4.1',
+      hardware: true,
+      is10Bit: is10Bit,
+      useCopy: false
+    };
   }
   
   if (availableEncoders.amd) {
-    console.log('[HARDWARE] Testing AMD encoder...');
-    const amdWorks = await testHardwareEncoder('h264_amf');
-    if (amdWorks) {
-      console.log('[HARDWARE] AMD encoder works, using it');
-      return {
-        encoder: 'h264_amf',
-        preset: 'fast',
-        profile: is10Bit ? 'high' : 'main',
-        level: '4.1',
-        hardware: true,
-        is10Bit: is10Bit,
-        useCopy: false
-      };
-    }
+    console.log('[HARDWARE] Using AMD encoder (already tested at startup)');
+    return {
+      encoder: 'h264_amf',
+      preset: 'fast',
+      profile: is10Bit ? 'high' : 'main',
+      level: '4.1',
+      hardware: true,
+      is10Bit: is10Bit,
+      useCopy: false
+    };
   }
   
   console.log('[HARDWARE] All hardware encoders failed or unavailable, using software encoding');
@@ -731,25 +619,9 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
   return segmentDuration;
 }
 
-// Helper function to get hardware-specific encoding parameters
+// Helper function to get hardware-specific encoding parameters (now uses global from app.js)
 function getHardwareEncodingParams(encoder, is10Bit = false) {
-  switch (encoder) {
-    case 'h264_nvenc':
-      return is10Bit ? '-rc vbr -cq 23 -b:v 0 -maxrate 5M -bufsize 10M -pix_fmt yuv420p10le' : '-rc vbr -cq 23 -b:v 0 -maxrate 5M -bufsize 10M';
-    case 'h264_qsv':
-      return is10Bit ? '-global_quality 23 -look_ahead 1 -pix_fmt yuv420p10le' : '-global_quality 23 -look_ahead 1';
-    case 'h264_videotoolbox':
-      // VideoToolbox optimized for Apple Silicon (M1/M2/M3/M4)
-      // -allow_sw 1: Allow software fallback if needed
-      // -q:v 65: Quality level (0-100, ~65 for good quality/size balance)
-      // -realtime 0: Disable real-time encoding for better quality
-      // -prio_speed 0: Prioritize quality over speed
-      return is10Bit ? '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0';
-    case 'h264_amf':
-      return is10Bit ? '-rc cqp -qp_i 23 -qp_p 23 -pix_fmt yuv420p10le' : '-rc cqp -qp_i 23 -qp_p 23';
-    default:
-      return is10Bit ? '-pix_fmt yuv420p10le' : '';
-  }
+  return global.getHardwareEncodingParams(encoder, is10Bit);
 }
 
 // Main video processing function

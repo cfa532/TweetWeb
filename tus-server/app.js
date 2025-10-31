@@ -10,6 +10,11 @@ const cors = require('cors');
 const express = require('express');
 const fileUpload = require('express-fileupload');
 const hprose = require('hprose');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { exec } = require('child_process');
+const { promisify } = require('util');
 const uploadRouter = require('./uploadRoutes');
 const fileBrowserRouter = require('./uploadedFilesBrowser');
 const netdisk = require('./netdisk');
@@ -17,6 +22,9 @@ const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
+
+// Promisify exec for async/await usage
+const execAsync = promisify(exec);
 
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
@@ -26,6 +34,12 @@ let leitherConnections = new Map();
 let leitherPort = null;
 let leitherInitialized = false;
 const maxLeitherConnections = 2;
+
+// Hardware encoder detection cache
+let hardwareEncoderCache = null;
+let hardwareEncoderCacheTime = 0;
+const HARDWARE_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours (much longer since we test at startup)
+let hardwareInitialized = false;
 
 // Leither API array for IPFS integration
 const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "Getnodeip", "SwarmLocal", "DhtGetAllKeys","MFOpenByPath",
@@ -174,6 +188,172 @@ global.getLeitherConnection = getLeitherConnection;
 global.releaseLeitherConnection = releaseLeitherConnection;
 global.getCurrentLeitherPort = getCurrentLeitherPort;
 global.isLeitherInitialized = isLeitherInitialized;
+
+/**
+ * Helper function to safely escape file paths for shell commands
+ */
+function escapeShellArg(arg) {
+  return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+}
+
+/**
+ * Helper function to get hardware-specific encoding parameters
+ */
+function getHardwareEncodingParams(encoder, is10Bit = false) {
+  switch (encoder) {
+    case 'h264_nvenc':
+      return is10Bit ? '-rc vbr -cq 23 -b:v 0 -maxrate 5M -bufsize 10M -pix_fmt yuv420p10le' : '-rc vbr -cq 23 -b:v 0 -maxrate 5M -bufsize 10M';
+    case 'h264_qsv':
+      return is10Bit ? '-global_quality 23 -look_ahead 1 -pix_fmt yuv420p10le' : '-global_quality 23 -look_ahead 1';
+    case 'h264_videotoolbox':
+      // VideoToolbox optimized for Apple Silicon (M1/M2/M3/M4)
+      // -allow_sw 1: Allow software fallback if needed
+      // -q:v 65: Quality level (0-100, ~65 for good quality/size balance)
+      // -realtime 0: Disable real-time encoding for better quality
+      // -prio_speed 0: Prioritize quality over speed
+      return is10Bit ? '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0';
+    case 'h264_amf':
+      return is10Bit ? '-rc cqp -qp_i 23 -qp_p 23 -pix_fmt yuv420p10le' : '-rc cqp -qp_i 23 -qp_p 23';
+    default:
+      return is10Bit ? '-pix_fmt yuv420p10le' : '';
+  }
+}
+
+/**
+ * Helper function to test if a hardware encoder actually works
+ */
+function testHardwareEncoder(encoder) {
+  return new Promise((resolve) => {
+    const testFile = path.join(os.tmpdir(), `encoder_test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
+    // Get encoder-specific parameters for testing
+    let hwParams = getHardwareEncodingParams(encoder, false);
+    // For VideoToolbox, add bitrate requirement for testing
+    if (encoder === 'h264_videotoolbox') {
+      hwParams += ' -b:v 2M';
+    }
+    const formattedHwParams = hwParams ? ` ${hwParams}` : '';
+    const testCommand = `ffmpeg -f lavfi -i testsrc=duration=0.5:size=320x240:rate=1 -c:v ${encoder}${formattedHwParams} -t 0.5 ${escapeShellArg(testFile)} -y 2>&1`;
+    console.log(`[HARDWARE] Testing encoder ${encoder} with command: ${testCommand}`);
+    
+    execAsync(testCommand, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 })
+      .then(() => {
+        // Clean up test file
+        try {
+          if (fs.existsSync(testFile)) {
+            fs.unlinkSync(testFile);
+          }
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        console.log(`[HARDWARE] Encoder ${encoder} test passed`);
+        resolve(true);
+      })
+      .catch((error) => {
+        // Clean up test file on error too
+        try {
+          if (fs.existsSync(testFile)) {
+            fs.unlinkSync(testFile);
+          }
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        console.log(`[HARDWARE] Encoder ${encoder} test failed:`, error.message);
+        if (error.stdout && error.stdout.includes('Error')) {
+          console.log(`[HARDWARE] Test stdout:`, error.stdout.substring(0, 500));
+        }
+        resolve(false);
+      });
+  });
+}
+
+/**
+ * Initialize hardware encoder detection on app startup
+ */
+async function initializeHardwareEncoders() {
+  if (hardwareInitialized) {
+    return;
+  }
+  
+  try {
+    console.log('[HARDWARE-INIT] Detecting available hardware encoders...');
+    
+    // First, check which encoders are available in FFmpeg
+    const command = 'ffmpeg -hide_banner -encoders 2>&1 | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)" || true';
+    const result = await execAsync(command, { timeout: 10000, maxBuffer: 10 * 1024 * 1024 });
+    const encoders = result.stdout.toLowerCase();
+    
+    const detected = {
+      nvidia: encoders.includes('h264_nvenc'),
+      intel: encoders.includes('h264_qsv'),
+      apple: encoders.includes('h264_videotoolbox'),
+      amd: encoders.includes('h264_amf')
+    };
+    
+    console.log('[HARDWARE-INIT] Detected encoders:', detected);
+    
+    // Now test each detected encoder to see if it actually works
+    const working = {
+      nvidia: false,
+      intel: false,
+      apple: false,
+      amd: false
+    };
+    
+    if (detected.nvidia) {
+      console.log('[HARDWARE-INIT] Testing NVIDIA encoder...');
+      working.nvidia = await testHardwareEncoder('h264_nvenc');
+    }
+    
+    if (detected.intel) {
+      console.log('[HARDWARE-INIT] Testing Intel encoder...');
+      working.intel = await testHardwareEncoder('h264_qsv');
+    }
+    
+    if (detected.apple) {
+      console.log('[HARDWARE-INIT] Testing Apple encoder...');
+      working.apple = await testHardwareEncoder('h264_videotoolbox');
+    }
+    
+    if (detected.amd) {
+      console.log('[HARDWARE-INIT] Testing AMD encoder...');
+      working.amd = await testHardwareEncoder('h264_amf');
+    }
+    
+    // Cache the working encoders
+    hardwareEncoderCache = working;
+    hardwareEncoderCacheTime = Date.now();
+    hardwareInitialized = true;
+    
+    const workingCount = Object.values(working).filter(v => v).length;
+    if (workingCount > 0) {
+      console.log(`[HARDWARE-INIT] Hardware encoding enabled with ${workingCount} encoder(s):`, working);
+    } else {
+      console.log('[HARDWARE-INIT] No working hardware encoders found, will use software encoding');
+    }
+    
+  } catch (error) {
+    console.error('[HARDWARE-INIT] Failed to initialize hardware encoder detection:', error.message);
+    console.log('[HARDWARE-INIT] Will use software encoding');
+    hardwareEncoderCache = { nvidia: false, intel: false, apple: false, amd: false };
+    hardwareEncoderCacheTime = Date.now();
+    hardwareInitialized = true;
+  }
+}
+
+/**
+ * Get available hardware encoders (from cache)
+ */
+function getAvailableHardwareEncoders() {
+  if (hardwareEncoderCache && (Date.now() - hardwareEncoderCacheTime) < HARDWARE_CACHE_DURATION) {
+    return hardwareEncoderCache;
+  }
+  // Fallback if cache expired
+  return { nvidia: false, intel: false, apple: false, amd: false };
+}
+
+// Make hardware functions available globally
+global.getAvailableHardwareEncoders = getAvailableHardwareEncoders;
+global.getHardwareEncodingParams = getHardwareEncodingParams;
 
 /**
  * Authorization Middleware
@@ -416,6 +596,7 @@ app.listen(port, '::', async () => {
   console.log(`File browser available at http://server-ip:${port}/files`);
   console.log(`IPv6 support enabled - listening on all interfaces`);
   
-  // Initialize Leither connection on startup
+  // Initialize services on startup
   await initializeLeither();
+  await initializeHardwareEncoders();
 });
