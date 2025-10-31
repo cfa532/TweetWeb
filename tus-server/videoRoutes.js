@@ -16,6 +16,9 @@ const maxConcurrentUploads = 3;
 const uploadQueue = [];
 let isProcessingQueue = false;
 
+// Track active temporary directories to prevent cleanup during processing
+const activeTempDirs = new Set();
+
 // Hardware encoder detection is now handled in app.js
 
 // Leither connection management is now handled in app.js
@@ -283,7 +286,8 @@ function cleanupOldTempFiles() {
         
         if (stats.isDirectory() && stats.mtime.getTime() < oneHourAgo) {
           try {
-            const isInUse = activeUploads > 0 && filePath.includes('hls-convert-');
+            // Check if this directory is currently being used by an active upload
+            const isInUse = activeTempDirs.has(filePath);
             if (!isInUse) {
               fs.rmSync(filePath, { recursive: true, force: true });
               console.log(`[CLEANUP] Removed old temporary directory: ${filePath}`);
@@ -639,10 +643,9 @@ async function processVideoUpload(req, res) {
   res.setHeader('Keep-Alive', 'timeout=21600, max=1000'); // 6 hours timeout
 
   try {
-    if (activeUploads <= 1) {
-      console.log(`[${requestId}] [CLEANUP] Cleaning up old temporary files...`);
-      cleanupOldTempFiles();
-    }
+    // Cleanup old temporary files (will skip any in activeTempDirs)
+    console.log(`[${requestId}] [CLEANUP] Cleaning up old temporary files...`);
+    cleanupOldTempFiles();
 
     // Validate upload
     if (!req.files || !req.files.videoFile) {
@@ -711,6 +714,9 @@ async function processVideoUpload(req, res) {
     tempDir = path.join(os.tmpdir(), `hls-convert-${Date.now()}-${requestId}`);
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[${requestId}] [INFO] Created temporary directory: ${tempDir}`);
+    
+    // Register this temp directory to prevent cleanup
+    activeTempDirs.add(tempDir);
 
     // Get video dimensions if resampling is needed
     let videoInfo = null;
@@ -1073,6 +1079,11 @@ async function processVideoUpload(req, res) {
       }
     }
     
+    // Unregister temp directory from active set (allows future cleanup)
+    if (tempDir) {
+      activeTempDirs.delete(tempDir);
+    }
+    
     console.log(`[${requestId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
     console.log(`[${requestId}] [INFO] HLS files preserved in: ${tempDir}`);
     console.log(`[${new Date().toISOString()}] [${requestId}] --- /convert-video route processing finished ---\n`);
@@ -1089,10 +1100,9 @@ async function processVideoUploadInternal(req, jobId) {
   let leitherClient = null;
 
   try {
-    if (activeUploads <= 1) {
-      console.log(`[${jobId}] [CLEANUP] Cleaning up old temporary files...`);
-      cleanupOldTempFiles();
-    }
+    // Cleanup old temporary files (will skip any in activeTempDirs)
+    console.log(`[${jobId}] [CLEANUP] Cleaning up old temporary files...`);
+    cleanupOldTempFiles();
 
     // File validation already done in main route handler
 
@@ -1148,6 +1158,9 @@ async function processVideoUploadInternal(req, jobId) {
     tempDir = path.join(os.tmpdir(), `hls-convert-${Date.now()}-${jobId}`);
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[${jobId}] [INFO] Created temporary directory: ${tempDir}`);
+    
+    // Register this temp directory to prevent cleanup
+    activeTempDirs.add(tempDir);
 
     // Get video dimensions if resampling is needed
     let videoInfo = null;
@@ -1491,6 +1504,11 @@ async function processVideoUploadInternal(req, jobId) {
       } catch (cleanupError) {
         console.error(`[${jobId}] [ERROR] Failed to cleanup uploaded file:`, cleanupError);
       }
+    }
+    
+    // Unregister temp directory from active set (allows future cleanup)
+    if (tempDir) {
+      activeTempDirs.delete(tempDir);
     }
     
     console.log(`[${jobId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);

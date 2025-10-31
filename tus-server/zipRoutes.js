@@ -12,6 +12,9 @@ const maxConcurrentUploads = 3;
 const uploadQueue = [];
 let isProcessingQueue = false;
 
+// Track active temporary directories to prevent cleanup during processing
+const activeTempDirs = new Set();
+
 // Leither connection management is now handled in app.js
 
 // Helper function to execute Leither operations with progress updates (IPFS-heavy)
@@ -139,7 +142,8 @@ function cleanupOldTempFiles() {
         
         if (stats.isDirectory() && stats.mtime.getTime() < oneHourAgo) {
           try {
-            const isInUse = activeUploads > 0 && filePath.includes('hls-zip-');
+            // Check if this directory is currently being used by an active upload
+            const isInUse = activeTempDirs.has(filePath);
             if (!isInUse) {
               fs.rmSync(filePath, { recursive: true, force: true });
               console.log(`[CLEANUP] Removed old temporary directory: ${filePath}`);
@@ -310,10 +314,9 @@ async function processZipUpload(req, res) {
   res.setHeader('Keep-Alive', 'timeout=21600, max=1000'); // 6 hours timeout
 
   try {
-    if (activeUploads <= 1) {
-      console.log(`[${requestId}] [CLEANUP] Cleaning up old temporary files...`);
-      cleanupOldTempFiles();
-    }
+    // Cleanup old temporary files (will skip any in activeTempDirs)
+    console.log(`[${requestId}] [CLEANUP] Cleaning up old temporary files...`);
+    cleanupOldTempFiles();
 
     // Validate upload
     if (!req.files || !req.files.zipFile) {
@@ -358,6 +361,9 @@ async function processZipUpload(req, res) {
     tempDir = path.join(os.tmpdir(), `hls-zip-${Date.now()}-${requestId}`);
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[${requestId}] [INFO] Created temporary directory: ${tempDir}`);
+    
+    // Register this temp directory to prevent cleanup
+    activeTempDirs.add(tempDir);
 
     // Extract zip file
     console.log(`\n[${requestId}] [STEP 1] Extracting zip file...`);
@@ -573,6 +579,11 @@ async function processZipUpload(req, res) {
       }
     }
     
+    // Unregister temp directory from active set (allows future cleanup)
+    if (tempDir) {
+      activeTempDirs.delete(tempDir);
+    }
+    
     console.log(`[${requestId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
     console.log(`[${requestId}] [INFO] Extracted HLS files preserved in: ${tempDir}`);
     console.log(`[${new Date().toISOString()}] [${requestId}] --- /process-zip route processing finished ---\n`);
@@ -590,10 +601,9 @@ async function processZipUploadInternal(req, jobId) {
   let hlsContentPath = null;
 
   try {
-    if (activeUploads <= 1) {
-      console.log(`[${jobId}] [CLEANUP] Cleaning up old temporary files...`);
-      cleanupOldTempFiles();
-    }
+    // Cleanup old temporary files (will skip any in activeTempDirs)
+    console.log(`[${jobId}] [CLEANUP] Cleaning up old temporary files...`);
+    cleanupOldTempFiles();
 
     // Validate upload
     if (!req.files || !req.files.zipFile) {
@@ -629,6 +639,9 @@ async function processZipUploadInternal(req, jobId) {
     tempDir = path.join(os.tmpdir(), `hls-zip-${Date.now()}-${jobId}`);
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[${jobId}] [INFO] Created temporary directory: ${tempDir}`);
+    
+    // Register this temp directory to prevent cleanup
+    activeTempDirs.add(tempDir);
 
     // Update progress (safe - never decreases)
     updateProgressSafe(jobId, 20, 'Extracting ZIP file...');
@@ -800,6 +813,11 @@ async function processZipUploadInternal(req, jobId) {
       } catch (cleanupError) {
         console.error(`[${jobId}] [ERROR] Failed to cleanup uploaded file:`, cleanupError);
       }
+    }
+    
+    // Unregister temp directory from active set (allows future cleanup)
+    if (tempDir) {
+      activeTempDirs.delete(tempDir);
     }
     
     console.log(`[${jobId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
