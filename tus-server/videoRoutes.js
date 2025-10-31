@@ -63,38 +63,70 @@ function escapeShellArg(arg) {
   return `'${arg.replace(/'/g, "'\"'\"'")}'`;
 }
 
+// Helper function to update progress ensuring it never decreases across the entire process
+function updateProgressSafe(jobId, newProgress, message) {
+  const currentJob = processingJobs.get(jobId);
+  const currentProgress = currentJob ? currentJob.progress : 0;
+  // Always ensure progress only increases, never decreases
+  const finalProgress = Math.max(currentProgress, Math.min(newProgress, 100));
+  
+  // Debug log to track progress changes
+  if (finalProgress !== currentProgress) {
+    console.log(`[${jobId}] [PROGRESS-SAFE] Updating: ${currentProgress}% → ${finalProgress}% (requested: ${newProgress}%) - ${message}`);
+  }
+  
+  processingJobs.set(jobId, {
+    ...(currentJob || {}),
+    progress: finalProgress,
+    message: message || (currentJob ? currentJob.message : 'Processing...')
+  });
+  
+  return finalProgress;
+}
+
 // Helper function to execute commands with fallback for COPY preset failures
-async function executeWithProgressWithFallback(command, fallbackCommand, jobId, startProgress, endProgress, message, useCopy = false, fileSize = 0) {
+async function executeWithProgressWithFallback(command, fallbackCommand, jobId, startProgress, endProgress, message, useCopy = false, fileSize = 0, mediaDurationSec = 0) {
   try {
-    return await executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize);
+    return await executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize, mediaDurationSec);
   } catch (error) {
     if (useCopy && error.message.includes('Command exited with code')) {
       console.log(`[${jobId}] [FALLBACK] COPY preset failed, retrying with normal encoding: ${error.message}`);
-      return await executeWithProgress(fallbackCommand, jobId, startProgress, endProgress, `${message} (fallback)`, fileSize);
+      return await executeWithProgress(fallbackCommand, jobId, startProgress, endProgress, `${message} (fallback)`, fileSize, mediaDurationSec);
     }
     throw error;
   }
 }
 
 // Helper function to execute long-running commands with progress updates
-function executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize = 0) {
+function executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize = 0, mediaDurationSec = 0) {
   return new Promise((resolve, reject) => {
     console.log(`[${jobId}] [PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
     const startTime = Date.now();
+    let lastComputedProgress = startProgress;
+    
+    // Helper to update progress ensuring it never decreases (uses global safe helper with stage bounds)
+    const updateProgress = (newProgress, progressMessage) => {
+      const boundedProgress = Math.min(newProgress, endProgress);
+      const finalProgress = updateProgressSafe(jobId, boundedProgress, progressMessage || message);
+      
+      // Update lastComputedProgress for this operation to track upward movement within this stage
+      if (finalProgress > lastComputedProgress) {
+        lastComputedProgress = finalProgress;
+      }
+    };
+    
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const minutes = Math.floor(elapsed / 60000);
       const seconds = Math.floor((elapsed % 60000) / 1000);
       
+      // Fallback to a simple elapsed-time heuristic only if we didn't parse progress from ffmpeg yet
       const timeProgress = Math.min(elapsed / (5 * 60 * 1000), 1);
-      const currentProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
+      const heuristicProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
+      const currentProgress = Math.max(lastComputedProgress, heuristicProgress);
       
-      processingJobs.set(jobId, {
-        ...processingJobs.get(jobId),
-        progress: currentProgress,
-        message: `${message} (${minutes}m ${seconds}s elapsed)`
-      });
+      updateProgress(currentProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
       
       console.log(`[${jobId}] [PROGRESS] ${message}: ${currentProgress}% (${minutes}m ${seconds}s elapsed)`);
     }, 5000); // Update progress every 5 seconds for better responsiveness
@@ -129,7 +161,26 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
     child.stderr.on('data', (chunk) => {
       // Keep minimal stderr to avoid memory pressure
       if (stderrBuffer.length < 10000) {
-        stderrBuffer += chunk.toString();
+        const text = chunk.toString();
+        stderrBuffer += text;
+      }
+      
+      // Try to extract processed time from ffmpeg progress lines when media duration is known
+      if (mediaDurationSec && mediaDurationSec > 0) {
+        // Typical ffmpeg progress snippet contains time=HH:MM:SS.xx
+        const match = /time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(chunk.toString());
+        if (match) {
+          const hours = parseInt(match[1], 10) || 0;
+          const minutes = parseInt(match[2], 10) || 0;
+          const seconds = parseFloat(match[3]) || 0;
+          const processedSeconds = hours * 3600 + minutes * 60 + seconds;
+          if (processedSeconds >= 0) {
+            const ratio = Math.max(0, Math.min(processedSeconds / mediaDurationSec, 1));
+            const computed = Math.floor(startProgress + (endProgress - startProgress) * ratio);
+            // Use updateProgress helper to ensure progress never decreases
+            updateProgress(computed, `${message} (${Math.floor(ratio * 100)}% of media duration)`);
+          }
+        }
       }
     });
 
@@ -144,6 +195,8 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
       clearInterval(progressInterval);
       clearTimeout(timeoutId); // Clear the timeout
       if (code === 0) {
+        // Ensure progress reaches at least the end of this stage
+        updateProgress(endProgress, `${message} completed`);
         console.log(`[${jobId}] [PROGRESS] ${message} completed successfully`);
         resolve({ code, stderr: stderrBuffer });
       } else {
@@ -162,6 +215,18 @@ function executeLeitherOperationWithProgress(operation, operationName, jobId, st
     console.log(`[${jobId}] [LEITHER-PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
     const startTime = Date.now();
+    let lastComputedProgress = startProgress;
+    
+    // Helper to update progress ensuring it never decreases (uses global safe helper with stage bounds)
+    const updateProgress = (newProgress, progressMessage) => {
+      const boundedProgress = Math.min(newProgress, endProgress);
+      const finalProgress = updateProgressSafe(jobId, boundedProgress, progressMessage || message);
+      
+      if (finalProgress > lastComputedProgress) {
+        lastComputedProgress = finalProgress;
+      }
+    };
+    
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const minutes = Math.floor(elapsed / 60000);
@@ -170,14 +235,11 @@ function executeLeitherOperationWithProgress(operation, operationName, jobId, st
       // Update progress based on elapsed time (rough estimation)
       const timeProgress = Math.min(elapsed / (10 * 60 * 1000), 1); // Assume 10 minutes max for Leither operations
       const currentProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
+      const finalProgress = Math.max(lastComputedProgress, currentProgress);
       
-      processingJobs.set(jobId, {
-        ...processingJobs.get(jobId),
-        progress: currentProgress,
-        message: `${message} (${minutes}m ${seconds}s elapsed)`
-      });
+      updateProgress(finalProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
       
-      console.log(`[${jobId}] [LEITHER-PROGRESS] ${message}: ${currentProgress}% (${minutes}m ${seconds}s elapsed)`);
+      console.log(`[${jobId}] [LEITHER-PROGRESS] ${message}: ${finalProgress}% (${minutes}m ${seconds}s elapsed)`);
     }, 10000); // Update every 10 seconds for Leither operations
     
     const timeoutPromise = new Promise((_, timeoutReject) => 
@@ -190,6 +252,8 @@ function executeLeitherOperationWithProgress(operation, operationName, jobId, st
     Promise.race([operation(), timeoutPromise])
       .then((result) => {
         clearInterval(progressInterval);
+        // Ensure progress reaches at least the end of this stage
+        updateProgress(endProgress, `${message} completed`);
         console.log(`[${jobId}] [LEITHER-PROGRESS] ${message} completed successfully`);
         resolve(result);
       })
@@ -254,10 +318,11 @@ function detectHardwareEncoders() {
   }
 
   console.log('[HARDWARE] Detecting available hardware encoders...');
-  const command = 'ffmpeg -hide_banner -encoders | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)"';
+  // Use shell command that doesn't fail on grep no-match, and handle stderr properly
+  const command = 'ffmpeg -hide_banner -encoders 2>&1 | grep -E "(h264_nvenc|h264_qsv|h264_videotoolbox|h264_amf)" || true';
   console.log('[HARDWARE] Running command:', command);
 
-  hardwareDetectionInFlight = execAsync(command, { timeout: 10000 })
+  hardwareDetectionInFlight = execAsync(command, { timeout: 10000, maxBuffer: 10 * 1024 * 1024 })
     .then(result => {
       console.log('[HARDWARE] Encoder detection command completed');
       const encoders = result.stdout.toLowerCase();
@@ -274,7 +339,7 @@ function detectHardwareEncoders() {
       return available;
     })
     .catch((error) => {
-      console.log('[HARDWARE] No hardware encoders detected, using software encoding. Error:', error.message);
+      console.log('[HARDWARE] Encoder detection failed. Error:', error.message);
       const available = { nvidia: false, intel: false, apple: false, amd: false };
       hardwareEncoderCache = available;
       hardwareEncoderCacheTime = Date.now();
@@ -291,30 +356,58 @@ function detectHardwareEncoders() {
 // Helper function to test if a hardware encoder actually works
 function testHardwareEncoder(encoder) {
   return new Promise((resolve) => {
-    const testCommand = `ffmpeg -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -c:v ${encoder} -f null - 2>&1`;
+    const testFile = path.join(os.tmpdir(), `encoder_test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
+    // Get encoder-specific parameters for testing
+    const hwParams = getHardwareEncodingParams(encoder, false);
+    const formattedHwParams = hwParams ? ` ${hwParams}` : '';
+    const testCommand = `ffmpeg -f lavfi -i testsrc=duration=0.5:size=320x240:rate=1 -c:v ${encoder}${formattedHwParams} -t 0.5 ${escapeShellArg(testFile)} -y 2>&1`;
     console.log(`[HARDWARE] Testing encoder ${encoder} with command: ${testCommand}`);
     
-    execAsync(testCommand, { timeout: 15000 })
+    execAsync(testCommand, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 })
       .then(() => {
+        // Clean up test file
+        try {
+          if (fs.existsSync(testFile)) {
+            fs.unlinkSync(testFile);
+          }
+        } catch (e) {
+          // Ignore cleanup errors
+        }
         console.log(`[HARDWARE] Encoder ${encoder} test passed`);
         resolve(true);
       })
       .catch((error) => {
+        // Clean up test file on error too
+        try {
+          if (fs.existsSync(testFile)) {
+            fs.unlinkSync(testFile);
+          }
+        } catch (e) {
+          // Ignore cleanup errors
+        }
         console.log(`[HARDWARE] Encoder ${encoder} test failed:`, error.message);
+        console.log(`[HARDWARE] Error code:`, error.code);
+        console.log(`[HARDWARE] Error signal:`, error.signal);
+        if (error.stdout) {
+          console.log(`[HARDWARE] Test stdout full:`, error.stdout);
+        }
+        if (error.stderr) {
+          console.log(`[HARDWARE] Test stderr full:`, error.stderr);
+        }
         resolve(false);
       });
   });
 }
 
 // Helper function to get optimal encoder settings
-async function getOptimalEncoder(availableEncoders, videoInfo = null) {
-  console.log('[HARDWARE] Getting optimal encoder for:', availableEncoders);
+async function getOptimalEncoder(availableEncoders, videoInfo = null, allowCopy = true) {
+  console.log('[HARDWARE] Getting optimal encoder for:', availableEncoders, 'allowCopy:', allowCopy);
   const is10Bit = videoInfo && videoInfo.bitDepth && videoInfo.bitDepth > 8;
   console.log('[HARDWARE] Video is 10-bit:', is10Bit);
   
   // Check if video resolution is no bigger than target resolution to use COPY preset
   let useCopyPreset = false;
-  if (videoInfo) {
+  if (videoInfo && allowCopy) {  // Only check for COPY if allowed
     const displayWidth = videoInfo.displayWidth || videoInfo.width;
     const displayHeight = videoInfo.displayHeight || videoInfo.height;
     const isPortrait = displayHeight > displayWidth;
@@ -550,14 +643,16 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
 
   // IMPORTANT: For multi-quality conversion, NEVER use copy encoder
   // Copy encoder cannot scale video, so both streams would be identical
-  // Override useCopy to false for multi-quality scenarios
-  if (encoderConfig.useCopy) {
-    console.log('[HLS-CONVERSION] Multi-quality conversion detected - overriding COPY encoder to ensure proper scaling');
+  // This should never happen as getOptimalEncoder is called with allowCopy=false for multi-quality
+  if (encoderConfig.useCopy || encoderConfig.encoder === 'copy') {
+    console.error('[HLS-CONVERSION] ERROR: COPY encoder received for multi-quality conversion - this should not happen!');
+    console.log('[HLS-CONVERSION] Force-using libx264 for multi-quality conversion since COPY cannot scale');
     encoderConfig = {
       ...encoderConfig,
       useCopy: false,
-      encoder: encoderConfig.hardware ? encoderConfig.encoder : 'libx264',
-      preset: encoderConfig.hardware ? encoderConfig.preset : 'fast' // Ensure preset is set for software encoding
+      encoder: 'libx264',
+      hardware: false,
+      preset: 'fast'
     };
   }
 
@@ -577,8 +672,8 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   
   // Use simplified commands based on Android implementation
   console.log('[HLS-CONVERSION] Using simplified commands based on Android implementation');
-  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
   commands.push(cmd720p, cmd480p);
   
@@ -642,10 +737,11 @@ function getHardwareEncodingParams(encoder, is10Bit = false) {
     case 'h264_videotoolbox':
       // VideoToolbox optimized for Apple Silicon (M1/M2/M3/M4)
       // -allow_sw 1: Allow software fallback if needed
+      // -b:v 2M: Bitrate required on some systems
       // -q:v 65: Quality level (0-100, ~65 for good quality/size balance)
       // -realtime 0: Disable real-time encoding for better quality
       // -prio_speed 0: Prioritize quality over speed
-      return is10Bit ? '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0';
+      return is10Bit ? '-allow_sw 1 -b:v 2M -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -b:v 2M -q:v 65 -realtime 0 -prio_speed 0';
     case 'h264_amf':
       return is10Bit ? '-rc cqp -qp_i 23 -qp_p 23 -pix_fmt yuv420p10le' : '-rc cqp -qp_i 23 -qp_p 23';
     default:
@@ -864,7 +960,7 @@ async function processVideoUpload(req, res) {
     if (noResample) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await executeWithProgress(ffmpegCommand, requestId, 0, 50, 'Converting video to HLS format...', uploadedFile.size);
+      await executeWithProgress(ffmpegCommand, requestId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
     } else if (useSingleQuality) {
       // For large files (>256MB), use single quality 720p conversion to save memory
@@ -907,12 +1003,12 @@ async function processVideoUpload(req, res) {
       // Create fallback command for COPY preset failures
       const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k -preset fast -tune zerolatency -threads 2 -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, requestId, 0, 50, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size);
+      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, requestId, 0, 50, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
       console.log(`[${requestId}] [SUCCESS] Single-quality HLS conversion completed`);
     } else {
       // For smaller files, use multi-quality conversion
       const availableEncoders = await detectHardwareEncoders();
-      const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
+      const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, false); // Disable COPY for multi-quality
       console.log(`[${requestId}] [HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
       
       const commands = createHLSConversionCommands(uploadedFile.tempFilePath, tempDir, videoInfo, encoderConfig);
@@ -921,8 +1017,8 @@ async function processVideoUpload(req, res) {
       // So no fallback is needed here - copy encoder fallback is only for single-quality scenarios
       
       await Promise.all([
-        executeWithProgress(commands[0], requestId, 0, 25, 'Converting video to 720p HLS...', uploadedFile.size),
-        executeWithProgress(commands[1], requestId, 25, 50, 'Converting video to 480p HLS...', uploadedFile.size)
+        executeWithProgress(commands[0], requestId, 0, 25, 'Converting video to 720p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0),
+        executeWithProgress(commands[1], requestId, 25, 50, 'Converting video to 480p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0)
       ]);
       console.log(`[${requestId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
@@ -1294,12 +1390,8 @@ async function processVideoUploadInternal(req, jobId) {
     console.log(`\n[${jobId}] [STEP 4] Converting video to HLS format...`);
     console.time(`[${jobId}] hls-conversion`);
     
-    // Update progress
-    processingJobs.set(jobId, {
-      ...processingJobs.get(jobId),
-      progress: 40,
-      message: 'Converting video to HLS format...'
-    });
+    // Update progress (safe - never decreases)
+    updateProgressSafe(jobId, 40, 'Converting video to HLS format...');
     
     // Check file size to determine conversion strategy
     const fileSizeMB = uploadedFile.size / (1024 * 1024);
@@ -1309,7 +1401,7 @@ async function processVideoUploadInternal(req, jobId) {
       const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       console.log(`[${jobId}] [FFMPEG] Starting no-resample conversion with command: ${ffmpegCommand}`);
-      await executeWithProgress(ffmpegCommand, jobId, 0, 50, 'Converting video to HLS format...', uploadedFile.size);
+      await executeWithProgress(ffmpegCommand, jobId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
       console.log(`[${jobId}] [SUCCESS] HLS conversion completed`);
     } else if (useSingleQuality) {
       // For large files (>500MB), use single quality 720p conversion to save memory
@@ -1356,7 +1448,7 @@ async function processVideoUploadInternal(req, jobId) {
       // Create fallback command for COPY preset failures
       const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k -preset fast -tune zerolatency -threads 2 -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
-      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, jobId, 0, 50, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size);
+      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, jobId, 0, 50, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
       console.log(`[${jobId}] [SUCCESS] Single-quality HLS conversion completed`);
     } else {
       // For smaller files, use multi-quality conversion
@@ -1365,7 +1457,7 @@ async function processVideoUploadInternal(req, jobId) {
       console.log(`[${jobId}] [HARDWARE] Available encoders:`, availableEncoders);
       
       console.log(`[${jobId}] [HARDWARE] Getting optimal encoder...`);
-      const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
+      const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, false); // Disable COPY for multi-quality
       console.log(`[${jobId}] [HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
       
       console.log(`[${jobId}] [HARDWARE] Creating HLS conversion commands...`);
@@ -1380,8 +1472,8 @@ async function processVideoUploadInternal(req, jobId) {
       
       // Execute both commands with progress tracking
       await Promise.all([
-        executeWithProgress(commands[0], jobId, 0, 25, 'Converting video to 720p HLS...', uploadedFile.size),
-        executeWithProgress(commands[1], jobId, 25, 50, 'Converting video to 480p HLS...', uploadedFile.size)
+        executeWithProgress(commands[0], jobId, 0, 25, 'Converting video to 720p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0),
+        executeWithProgress(commands[1], jobId, 25, 50, 'Converting video to 480p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0)
       ]);
       console.log(`[${jobId}] [SUCCESS] Multi-quality HLS conversion completed`);
     }
@@ -1393,12 +1485,8 @@ async function processVideoUploadInternal(req, jobId) {
     console.time(`[${jobId}] leither-total-time`);
     let timingLabels = new Set();
     
-    // Update progress
-    processingJobs.set(jobId, {
-      ...processingJobs.get(jobId),
-      progress: 60,
-      message: 'Processing with Leither service...'
-    });
+    // Update progress (safe - never decreases)
+    updateProgressSafe(jobId, 60, 'Processing with Leither service...');
     
     try {
       console.time(`[${jobId}] leither-port-detection`);
@@ -1465,12 +1553,8 @@ async function processVideoUploadInternal(req, jobId) {
       timingLabels.add('leither-ipfs-add');
       console.log(`[${jobId}] [INFO] Adding HLS content to IPFS from path: '${tempDir}'`);
       
-      // Update progress
-      processingJobs.set(jobId, {
-        ...processingJobs.get(jobId),
-        progress: 80,
-        message: 'Adding to IPFS...'
-      });
+      // Update progress (safe - never decreases)
+      updateProgressSafe(jobId, 80, 'Adding to IPFS...');
 
       const defaultTimeout = leitherClient.timeout;
       leitherClient.timeout = 0;
@@ -1634,11 +1718,12 @@ async function processVideoUploadAsync(req, jobId) {
   
   try {
     // Update job status to processing
+    const startTime = processingJobs.get(jobId) ? processingJobs.get(jobId).startTime : Date.now();
     processingJobs.set(jobId, {
       status: 'processing',
-      progress: 20,
+      progress: updateProgressSafe(jobId, 20, 'Starting video processing...'),
       message: 'Starting video processing...',
-      startTime: processingJobs.get(jobId).startTime
+      startTime: startTime
     });
     
     console.log(`[${jobId}] Calling processVideoUploadInternal...`);

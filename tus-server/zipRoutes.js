@@ -14,6 +14,62 @@ let isProcessingQueue = false;
 
 // Leither connection management is now handled in app.js
 
+// Helper function to execute Leither operations with progress updates (IPFS-heavy)
+function executeLeitherOperationWithProgress(operation, operationName, jobId, startProgress, endProgress, message, timeoutMs = 4 * 60 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    console.log(`[${jobId}] [LEITHER-PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
+    
+    const startTime = Date.now();
+    let lastComputedProgress = startProgress;
+    
+    // Helper to update progress ensuring it never decreases (uses global safe helper with stage bounds)
+    const updateProgress = (newProgress, progressMessage) => {
+      const boundedProgress = Math.min(newProgress, endProgress);
+      const finalProgress = updateProgressSafe(jobId, boundedProgress, progressMessage || message);
+      
+      if (finalProgress > lastComputedProgress) {
+        lastComputedProgress = finalProgress;
+      }
+    };
+    
+    const progressInterval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const minutes = Math.floor(elapsed / 60000);
+      const seconds = Math.floor((elapsed % 60000) / 1000);
+      
+      // IPFS add can be very long; advance slowly based on elapsed time
+      const timeProgress = Math.min(elapsed / (30 * 60 * 1000), 1); // assume 30 mins to reach end of this phase heuristically
+      const currentProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
+      const finalProgress = Math.max(lastComputedProgress, currentProgress);
+      
+      updateProgress(finalProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
+      
+      console.log(`[${jobId}] [LEITHER-PROGRESS] ${message}: ${finalProgress}% (${minutes}m ${seconds}s elapsed)`);
+    }, 10000); // Update every 10 seconds for IPFS operations
+    
+    const timeoutPromise = new Promise((_, timeoutReject) => 
+      setTimeout(() => {
+        clearInterval(progressInterval);
+        timeoutReject(new Error(`${operationName} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`));
+      }, timeoutMs)
+    );
+    
+    Promise.race([operation(), timeoutPromise])
+      .then((result) => {
+        clearInterval(progressInterval);
+        // Ensure progress reaches at least the end of this stage
+        updateProgress(endProgress, `${message} completed`);
+        console.log(`[${jobId}] [LEITHER-PROGRESS] ${message} completed successfully`);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearInterval(progressInterval);
+        console.error(`[${jobId}] [LEITHER-PROGRESS] ${message} failed:`, error.message);
+        reject(error);
+      });
+  });
+}
+
 // Helper function to manage upload concurrency
 function processUploadQueue() {
   if (isProcessingQueue || uploadQueue.length === 0 || activeUploads >= maxConcurrentUploads) {
@@ -51,6 +107,22 @@ function processUploadQueue() {
 // Helper function to safely escape file paths for shell commands
 function escapeShellArg(arg) {
   return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+}
+
+// Helper function to update progress ensuring it never decreases across the entire process
+function updateProgressSafe(jobId, newProgress, message) {
+  const currentJob = processingJobs.get(jobId);
+  const currentProgress = currentJob ? currentJob.progress : 0;
+  // Always ensure progress only increases, never decreases
+  const finalProgress = Math.max(currentProgress, Math.min(newProgress, 100));
+  
+  processingJobs.set(jobId, {
+    ...(currentJob || {}),
+    progress: finalProgress,
+    message: message || (currentJob ? currentJob.message : 'Processing...')
+  });
+  
+  return finalProgress;
 }
 
 // Helper function to cleanup old temporary files and directories
@@ -405,9 +477,13 @@ async function processZipUpload(req, res) {
 
       const defaultTimeout = leitherClient.timeout;
       leitherClient.timeout = 0;
-      const cid = await executeLeitherOperation(
+      const cid = await executeLeitherOperationWithProgress(
         () => leitherClient.IpfsAdd(api.sid, hlsContentPath),
         "IpfsAdd",
+        requestId,
+        80,
+        100,
+        "Adding to IPFS...",
         4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
       );
       leitherClient.timeout = defaultTimeout;
@@ -554,12 +630,8 @@ async function processZipUploadInternal(req, jobId) {
     fs.mkdirSync(tempDir, { recursive: true });
     console.log(`[${jobId}] [INFO] Created temporary directory: ${tempDir}`);
 
-    // Update progress
-    processingJobs.set(jobId, {
-      ...processingJobs.get(jobId),
-      progress: 20,
-      message: 'Extracting ZIP file...'
-    });
+    // Update progress (safe - never decreases)
+    updateProgressSafe(jobId, 20, 'Extracting ZIP file...');
 
     // Extract zip file
     console.log(`\n[${jobId}] [STEP 1] Extracting zip file...`);
@@ -573,12 +645,8 @@ async function processZipUploadInternal(req, jobId) {
       zip.extractAllTo(extractedPath, true);
       console.log(`[${jobId}] [SUCCESS] Zip file extracted successfully to: ${extractedPath}`);
       
-      // Update progress
-      processingJobs.set(jobId, {
-        ...processingJobs.get(jobId),
-        progress: 30,
-        message: 'Validating HLS structure...'
-      });
+      // Update progress (safe - never decreases)
+      updateProgressSafe(jobId, 30, 'Validating HLS structure...');
       
       // Validate HLS structure
       console.log(`[${jobId}] [STEP 2] Validating HLS structure...`);
@@ -610,12 +678,8 @@ async function processZipUploadInternal(req, jobId) {
     console.time(`[${jobId}] leither-total-time`);
     let timingLabels = new Set();
     
-    // Update progress
-    processingJobs.set(jobId, {
-      ...processingJobs.get(jobId),
-      progress: 40,
-      message: 'Connecting to Leither service...'
-    });
+    // Update progress (safe - never decreases)
+    updateProgressSafe(jobId, 40, 'Connecting to Leither service...');
     
     try {
       console.time(`[${jobId}] leither-port-detection`);
@@ -682,18 +746,18 @@ async function processZipUploadInternal(req, jobId) {
       timingLabels.add('leither-ipfs-add');
       console.log(`[${jobId}] [INFO] Adding HLS content to IPFS from path: '${hlsContentPath}'`);
       
-      // Update progress
-      processingJobs.set(jobId, {
-        ...processingJobs.get(jobId),
-        progress: 80,
-        message: 'Adding to IPFS...'
-      });
+      // Update progress (safe - never decreases)
+      updateProgressSafe(jobId, 80, 'Adding to IPFS...');
 
       const defaultTimeout = leitherClient.timeout;
       leitherClient.timeout = 0;
-      const cid = await executeLeitherOperation(
+      const cid = await executeLeitherOperationWithProgress(
         () => leitherClient.IpfsAdd(api.sid, hlsContentPath),
         "IpfsAdd",
+        jobId,
+        80,
+        100,
+        "Adding to IPFS...",
         4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
       );
       leitherClient.timeout = defaultTimeout;
@@ -794,11 +858,12 @@ async function processZipUploadAsync(req, jobId) {
   
   try {
     // Update job status to processing
+    const startTime = processingJobs.get(jobId) ? processingJobs.get(jobId).startTime : Date.now();
     processingJobs.set(jobId, {
       status: 'processing',
-      progress: 10,
+      progress: updateProgressSafe(jobId, 10, 'Starting ZIP processing...'),
       message: 'Starting ZIP processing...',
-      startTime: processingJobs.get(jobId).startTime
+      startTime: startTime
     });
     
     console.log(`[${jobId}] Calling processZipUploadInternal...`);
