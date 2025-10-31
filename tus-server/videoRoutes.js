@@ -358,7 +358,11 @@ function testHardwareEncoder(encoder) {
   return new Promise((resolve) => {
     const testFile = path.join(os.tmpdir(), `encoder_test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.mp4`);
     // Get encoder-specific parameters for testing
-    const hwParams = getHardwareEncodingParams(encoder, false);
+    let hwParams = getHardwareEncodingParams(encoder, false);
+    // For VideoToolbox, add bitrate requirement for testing
+    if (encoder === 'h264_videotoolbox') {
+      hwParams += ' -b:v 2M';
+    }
     const formattedHwParams = hwParams ? ` ${hwParams}` : '';
     const testCommand = `ffmpeg -f lavfi -i testsrc=duration=0.5:size=320x240:rate=1 -c:v ${encoder}${formattedHwParams} -t 0.5 ${escapeShellArg(testFile)} -y 2>&1`;
     console.log(`[HARDWARE] Testing encoder ${encoder} with command: ${testCommand}`);
@@ -737,11 +741,10 @@ function getHardwareEncodingParams(encoder, is10Bit = false) {
     case 'h264_videotoolbox':
       // VideoToolbox optimized for Apple Silicon (M1/M2/M3/M4)
       // -allow_sw 1: Allow software fallback if needed
-      // -b:v 2M: Bitrate required on some systems
       // -q:v 65: Quality level (0-100, ~65 for good quality/size balance)
       // -realtime 0: Disable real-time encoding for better quality
       // -prio_speed 0: Prioritize quality over speed
-      return is10Bit ? '-allow_sw 1 -b:v 2M -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -b:v 2M -q:v 65 -realtime 0 -prio_speed 0';
+      return is10Bit ? '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0 -pix_fmt yuv420p10le' : '-allow_sw 1 -q:v 65 -realtime 0 -prio_speed 0';
     case 'h264_amf':
       return is10Bit ? '-rc cqp -qp_i 23 -qp_p 23 -pix_fmt yuv420p10le' : '-rc cqp -qp_i 23 -qp_p 23';
     default:
