@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to convert a video file to HLS format (similar to videoRoutes.js)
-# Usage: ./convert-to-hls.sh <video_file> [--no-resample]
+# Usage: ./convert-to-hls.sh <video_file> [--no-resample] [--leither-path /path/to/Leither] [--skip-ipfs]
 
 set -e
 
@@ -9,21 +9,57 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Check if video file is provided
-if [ $# -eq 0 ]; then
-    echo -e "${RED}Error: No video file specified${NC}"
-    echo "Usage: $0 <video_file> [--no-resample]"
-    exit 1
-fi
-
-INPUT_FILE="$1"
+# Parse arguments
+INPUT_FILE=""
 NO_RESAMPLE=false
+LEITHER_PATH=""
+SKIP_IPFS=false
 
-# Check for --no-resample flag
-if [ "$2" = "--no-resample" ]; then
-    NO_RESAMPLE=true
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-resample)
+            NO_RESAMPLE=true
+            shift
+            ;;
+        --leither-path)
+            LEITHER_PATH="$2"
+            shift 2
+            ;;
+        --skip-ipfs)
+            SKIP_IPFS=true
+            shift
+            ;;
+        -*)
+            echo -e "${RED}Error: Unknown option: $1${NC}"
+            echo "Usage: $0 <video_file> [--no-resample] [--leither-path /path/to/Leither] [--skip-ipfs]"
+            exit 1
+            ;;
+        *)
+            if [ -z "$INPUT_FILE" ]; then
+                INPUT_FILE="$1"
+            else
+                echo -e "${RED}Error: Multiple input files specified${NC}"
+                echo "Usage: $0 <video_file> [--no-resample] [--leither-path /path/to/Leither] [--skip-ipfs]"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if video file is provided
+if [ -z "$INPUT_FILE" ]; then
+    echo -e "${RED}Error: No video file specified${NC}"
+    echo "Usage: $0 <video_file> [--no-resample] [--leither-path /path/to/Leither] [--skip-ipfs]"
+    echo ""
+    echo "Options:"
+    echo "  --no-resample       Use codec copy (no re-encoding)"
+    echo "  --leither-path PATH Path to Leither binary (or set LEITHER_PATH env var)"
+    echo "  --skip-ipfs         Skip IPFS add operation"
+    exit 1
 fi
 
 # Check if input file exists
@@ -41,6 +77,66 @@ fi
 if ! command -v ffprobe &> /dev/null; then
     echo -e "${RED}Error: ffprobe is not installed${NC}"
     exit 1
+fi
+
+# Function to find Leither binary
+find_leither() {
+    local leither_path="$1"
+    
+    # If path provided, check it first
+    if [ -n "$leither_path" ]; then
+        if [ -f "$leither_path" ] && [ -x "$leither_path" ]; then
+            echo "$leither_path"
+            return 0
+        else
+            echo -e "${YELLOW}[WARNING] Leither path specified but not found or not executable: $leither_path${NC}" >&2
+        fi
+    fi
+    
+    # Check environment variable (if not already set via argument)
+    if [ -z "$leither_path" ] && [ -n "${LEITHER_PATH}" ]; then
+        if [ -f "${LEITHER_PATH}" ] && [ -x "${LEITHER_PATH}" ]; then
+            echo "${LEITHER_PATH}"
+            return 0
+        fi
+    fi
+    
+    # Try to find in common locations
+    local common_paths=(
+        "$HOME/Leither"
+        "$HOME/leither/Leither"
+        "/usr/local/bin/Leither"
+        "/usr/bin/Leither"
+        "./Leither"
+    )
+    
+    for path in "${common_paths[@]}"; do
+        if [ -f "$path" ] && [ -x "$path" ]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    
+    # Try command lookup
+    if command -v Leither &> /dev/null; then
+        command -v Leither
+        return 0
+    fi
+    
+    return 1
+}
+
+# Find Leither binary if not skipping IPFS
+if [ "$SKIP_IPFS" = false ]; then
+    # Use argument path if provided, otherwise check environment variable
+    LEITHER_BIN=$(find_leither "$LEITHER_PATH" 2>/dev/null || echo "")
+    if [ -z "$LEITHER_BIN" ]; then
+        echo -e "${YELLOW}[WARNING] Leither binary not found. IPFS add will be skipped.${NC}"
+        echo -e "${YELLOW}[INFO] You can specify the path with --leither-path or set LEITHER_PATH environment variable${NC}"
+        SKIP_IPFS=true
+    else
+        echo -e "${GREEN}[INFO] Found Leither binary: $LEITHER_BIN${NC}"
+    fi
 fi
 
 # Function to escape shell arguments
@@ -225,7 +321,7 @@ if [ "$USE_SINGLE_QUALITY" = true ]; then
         -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
         -f hls -hls_time ${SEGMENT_DURATION} -hls_list_size 0 \
         -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
-        -hls_flags independent_segments+discont_start+split_by_time \
+        -hls_flags discont_start+split_by_time \
         "$TEMP_DIR/playlist.m3u8" -y
     
     echo -e "${GREEN}[SUCCESS] Single-quality HLS conversion completed${NC}"
@@ -272,7 +368,7 @@ else
         -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
         -f hls -hls_time ${SEGMENT_DURATION720} -hls_list_size 0 \
         -hls_segment_filename "$TEMP_DIR/720p/segment%03d.ts" \
-        -hls_flags independent_segments+discont_start+split_by_time \
+        -hls_flags discont_start+split_by_time \
         "$TEMP_DIR/720p/playlist.m3u8" -y
     
     # Convert to 480p
@@ -283,7 +379,7 @@ else
         -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
         -f hls -hls_time ${SEGMENT_DURATION480} -hls_list_size 0 \
         -hls_segment_filename "$TEMP_DIR/480p/segment%03d.ts" \
-        -hls_flags independent_segments+discont_start+split_by_time \
+        -hls_flags discont_start+split_by_time \
         "$TEMP_DIR/480p/playlist.m3u8" -y
     
     # Create master playlist
@@ -305,4 +401,26 @@ fi
 # Output the directory path
 echo -e "${GREEN}[SUCCESS] HLS files created in: $TEMP_DIR${NC}"
 echo "$TEMP_DIR"
+
+# Add to IPFS using Leither
+if [ "$SKIP_IPFS" = false ] && [ -n "$LEITHER_BIN" ]; then
+    echo ""
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}[IPFS] Adding HLS directory to IPFS...${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    
+    # Run Leither ipfs add command and capture output
+    if "$LEITHER_BIN" ipfs add "$TEMP_DIR" 2>&1; then
+        echo ""
+        echo -e "${GREEN}[IPFS] Successfully added to IPFS${NC}"
+    else
+        EXIT_CODE=$?
+        echo ""
+        echo -e "${RED}[IPFS] Failed to add to IPFS (exit code: $EXIT_CODE)${NC}"
+        echo -e "${YELLOW}[INFO] HLS files are still available in: $TEMP_DIR${NC}"
+        # Don't exit on error - conversion was successful
+    fi
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+fi
 
