@@ -212,22 +212,68 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
 function getLeitherBinaryPath() {
   const leitherPath = process.env.LEITHER_PATH;
   if (!leitherPath) {
-    throw new Error('LEITHER_PATH environment variable is not set. Please set it to the path of the Leither binary.');
+    throw new Error('LEITHER_PATH environment variable is not set. Please set it to the path of the Leither binary or directory containing it.');
   }
   
   let finalPath = leitherPath;
   
   // Check if the path exists
   if (!fs.existsSync(leitherPath)) {
-    throw new Error(`Leither path not found: ${leitherPath}`);
-  }
-  
-  // If it's a directory, append 'Leither' to the path
-  const stats = fs.statSync(leitherPath);
-  if (stats.isDirectory()) {
-    finalPath = path.join(leitherPath, 'Leither');
-    if (!fs.existsSync(finalPath)) {
-      throw new Error(`Leither binary not found at path: ${finalPath} (LEITHER_PATH points to a directory but Leither binary not found inside)`);
+    const dirPath = path.dirname(leitherPath);
+    const baseName = path.basename(leitherPath);
+    const normalizedBaseName = baseName.toLowerCase();
+    
+    // If path ends with 'leither' (case-insensitive), try uppercase 'Leither' version
+    if (normalizedBaseName === 'leither' || normalizedBaseName.endsWith('leither')) {
+      // Try uppercase version: replace with 'Leither' (always uppercase L)
+      const uppercasePath = path.join(dirPath, 'Leither');
+      
+      if (fs.existsSync(uppercasePath)) {
+        finalPath = uppercasePath;
+        console.warn(`[WARNING] LEITHER_PATH '${leitherPath}' not found, but found '${uppercasePath}'. Using uppercase 'Leither' version.`);
+      } else if (fs.existsSync(dirPath)) {
+        // Check if parent directory exists and try appending 'Leither'
+        const stats = fs.statSync(dirPath);
+        if (stats.isDirectory()) {
+          const appendedPath = path.join(dirPath, 'Leither');
+          if (fs.existsSync(appendedPath)) {
+            finalPath = appendedPath;
+            console.warn(`[WARNING] LEITHER_PATH '${leitherPath}' not found, but found '${appendedPath}' in parent directory.`);
+          } else {
+            throw new Error(`Leither binary not found. Tried: ${uppercasePath}, ${appendedPath}. The binary must be named 'Leither' with uppercase L.`);
+          }
+        } else {
+          throw new Error(`Leither path not found: ${leitherPath}. Also tried: ${uppercasePath}`);
+        }
+      } else {
+        throw new Error(`Leither path not found: ${leitherPath}. Directory '${dirPath}' does not exist.`);
+      }
+    } else if (fs.existsSync(dirPath)) {
+      // Path doesn't end with 'leither', but maybe parent directory exists - try appending 'Leither'
+      const stats = fs.statSync(dirPath);
+      if (stats.isDirectory()) {
+        const appendedPath = path.join(dirPath, 'Leither');
+        if (fs.existsSync(appendedPath)) {
+          finalPath = appendedPath;
+          console.warn(`[WARNING] LEITHER_PATH '${leitherPath}' not found, but found '${appendedPath}' in parent directory.`);
+        } else {
+          throw new Error(`Leither binary not found. Tried: ${appendedPath}. The binary must be named 'Leither' with uppercase L.`);
+        }
+      } else {
+        throw new Error(`Leither path not found: ${leitherPath}`);
+      }
+    } else {
+      throw new Error(`Leither path not found: ${leitherPath}. Directory '${dirPath}' does not exist.`);
+    }
+  } else {
+    const stats = fs.statSync(leitherPath);
+    if (stats.isDirectory()) {
+      // If it's a directory, append 'Leither' (with uppercase L) to the path
+      // Note: The binary is always named 'Leither' with uppercase L
+      finalPath = path.join(leitherPath, 'Leither');
+      if (!fs.existsSync(finalPath)) {
+        throw new Error(`Leither binary not found at path: ${finalPath} (LEITHER_PATH points to a directory but 'Leither' binary not found inside - note: must be uppercase L)`);
+      }
     }
   }
   
@@ -237,13 +283,23 @@ function getLeitherBinaryPath() {
     throw new Error(`Leither path is not a file: ${finalPath}`);
   }
   
+  // Verify the filename is 'Leither' with uppercase L
+  const finalBaseName = path.basename(finalPath);
+  if (finalBaseName.toLowerCase() === 'leither' && finalBaseName !== 'Leither') {
+    throw new Error(`Leither binary name must be 'Leither' with uppercase L, but found '${finalBaseName}' at ${finalPath}`);
+  }
+  
+  console.log(`[LEITHER-PATH] Resolved Leither binary path: ${finalPath} (basename: ${finalBaseName})`);
+  
   return finalPath;
 }
 
 // Helper function to execute Leither command directly
 async function executeLeitherCommand(command, requestId, timeoutMs = 6 * 60 * 60 * 1000) {
   const leitherPath = getLeitherBinaryPath();
+  console.log(`[${requestId}] [LEITHER] Executing command with path: ${leitherPath}`);
   const fullCommand = `"${leitherPath}" ${command}`;
+  console.log(`[${requestId}] [LEITHER] Full command: ${fullCommand}`);
   
   return new Promise((resolve, reject) => {
     let timeoutId;
@@ -315,7 +371,9 @@ function executeLeitherOperationWithProgress(command, jobId, startProgress, endP
     }, 10000); // Update every 10 seconds for Leither operations
     
     const leitherPath = getLeitherBinaryPath();
+    console.log(`[${jobId}] [LEITHER] Executing command with path: ${leitherPath}`);
     const fullCommand = `"${leitherPath}" ${command}`;
+    console.log(`[${jobId}] [LEITHER] Full command: ${fullCommand}`);
     let isResolved = false;
     let timeoutId;
     
@@ -931,7 +989,7 @@ async function processVideoUpload(req, res) {
     const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
     
     if (noResample) {
-      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       await executeWithProgress(ffmpegCommand, requestId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
@@ -997,6 +1055,11 @@ async function processVideoUpload(req, res) {
     }
     
     console.timeEnd(`[${requestId}] hls-conversion`);
+
+    // Post-process HLS playlists to ensure they work correctly when served from IPFS
+    // NOTE: The IPFS gateway server must send proper CORS headers for HLS segments to work
+    // Required headers: Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers (Range)
+    // See docs/HLS_CORS_REQUIREMENTS.md for configuration details
 
     // Process with Leither
     console.log(`\n[${requestId}] [STEP 5] Processing with Leither service...`);
@@ -1314,7 +1377,7 @@ async function processVideoUploadInternal(req, jobId) {
     const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
     
     if (noResample) {
-      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       console.log(`[${jobId}] [FFMPEG] Starting no-resample conversion with command: ${ffmpegCommand}`);
       await executeWithProgress(ffmpegCommand, jobId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
@@ -1395,6 +1458,10 @@ async function processVideoUploadInternal(req, jobId) {
     }
     
     console.timeEnd(`[${jobId}] hls-conversion`);
+
+    // NOTE: The IPFS gateway server must send proper CORS headers for HLS segments to work
+    // Required headers: Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers (Range)
+    // See docs/HLS_CORS_REQUIREMENTS.md for configuration details
 
     // Process with Leither
     console.log(`\n[${jobId}] [STEP 5] Processing with Leither service...`);
