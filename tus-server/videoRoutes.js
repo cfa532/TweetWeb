@@ -1083,12 +1083,30 @@ async function processVideoUpload(req, res) {
         console.log(`[${requestId}] [DEBUG] CID type:`, typeof cid, 'Value:', cid);
         console.log(`[${requestId}] [SUCCESS] IPFS CID received:`, cid);
         
-        // Extract CID from output if needed (Leither might return CID with additional text)
-        // Trim and get the last line or match CID pattern
-        const cidMatch = cid.match(/Qm[a-zA-Z0-9]{44}/) || cid.match(/baf[a-z0-9]{56,}/);
-        if (cidMatch) {
-          cid = cidMatch[0];
+        // Extract CID from output - Leither returns format: "ipfs add ok  Qm..."
+        // Parse the output to find the CID after "ipfs add ok"
+        let extractedCid = null;
+        const trimmedOutput = cid.trim();
+        
+        // Check for format: "ipfs add ok  Qm..." or "ipfs add ok  baf..."
+        const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+        if (ipfsAddOkMatch) {
+          extractedCid = ipfsAddOkMatch[1];
+        } else {
+          // Fallback: look for CID pattern anywhere in the output
+          const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+          if (cidMatch) {
+            extractedCid = cidMatch[1];
+          }
+        }
+        
+        if (extractedCid) {
+          cid = extractedCid;
           console.log(`[${requestId}] [DEBUG] Extracted CID:`, cid);
+        } else {
+          console.warn(`[${requestId}] [WARNING] Could not extract CID from output. Raw output:`, trimmedOutput);
+          // Use the full output as fallback
+          cid = trimmedOutput;
         }
       } catch (ipfsError) {
         console.error(`[${requestId}] [ERROR] IPFS add operation failed:`, ipfsError);
@@ -1497,12 +1515,30 @@ async function processVideoUploadInternal(req, jobId) {
         console.log(`[${jobId}] [DEBUG] IPFS add operation completed, result:`, cid);
         console.log(`[${jobId}] [DEBUG] CID type:`, typeof cid, 'Value:', cid);
         
-        // Extract CID from output if needed (Leither might return CID with additional text)
-        // Trim and get the last line or match CID pattern
-        const cidMatch = cid.match(/Qm[a-zA-Z0-9]{44}/) || cid.match(/baf[a-z0-9]{56,}/);
-        if (cidMatch) {
-          cid = cidMatch[0];
+        // Extract CID from output - Leither returns format: "ipfs add ok  Qm..."
+        // Parse the output to find the CID after "ipfs add ok"
+        let extractedCid = null;
+        const trimmedOutput = cid.trim();
+        
+        // Check for format: "ipfs add ok  Qm..." or "ipfs add ok  baf..."
+        const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+        if (ipfsAddOkMatch) {
+          extractedCid = ipfsAddOkMatch[1];
+        } else {
+          // Fallback: look for CID pattern anywhere in the output
+          const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+          if (cidMatch) {
+            extractedCid = cidMatch[1];
+          }
+        }
+        
+        if (extractedCid) {
+          cid = extractedCid;
           console.log(`[${jobId}] [DEBUG] Extracted CID:`, cid);
+        } else {
+          console.warn(`[${jobId}] [WARNING] Could not extract CID from output. Raw output:`, trimmedOutput);
+          // Use the full output as fallback
+          cid = trimmedOutput;
         }
         console.log(`[${jobId}] [SUCCESS] IPFS CID received:`, cid);
       } catch (ipfsError) {
