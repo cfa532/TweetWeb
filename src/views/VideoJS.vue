@@ -171,16 +171,39 @@ function setupHLS() {
   
   // Check if HLS is supported natively
   if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
-    // Use native HLS support - try master playlist first, then fallback to single playlist
-    videoElement.src = getHLSMasterSource();
+    // Use native HLS support - check both playlists simultaneously
+    const masterUrl = getHLSMasterSource();
+    const playlistUrl = getHLSSource();
     
-    // Add fallback for native HLS
-    videoElement.addEventListener('error', () => {
-      videoElement.src = getHLSSource();
+    // Check both playlists simultaneously using fetch
+    Promise.race([
+      fetch(masterUrl, { method: 'HEAD', cache: 'no-cache' }).then(() => 'master'),
+      fetch(playlistUrl, { method: 'HEAD', cache: 'no-cache' }).then(() => 'playlist')
+    ]).then((winner) => {
+      console.log(`Native HLS: ${winner} playlist succeeded first`);
+      videoElement.src = winner === 'master' ? masterUrl : playlistUrl;
       
-      // Add another error listener for single playlist failure
+      // Add fallback for native HLS if the selected one fails
       videoElement.addEventListener('error', () => {
-        fallbackToProgressiveVideo(videoElement);
+        console.log(`Native HLS: ${winner} playlist failed, trying the other one`);
+        videoElement.src = winner === 'master' ? playlistUrl : masterUrl;
+        
+        // Add another error listener for both playlists failure
+        videoElement.addEventListener('error', () => {
+          fallbackToProgressiveVideo(videoElement);
+        }, { once: true });
+      }, { once: true });
+    }).catch((error) => {
+      // If both fail, try master first as fallback
+      console.log('Native HLS: Both playlists check failed, trying master first:', error);
+      videoElement.src = masterUrl;
+      
+      videoElement.addEventListener('error', () => {
+        videoElement.src = playlistUrl;
+        
+        videoElement.addEventListener('error', () => {
+          fallbackToProgressiveVideo(videoElement);
+        }, { once: true });
       }, { once: true });
     });
   } else if (Hls.isSupported()) {
@@ -232,105 +255,153 @@ function setupHLS() {
       backBufferLength: 90, // Back buffer length for smooth seeking
     };
     
-    hls = new Hls(hlsConfig);
+    const masterUrl = getHLSMasterSource();
+    const playlistUrl = getHLSSource();
     
-      // Try master playlist first
-      hasTriedSinglePlaylist = false;
-      console.log('Loading master playlist:', getHLSMasterSource());
-      hls.loadSource(getHLSMasterSource());
+    // Try both playlists simultaneously
+    let masterHls: Hls | null = null;
+    let playlistHls: Hls | null = null;
+    let isResolved = false;
+    let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
+    
+    const cleanupLoser = (loser: Hls | null) => {
+      if (loser) {
+        try {
+          loser.destroy();
+        } catch (e) {
+          console.log('Error destroying loser HLS instance:', e);
+        }
+      }
+    };
+    
+    const resolveWinner = (winningUrl: string, sourceName: string) => {
+      if (isResolved) return;
+      isResolved = true;
+      
+      // Clear fallback timeout
+      if (fallbackTimeout) {
+        clearTimeout(fallbackTimeout);
+        fallbackTimeout = null;
+      }
+      
+      // Cleanup both temporary instances
+      cleanupLoser(masterHls);
+      cleanupLoser(playlistHls);
+      
+      // Create final HLS instance with the winning source
+      console.log(`HLS.js: ${sourceName} playlist succeeded first, creating final instance`);
+      hls = new Hls(hlsConfig);
+      hls.loadSource(winningUrl);
       hls.attachMedia(videoElement);
       
-      // Add timeout fallback in case HLS hangs
-      const hlsTimeout = setTimeout(() => {
-        if (hls && !hasTriedSinglePlaylist) {
-          console.log('Master playlist timeout, falling back to playlist.m3u8');
-          hasTriedSinglePlaylist = true;
-          hls?.destroy();
-          hls = new Hls(hlsConfig);
-          
-          hls.on(Hls.Events.ERROR, (event, data) => {
-            console.log('Playlist.m3u8 timeout error:', data);
-            if (data.fatal) {
-              console.log('Playlist.m3u8 also failed after timeout');
-            }
+      // Clear timeout when manifest is parsed
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log(`HLS.js: ${sourceName} playlist manifest parsed successfully`);
+        // Start playing if autoplay is enabled
+        if (props.autoplay) {
+          videoElement.play().catch(() => {
+            // Autoplay was prevented, user will need to use native controls
+            showPlayOverlay.value = false; // Still hide overlay, rely on native controls
           });
-          
-          hls.loadSource(getHLSSource());
-          hls.attachMedia(videoElement);
         }
-      }, 5000); // 5 second timeout
-    
-    // Clear timeout when manifest is parsed
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      clearTimeout(hlsTimeout);
+      });
       
-      // Start playing if autoplay is enabled
-      if (props.autoplay) {
-        videoElement.play().catch(() => {
-          // Autoplay was prevented, user will need to use native controls
-          showPlayOverlay.value = false; // Still hide overlay, rely on native controls
-        });
-      }
-    });
-    
-    // Monitor quality level changes
-    // hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
-    //   console.log('Quality level switched to:', data.level, 'bitrate:', hls?.levels[data.level]?.bitrate);
-    // });
-    
-    // Monitor buffer events for hardware acceleration
-    // hls.on(Hls.Events.BUFFER_APPENDING, () => {
-    //   if (supportsHardwareAcceleration.value) {
-    //     console.log('[HARDWARE] Buffer appending with hardware acceleration');
-    //   }
-    // });
-    
-    hls.on(Hls.Events.ERROR, (event, data) => {
-      console.log('HLS Error:', data);
-      
-      // If master playlist fails, try single playlist
-      if (!hasTriedSinglePlaylist && data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR && 
-          (data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || 
-           data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
-           data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR ||
-           (data.response && data.response.code && data.response.code >= 400))) {
-        console.log('Master playlist failed, falling back to playlist.m3u8');
-        hasTriedSinglePlaylist = true;
-        hls?.destroy();
-        hls = new Hls(hlsConfig); // Use same config for fallback
+      // Error handling for the final instance
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.log(`HLS Error (${sourceName}):`, data);
         
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          console.log('Playlist.m3u8 error:', data);
-          if (data.fatal) {
-            console.log('Playlist.m3u8 also failed');
+        // For non-fatal errors, try to recover
+        if (!data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.log('Network error, attempting to recover...');
+              hls?.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.log('Media error, attempting to recover...');
+              hls?.recoverMediaError();
+              break;
           }
-        });
-        
-        hls.loadSource(getHLSSource());
-        hls.attachMedia(videoElement);
-        return;
-      }
-      
-      // If we've already tried single playlist or this is a different error, keep HLS mode
-      if (hasTriedSinglePlaylist || data.fatal) {
-        console.log('HLS error occurred, but keeping HLS mode for hls_video type');
-        return;
-      }
-      
-      // For non-fatal errors, try to recover
-      if (!data.fatal) {
-        switch (data.type) {
-          case Hls.ErrorTypes.NETWORK_ERROR:
-            console.log('Network error, attempting to recover...');
-            hls?.startLoad();
-            break;
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            console.log('Media error, attempting to recover...');
-            hls?.recoverMediaError();
-            break;
+        } else {
+          console.log(`HLS fatal error on ${sourceName}, keeping HLS mode`);
         }
+      });
+    };
+    
+    // Try master playlist (without attaching to video yet)
+    console.log('HLS.js: Loading master playlist:', masterUrl);
+    masterHls = new Hls(hlsConfig);
+    
+    const masterManifestPromise = new Promise<'master' | 'failed'>((resolve) => {
+      masterHls!.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (!isResolved) {
+          resolveWinner(masterUrl, 'master');
+          resolve('master');
+        } else {
+          resolve('master'); // Already resolved, but signal success
+        }
+      });
+      
+      masterHls!.on(Hls.Events.ERROR, (event, data) => {
+        if (data.fatal) {
+          if (!isResolved) {
+            console.log('Master playlist fatal error:', data);
+          }
+          resolve('failed'); // Resolve with failure status, don't reject
+        } else {
+          // Non-fatal errors can recover, wait for manifest
+          console.log('Master playlist non-fatal error:', data);
+        }
+      });
+    });
+    
+    masterHls.loadSource(masterUrl);
+    
+    // Try playlist simultaneously (without attaching to video yet)
+    console.log('HLS.js: Loading playlist:', playlistUrl);
+    playlistHls = new Hls(hlsConfig);
+    
+    const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
+      playlistHls!.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (!isResolved) {
+          resolveWinner(playlistUrl, 'playlist');
+          resolve('playlist');
+        } else {
+          resolve('playlist'); // Already resolved, but signal success
+        }
+      });
+      
+      playlistHls!.on(Hls.Events.ERROR, (event, data) => {
+        if (data.fatal) {
+          if (!isResolved) {
+            console.log('Playlist fatal error:', data);
+          }
+          resolve('failed'); // Resolve with failure status, don't reject
+        } else {
+          // Non-fatal errors can recover, wait for manifest
+          console.log('Playlist non-fatal error:', data);
+        }
+      });
+    });
+    
+    playlistHls.loadSource(playlistUrl);
+    
+    // Race both promises - first one to succeed wins
+    Promise.race([masterManifestPromise, playlistManifestPromise]).then((result) => {
+      // Winner already resolved in resolveWinner above
+      if (result === 'failed' && !isResolved) {
+        // If the first one failed, wait for the other
+        console.log('HLS.js: First playlist failed, waiting for the other...');
       }
     });
+    
+    // Fallback timeout - if neither succeeds within 10 seconds, try master
+    fallbackTimeout = setTimeout(() => {
+      if (!isResolved) {
+        console.log('HLS.js: Timeout waiting for both playlists, using master as fallback');
+        resolveWinner(masterUrl, 'master');
+      }
+    }, 10000); // 10 second timeout
   }
 }
 
