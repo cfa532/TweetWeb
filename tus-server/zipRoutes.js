@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const AdmZip = require('adm-zip');
-const { getLeitherPort } = require('./leitherDetector');
+const { exec } = require('child_process');
 
 // Concurrency management
 let activeUploads = 0;
@@ -15,10 +15,139 @@ let isProcessingQueue = false;
 // Track active temporary directories to prevent cleanup during processing
 const activeTempDirs = new Set();
 
-// Leither connection management is now handled in app.js
+// Leither is now called directly via command line, not through API
 
-// Helper function to execute Leither operations with progress updates (IPFS-heavy)
-function executeLeitherOperationWithProgress(operation, operationName, jobId, startProgress, endProgress, message, timeoutMs = 4 * 60 * 60 * 1000) {
+// Helper function to get Leither binary path from environment
+function getLeitherBinaryPath() {
+  const leitherPath = process.env.LEITHER_PATH;
+  if (!leitherPath) {
+    throw new Error('LEITHER_PATH environment variable is not set. Please set it to the path of the Leither binary or directory containing it.');
+  }
+  
+  let finalPath = leitherPath;
+  
+  // Check if the path exists
+  if (!fs.existsSync(leitherPath)) {
+    const dirPath = path.dirname(leitherPath);
+    const baseName = path.basename(leitherPath);
+    const normalizedBaseName = baseName.toLowerCase();
+    
+    // If path ends with 'leither' (case-insensitive), try uppercase 'Leither' version
+    if (normalizedBaseName === 'leither' || normalizedBaseName.endsWith('leither')) {
+      // Try uppercase version: replace with 'Leither' (always uppercase L)
+      const uppercasePath = path.join(dirPath, 'Leither');
+      
+      if (fs.existsSync(uppercasePath)) {
+        finalPath = uppercasePath;
+        console.warn(`[WARNING] LEITHER_PATH '${leitherPath}' not found, but found '${uppercasePath}'. Using uppercase 'Leither' version.`);
+      } else if (fs.existsSync(dirPath)) {
+        // Check if parent directory exists and try appending 'Leither'
+        const stats = fs.statSync(dirPath);
+        if (stats.isDirectory()) {
+          const appendedPath = path.join(dirPath, 'Leither');
+          if (fs.existsSync(appendedPath)) {
+            finalPath = appendedPath;
+            console.warn(`[WARNING] LEITHER_PATH '${leitherPath}' not found, but found '${appendedPath}' in parent directory.`);
+          } else {
+            throw new Error(`Leither binary not found. Tried: ${uppercasePath}, ${appendedPath}. The binary must be named 'Leither' with uppercase L.`);
+          }
+        } else {
+          throw new Error(`Leither path not found: ${leitherPath}. Also tried: ${uppercasePath}`);
+        }
+      } else {
+        throw new Error(`Leither path not found: ${leitherPath}. Directory '${dirPath}' does not exist.`);
+      }
+    } else if (fs.existsSync(dirPath)) {
+      // Path doesn't end with 'leither', but maybe parent directory exists - try appending 'Leither'
+      const stats = fs.statSync(dirPath);
+      if (stats.isDirectory()) {
+        const appendedPath = path.join(dirPath, 'Leither');
+        if (fs.existsSync(appendedPath)) {
+          finalPath = appendedPath;
+          console.warn(`[WARNING] LEITHER_PATH '${leitherPath}' not found, but found '${appendedPath}' in parent directory.`);
+        } else {
+          throw new Error(`Leither binary not found. Tried: ${appendedPath}. The binary must be named 'Leither' with uppercase L.`);
+        }
+      } else {
+        throw new Error(`Leither path not found: ${leitherPath}`);
+      }
+    } else {
+      throw new Error(`Leither path not found: ${leitherPath}. Directory '${dirPath}' does not exist.`);
+    }
+  } else {
+    const stats = fs.statSync(leitherPath);
+    if (stats.isDirectory()) {
+      // If it's a directory, append 'Leither' (with uppercase L) to the path
+      // Note: The binary is always named 'Leither' with uppercase L
+      finalPath = path.join(leitherPath, 'Leither');
+      if (!fs.existsSync(finalPath)) {
+        throw new Error(`Leither binary not found at path: ${finalPath} (LEITHER_PATH points to a directory but 'Leither' binary not found inside - note: must be uppercase L)`);
+      }
+    }
+  }
+  
+  // Verify it's a file and executable (if possible)
+  const finalStats = fs.statSync(finalPath);
+  if (!finalStats.isFile()) {
+    throw new Error(`Leither path is not a file: ${finalPath}`);
+  }
+  
+  // Verify the filename is 'Leither' with uppercase L
+  const finalBaseName = path.basename(finalPath);
+  if (finalBaseName.toLowerCase() === 'leither' && finalBaseName !== 'Leither') {
+    throw new Error(`Leither binary name must be 'Leither' with uppercase L, but found '${finalBaseName}' at ${finalPath}`);
+  }
+  
+  console.log(`[LEITHER-PATH] Resolved Leither binary path: ${finalPath} (basename: ${finalBaseName})`);
+  
+  return finalPath;
+}
+
+// Helper function to execute Leither command directly
+async function executeLeitherCommand(command, requestId, timeoutMs = 6 * 60 * 60 * 1000) {
+  const leitherPath = getLeitherBinaryPath();
+  console.log(`[${requestId}] [LEITHER] Executing command with path: ${leitherPath}`);
+  const fullCommand = `"${leitherPath}" ${command}`;
+  console.log(`[${requestId}] [LEITHER] Full command: ${fullCommand}`);
+  
+  return new Promise((resolve, reject) => {
+    let timeoutId;
+    let isResolved = false;
+    
+    const child = exec(fullCommand, { 
+      maxBuffer: 1024 * 1024 * 100, // 100MB buffer
+      timeout: timeoutMs 
+    }, (error, stdout, stderr) => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (isResolved) return;
+      isResolved = true;
+      
+      if (error) {
+        console.error(`[${requestId}] [LEITHER] Command failed:`, error.message);
+        if (stderr) {
+          console.error(`[${requestId}] [LEITHER] stderr:`, stderr);
+        }
+        reject(error);
+      } else {
+        const output = stdout.trim();
+        resolve(output);
+      }
+    });
+    
+    timeoutId = setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true;
+        child.kill('SIGKILL');
+        reject(new Error(`Leither command timed out after ${Math.round(timeoutMs / (60 * 1000))} minutes`));
+      }
+    }, timeoutMs);
+  });
+}
+
+// Helper function to execute Leither operations with progress updates
+function executeLeitherOperationWithProgress(command, jobId, startProgress, endProgress, message, timeoutMs = 6 * 60 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     console.log(`[${jobId}] [LEITHER-PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
@@ -40,36 +169,58 @@ function executeLeitherOperationWithProgress(operation, operationName, jobId, st
       const minutes = Math.floor(elapsed / 60000);
       const seconds = Math.floor((elapsed % 60000) / 1000);
       
-      // IPFS add can be very long; advance slowly based on elapsed time
-      const timeProgress = Math.min(elapsed / (30 * 60 * 1000), 1); // assume 30 mins to reach end of this phase heuristically
+      // Update progress based on elapsed time (rough estimation)
+      const timeProgress = Math.min(elapsed / (10 * 60 * 1000), 1); // Assume 10 minutes max for Leither operations
       const currentProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
       const finalProgress = Math.max(lastComputedProgress, currentProgress);
       
       updateProgress(finalProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
       
       console.log(`[${jobId}] [LEITHER-PROGRESS] ${message}: ${finalProgress}% (${minutes}m ${seconds}s elapsed)`);
-    }, 10000); // Update every 10 seconds for IPFS operations
+    }, 10000); // Update every 10 seconds for Leither operations
     
-    const timeoutPromise = new Promise((_, timeoutReject) => 
-      setTimeout(() => {
-        clearInterval(progressInterval);
-        timeoutReject(new Error(`${operationName} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`));
-      }, timeoutMs)
-    );
+    const leitherPath = getLeitherBinaryPath();
+    console.log(`[${jobId}] [LEITHER] Executing command with path: ${leitherPath}`);
+    const fullCommand = `"${leitherPath}" ${command}`;
+    console.log(`[${jobId}] [LEITHER] Full command: ${fullCommand}`);
+    let isResolved = false;
+    let timeoutId;
     
-    Promise.race([operation(), timeoutPromise])
-      .then((result) => {
-        clearInterval(progressInterval);
+    const child = exec(fullCommand, { 
+      maxBuffer: 1024 * 1024 * 100, // 100MB buffer
+      timeout: timeoutMs 
+    }, (error, stdout, stderr) => {
+      clearInterval(progressInterval);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (isResolved) return;
+      isResolved = true;
+      
+      if (error) {
+        console.error(`[${jobId}] [LEITHER-PROGRESS] ${message} failed:`, error.message);
+        if (stderr) {
+          console.error(`[${jobId}] [LEITHER-PROGRESS] stderr:`, stderr);
+        }
+        reject(error);
+      } else {
         // Ensure progress reaches at least the end of this stage
         updateProgress(endProgress, `${message} completed`);
         console.log(`[${jobId}] [LEITHER-PROGRESS] ${message} completed successfully`);
-        resolve(result);
-      })
-      .catch((error) => {
+        const output = stdout.trim();
+        resolve(output);
+      }
+    });
+    
+    // Setup timeout
+    timeoutId = setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true;
         clearInterval(progressInterval);
-        console.error(`[${jobId}] [LEITHER-PROGRESS] ${message} failed:`, error.message);
-        reject(error);
-      });
+        child.kill('SIGKILL');
+        reject(new Error(`${message} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`));
+      }
+    }, timeoutMs);
   });
 }
 
@@ -306,7 +457,6 @@ async function processZipUpload(req, res) {
   
   let tempDir = null;
   let uploadedFile = null;
-  let leitherClient = null;
   let hlsContentPath = null;
   
   // Set proper headers to keep connection alive
@@ -417,85 +567,51 @@ async function processZipUpload(req, res) {
     let timingLabels = new Set();
     
     try {
-      console.time(`[${requestId}] leither-port-detection`);
-      timingLabels.add('leither-port-detection');
-      const leitherPort = global.getCurrentLeitherPort();
-      console.timeEnd(`[${requestId}] leither-port-detection`);
-      timingLabels.delete('leither-port-detection');
-      console.log(`[${requestId}] [INFO] Using Leither service on port: ${leitherPort}`);
-
-      leitherClient = await global.getLeitherConnection();
-      
-      console.time(`[${requestId}] leither-get-ppt`);
-      timingLabels.add('leither-get-ppt');
-      console.log(`[${requestId}] [INFO] Getting PPT from Leither service...`);
-      
-      const executeLeitherOperation = async (operation, operationName, timeoutMs = 4 * 60 * 60 * 1000) => {
-        try {
-          console.log(`[${requestId}] [LEITHER] ${operationName}`);
-          const result = await Promise.race([
-            operation(),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error(`${operationName} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`)), timeoutMs)
-            )
-          ]);
-          console.log(`[${requestId}] [LEITHER] ${operationName} completed successfully`);
-          return result;
-        } catch (error) {
-          console.error(`[${requestId}] [LEITHER] ${operationName} failed:`, error.message);
-          throw error;
-        }
-      };
-      
-      const leitherVersion = await executeLeitherOperation(
-        () => leitherClient.Getvar("", "ver"),
-        "Getvar version",
-        30000 // 30 seconds for version check
-      );
-      console.log(`[${requestId}] [DEBUG] Leither version: ${leitherVersion}`);
-      
-      const ppt = await executeLeitherOperation(
-        () => leitherClient.GetVarByContext("", "context_ppt", []),
-        "GetVarByContext PPT",
-        60000 // 1 minute for PPT retrieval
-      );
-      console.timeEnd(`[${requestId}] leither-get-ppt`);
-      timingLabels.delete('leither-get-ppt');
-      if (!ppt) throw new Error("Failed to get PPT from Leither service.");
-      console.log(`[${requestId}] [SUCCESS] PPT received.`);
-
-      console.time(`[${requestId}] leither-login`);
-      timingLabels.add('leither-login');
-      console.log(`[${requestId}] [INFO] Logging in to Leither service...`);
-      const api = await executeLeitherOperation(
-        () => leitherClient.Login(ppt),
-        "Login",
-        60000 // 1 minute for login
-      );
-      console.timeEnd(`[${requestId}] leither-login`);
-      timingLabels.delete('leither-login');
-      if (!api || !api.sid) throw new Error("Login to Leither service failed.");
-      console.log(`[${requestId}] [SUCCESS] Login successful. SID:`, api.sid);
-
       console.time(`[${requestId}] leither-ipfs-add`);
       timingLabels.add('leither-ipfs-add');
       console.log(`[${requestId}] [INFO] Adding HLS content to IPFS from path: '${hlsContentPath}'`);
 
-      const defaultTimeout = leitherClient.timeout;
-      leitherClient.timeout = 0;
-      const cid = await executeLeitherOperationWithProgress(
-        () => leitherClient.IpfsAdd(api.sid, hlsContentPath),
-        "IpfsAdd",
-        requestId,
-        80,
-        100,
-        "Adding to IPFS...",
-        4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
-      );
-      leitherClient.timeout = defaultTimeout;
-      console.timeEnd(`[${requestId}] leither-ipfs-add`);
-      timingLabels.delete('leither-ipfs-add');
-      console.log(`[${requestId}] [SUCCESS] IPFS CID received:`, cid);
+      console.log(`[${requestId}] [DEBUG] Starting IPFS add operation...`);
+      let cid;
+      try {
+        // Use direct Leither command: Leither ipfs add <directory>
+        const escapedPath = escapeShellArg(hlsContentPath);
+        cid = await executeLeitherCommand(`ipfs add ${escapedPath}`, requestId, 6 * 60 * 60 * 1000); // 6 hours for IPFS add (can be very large)
+        console.timeEnd(`[${requestId}] leither-ipfs-add`);
+        timingLabels.delete('leither-ipfs-add');
+        console.log(`[${requestId}] [DEBUG] IPFS add operation completed, result:`, cid);
+        console.log(`[${requestId}] [DEBUG] CID type:`, typeof cid, 'Value:', cid);
+        console.log(`[${requestId}] [SUCCESS] IPFS CID received:`, cid);
+        
+        // Extract CID from output - Leither returns format: "ipfs add ok  Qm..."
+        // Parse the output to find the CID after "ipfs add ok"
+        let extractedCid = null;
+        const trimmedOutput = cid.trim();
+        
+        // Check for format: "ipfs add ok  Qm..." or "ipfs add ok  baf..."
+        const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+        if (ipfsAddOkMatch) {
+          extractedCid = ipfsAddOkMatch[1];
+        } else {
+          // Fallback: look for CID pattern anywhere in the output
+          const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+          if (cidMatch) {
+            extractedCid = cidMatch[1];
+          }
+        }
+        
+        if (extractedCid) {
+          cid = extractedCid;
+          console.log(`[${requestId}] [DEBUG] Extracted CID:`, cid);
+        } else {
+          console.warn(`[${requestId}] [WARNING] Could not extract CID from output. Raw output:`, trimmedOutput);
+          // Use the full output as fallback
+          cid = trimmedOutput;
+        }
+      } catch (ipfsError) {
+        console.error(`[${requestId}] [ERROR] IPFS add operation failed:`, ipfsError);
+        throw ipfsError;
+      }
 
       console.timeEnd(`[${requestId}] leither-total-time`);
       timingLabels.delete('leither-total-time');
@@ -520,7 +636,7 @@ async function processZipUpload(req, res) {
       console.error(`[${requestId}] [FATAL] Leither service error:`, leitherError);
       
       // Clean up any active timing labels
-      const labelsToClean = ['leither-total-time', 'leither-get-ppt', 'leither-login', 'leither-ipfs-add', 'leither-port-detection'];
+      const labelsToClean = ['leither-total-time', 'leither-ipfs-add'];
       labelsToClean.forEach(label => {
         if (timingLabels.has(label)) {
           console.timeEnd(`[${requestId}] ${label}`);
@@ -528,13 +644,11 @@ async function processZipUpload(req, res) {
         }
       });
       
-      let errorMessage = 'ZIP file extracted successfully, but Leither service failed';
-      if (leitherError.message.includes('1006')) {
-        errorMessage = 'ZIP file extracted successfully, but Leither service connection was lost (Error 1006). Please check if Leither service is running.';
-      } else if (leitherError.message.includes('timeout')) {
-        errorMessage = 'ZIP file extracted successfully, but Leither service operation timed out. The service may be overloaded.';
-      } else if (leitherError.message.includes('WebSocket')) {
-        errorMessage = 'ZIP file extracted successfully, but Leither service WebSocket connection failed. Please check network connectivity.';
+      let errorMessage = 'ZIP file extracted successfully, but Leither IPFS add failed';
+      if (leitherError.message.includes('timeout')) {
+        errorMessage = 'ZIP file extracted successfully, but Leither IPFS add operation timed out. The operation may be taking longer than expected.';
+      } else if (leitherError.message.includes('LEITHER_PATH')) {
+        errorMessage = 'ZIP file extracted successfully, but LEITHER_PATH environment variable is not set or Leither binary not found.';
       }
       
       // Send error response with proper headers
@@ -566,10 +680,6 @@ async function processZipUpload(req, res) {
     res.setHeader('Content-Length', Buffer.byteLength(errorResponse));
     res.end(errorResponse);
   } finally {
-    if (leitherClient) {
-      global.releaseLeitherConnection(leitherClient);
-    }
-    
     if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
       try {
         fs.unlinkSync(uploadedFile.tempFilePath);
@@ -597,7 +707,6 @@ async function processZipUploadInternal(req, jobId) {
   
   let tempDir = null;
   let uploadedFile = null;
-  let leitherClient = null;
   let hlsContentPath = null;
 
   try {
@@ -692,69 +801,9 @@ async function processZipUploadInternal(req, jobId) {
     let timingLabels = new Set();
     
     // Update progress (safe - never decreases)
-    updateProgressSafe(jobId, 40, 'Connecting to Leither service...');
+    updateProgressSafe(jobId, 40, 'Processing with Leither service...');
     
     try {
-      console.time(`[${jobId}] leither-port-detection`);
-      timingLabels.add('leither-port-detection');
-      const leitherPort = global.getCurrentLeitherPort();
-      console.timeEnd(`[${jobId}] leither-port-detection`);
-      timingLabels.delete('leither-port-detection');
-      console.log(`[${jobId}] [INFO] Using Leither service on port: ${leitherPort}`);
-
-      leitherClient = await global.getLeitherConnection();
-      
-      console.time(`[${jobId}] leither-get-ppt`);
-      timingLabels.add('leither-get-ppt');
-      console.log(`[${jobId}] [INFO] Getting PPT from Leither service...`);
-      
-      const executeLeitherOperation = async (operation, operationName, timeoutMs = 4 * 60 * 60 * 1000) => {
-        try {
-          console.log(`[${jobId}] [LEITHER] ${operationName}`);
-          const result = await Promise.race([
-            operation(),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error(`${operationName} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`)), timeoutMs)
-            )
-          ]);
-          console.log(`[${jobId}] [LEITHER] ${operationName} completed successfully`);
-          return result;
-        } catch (error) {
-          console.error(`[${jobId}] [LEITHER] ${operationName} failed:`, error.message);
-          throw error;
-        }
-      };
-      
-      const leitherVersion = await executeLeitherOperation(
-        () => leitherClient.Getvar("", "ver"),
-        "Getvar version",
-        30000 // 30 seconds for version check
-      );
-      console.log(`[${jobId}] [DEBUG] Leither version: ${leitherVersion}`);
-      
-      const ppt = await executeLeitherOperation(
-        () => leitherClient.GetVarByContext("", "context_ppt", []),
-        "GetVarByContext PPT",
-        60000 // 1 minute for PPT retrieval
-      );
-      console.timeEnd(`[${jobId}] leither-get-ppt`);
-      timingLabels.delete('leither-get-ppt');
-      if (!ppt) throw new Error("Failed to get PPT from Leither service.");
-      console.log(`[${jobId}] [SUCCESS] PPT received.`);
-
-      console.time(`[${jobId}] leither-login`);
-      timingLabels.add('leither-login');
-      console.log(`[${jobId}] [INFO] Logging in to Leither service...`);
-      const api = await executeLeitherOperation(
-        () => leitherClient.Login(ppt),
-        "Login",
-        60000 // 1 minute for login
-      );
-      console.timeEnd(`[${jobId}] leither-login`);
-      timingLabels.delete('leither-login');
-      if (!api || !api.sid) throw new Error("Login to Leither service failed.");
-      console.log(`[${jobId}] [SUCCESS] Login successful. SID:`, api.sid);
-
       console.time(`[${jobId}] leither-ipfs-add`);
       timingLabels.add('leither-ipfs-add');
       console.log(`[${jobId}] [INFO] Adding HLS content to IPFS from path: '${hlsContentPath}'`);
@@ -762,21 +811,54 @@ async function processZipUploadInternal(req, jobId) {
       // Update progress (safe - never decreases)
       updateProgressSafe(jobId, 80, 'Adding to IPFS...');
 
-      const defaultTimeout = leitherClient.timeout;
-      leitherClient.timeout = 0;
-      const cid = await executeLeitherOperationWithProgress(
-        () => leitherClient.IpfsAdd(api.sid, hlsContentPath),
-        "IpfsAdd",
-        jobId,
-        80,
-        100,
-        "Adding to IPFS...",
-        4 * 60 * 60 * 1000 // 4 hours for IPFS add (can be very large)
-      );
-      leitherClient.timeout = defaultTimeout;
-      console.timeEnd(`[${jobId}] leither-ipfs-add`);
-      timingLabels.delete('leither-ipfs-add');
-      console.log(`[${jobId}] [SUCCESS] IPFS CID received:`, cid);
+      console.log(`[${jobId}] [DEBUG] Starting IPFS add operation...`);
+      let cid;
+      try {
+        // Use direct Leither command: Leither ipfs add <directory>
+        const escapedPath = escapeShellArg(hlsContentPath);
+        cid = await executeLeitherOperationWithProgress(
+          `ipfs add ${escapedPath}`,
+          jobId,
+          50,
+          100,
+          "Adding to IPFS...",
+          6 * 60 * 60 * 1000 // 6 hours for IPFS add (can be very large)
+        );
+        console.timeEnd(`[${jobId}] leither-ipfs-add`);
+        timingLabels.delete('leither-ipfs-add');
+        console.log(`[${jobId}] [DEBUG] IPFS add operation completed, result:`, cid);
+        console.log(`[${jobId}] [DEBUG] CID type:`, typeof cid, 'Value:', cid);
+        
+        // Extract CID from output - Leither returns format: "ipfs add ok  Qm..."
+        // Parse the output to find the CID after "ipfs add ok"
+        let extractedCid = null;
+        const trimmedOutput = cid.trim();
+        
+        // Check for format: "ipfs add ok  Qm..." or "ipfs add ok  baf..."
+        const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+        if (ipfsAddOkMatch) {
+          extractedCid = ipfsAddOkMatch[1];
+        } else {
+          // Fallback: look for CID pattern anywhere in the output
+          const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+          if (cidMatch) {
+            extractedCid = cidMatch[1];
+          }
+        }
+        
+        if (extractedCid) {
+          cid = extractedCid;
+          console.log(`[${jobId}] [DEBUG] Extracted CID:`, cid);
+        } else {
+          console.warn(`[${jobId}] [WARNING] Could not extract CID from output. Raw output:`, trimmedOutput);
+          // Use the full output as fallback
+          cid = trimmedOutput;
+        }
+        console.log(`[${jobId}] [SUCCESS] IPFS CID received:`, cid);
+      } catch (ipfsError) {
+        console.error(`[${jobId}] [ERROR] IPFS add operation failed:`, ipfsError);
+        throw ipfsError;
+      }
 
       console.timeEnd(`[${jobId}] leither-total-time`);
       timingLabels.delete('leither-total-time');
@@ -787,7 +869,7 @@ async function processZipUploadInternal(req, jobId) {
       console.error(`[${jobId}] [FATAL] Leither service error:`, leitherError);
       
       // Clean up any active timing labels
-      const labelsToClean = ['leither-total-time', 'leither-get-ppt', 'leither-login', 'leither-ipfs-add', 'leither-port-detection'];
+      const labelsToClean = ['leither-total-time', 'leither-ipfs-add'];
       labelsToClean.forEach(label => {
         if (timingLabels.has(label)) {
           console.timeEnd(`[${jobId}] ${label}`);
@@ -802,10 +884,6 @@ async function processZipUploadInternal(req, jobId) {
     console.error(`[${jobId}] [FATAL] An unexpected error occurred in /process-zip route:`, error);
     throw error;
   } finally {
-    if (leitherClient) {
-      global.releaseLeitherConnection(leitherClient);
-    }
-    
     if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
       try {
         fs.unlinkSync(uploadedFile.tempFilePath);
