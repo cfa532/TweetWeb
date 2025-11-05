@@ -198,7 +198,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                 }
 
-                console.log("Fetching tweets for user:", user.mid, "page:", pageNumber, "size:", pageSize)
+                console.log("Fetching tweets for user", user.mid, "page:", pageNumber, "size:", pageSize)
                 const response = await user.client.RunMApp("get_tweets_by_user", params)
                 console.log("Tweets response:", response)
 
@@ -772,69 +772,118 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The user object if login successful
          */
         async login(username: string, password: string) {
-            try {
-                // given username, get UserId
-                let userId = await this.lapi.client.RunMApp("get_userid", {
-                    aid: this.appId, ver: "last", username: username
-                })
-                console.log("Login user ID", userId)
-                if (!userId) {
-                    console.error("Login failed: User not found", username)
-                    useAlertStore().error("User not found. Please check your username.")
-                    return
-                }
-                
-                let user = await this.getUser(userId)
-                console.log("Login user", user)
-                if (!user) {
-                    console.error("Login failed: Could not fetch user data", userId)
-                    useAlertStore().error("Could not fetch user data. Please try again.")
-                    return
-                }
-                
-                let ret = await user.client.RunMApp("login", {
-                    aid: this.appId, ver: "last", username: username, password: password
-                })
-                if (!ret) {
-                    console.error("Login failed: Authentication failed", userId)
-                    useAlertStore().error("Authentication failed. Please check your credentials.")
-                    return
-                }
-                
-                if (ret["status"] === 'success') {
-                    /**
-                     * Now find the IP of a host where user has write permission
-                     */
-                    if (user.hostId) {
-                        const ip = await this.getNodeIp(user, true)
-                        console.log("Host IP", ip)
-                        if (!ip) {
-                            console.error("No writable host found for user", ip, user)
-                            useAlertStore().error("No writable host found for user. Please contact support.")
-                            return
-                        }
-                        user.providerIp = ip
-                        sessionStorage.setItem("user", JSON.stringify(user))
-                        user.client = this.lapi.getClient(ip)
-                        this._user = user
-                        this.addFollowing(userId)
-                        useAlertStore().success("Login successful!")
-                        return user
-                    } else {
-                        console.error("Login failed: User has no host ID", user)
-                        useAlertStore().error("User account configuration error. Please contact support.")
+            const maxRetries = 2;
+            let lastError: any = null;
+
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    // given username, get UserId
+                    let userId = await this.lapi.client.RunMApp("get_userid", {
+                        aid: this.appId, ver: "last", username: username
+                    })
+                    console.log("Login user ID", userId)
+                    if (!userId) {
+                        console.error("Login failed: User not found", username)
+                        useAlertStore().error("User not found. Please check your username.")
                         return
                     }
-                } else {
-                    console.error("Login failed", ret["reason"])
-                    useAlertStore().error(ret["reason"] || "Login failed. Please check your credentials.")
+                    
+                    let user = await this.getUser(userId)
+                    console.log("Login user", user)
+                    if (!user) {
+                        // Retry on user fetch failure (could be network issue)
+                        if (attempt < maxRetries) {
+                            console.warn(`Login attempt ${attempt + 1} failed: Could not fetch user data. Retrying...`)
+                            lastError = new Error("Could not fetch user data")
+                            await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
+                            continue
+                        }
+                        console.error("Login failed: Could not fetch user data", userId)
+                        useAlertStore().error("Could not fetch user data. Please try again.")
+                        return
+                    }
+                    
+                    let ret = await user.client.RunMApp("login", {
+                        aid: this.appId, ver: "last", username: username, password: password
+                    })
+                    if (!ret) {
+                        // Retry on authentication failure (could be network issue)
+                        if (attempt < maxRetries) {
+                            console.warn(`Login attempt ${attempt + 1} failed: Authentication failed. Retrying...`)
+                            lastError = new Error("Authentication failed")
+                            await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
+                            continue
+                        }
+                        console.error("Login failed: Authentication failed", userId)
+                        useAlertStore().error("Authentication failed. Please check your credentials.")
+                        return
+                    }
+                    
+                    if (ret["status"] === 'success') {
+                        /**
+                         * Now find the IP of a host where user has write permission
+                         */
+                        if (user.hostId) {
+                            const ip = await this.getNodeIp(user, true)
+                            console.log("Host IP", ip)
+                            if (!ip) {
+                                // Retry on IP fetch failure (could be network issue)
+                                if (attempt < maxRetries) {
+                                    console.warn(`Login attempt ${attempt + 1} failed: No writable host found. Retrying...`)
+                                    lastError = new Error("No writable host found")
+                                    await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
+                                    continue
+                                }
+                                console.error("No writable host found for user", ip, user)
+                                useAlertStore().error("No writable host found for user. Please contact support.")
+                                return
+                            }
+                            user.providerIp = ip
+                            sessionStorage.setItem("user", JSON.stringify(user))
+                            user.client = this.lapi.getClient(ip)
+                            this._user = user
+                            this.addFollowing(userId)
+                            useAlertStore().success("Login successful!")
+                            return user
+                        } else {
+                            console.error("Login failed: User has no host ID", user)
+                            useAlertStore().error("User account configuration error. Please contact support.")
+                            return
+                        }
+                    } else {
+                        // Don't retry on authentication errors with reason (likely invalid credentials)
+                        console.error("Login failed", ret["reason"])
+                        useAlertStore().error(ret["reason"] || "Login failed. Please check your credentials.")
+                        return
+                    }
+                } catch (error) {
+                    lastError = error
+                    // Retry on network errors
+                    if (attempt < maxRetries) {
+                        console.warn(`Login attempt ${attempt + 1} failed due to network error. Retrying...`, error)
+                        await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
+                        continue
+                    }
+                    console.error("Login error:", error)
+                    useAlertStore().error("Login failed due to network error. Please try again.")
                     return
                 }
-            } catch (error) {
-                console.error("Login error:", error)
-                useAlertStore().error("Login failed due to network error. Please try again.")
-                return
             }
+
+            // If we exhausted all retries
+            if (lastError) {
+                console.error("Login failed after all retries:", lastError)
+                useAlertStore().error("Login failed after multiple attempts. Please try again later.")
+            }
+            return
+        },
+
+        /**
+         * Helper function to add delay between retry attempts
+         * @param ms Milliseconds to delay
+         */
+        delay(ms: number): Promise<void> {
+            return new Promise(resolve => setTimeout(resolve, ms))
         },
         /**
          * Logs out the current user and clears session storage

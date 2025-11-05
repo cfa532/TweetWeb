@@ -69,6 +69,11 @@ const supportsHardwareAcceleration = computed(() => {
 let hls: Hls | null = null;
 let hasTriedSinglePlaylist = false;
 let intersectionObserver: IntersectionObserver | null = null;
+let videoErrorRetryCount = 0;
+const MAX_VIDEO_ERROR_RETRIES = 2;
+let isRetryingVideo = false;
+let lastHandledError: { code: number; src: string; timestamp: number } | null = null;
+const ERROR_HANDLING_COOLDOWN = 3000; // 3 seconds cooldown between handling same error
 
 onMounted(() => {
   vdiv.value.hidden = false;
@@ -98,13 +103,14 @@ onMounted(() => {
         
         // Add metadata loaded event listener
         video.value.addEventListener('loadedmetadata', () => {
-          // Metadata loaded successfully
+          // Metadata loaded successfully - reset retry count
+          videoErrorRetryCount = 0;
+          isRetryingVideo = false;
+          lastHandledError = null;
           console.log('Video metadata loaded, duration:', video.value?.duration);
         });
         
-        video.value.addEventListener('error', (e: Event) => {
-          console.log('Video error:', e);
-        });
+        video.value.addEventListener('error', handleVideoError);
         
         // Add fullscreen change listeners
         document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -171,40 +177,60 @@ function setupHLS() {
   
   // Check if HLS is supported natively
   if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
-    // Use native HLS support - check both playlists simultaneously
+    // Use native HLS support - check both playlists simultaneously using fetch
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
     
+    let isResolved = false;
+    
     // Check both playlists simultaneously using fetch
-    Promise.race([
-      fetch(masterUrl, { method: 'HEAD', cache: 'no-cache' }).then(() => 'master'),
-      fetch(playlistUrl, { method: 'HEAD', cache: 'no-cache' }).then(() => 'playlist')
-    ]).then((winner) => {
-      console.log(`Native HLS: ${winner} playlist succeeded first`);
-      videoElement.src = winner === 'master' ? masterUrl : playlistUrl;
+    const masterCheck = fetch(masterUrl, { method: 'HEAD', cache: 'no-cache' })
+      .then(() => ({ success: true, url: masterUrl, name: 'master' }))
+      .catch(() => ({ success: false, url: masterUrl, name: 'master' }));
+    
+    const playlistCheck = fetch(playlistUrl, { method: 'HEAD', cache: 'no-cache' })
+      .then(() => ({ success: true, url: playlistUrl, name: 'playlist' }))
+      .catch(() => ({ success: false, url: playlistUrl, name: 'playlist' }));
+    
+    // Check both simultaneously - use whichever succeeds first, or wait for both
+    Promise.allSettled([masterCheck, playlistCheck]).then((results) => {
+      if (isResolved) return;
       
-      // Add fallback for native HLS if the selected one fails
-      videoElement.addEventListener('error', () => {
-        console.log(`Native HLS: ${winner} playlist failed, trying the other one`);
-        videoElement.src = winner === 'master' ? playlistUrl : masterUrl;
-        
-        // Add another error listener for both playlists failure
-        videoElement.addEventListener('error', () => {
-          fallbackToProgressiveVideo(videoElement);
-        }, { once: true });
-      }, { once: true });
-    }).catch((error) => {
-      // If both fail, try master first as fallback
-      console.log('Native HLS: Both playlists check failed, trying master first:', error);
-      videoElement.src = masterUrl;
+      const masterResult = results[0].status === 'fulfilled' ? results[0].value : { success: false, url: masterUrl, name: 'master' };
+      const playlistResult = results[1].status === 'fulfilled' ? results[1].value : { success: false, url: playlistUrl, name: 'playlist' };
       
-      videoElement.addEventListener('error', () => {
-        videoElement.src = playlistUrl;
+      let urlToUse: string | null = null;
+      let sourceName: string = '';
+      
+      // Prefer master if both succeed, otherwise use whichever succeeded
+      if (masterResult.success) {
+        urlToUse = masterUrl;
+        sourceName = 'master';
+      } else if (playlistResult.success) {
+        urlToUse = playlistUrl;
+        sourceName = 'playlist';
+      }
+      
+      if (urlToUse) {
+        console.log(`Native HLS: ${sourceName} playlist available, loading...`);
+        isResolved = true;
+        videoElement.src = urlToUse;
+        videoElement.load();
         
+        // Add error handler - if this fails, we've exhausted options
         videoElement.addEventListener('error', () => {
-          fallbackToProgressiveVideo(videoElement);
+          console.error(`Native HLS: ${sourceName} playlist failed to load, cannot play HLS video`);
         }, { once: true });
-      }, { once: true });
+        
+        // Confirm successful load
+        videoElement.addEventListener('loadedmetadata', () => {
+          console.log(`Native HLS: ${sourceName} playlist loaded successfully`);
+        }, { once: true });
+      } else {
+        // Both failed
+        console.error('Native HLS: Both playlists failed availability check, cannot play HLS video');
+        isResolved = true;
+      }
     });
   } else if (Hls.isSupported()) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
@@ -323,7 +349,8 @@ function setupHLS() {
               break;
           }
         } else {
-          console.log(`HLS fatal error on ${sourceName}, keeping HLS mode`);
+          console.log(`HLS fatal error on ${sourceName}, attempting retry...`);
+          handleHLSFatalError(data, sourceName, winningUrl, videoElement);
         }
       });
     };
@@ -395,11 +422,13 @@ function setupHLS() {
       }
     });
     
-    // Fallback timeout - if neither succeeds within 10 seconds, try master
+    // Fallback timeout - if neither succeeds within 10 seconds, fail
     fallbackTimeout = setTimeout(() => {
       if (!isResolved) {
-        console.log('HLS.js: Timeout waiting for both playlists, using master as fallback');
-        resolveWinner(masterUrl, 'master');
+        console.error('HLS.js: Timeout waiting for both playlists, both failed');
+        cleanupLoser(masterHls);
+        cleanupLoser(playlistHls);
+        isResolved = true;
       }
     }, 10000); // 10 second timeout
   }
@@ -421,9 +450,7 @@ function setupRegularVideo() {
   // No need to set src here to avoid conflicts
   
   // Add error handling for regular video
-  videoElement.addEventListener('error', (e: Event) => {
-    // Silent error handling
-  }, { once: true });
+  videoElement.addEventListener('error', handleVideoError);
   
   // Add load event to confirm video loaded
   videoElement.addEventListener('loadeddata', () => {
@@ -531,43 +558,62 @@ function getHLSMasterSource(): string {
 
 // Fallback to progressive video when HLS streaming fails
 function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
+  console.log('Falling back to progressive video format');
+  
   // Destroy HLS instance
   if (hls) {
-    hls.destroy();
+    try {
+      hls.destroy();
+    } catch (e) {
+      console.log('Error destroying HLS during fallback:', e);
+    }
     hls = null;
   }
+  
+  // Reset retry state for progressive video
+  videoErrorRetryCount = 0;
+  isRetryingVideo = false;
+  lastHandledError = null;
   
   // Remove any existing sources
   while (videoElement.firstChild) {
     videoElement.removeChild(videoElement.firstChild);
   }
   
+  // Clear current source
+  videoElement.src = '';
+  
   // Set the video source to the original URL without extension
   // This will attempt to play the video as a progressive download
   const progressiveUrl = props.media.mid;
-  videoElement.src = progressiveUrl;
   
-  // Add error handling for progressive video
-  videoElement.addEventListener('error', (e) => {
-    // Silent error handling
-  }, { once: true });
-  
-  // Add load event to confirm progressive video loaded
-  videoElement.addEventListener('loadeddata', () => {
-    // Video loaded successfully
-  }, { once: true });
-  
-  // Add canplay event
-  videoElement.addEventListener('canplay', () => {
-    // Video can start playing
-  }, { once: true });
-  
-  // Try to play the video
-  if (props.autoplay) {
-    videoElement.play().catch(error => {
-      // Silent error handling
-    });
-  }
+  // Small delay to ensure cleanup is complete
+  setTimeout(() => {
+    if (videoElement) {
+      videoElement.src = progressiveUrl;
+      videoElement.load();
+      
+      // Add load event to confirm progressive video loaded
+      videoElement.addEventListener('loadeddata', () => {
+        console.log('Progressive video loaded successfully');
+        videoErrorRetryCount = 0;
+        isRetryingVideo = false;
+        lastHandledError = null;
+      }, { once: true });
+      
+      // Add canplay event
+      videoElement.addEventListener('canplay', () => {
+        console.log('Progressive video can play');
+      }, { once: true });
+      
+      // Try to play the video
+      if (props.autoplay) {
+        videoElement.play().catch(error => {
+          console.log('Autoplay failed for progressive video:', error);
+        });
+      }
+    }
+  }, 100);
 }
 
 
@@ -735,6 +781,242 @@ function setupIntersectionObserver() {
   intersectionObserver.observe(vdiv.value);
 }
 
+// Handle video element errors with retry mechanism
+async function handleVideoError(e: Event) {
+  const videoElement = e.target as HTMLVideoElement;
+  if (!videoElement || isRetryingVideo) return;
+  
+  const error = videoElement.error;
+  if (!error) return;
+  
+  const currentSrc = videoElement.src || '';
+  const now = Date.now();
+  
+  // Prevent handling the same error multiple times in quick succession
+  if (lastHandledError && 
+      lastHandledError.code === error.code && 
+      lastHandledError.src === currentSrc &&
+      (now - lastHandledError.timestamp) < ERROR_HANDLING_COOLDOWN) {
+    console.log('Skipping duplicate error handling within cooldown period');
+    return;
+  }
+  
+  lastHandledError = { code: error.code, src: currentSrc, timestamp: now };
+  
+  console.log('Video error:', {
+    code: error.code,
+    message: error.message,
+    src: currentSrc.substring(0, 100) + '...',
+    MEDIA_ERR_ABORTED: error.MEDIA_ERR_ABORTED,
+    MEDIA_ERR_NETWORK: error.MEDIA_ERR_NETWORK,
+    MEDIA_ERR_DECODE: error.MEDIA_ERR_DECODE,
+    MEDIA_ERR_SRC_NOT_SUPPORTED: error.MEDIA_ERR_SRC_NOT_SUPPORTED
+  });
+  
+  // Format/source not supported errors (code 4) - don't retry for HLS, just fail
+  if (error.code === error.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+    if (isHLS.value) {
+      console.error('HLS video format not supported, cannot play');
+      return;
+    }
+    console.log('Video format not supported');
+    return;
+  }
+  
+  // Abort errors (code 1) - user or script aborted, don't retry
+  if (error.code === error.MEDIA_ERR_ABORTED) {
+    console.log('Video loading aborted, not retrying');
+    return;
+  }
+  
+  // Network errors (code 2) - retry as these are transient
+  if (error.code === error.MEDIA_ERR_NETWORK) {
+    if (videoErrorRetryCount < MAX_VIDEO_ERROR_RETRIES) {
+      videoErrorRetryCount++;
+      console.log(`Network error retry attempt ${videoErrorRetryCount}/${MAX_VIDEO_ERROR_RETRIES}`);
+      isRetryingVideo = true;
+      
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, 1000 * videoErrorRetryCount));
+      
+      // Clear the error and retry
+      if (videoElement && videoElement.src === currentSrc) {
+        videoElement.src = '';
+        await new Promise(resolve => setTimeout(resolve, 100));
+        videoElement.src = currentSrc;
+        videoElement.load();
+        
+        // Reset retry flag after a delay
+        setTimeout(() => {
+          isRetryingVideo = false;
+        }, 2000);
+      } else {
+        isRetryingVideo = false;
+      }
+    } else {
+      console.error('Network error: Max retries reached');
+      if (isHLS.value) {
+        console.error('HLS video failed after retries, cannot play');
+      }
+    }
+    return;
+  }
+  
+  // Decode errors (code 3) - try retry once, then fallback
+  if (error.code === error.MEDIA_ERR_DECODE) {
+    if (videoErrorRetryCount < 1) { // Only retry once for decode errors
+      videoErrorRetryCount++;
+      console.log(`Decode error retry attempt ${videoErrorRetryCount}`);
+      isRetryingVideo = true;
+      
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      if (videoElement && videoElement.src === currentSrc) {
+        videoElement.src = '';
+        await new Promise(resolve => setTimeout(resolve, 100));
+        videoElement.src = currentSrc;
+        videoElement.load();
+        
+        setTimeout(() => {
+          isRetryingVideo = false;
+        }, 2000);
+      } else {
+        isRetryingVideo = false;
+      }
+    } else {
+      console.error('Decode error: Retry failed');
+      if (isHLS.value) {
+        console.error('HLS video decode failed, cannot play');
+      }
+    }
+    return;
+  }
+  
+  // Unknown error code - log and don't retry
+  console.warn('Unknown video error code:', error.code, error.message);
+}
+
+// Handle native HLS errors with retry (no longer used but kept for compatibility)
+async function handleNativeHLSError(videoElement: HTMLVideoElement, fallbackUrl: string, masterUrl: string, playlistUrl: string) {
+  // This function is no longer used as we try both playlists simultaneously
+  // Keeping for compatibility but it should not be called
+  console.error('Native HLS: Both playlists failed, cannot play HLS video');
+}
+
+// Handle HLS.js fatal errors with retry
+async function handleHLSFatalError(data: any, sourceName: string, currentUrl: string, videoElement: HTMLVideoElement) {
+  if (videoErrorRetryCount < MAX_VIDEO_ERROR_RETRIES && hls) {
+    videoErrorRetryCount++;
+    console.log(`HLS.js fatal error retry attempt ${videoErrorRetryCount}/${MAX_VIDEO_ERROR_RETRIES} for ${sourceName}`);
+    
+    // Destroy current HLS instance
+    try {
+      hls.destroy();
+      hls = null;
+    } catch (e) {
+      console.log('Error destroying HLS instance:', e);
+    }
+    
+    // Wait before retrying
+    await new Promise(resolve => setTimeout(resolve, 1000 * videoErrorRetryCount));
+    
+    // Recreate HLS instance and retry
+    if (videoElement && !isRetryingVideo) {
+      isRetryingVideo = true;
+      
+      // Get the config based on context
+      const hlsConfig = isInTweetList.value ? {
+        enableWorker: true,
+        lowLatencyMode: false,
+        abrEwmaDefaultEstimate: 250000,
+        abrBandWidthFactor: 0.8,
+        abrBandWidthUpFactor: 0.5,
+        abrMaxWithRealBitrate: true,
+        startLevel: 1,
+        capLevelToPlayerSize: true,
+        maxBufferLength: 15,
+        maxMaxBufferLength: 300,
+        maxBufferSize: 30 * 1000 * 1000,
+        maxBufferHole: 0.5,
+        enableSoftwareAES: false,
+        enableStashBuffer: true,
+        stashInitialSize: 384 * 1024,
+      } : {
+        enableWorker: true,
+        lowLatencyMode: true,
+        abrEwmaDefaultEstimate: 500000,
+        abrBandWidthFactor: 0.95,
+        abrBandWidthUpFactor: 0.7,
+        abrMaxWithRealBitrate: true,
+        startLevel: -1,
+        capLevelToPlayerSize: true,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 600,
+        maxBufferSize: 60 * 1000 * 1000,
+        maxBufferHole: 0.5,
+        enableSoftwareAES: false,
+        enableStashBuffer: true,
+        stashInitialSize: 384 * 1024,
+        enableWebAssembly: true,
+        backBufferLength: 90,
+      };
+      
+      // Try alternative URL if available
+      const masterUrl = getHLSMasterSource();
+      const playlistUrl = getHLSSource();
+      const retryUrl = currentUrl === masterUrl ? playlistUrl : masterUrl;
+      
+      console.log(`HLS.js retry: Using ${retryUrl === masterUrl ? 'master' : 'playlist'} playlist`);
+      
+      hls = new Hls(hlsConfig);
+      hls.loadSource(retryUrl);
+      hls.attachMedia(videoElement);
+      
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log(`HLS.js retry: ${retryUrl === masterUrl ? 'master' : 'playlist'} playlist loaded successfully`);
+        isRetryingVideo = false;
+        if (props.autoplay) {
+          videoElement.play().catch(() => {
+            showPlayOverlay.value = false;
+          });
+        }
+      });
+      
+      hls.on(Hls.Events.ERROR, (event, errorData) => {
+        if (!errorData.fatal) {
+          switch (errorData.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls?.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls?.recoverMediaError();
+              break;
+          }
+        } else {
+          // Another fatal error - give up
+          console.error('HLS.js retry: Another fatal error, cannot play HLS video');
+          isRetryingVideo = false;
+        }
+      });
+      
+      // Reset retry flag after timeout
+      setTimeout(() => {
+        isRetryingVideo = false;
+      }, 10000);
+    }
+  } else {
+    console.error('HLS.js: Max retries reached, cannot play HLS video');
+    if (hls) {
+      try {
+        hls.destroy();
+        hls = null;
+      } catch (e) {
+        console.log('Error destroying HLS instance:', e);
+      }
+    }
+  }
+}
+
 // Stop video playback and clean up resources
 function stopVideo() {
   if (video.value) {
@@ -756,6 +1038,9 @@ function stopVideo() {
   
   // Reset flags
   hasTriedSinglePlaylist = false;
+  videoErrorRetryCount = 0;
+  isRetryingVideo = false;
+  lastHandledError = null;
 }
 </script>
 
