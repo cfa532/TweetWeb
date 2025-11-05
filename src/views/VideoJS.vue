@@ -74,13 +74,13 @@ const MAX_VIDEO_ERROR_RETRIES = 2;
 let isRetryingVideo = false;
 let lastHandledError: { code: number; src: string; timestamp: number } | null = null;
 const ERROR_HANDLING_COOLDOWN = 3000; // 3 seconds cooldown between handling same error
+let isHLSInitialized = false; // Prevent multiple HLS initializations
 
 onMounted(() => {
   vdiv.value.hidden = false;
   
-    // Wait for next tick to ensure video element is created
-    setTimeout(() => {
-      if (video.value) {
+    // Setup video element immediately
+    if (video.value && !isHLSInitialized) {
         // Add play/pause event listeners to track state
         video.value.addEventListener('play', () => {
           isPlaying.value = true;
@@ -101,14 +101,16 @@ onMounted(() => {
           }
         });
         
-        // Add metadata loaded event listener
+        // Add metadata loaded event listener (only once)
         video.value.addEventListener('loadedmetadata', () => {
           // Metadata loaded successfully - reset retry count
           videoErrorRetryCount = 0;
           isRetryingVideo = false;
           lastHandledError = null;
-          console.log('Video metadata loaded, duration:', video.value?.duration);
-        });
+          if (video.value) {
+            console.log('Video metadata loaded, duration:', video.value.duration);
+          }
+        }, { once: true });
         
         video.value.addEventListener('error', handleVideoError);
         
@@ -118,23 +120,18 @@ onMounted(() => {
         document.addEventListener('mozfullscreenchange', handleFullscreenChange);
         document.addEventListener('MSFullscreenChange', handleFullscreenChange);
         
-        // Delay source loading for mobile HLS compatibility
-        setTimeout(() => {
-          if (isHLS.value) {
-            setupHLS();
-          } else if (isRegularVideo.value) {
-            setupRegularVideo();
-          }
-          
-          // Source elements will load automatically, no need to force load
-        }, 200);
+        // Load video immediately (no delay needed)
+        if (isHLS.value && !isHLSInitialized) {
+          setupHLS();
+        } else if (isRegularVideo.value) {
+          setupRegularVideo();
+        }
         
         // Set up intersection observer for autoplay in tweet list
         if (isInTweetList.value) {
           setupIntersectionObserver();
         }
       }
-    }, 100);
   
   // Add page visibility change listener
   document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -165,7 +162,8 @@ onUnmounted(() => {
 });
 
 function setupHLS() {
-  if (!video.value) return;
+  if (!video.value || isHLSInitialized) return;
+  isHLSInitialized = true;
   
   const videoElement = video.value;
   
@@ -177,61 +175,25 @@ function setupHLS() {
   
   // Check if HLS is supported natively
   if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
-    // Use native HLS support - check both playlists simultaneously using fetch
+    // Simple approach: try master first, then playlist if master fails
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
     
-    let isResolved = false;
+    console.log('Native HLS: Trying master playlist');
+    videoElement.src = masterUrl;
+    videoElement.load();
     
-    // Check both playlists simultaneously using fetch
-    const masterCheck = fetch(masterUrl, { method: 'HEAD', cache: 'no-cache' })
-      .then(() => ({ success: true, url: masterUrl, name: 'master' }))
-      .catch(() => ({ success: false, url: masterUrl, name: 'master' }));
-    
-    const playlistCheck = fetch(playlistUrl, { method: 'HEAD', cache: 'no-cache' })
-      .then(() => ({ success: true, url: playlistUrl, name: 'playlist' }))
-      .catch(() => ({ success: false, url: playlistUrl, name: 'playlist' }));
-    
-    // Check both simultaneously - use whichever succeeds first, or wait for both
-    Promise.allSettled([masterCheck, playlistCheck]).then((results) => {
-      if (isResolved) return;
+    // If master fails, try playlist
+    videoElement.addEventListener('error', () => {
+      console.log('Native HLS: Master failed, trying playlist');
+      videoElement.src = playlistUrl;
+      videoElement.load();
       
-      const masterResult = results[0].status === 'fulfilled' ? results[0].value : { success: false, url: masterUrl, name: 'master' };
-      const playlistResult = results[1].status === 'fulfilled' ? results[1].value : { success: false, url: playlistUrl, name: 'playlist' };
-      
-      let urlToUse: string | null = null;
-      let sourceName: string = '';
-      
-      // Prefer master if both succeed, otherwise use whichever succeeded
-      if (masterResult.success) {
-        urlToUse = masterUrl;
-        sourceName = 'master';
-      } else if (playlistResult.success) {
-        urlToUse = playlistUrl;
-        sourceName = 'playlist';
-      }
-      
-      if (urlToUse) {
-        console.log(`Native HLS: ${sourceName} playlist available, loading...`);
-        isResolved = true;
-        videoElement.src = urlToUse;
-        videoElement.load();
-        
-        // Add error handler - if this fails, we've exhausted options
-        videoElement.addEventListener('error', () => {
-          console.error(`Native HLS: ${sourceName} playlist failed to load, cannot play HLS video`);
-        }, { once: true });
-        
-        // Confirm successful load
-        videoElement.addEventListener('loadedmetadata', () => {
-          console.log(`Native HLS: ${sourceName} playlist loaded successfully`);
-        }, { once: true });
-      } else {
-        // Both failed
-        console.error('Native HLS: Both playlists failed availability check, cannot play HLS video');
-        isResolved = true;
-      }
-    });
+      // If playlist also fails, give up
+      videoElement.addEventListener('error', () => {
+        console.error('Native HLS: Both playlists failed, cannot play HLS video');
+      }, { once: true });
+    }, { once: true });
   } else if (Hls.isSupported()) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
     const hlsConfig = isInTweetList.value ? {
@@ -414,23 +376,19 @@ function setupHLS() {
     playlistHls.loadSource(playlistUrl);
     
     // Race both promises - first one to succeed wins
-    Promise.race([masterManifestPromise, playlistManifestPromise]).then((result) => {
-      // Winner already resolved in resolveWinner above
-      if (result === 'failed' && !isResolved) {
-        // If the first one failed, wait for the other
-        console.log('HLS.js: First playlist failed, waiting for the other...');
+    Promise.race([masterManifestPromise, playlistManifestPromise]).catch(() => {
+      // If race fails, wait for the other one
+      if (!isResolved) {
+        Promise.allSettled([masterManifestPromise, playlistManifestPromise]).then(() => {
+          if (!isResolved) {
+            console.error('HLS.js: Both playlists failed');
+            cleanupLoser(masterHls);
+            cleanupLoser(playlistHls);
+            isResolved = true;
+          }
+        });
       }
     });
-    
-    // Fallback timeout - if neither succeeds within 10 seconds, fail
-    fallbackTimeout = setTimeout(() => {
-      if (!isResolved) {
-        console.error('HLS.js: Timeout waiting for both playlists, both failed');
-        cleanupLoser(masterHls);
-        cleanupLoser(playlistHls);
-        isResolved = true;
-      }
-    }, 10000); // 10 second timeout
   }
 }
 
@@ -755,12 +713,13 @@ function setupIntersectionObserver() {
           } else {
             // Metadata not loaded yet, wait for it
             const onLoadedMetadata = () => {
-              video.value.removeEventListener('loadedmetadata', onLoadedMetadata);
-              video.value.play().catch(() => {
-                showPlayOverlay.value = true;
-              });
+              if (video.value) {
+                video.value.play().catch(() => {
+                  showPlayOverlay.value = true;
+                });
+              }
             };
-            video.value.addEventListener('loadedmetadata', onLoadedMetadata);
+            video.value.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
             video.value.load(); // Force load if not already loading
           }
         }
@@ -1041,6 +1000,7 @@ function stopVideo() {
   videoErrorRetryCount = 0;
   isRetryingVideo = false;
   lastHandledError = null;
+  isHLSInitialized = false;
 }
 </script>
 
