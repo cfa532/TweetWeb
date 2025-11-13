@@ -245,6 +245,17 @@ async function startDirectDownload() {
 function openInBrowser() {
     window.open(downloadPageUrl.value, '_blank')
 }
+
+function isVideoMedia(media?: MimeiFileType) {
+    const type = media?.type?.toLowerCase() || ''
+    return type.includes('video') || type === 'hls_video'
+}
+
+function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
+    if (!mediaList?.length) return false
+    const firstVideo = mediaList.find(item => isVideoMedia(item))
+    return !!firstVideo && firstVideo.mid === media.mid
+}
 </script>
 
 <template>
@@ -273,7 +284,7 @@ function openInBrowser() {
 
             <div v-if="originTweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in originTweet.attachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="index==0" :media-list="originTweet.attachments" :media-index="index" class="img-fluid mb-1"></MediaView>
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, originTweet.attachments)" :media-list="originTweet.attachments" :media-index="index" class="img-fluid mb-1"></MediaView>
             </div>
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
                 <div class='icon-item d-flex align-items-center'>
@@ -297,7 +308,7 @@ function openInBrowser() {
 
             <div v-if="tweet.attachments?.length" class="media-attachments">
                 <MediaView v-for="(media, index) in tweet.attachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="index==0" :media-list="tweet.attachments" :media-index="index" class="img-fluid">
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, tweet.attachments)" :media-list="tweet.attachments" :media-index="index" class="img-fluid">
                 </MediaView>
             </div>
 
