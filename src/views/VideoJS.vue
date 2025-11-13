@@ -1248,8 +1248,27 @@ function stopVideo() {
   object-fit: contain !important;
 }
 
-/* Mobile adjustments */
+/* Mobile adjustments - Full-width videos */
 @media (max-width: 768px) {
+  .video-container {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  
+  .video-wrapper {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+  }
+  
+  .video {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+  }
+  
   .play-overlay-button {
     width: 44px;
     height: 44px;

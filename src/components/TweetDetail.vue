@@ -477,6 +477,16 @@ function openInBrowser() {
     max-width: 100%;
 }
 
+/* Mobile: Full-width media */
+@media (max-width: 767px) {
+    .media-attachments {
+        margin-left: -8px;
+        margin-right: -8px;
+        width: calc(100% + 16px);
+        max-width: calc(100% + 16px);
+    }
+}
+
 .rounded-circle {
     width: 40px;
     height: 40px;

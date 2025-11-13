@@ -32,6 +32,23 @@ const props = defineProps({
     object-fit: contain; /* Add this line to maintain aspect ratio */
 }
 
+/* Mobile: Full-width images */
+@media (max-width: 767px) {
+    .container {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        max-width: 100%;
+        display: block;
+    }
+    
+    .container img {
+        width: 100%;
+        max-width: 100%;
+        object-fit: cover;
+    }
+}
+
 /* Full-screen image styles */
 .fullscreen-image {
     width: 100vw !important;
