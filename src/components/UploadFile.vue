@@ -87,7 +87,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
         const upload = new tus.Upload(file, {
             endpoint: `${tusServerUrl}/upload`,
             retryDelays: [0, 1000, 3000, 5000, 10000, 20000, 30000],
-            chunkSize: 1024 * 1024, // 1MB chunks for better reliability and performance
+            chunkSize: 2 * 1024 * 1024, // 2MB chunks - optimal balance of reliability and performance
             overridePatchMethod: false,
             removeFingerprintOnSuccess: true,
             metadata: {
