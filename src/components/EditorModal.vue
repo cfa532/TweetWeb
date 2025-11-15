@@ -110,10 +110,19 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
             }
             const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
             
-            // Try to normalize video directly - if it fails, fall back to IPFS
-            try {
-              console.log(`Normalizing video for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-              cid = await normalizeVideo(
+            // Check service availability before attempting normalization
+            const serviceAvailable = await checkServiceAvailability(baseUrl);
+            
+            if (!serviceAvailable) {
+              useIPFSFallback = true;
+              fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
+              console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+              shouldWarnFallback = true;
+            } else {
+              // Try to normalize video directly - if it fails, fall back to IPFS
+              try {
+                console.log(`Normalizing video for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+                cid = await normalizeVideo(
                 file,
                 baseUrl,
                 cloudDrivePort,
@@ -132,6 +141,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
               useIPFSFallback = true;
               fallbackReason = `Normalization failed: ${normalizeError instanceof Error ? normalizeError.message : String(normalizeError)}`;
               shouldWarnFallback = true;
+            }
             }
           }
         } else {

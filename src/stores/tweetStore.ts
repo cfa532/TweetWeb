@@ -644,11 +644,17 @@ export const useTweetStore = defineStore('tweetStore', {
                 console.warn("No provider found for user", userId)
                 return
             }
+            
+            // Store original provider IP to detect loops
+            const originalProviderIp = providerIp
             let providerClient = this.lapi.getClient(providerIp)
 
             let user = await providerClient.RunMApp("get_user", {
                 aid: this.appId, ver: "last", userid: userId,
             })
+            
+            // Print the result of get_user for debugging
+            console.log("get_user result:", user)
             
             // Check if user is a string - if it's an IP address, retry with that IP
             if (typeof user === 'string') {
@@ -656,6 +662,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Format: "ip:port" or just "ip" (e.g., "115.196.201.208:8081" or "127.0.0.1:4800")
                 const ipPattern = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/
                 if (ipPattern.test(user)) {
+                    // Check if returned IP is the same as the one used for the call
+                    // This indicates the user should be on this server but something is wrong
+                    if (user === originalProviderIp) {
+                        const errorMsg = `get_user returned the same IP as the provider IP (${originalProviderIp}). User should be on this server but get_user failed. This indicates a server-side error. User object should be on server: ${user}`
+                        console.error(errorMsg)
+                        throw new Error(errorMsg)
+                    }
+                    
                     console.log(`User not found on node ${providerIp}, redirecting to correct node: ${user}`)
                     // Retry with the correct provider IP
                     providerIp = user
@@ -663,8 +677,18 @@ export const useTweetStore = defineStore('tweetStore', {
                     user = await providerClient.RunMApp("get_user", {
                         aid: this.appId, ver: "last", userid: userId,
                     })
+                    
+                    // Print the result after retry
+                    console.log("get_user result after retry:", user)
+                    
                     // If it's still a string after retry, it's an error
                     if (typeof user === 'string') {
+                        // Check again if it's the same as the retry IP
+                        if (user === providerIp) {
+                            const errorMsg = `get_user returned the same IP even after retry (${providerIp}). User should be on this server but get_user failed. User object should be on server: ${user}`
+                            console.error(errorMsg)
+                            throw new Error(errorMsg)
+                        }
                         console.error("get_user returned string even after retry with correct IP:", user)
                         return undefined
                     }
