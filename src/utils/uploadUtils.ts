@@ -312,7 +312,7 @@ export async function uploadVideo(
       
       xhr.open('POST', videoUploadUrl);
       xhr.timeout = 30 * 60 * 1000; // 30 minute timeout for large files
-      xhr.setRequestHeader('Connection', 'keep-alive');
+      // Note: Browsers automatically manage the 'Connection' header - we cannot set it
       xhr.setRequestHeader('Cache-Control', 'no-cache');
       xhr.send(formData);
     });
