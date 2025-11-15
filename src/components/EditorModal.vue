@@ -5,7 +5,7 @@ import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
-import { compressImage, uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 
 // Helper function to get human-readable aspect ratio names
 function getAspectRatioDisplayName(ratio: number): string {
@@ -95,10 +95,45 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         let isHLSConverted = false; // Track if video was converted to HLS
         
         if (file.size <= SMALL_VIDEO_THRESHOLD_BYTES) {
-          useIPFSFallback = true;
-          const fileSizeMb = (file.size / (1024 * 1024)).toFixed(2);
-          fallbackReason = `Video size ${fileSizeMb}MB is below 50MB threshold`;
-          console.log(`Video upload: ${fallbackReason}, using default IPFS path`);
+          // For small videos (<50MB), use normalize-video endpoint
+          // Check if cloudDrivePort is available
+          if (author.cloudDrivePort === null || author.cloudDrivePort === undefined || author.cloudDrivePort === 0) {
+            useIPFSFallback = true;
+            fallbackReason = 'cloudDrivePort is not available';
+            console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+            shouldWarnFallback = true;
+          } else {
+            const cloudDrivePort = author.cloudDrivePort.toString();
+            let ipAddress = author.providerIp || '';
+            if (ipAddress.includes(':')) {
+              ipAddress = ipAddress.split(':')[0];
+            }
+            const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
+            
+            // Try to normalize video directly - if it fails, fall back to IPFS
+            try {
+              console.log(`Normalizing video for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+              cid = await normalizeVideo(
+                file,
+                baseUrl,
+                cloudDrivePort,
+                (progress) => {
+                  uploadProgress[i] = progress;
+                  console.log(`Normalization progress for ${file.name}: ${uploadProgress[i]}%`);
+                }
+              );
+              if (!cid || cid.trim() === '') {
+                throw new Error('Video normalization failed: No CID returned from server');
+              }
+              uploadProgress[i] = 100; // Complete
+              isHLSConverted = false; // Video was normalized, not converted to HLS
+            } catch (normalizeError) {
+              console.error(`Video normalization failed: ${normalizeError}, falling back to IPFS`);
+              useIPFSFallback = true;
+              fallbackReason = `Normalization failed: ${normalizeError instanceof Error ? normalizeError.message : String(normalizeError)}`;
+              shouldWarnFallback = true;
+            }
+          }
         } else {
           // Check 1: Is cloudDrivePort null, undefined, or 0?
           // Note: 0 explicitly means "no service available"

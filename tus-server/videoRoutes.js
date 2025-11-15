@@ -1593,6 +1593,9 @@ async function processVideoUploadInternal(req, jobId) {
 // Store for tracking video processing status
 const processingJobs = new Map();
 
+// Store for tracking video normalization status
+const normalizeJobs = new Map();
+
 // Video conversion endpoint
 router.post('/convert-video', async (req, res) => {
   const uploadStartTime = Date.now();
@@ -1724,6 +1727,317 @@ async function processVideoUploadAsync(req, jobId) {
     });
   }
 }
+
+// Video normalization endpoint (for <50MB videos) - single file upload like convert-video
+router.post('/normalize-video', async (req, res) => {
+  const uploadStartTime = Date.now();
+  console.log(`[NORMALIZE-TIMING] Upload request received at ${new Date().toISOString()}`);
+  
+  // Set timeout for normalization (should be quick for <50MB files)
+  req.setTimeout(10 * 60 * 1000); // 10 minutes
+  res.setTimeout(10 * 60 * 1000);
+  
+  // Handle connection close gracefully
+  req.on('close', () => {
+    console.log('[NORMALIZE-VIDEO] Client disconnected during upload');
+  });
+  
+  req.on('error', (error) => {
+    console.error('[NORMALIZE-VIDEO] Request error:', error);
+  });
+  
+  res.on('close', () => {
+    console.log('[NORMALIZE-VIDEO] Response closed');
+  });
+  
+  // Generate a unique job ID
+  const jobId = Math.random().toString(36).substr(2, 9);
+  
+  // Store job status
+  normalizeJobs.set(jobId, {
+    status: 'uploading',
+    progress: 0,
+    message: 'Starting upload...',
+    startTime: Date.now()
+  });
+  
+  try {
+    const requestReceivedTime = Date.now();
+    console.log(`[NORMALIZE-TIMING] Request processing started at ${new Date().toISOString()} (${requestReceivedTime - uploadStartTime}ms after request received)`);
+    
+    // Validate upload BEFORE sending response
+    if (!req.files || !req.files.videoFile) {
+      console.error(`[${jobId}] [ERROR] No video file found in request. Expected a file with field name "videoFile".`);
+      return res.status(400).json({
+        success: false,
+        message: 'No video file uploaded. Please use the "videoFile" field name.'
+      });
+    }
+    
+    // Check file size (50MB limit)
+    const uploadedFile = req.files.videoFile;
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (uploadedFile.size > maxSize) {
+      console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxSize}`);
+      return res.status(400).json({
+        success: false,
+        message: `File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 50MB for normalization.`
+      });
+    }
+    
+    console.log(`[${jobId}] [UPLOAD-DEBUG] File received: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+    console.log(`[${jobId}] [UPLOAD-DEBUG] File path: ${uploadedFile.tempFilePath}`);
+    
+    // Send immediate response with job ID
+    const responseSentTime = Date.now();
+    console.log(`[NORMALIZE-TIMING] Sending response at ${new Date().toISOString()} (${responseSentTime - uploadStartTime}ms total upload time)`);
+    
+    res.json({
+      success: true,
+      message: 'Video normalization started',
+      jobId: jobId
+    });
+    
+    console.log(`[NORMALIZE-TIMING] Response sent successfully, starting background processing`);
+    
+    // Process video normalization in background
+    processNormalizeVideoAsync(req, jobId);
+    
+  } catch (error) {
+    console.error(`[${jobId}] [ERROR] Failed to process video normalization:`, error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process video normalization: ' + error.message
+      });
+    }
+  }
+});
+
+// Async video normalization function
+async function processNormalizeVideoAsync(req, jobId) {
+  console.log(`[${jobId}] Starting background video normalization...`);
+  
+  try {
+    // Update job status to processing
+    const startTime = normalizeJobs.get(jobId) ? normalizeJobs.get(jobId).startTime : Date.now();
+    normalizeJobs.set(jobId, {
+      status: 'processing',
+      progress: 10,
+      message: 'Starting video normalization...',
+      startTime: startTime
+    });
+    
+    console.log(`[${jobId}] Calling processNormalizeVideoInternal...`);
+    
+    // Process the video normalization (reuse existing logic from previous implementation if any)
+    const result = await processNormalizeVideoInternal(req, jobId);
+    
+    console.log(`[${jobId}] Video normalization completed, CID:`, result.cid);
+    
+    // Update job status with success
+    normalizeJobs.set(jobId, {
+      status: 'completed',
+      progress: 100,
+      message: 'Video normalization completed successfully',
+      cid: result.cid,
+      startTime: normalizeJobs.get(jobId).startTime,
+      endTime: Date.now()
+    });
+    
+  } catch (error) {
+    console.error(`[${jobId}] Background normalization failed:`, error);
+    
+    // Update job status with error
+    normalizeJobs.set(jobId, {
+      status: 'failed',
+      progress: 0,
+      message: error.message || 'Video normalization failed',
+      error: error.message,
+      startTime: normalizeJobs.get(jobId).startTime,
+      endTime: Date.now()
+    });
+  }
+}
+
+// Internal video normalization function (normalizes to max 720p MP4, then uploads to IPFS)
+async function processNormalizeVideoInternal(req, jobId) {
+  console.log(`\n[${new Date().toISOString()}] [${jobId}] --- /normalize-video internal processing started ---`);
+  
+  let tempDir = null;
+  let uploadedFile = null;
+  
+  try {
+    // Cleanup old temporary files (will skip any in activeTempDirs)
+    console.log(`[${jobId}] [CLEANUP] Cleaning up old temporary files...`);
+    cleanupOldTempFiles();
+    
+    uploadedFile = req.files.videoFile;
+    console.log(`[${jobId}] [INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+    
+    // Check file size (50MB limit)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (uploadedFile.size > maxSize) {
+      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 50MB for normalization.`);
+    }
+    
+    // Create temporary directory for processing
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'video-normalize-'));
+    activeTempDirs.add(tempDir);
+    console.log(`[${jobId}] [INFO] Created temp directory: ${tempDir}`);
+    
+    const inputPath = uploadedFile.tempFilePath;
+    const outputPath = path.join(tempDir, 'normalized.mp4');
+    
+    // Step 1: Get video information using ffprobe
+    console.log(`[${jobId}] [STEP 1] Analyzing video with ffprobe...`);
+    normalizeJobs.set(jobId, {
+      status: 'processing',
+      progress: 10,
+      message: 'Analyzing video...',
+      startTime: normalizeJobs.get(jobId).startTime
+    });
+    
+    const getVideoInfo = () => {
+      return execAsync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height,duration,bit_rate -of json ${escapeShellArg(inputPath)}`);
+    };
+    
+    const videoInfoOutput = await getVideoInfo();
+    const videoInfo = JSON.parse(videoInfoOutput.stdout);
+    const streamInfo = videoInfo.streams && videoInfo.streams[0];
+    const originalWidth = streamInfo ? streamInfo.width : null;
+    const originalHeight = streamInfo ? streamInfo.height : null;
+    
+    console.log(`[${jobId}] [INFO] Original dimensions: ${originalWidth}x${originalHeight}`);
+    
+    // Step 2: Normalize video (max 720p, MP4 format)
+    console.log(`[${jobId}] [STEP 2] Normalizing video to max 720p MP4...`);
+    normalizeJobs.set(jobId, {
+      status: 'processing',
+      progress: 30,
+      message: 'Normalizing video...',
+      startTime: normalizeJobs.get(jobId).startTime
+    });
+    
+    // Calculate output dimensions (max 720p, preserve aspect ratio)
+    let outputWidth = originalWidth;
+    let outputHeight = originalHeight;
+    const maxHeight = 720;
+    
+    if (originalHeight && originalHeight > maxHeight) {
+      const scale = maxHeight / originalHeight;
+      outputWidth = Math.floor(originalWidth * scale);
+      outputHeight = maxHeight;
+      // Ensure dimensions are even (required for H.264)
+      outputWidth = outputWidth % 2 === 0 ? outputWidth : outputWidth - 1;
+      outputHeight = outputHeight % 2 === 0 ? outputHeight : outputHeight - 1;
+    }
+    
+    console.log(`[${jobId}] [INFO] Output dimensions: ${outputWidth}x${outputHeight}`);
+    
+    // Use hardware encoding if available
+    const encoderConfig = getAvailableHardwareEncoders();
+    const encoderParams = encoderConfig.apple ? getHardwareEncodingParams('h264_videotoolbox', false) : null;
+    
+    let ffmpegCmd;
+    if (encoderConfig.apple && encoderParams) {
+      // Use Apple hardware encoder
+      const hwParams = encoderParams.hardwareParams || '';
+      ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v h264_videotoolbox ${hwParams} -b:v 2500k -c:a aac -b:a 128k -vf "scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y`;
+    } else {
+      // Use software encoder
+      ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k -vf "scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y`;
+    }
+    
+    console.log(`[${jobId}] [INFO] Running FFmpeg command...`);
+    await execAsync(ffmpegCmd);
+    
+    console.log(`[${jobId}] [INFO] Video normalized successfully`);
+    
+    // Step 3: Upload to IPFS
+    console.log(`[${jobId}] [STEP 3] Uploading to IPFS...`);
+    normalizeJobs.set(jobId, {
+      status: 'processing',
+      progress: 70,
+      message: 'Uploading to IPFS...',
+      startTime: normalizeJobs.get(jobId).startTime
+    });
+    
+    const escapedPath = escapeShellArg(outputPath);
+    const cidOutput = await executeLeitherCommand(`ipfs add ${escapedPath}`, jobId, 600000); // 10 minutes timeout
+    
+    // Extract CID from output
+    let cid = null;
+    const trimmedOutput = cidOutput.trim();
+    const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+    if (ipfsAddOkMatch) {
+      cid = ipfsAddOkMatch[1];
+    } else {
+      const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+      if (cidMatch) {
+        cid = cidMatch[1];
+      }
+    }
+    
+    if (!cid) {
+      throw new Error('Failed to extract CID from IPFS add output');
+    }
+    
+    console.log(`[${jobId}] [SUCCESS] Video normalized and uploaded to IPFS, CID: ${cid}`);
+    
+    // Cleanup temp directory
+    if (tempDir && fs.existsSync(tempDir)) {
+      activeTempDirs.delete(tempDir);
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        console.log(`[${jobId}] [CLEANUP] Temp directory removed: ${tempDir}`);
+      } catch (cleanupError) {
+        console.warn(`[${jobId}] [CLEANUP] Failed to remove temp directory: ${cleanupError.message}`);
+      }
+    }
+    
+    return { cid };
+    
+  } catch (error) {
+    console.error(`[${jobId}] [ERROR] Video normalization failed:`, error);
+    
+    // Cleanup on error
+    if (tempDir && fs.existsSync(tempDir)) {
+      activeTempDirs.delete(tempDir);
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+      }
+    }
+    
+    throw error;
+  }
+}
+
+// Status check endpoint
+router.get('/normalize-video/status/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const job = normalizeJobs.get(jobId);
+  
+  if (!job) {
+    return res.status(404).json({
+      success: false,
+      message: 'Job not found'
+    });
+  }
+  
+  res.json({
+    success: true,
+    jobId: jobId,
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    cid: job.cid,
+    startTime: job.startTime,
+    endTime: job.endTime
+  });
+});
 
 // Status check endpoint
 router.get('/convert-video/status/:jobId', (req, res) => {

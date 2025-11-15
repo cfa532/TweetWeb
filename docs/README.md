@@ -11,9 +11,11 @@ Complete documentation for the TweetWeb decentralized social media platform.
 
 ### Core Documentation
 
+- **[Features Overview](FEATURES.md)** - Comprehensive feature documentation
 - **[Architecture Overview](ARCHITECTURE.md)** - System design and architecture
 - **[API Documentation](API.md)** - Complete API reference
-- **[Video Conversion Guide](VIDEO_CONVERSION.md)** - Video processing and encoding details
+- **[Video Conversion Guide](VIDEO_CONVERSION.md)** - HLS conversion for large videos (>50MB)
+- **[Video Normalization Guide](VIDEO_NORMALIZATION.md)** - MP4 normalization for small videos (<50MB)
 
 ### Backend Documentation
 
@@ -69,8 +71,9 @@ open http://localhost:5173
 3. [API Documentation](API.md)
 
 **Working with Video:**
-1. [Video Conversion Guide](VIDEO_CONVERSION.md)
-2. [API Documentation - Video Endpoints](API.md#video-conversion-api)
+1. [Video Normalization Guide](VIDEO_NORMALIZATION.md) - For small videos (<50MB)
+2. [Video Conversion Guide](VIDEO_CONVERSION.md) - For large videos (>50MB)
+3. [API Documentation - Video Endpoints](API.md#video-conversion-api)
 
 **Working with Files:**
 1. [API Documentation - File Upload](API.md#file-upload-api)
@@ -164,6 +167,7 @@ Common issues:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/normalize-video` | POST | Normalize small video (<50MB) to MP4 |
 | `/convert-video` | POST | Upload and convert video to HLS |
 | `/convert-video/status/:jobId` | GET | Check video conversion status |
 | `/process-zip` | POST | Process ZIP containing HLS content |

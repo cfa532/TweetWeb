@@ -388,6 +388,11 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
   
+  // Skip authorization for the video normalization endpoint and status checks
+  if (req.path === '/normalize-video' || req.path.startsWith('/normalize-video/status/')) {
+    return next();
+  }
+  
   // Skip authorization for PATCH requests to existing uploads
   if ((req.method === 'PATCH' || req.method === 'HEAD') && req.path.startsWith('/upload/')) {
     return next();
@@ -501,12 +506,17 @@ app.use((req, res, next) => {
     fileSizeLimit = 4 * 1024 * 1024 * 1024; // 4GB for video conversion
   } else if (req.path === '/process-zip') {
     fileSizeLimit = 500 * 1024 * 1024; // 500MB for zip processing
+  } else if (req.path === '/normalize-video') {
+    fileSizeLimit = 60 * 1024 * 1024; // 60MB for video normalization (<50MB videos)
   }
   
   // Set longer timeout for video and zip uploads
   if (req.path === '/convert-video' || req.path === '/process-zip') {
     req.setTimeout(6 * 60 * 60 * 1000); // 6 hours for processing
     res.setTimeout(6 * 60 * 60 * 1000); // 6 hours for processing
+  } else if (req.path === '/normalize-video') {
+    req.setTimeout(10 * 60 * 1000); // 10 minutes for normalization
+    res.setTimeout(10 * 60 * 1000);
   }
   
   fileUpload({
@@ -519,7 +529,8 @@ app.use((req, res, next) => {
     preserveExtension: true,
     safeFileNames: false,
     // Add response timeout for large files
-    responseTimeout: (req.path === '/convert-video' || req.path === '/process-zip') ? 6 * 60 * 60 * 1000 : 30000
+    responseTimeout: (req.path === '/convert-video' || req.path === '/process-zip') ? 6 * 60 * 60 * 1000 : 
+                     (req.path === '/normalize-video') ? 10 * 60 * 1000 : 30000
   })(req, res, next);
 });
 

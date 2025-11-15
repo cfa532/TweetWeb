@@ -62,6 +62,165 @@ export async function compressImage(file: File): Promise<File> {
 
 
 /**
+ * Normalizes a small video file (<50MB) to MP4 format with max 720p resolution
+ * Uses the same pattern as uploadVideo - single file upload with status polling
+ * @param file The video file to normalize (must be <50MB)
+ * @param baseUrl The base URL (with port) to construct the endpoint URL
+ * @param cloudDrivePort The cloud drive port to use for the endpoint
+ * @param onProgress Optional progress callback function
+ * @returns Promise<string> The CID of the normalized video
+ */
+export async function normalizeVideo(
+  file: File,
+  baseUrl: string,
+  cloudDrivePort: string,
+  onProgress?: (progress: number) => void
+): Promise<string> {
+  // Validate file size (50MB limit)
+  const maxFileSize = 50 * 1024 * 1024; // 50MB
+  if (file.size > maxFileSize) {
+    throw new Error(`File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 50MB for normalization.`);
+  }
+  
+  // Validate baseUrl
+  if (!baseUrl || (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://'))) {
+    throw new Error(`Invalid baseUrl: ${baseUrl}. Must be a valid HTTP/HTTPS URL.`);
+  }
+  
+  // Extract IP from baseUrl and construct new URL with cloudDrivePort
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch (error) {
+    throw new Error(`Failed to parse baseUrl: ${baseUrl}. Error: ${error}`);
+  }
+  
+  const normalizeVideoUrl = `http://${url.hostname}:${cloudDrivePort}/normalize-video`;
+  const statusUrl = `http://${url.hostname}:${cloudDrivePort}/normalize-video/status`;
+  
+  console.log('Normalizing video:', normalizeVideoUrl, 'File size:', file.size);
+  
+  // Create multipart form data (same as uploadVideo)
+  const formData = new FormData();
+  formData.append('videoFile', file);
+  formData.append('filename', file.name);
+  formData.append('filesize', file.size.toString());
+  formData.append('contentType', file.type);
+  
+  if (onProgress) {
+    onProgress(5); // Show initial progress
+  }
+  
+  try {
+    // Step 1: Start the upload and get job ID with progress tracking
+    console.log(`[NORMALIZE] Sending upload request...`);
+    
+    // Use XMLHttpRequest for upload progress tracking (same as uploadVideo)
+    const uploadResult = await new Promise<any>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      // Track upload progress (5-40% of total progress bar)
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          const uploadProgress = Math.floor(5 + ((event.loaded / event.total) * 35)); // 5-40% for upload
+          onProgress(uploadProgress);
+        }
+      });
+      
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const result = JSON.parse(xhr.responseText);
+            resolve(result);
+          } catch (parseError) {
+            reject(new Error('Invalid response format'));
+          }
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+        }
+      });
+      
+      xhr.addEventListener('error', () => {
+        reject(new Error('Network error during upload'));
+      });
+      
+      xhr.addEventListener('timeout', () => {
+        reject(new Error('Upload timeout'));
+      });
+      
+      xhr.open('POST', normalizeVideoUrl);
+      xhr.timeout = 10 * 60 * 1000; // 10 minute timeout
+      xhr.setRequestHeader('Cache-Control', 'no-cache');
+      xhr.send(formData);
+    });
+    
+    const jobId = uploadResult.jobId;
+    if (!jobId) {
+      throw new Error('No jobId returned from server');
+    }
+    
+    console.log(`[NORMALIZE] Upload completed, job ID: ${jobId}`);
+    
+    // Show upload completion progress (40% of total progress bar)
+    if (onProgress) {
+      onProgress(40); // Show 40% for upload completion
+    }
+    
+    // Step 2: Poll for completion
+    return new Promise<string>((resolve, reject) => {
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(`${statusUrl}/${jobId}`);
+          if (!statusResponse.ok) {
+            throw new Error(`Status check failed: ${statusResponse.status}`);
+          }
+          
+          const statusResult = await statusResponse.json();
+          console.log('[NORMALIZE] Job status:', statusResult.status, 'Progress:', statusResult.progress + '%', 'Message:', statusResult.message);
+          
+          // Update progress if callback provided (map job progress to 40-95% range)
+          if (onProgress && statusResult.progress) {
+            const mappedProgress = Math.floor(40 + (statusResult.progress * 0.55)); // Map 0-100% to 40-95%
+            onProgress(mappedProgress);
+          }
+          
+          if (statusResult.status === 'completed') {
+            clearInterval(pollInterval);
+            if (onProgress) {
+              onProgress(95); // Show 95% for processing completion
+            }
+            
+            if (!statusResult.cid) {
+              reject(new Error('No CID returned from completed job'));
+              return;
+            }
+            
+            console.log('Video normalization completed, CID:', statusResult.cid);
+            resolve(statusResult.cid);
+          } else if (statusResult.status === 'failed') {
+            clearInterval(pollInterval);
+            reject(new Error(statusResult.message || 'Video normalization failed'));
+          }
+        } catch (error) {
+          clearInterval(pollInterval);
+          reject(error);
+        }
+      }, 2000); // Poll every 2 seconds
+      
+      // Set a maximum timeout of 10 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        reject(new Error('Video normalization timeout after 10 minutes'));
+      }, 10 * 60 * 1000);
+    });
+    
+  } catch (error: any) {
+    console.error('Video normalization error:', error);
+    throw error;
+  }
+}
+
+/**
  * Uploads a video file to the convert-video endpoint using multipart form data
  * @param file The video file to upload
  * @param baseUrl The base URL (with port) to construct the endpoint URL

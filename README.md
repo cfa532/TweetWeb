@@ -46,11 +46,17 @@ Visit `http://localhost:5173` to access the application.
 
 ## 📚 Documentation
 
-- [Setup & Installation Guide](docs/SETUP.md) - Detailed setup instructions
-- [API Documentation](docs/API.md) - Complete API reference
-- [Video Conversion Guide](docs/VIDEO_CONVERSION.md) - Video processing documentation
-- [Architecture Overview](docs/ARCHITECTURE.md) - System design and architecture
-- [Privacy Policy](docs/PRIVACY.md) - Privacy policy and data handling
+Complete documentation is available in the [docs](docs/) folder:
+
+- **[Features Overview](docs/FEATURES.md)** - Comprehensive feature documentation
+- **[Setup & Installation Guide](docs/SETUP.md)** - Detailed setup instructions
+- **[API Documentation](docs/API.md)** - Complete API reference
+- **[Video Normalization Guide](docs/VIDEO_NORMALIZATION.md)** - Small video processing (<50MB)
+- **[Video Conversion Guide](docs/VIDEO_CONVERSION.md)** - Large video processing (>50MB)
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design and architecture
+- **[Privacy Policy](docs/PRIVACY.md)** - Privacy policy and data handling
+
+See [docs/README.md](docs/README.md) for complete documentation index.
 
 ## 🏗️ Architecture
 
@@ -72,11 +78,14 @@ TweetWeb consists of two main components:
 
 ## 🎥 Video Features
 
-- **Automatic HLS Conversion**: Videos are automatically converted to HLS format
-- **Adaptive Bitrate**: Multi-quality streaming (720p, 480p)
+- **Dual Processing Pipeline**: 
+  - **Normalization** (<50MB): Fast MP4 normalization with automatic resolution scaling
+  - **HLS Conversion** (>50MB): Adaptive bitrate streaming with multiple quality levels
+- **Automatic Selection**: System automatically chooses optimal processing method
+- **Adaptive Bitrate**: Multi-quality streaming (720p, 480p) for large videos
 - **Hardware Acceleration**: Support for NVIDIA, Intel, Apple, and AMD encoders
 - **Smart Encoding**: Intelligent encoder selection based on video properties
-- **Copy Encoder Optimization**: Direct stream copy for compatible videos
+- **Resolution Optimization**: Automatic scaling for high-resolution videos
 
 ## 📦 File Upload Features
 

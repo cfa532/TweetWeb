@@ -28,8 +28,9 @@ Most endpoints do not require authentication. Endpoints that require authorizati
 
 ### Public Endpoints (No Auth Required)
 
-- `/convert-video` - Video conversion
-- `/convert-video/status/:jobId` - Video status
+- `/normalize-video` - Video normalization (for <50MB videos)
+- `/convert-video` - Video conversion (for >50MB videos)
+- `/convert-video/status/:jobId` - Video conversion status
 - `/process-zip` - ZIP processing
 - `/process-zip/status/:jobId` - ZIP status
 - `/extract-tar` - Tar extraction
@@ -50,6 +51,111 @@ Provide authorization via query params, body, or headers:
 // Header
 Authorization: Bearer <username>
 ```
+
+---
+
+## Video Normalization API
+
+Normalize small video files (<50MB) to MP4 format with automatic resolution scaling and IPFS upload.
+
+### POST /normalize-video
+
+Normalize a small video file to MP4 format and upload to IPFS.
+
+#### Request
+
+**Content-Type**: `multipart/form-data`
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `videoFile` | File | Yes | Video file to normalize (must be <50MB) |
+| `filename` | String | No | Original filename |
+| `filesize` | Number | No | File size in bytes |
+| `contentType` | String | No | MIME type of the file |
+
+**Supported Video Formats**:
+- MP4 (.mp4)
+- AVI (.avi)
+- MOV (.mov)
+- MKV (.mkv)
+- WebM (.webm)
+- WMV (.wmv)
+- FLV (.flv)
+- M4V (.m4v)
+- 3GP (.3gp)
+- OGV (.ogv)
+
+**File Size Limit**: 50MB (strict limit)
+
+#### Response
+
+**Success** (200):
+```json
+{
+  "success": true,
+  "cid": "QmXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "originalSize": 45234123,
+  "normalizedSize": 38912345,
+  "originalDimensions": "1920x1080",
+  "normalizedDimensions": "1280x720",
+  "message": "Video normalized and added to IPFS successfully"
+}
+```
+
+**Fields**:
+- `cid`: IPFS Content Identifier (CID) of the normalized video
+- `originalSize`: Original file size in bytes
+- `normalizedSize`: Normalized file size in bytes
+- `originalDimensions`: Original video dimensions (width x height)
+- `normalizedDimensions`: Final normalized dimensions (width x height)
+- `message`: Success message
+
+**Error Responses**:
+
+**File Too Large** (400):
+```json
+{
+  "success": false,
+  "message": "File size 55.23MB exceeds the maximum allowed size of 50MB for normalization."
+}
+```
+
+**No File Uploaded** (400):
+```json
+{
+  "success": false,
+  "message": "No video file uploaded. Please use the 'videoFile' field name."
+}
+```
+
+**Processing Failed** (500):
+```json
+{
+  "success": false,
+  "message": "Video normalization failed: [error details]"
+}
+```
+
+#### Behavior
+
+- **Resolution > 720p**: Automatically scales down to max 720p while preserving aspect ratio
+- **Resolution ≤ 720p**: Keeps original resolution
+- **Format**: Always outputs MP4 with H.264 video and AAC audio
+- **IPFS**: Uploads normalized file directly to IPFS using Leither
+
+#### Example
+
+```bash
+curl -X POST http://localhost:3000/normalize-video \
+  -F "videoFile=@small-video.mp4" \
+  -F "filename=small-video.mp4" \
+  -F "filesize=45234123" \
+  -F "contentType=video/mp4"
+```
+
+For detailed documentation, see [Video Normalization Guide](VIDEO_NORMALIZATION.md).
 
 ---
 
