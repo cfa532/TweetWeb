@@ -650,10 +650,29 @@ export const useTweetStore = defineStore('tweetStore', {
                 aid: this.appId, ver: "last", userid: userId,
             })
             
-            // Check if user is a string (error message) or not a proper User object
+            // Check if user is a string - if it's an IP address, retry with that IP
             if (typeof user === 'string') {
-                console.error("get_user returned string instead of User object:", user)
-                return undefined
+                // Check if the string looks like an IP address (with optional port)
+                // Format: "ip:port" or just "ip" (e.g., "115.196.201.208:8081" or "127.0.0.1:4800")
+                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/
+                if (ipPattern.test(user)) {
+                    console.log(`User not found on node ${providerIp}, redirecting to correct node: ${user}`)
+                    // Retry with the correct provider IP
+                    providerIp = user
+                    providerClient = this.lapi.getClient(providerIp)
+                    user = await providerClient.RunMApp("get_user", {
+                        aid: this.appId, ver: "last", userid: userId,
+                    })
+                    // If it's still a string after retry, it's an error
+                    if (typeof user === 'string') {
+                        console.error("get_user returned string even after retry with correct IP:", user)
+                        return undefined
+                    }
+                } else {
+                    // Not an IP address, it's an error message
+                    console.error("get_user returned error string:", user)
+                    return undefined
+                }
             }
             
             // Ensure user has required properties for a User object
