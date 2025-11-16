@@ -127,11 +127,11 @@ const downloadText = computed(() => {
     const language = navigator.language || 'en'
     
     if (language.startsWith('zh')) {
-        return '使用我们的APP获得最佳体验'
+        return '下载APP获得最佳体验'
     } else if (language.startsWith('ja')) {
         return 'ネイティブアプリで最高の体験を'
     } else {
-        return 'Get the best experience with our native app'
+        return '下载APP获得最佳体验'
     }
 })
 
