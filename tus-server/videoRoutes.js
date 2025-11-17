@@ -678,8 +678,8 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
   const originalBitrate480 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate480, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate480;
   
-  const bitrate720 = originalBitrate720; // Use original bitrate if lower, otherwise use capped value
-  const bitrate480 = originalBitrate480; // Use original bitrate if lower, otherwise use capped value
+  const bitrate720 = 3000;  // Set to 3000k as requested
+  const bitrate480 = 2000;  // Keep as is
   
   // Calculate optimal segment durations for each quality
   const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);
@@ -724,8 +724,8 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
 
   commands.push(cmd720p, cmd480p);
   
-  const bandwidth720 = 2000000; // Match Swift: 2000000
-  const bandwidth480 = 1000000; // Match Swift: 1000000
+  const bandwidth720 = 3000000;  // Matches 3000k
+  const bandwidth480 = 2000000;  // Keep as is
   
   const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
