@@ -1030,8 +1030,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 const uploadPromise = (async () => {
                     if (tweetId) {
                         console.log('[TWEET-STORE] Calling add_comment API...');
+                        // Fetch parent tweet to get its author's hostId
+                        const parentTweet = await this.getTweet(tweetId);
+                        if (!parentTweet || !parentTweet.author?.hostId) {
+                            throw new Error('Failed to fetch parent tweet or parent tweet author hostId');
+                        }
+                        const parentAuthorHostId = parentTweet.author.hostId;
+                        console.log('[TWEET-STORE] Using parent tweet author hostId:', parentAuthorHostId);
                         return await this.loginUser?.client.RunMApp("add_comment",
-                            {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: this.loginUser?.hostId}
+                            {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: parentAuthorHostId}
                         )
                     } else {
                         console.log('[TWEET-STORE] Calling add_tweet API...');
