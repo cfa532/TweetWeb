@@ -1,8 +1,8 @@
 <script setup lang='ts'>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { Loading, Preview, ItemHeader, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
 import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
@@ -23,7 +23,9 @@ interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
 const emit = defineEmits(['uploaded', 'hide'])
-const tweetId = useRoute().params.tweetId
+const route = useRoute()
+const router = useRouter()
+const tweetId = computed(() => route.params.tweetId as MimeiId | undefined)
 const tweetTitle = ref()
 const txtConent = ref()
 const divAttach = ref()
@@ -341,8 +343,9 @@ async function onSubmit() {
       size: f.size
     })));
     
-    console.log('[TWEET-SUBMIT] Calling tweetStore.uploadTweet...');
-    const result = await tweetStore.uploadTweet(tweet, tweetId as MimeiId)
+    const targetTweetId = tweetId.value as MimeiId
+    console.log('[TWEET-SUBMIT] Calling tweetStore.uploadTweet...', { targetTweetId });
+    const result = await tweetStore.uploadTweet(tweet, targetTweetId)
     
     // Check if tweet upload was successful
     console.log('[TWEET-SUBMIT] Tweet upload result:', result);
@@ -357,9 +360,44 @@ async function onSubmit() {
       mmFiles.value = []
       noResample.value = false
       
-      // Emit success event and hide modal
-      emit('uploaded', result)
-      emit('hide')
+      // If this was a comment (tweetId exists), navigate back to parent tweet's detail view
+      if (targetTweetId) {
+        try {
+          const parentTweet = await tweetStore.getTweet(targetTweetId)
+          if (parentTweet && parentTweet.author) {
+            console.log('[TWEET-SUBMIT] Navigating back to parent tweet:', targetTweetId, parentTweet.author.mid)
+            router.push({ 
+              name: 'TweetDetail', 
+              params: { 
+                tweetId: targetTweetId, 
+                authorId: parentTweet.author.mid 
+              } 
+            })
+          } else {
+            // Fallback: navigate to parent tweet without authorId
+            console.log('[TWEET-SUBMIT] Parent tweet not found, navigating without authorId')
+            router.push({ 
+              name: 'TweetDetail', 
+              params: { 
+                tweetId: targetTweetId 
+              } 
+            })
+          }
+        } catch (error) {
+          console.error('[TWEET-SUBMIT] Error fetching parent tweet for navigation:', error)
+          // Fallback: navigate to parent tweet without authorId
+          router.push({ 
+            name: 'TweetDetail', 
+            params: { 
+              tweetId: targetTweetId 
+            } 
+          })
+        }
+      } else {
+        // This was a new tweet, emit success event
+        emit('uploaded', result)
+        emit('hide')
+      }
     } else {
       console.log('[TWEET-SUBMIT] Tweet upload failed: No response from server');
       throw new Error("Tweet upload failed: No response from server")
