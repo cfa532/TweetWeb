@@ -1,16 +1,18 @@
 <script setup lang='ts'>
 import { onMounted, ref, computed } from 'vue';
 import type { PropType } from 'vue'
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { MediaView, ItemHeader } from '@/views';
 import { useTweetStore } from '@/stores';
 
 const tweetStore = useTweetStore()
 const router = useRouter()
+const route = useRoute()
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
-  isQuoted: { type: Boolean, required: false, default: false }
+  isQuoted: { type: Boolean, required: false, default: false },
+  isComment: { type: Boolean, required: false, default: false }
 });
 
 const originalTweet = ref<Tweet | null>();
@@ -44,8 +46,16 @@ const displayedTweet = computed(() => {
 });
 
 function openDetailView() {
-  sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
-  router.push(`/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`);
+    sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
+    const basePath = `/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`;
+    if (props.isComment) {
+        // Get parent tweet ID from the route if available
+        const parentTweetId = route.params.tweetId as string;
+        const parentAuthorId = route.params.authorId as string;
+        router.push(`${basePath}?fromComment=true&parentTweetId=${parentTweetId}&parentAuthorId=${parentAuthorId}`);
+    } else {
+        router.push(basePath);
+    }
 }
 
 function linkify(text: string) {
@@ -88,8 +98,8 @@ const attachmentGridRows = computed(() => {
 </script>
 
 <template>
-  <div @click.prevent='openDetailView' class='card ms-1 tweet-container'>
-    <div class='card-header d-flex align-items-start'>
+  <div class='card ms-1 tweet-container'>
+    <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
         :author='originalTweet?.author'

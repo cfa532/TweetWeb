@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, ItemHeader, TweetView, QRCoder } from "@/views";
@@ -425,6 +425,12 @@ watch(tweetId, async (newValue, oldValue)=>{
     }
 });
 
+watch(route, () => {
+    nextTick(() => {
+        window.scrollTo(0, 0);
+    });
+});
+
 function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
@@ -493,11 +499,26 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
     const firstVideo = mediaList.find(item => isVideoMedia(item))
     return !!firstVideo && firstVideo.mid === media.mid
 }
+
+const isFromComment = computed(() => !!route.query.fromComment);
+const parentTweetId = computed(() => route.query.parentTweetId as string | undefined);
+const parentAuthorId = computed(() => route.query.parentAuthorId as string | undefined);
+
+function goBack() {
+    if (parentTweetId.value && parentAuthorId.value) {
+        router.push(`/tweet/${parentTweetId.value}/${parentAuthorId.value}`);
+    } else {
+        router.back();
+    }
+}
 </script>
 
 <template>
 <div class="row justify-content-start align-items-start">
 <div class="col-sm-12 col-md-10 col-lg-8" style="background-color:aliceblue;">
+    <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
+        ← Back to Tweet
+    </div>
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
             <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
@@ -574,11 +595,11 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
     <!-- Show comments of the original tweet if it is a retweet -->
     <div v-if="tweet">
         <div v-if="isRetweet">
-            <TweetView v-for="(comment, index) in originTweet.comments" :key="index" :tweet="comment" class="comment card mb-1 mt-3" />
+            <TweetView v-for="(comment, index) in originTweet.comments" :key="index" :tweet="comment" :is-comment="true" class="comment card mb-1 mt-3" />
         </div>
         <!-- Show comments of the tweet -->
         <div v-else>
-            <TweetView v-for="(comment, index) in tweet.comments" :key="index" :tweet="comment" class="comment card mb-1 mt-3" />
+            <TweetView v-for="(comment, index) in tweet.comments" :key="index" :tweet="comment" :is-comment="true" class="comment card mb-1 mt-3" />
         </div>
     </div>
 
@@ -919,5 +940,17 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
         transform: rotateX(0deg);
         opacity: 1;
     }
+}
+
+.back-button {
+    padding: 8px 16px;
+    cursor: pointer;
+    display: inline-block;
+    font-weight: 500;
+    color: #333;
+}
+
+.back-button:hover {
+    opacity: 0.7;
 }
 </style>
