@@ -994,48 +994,47 @@ async function processVideoUpload(req, res) {
       await executeWithProgress(ffmpegCommand, requestId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
     } else if (useSingleQuality) {
-      // For large files (>256MB), use single quality 720p conversion to save memory
-      console.log(`[${requestId}] [INFO] Large file detected (${fileSizeMB.toFixed(2)}MB), using single-quality 720p conversion`);
-      
+      // For large files (>256MB), use multi-quality 720p + 360p conversion
+      console.log(`[${requestId}] [INFO] Large file detected (${fileSizeMB.toFixed(2)}MB), using multi-quality 720p + 360p conversion`);
+
       const availableEncoders = await detectHardwareEncoders();
       const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
-      console.log(`[${requestId}] [HARDWARE] Using encoder: ${encoderConfig.encoder} (hardware: ${encoderConfig.hardware})`);
-      
-      // Calculate aspect-ratio-preserving dimensions for 720p
+
+      fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
+      fs.mkdirSync(path.join(tempDir, '360p'), { recursive: true });
+
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
-      console.log(`[${requestId}] [INFO] Original dimensions: ${videoInfo.width}x${videoInfo.height}, Target dimensions: ${dim720.width}x${dim720.height}`);
-      
-      // Calculate optimal bitrate based on original video bitrate
-      // Cap at 3Mbps for better streaming performance
-      const maxStreamingBitrate = 3000;
-      const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate;
-      console.log(`[${requestId}] [BITRATE] Using 720p bitrate: ${originalBitrate720}k (original: ${videoInfo && videoInfo.bitrate ? (videoInfo.bitrate / 1000).toFixed(0) + 'k' : 'unknown'})`);
-      
-      // Get hardware-specific parameters
+      const dim360 = calculateSingleQualityDimensions(videoInfo, 360);
+
+      const maxStreamingBitrate720 = 3000;
+      const maxStreamingBitrate360 = 1000;
+
+      const bitrate720 = Math.min(maxStreamingBitrate720, videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : maxStreamingBitrate720);
+      const bitrate360 = Math.min(maxStreamingBitrate360, videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000 / 3) : maxStreamingBitrate360);
+
+      const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);
+      const segmentDuration360 = calculateOptimalSegmentDuration(videoInfo, bitrate360);
+
       const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
-      
-      console.log(`[${requestId}] [ENCODER-INFO] Using encoder: ${encoderConfig.encoder}, Hardware: ${encoderConfig.hardware}, HW Params: "${hwParams}", SW Params: "${softwareParams}"`);
-      
-      let singleQualityCommand;
-      if (encoderConfig.useCopy) {
-        // Use COPY encoder with HLS compatibility parameters
-        console.log(`[${requestId}] [HLS-CONVERSION] Using COPY encoder for single quality conversion with HLS compatibility parameters`);
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
-      } else {
-        // Use normal encoding with scaling and HLS compatibility parameters
-        // Ensure softwareParams is properly formatted with spaces
-        const formattedSoftwareParams = softwareParams ? ` ${softwareParams}` : '';
-        singleQualityCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
-      }
-      
-      console.log(`[${requestId}] [FFMPEG] Starting single-quality conversion for large file: ${singleQualityCommand}`);
-      
-      // Create fallback command for COPY preset failures
-      const fallbackCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v libx264 -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${originalBitrate720}k -b:a 128k -preset fast -tune zerolatency -threads 2 -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
-      
-      await executeWithProgressWithFallback(singleQualityCommand, fallbackCommand, requestId, 0, 50, 'Converting large video to 720p HLS...', encoderConfig.useCopy, uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
-      console.log(`[${requestId}] [SUCCESS] Single-quality HLS conversion completed`);
+
+      const cmd720p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+
+      const cmd360p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim360.width}:${dim360.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate360}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration360} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '360p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '360p/playlist.m3u8'))}`;
+
+      await Promise.all([
+        executeWithProgress(cmd720p, requestId, 0, 25, 'Converting large video to 720p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0),
+        executeWithProgress(cmd360p, requestId, 25, 50, 'Converting large video to 360p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0)
+      ]);
+
+      const bandwidth720 = bitrate720 * 1000 + 128000;
+      const bandwidth360 = bitrate360 * 1000 + 128000;
+
+      const masterPlaylist = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth720},RESOLUTION=${dim720.width}x${dim720.height}\n720p/playlist.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth360},RESOLUTION=${dim360.width}x${dim360.height}\n360p/playlist.m3u8`;
+
+      fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+
+      console.log(`[${requestId}] [SUCCESS] Multi-quality (720p + 360p) HLS conversion completed for large file`);
     } else {
       // For smaller files, use multi-quality conversion
       const availableEncoders = await detectHardwareEncoders();
