@@ -573,63 +573,12 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
 
     <!-- Show comments of the original tweet if it is a retweet -->
     <div v-if="tweet">
-        <div v-if="isRetweet" v-for="(comment, index) in originTweet.comments" :key="index" class="comment card mb-1 mt-3">
-            <div class="card-header d-flex align-items-center">
-                <ItemHeader :author="comment.author" :tweet="comment" :timestamp="comment.timestamp"></ItemHeader>
-            </div>
-            <div class="card-body">
-
-                <p class="card-text">{{ comment.content }}</p>
-
-                <div v-if="comment.attachments?.length" class="media-attachments">
-                    <MediaView v-for="(media, index) in comment.attachments" :key="index" v-bind=media
-                        v-bind:tweet="tweet" :autoplay="index==0" class="img-fluid"></MediaView>
-                </div>
-
-                <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
-                    <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                        <span class='icon-number'>{{ comment.likeCount > 0 ? comment.likeCount : null }}</span>
-                    </div>
-                    <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                        <span class='icon-number'>{{ comment.bookmarkCount > 0 ? comment.bookmarkCount : null }}</span>
-                    </div>
-                    <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_notice.png' alt='Comment' class='icon' />
-                        <span class='icon-number'>{{ comment.commentCount > 0 ? comment.commentCount : null }}</span>
-                    </div>
-                </div>
-            </div>
+        <div v-if="isRetweet">
+            <TweetView v-for="(comment, index) in originTweet.comments" :key="index" :tweet="comment" class="comment card mb-1 mt-3" />
         </div>
         <!-- Show comments of the tweet -->
-        <div v-else v-for="(comment, index1) in tweet.comments" :key="index1" class="comment card mb-1 mt-3">
-            <div class="card-header d-flex align-items-center">
-                <ItemHeader :author="comment.author" :tweet="comment" :timestamp="comment.timestamp"></ItemHeader>
-            </div>
-            <div class="card-body">
-                <p class="card-text">{{ comment.content }}</p>
-                <div v-if="comment.attachments?.length" class="media-attachments">
-                    <MediaView v-for="(media, index) in comment.attachments" :key="index" :media=media
-                        v-bind:tweet="tweet" :autoplay="index==0" class="img-fluid mb-2"></MediaView>
-                </div>
-
-                <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
-                    <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                        <span class='icon-number'>{{ comment.likeCount > 0 ? comment.likeCount : null }}</span>
-                    </div>
-                    <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                        <span class='icon-number'>{{ comment.bookmarkCount > 0 ? comment.bookmarkCount : null }}</span>
-                    </div>
-                    <div class='icon-item d-flex align-items-center'>
-                        <img src='/src/ic_notice.png' alt='Forward' class='icon' />
-                        <span class='icon-number'>{{ comment.commentCount > 0 ? comment.commentCount : null }}</span>
-                    </div>
-                </div>
-
-            </div>
+        <div v-else>
+            <TweetView v-for="(comment, index) in tweet.comments" :key="index" :tweet="comment" class="comment card mb-1 mt-3" />
         </div>
     </div>
 
