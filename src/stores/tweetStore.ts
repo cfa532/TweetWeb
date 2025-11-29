@@ -983,6 +983,54 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             }
         },
+
+        /**
+         * Deletes a comment from a tweet
+         * Can be called by either the comment author or the parent tweet author
+         * Uses the parent tweet author's client since comments are stored on the same node as the tweet
+         * @param commentId The ID of the comment to delete
+         * @param commentAuthorId The ID of the comment author
+         * @param parentTweetId The ID of the parent tweet
+         * @param parentAuthorId The ID of the parent tweet author
+         */
+        async deleteComment(commentId: MimeiId, commentAuthorId: MimeiId, parentTweetId: MimeiId, parentAuthorId: MimeiId) {
+            // Verify authorization: can be called by comment author or parent tweet author
+            if (!this.loginUser || (this.loginUser.mid !== commentAuthorId && this.loginUser.mid !== parentAuthorId)) {
+                console.error("Unauthorized: Only comment author or parent tweet author can delete comments")
+                return
+            }
+
+            // Remove comment from local cache
+            const parentTweet = this.tweets.find(t => t.mid === parentTweetId)
+            if (parentTweet && parentTweet.comments) {
+                const commentIndex = parentTweet.comments.findIndex(c => c.mid === commentId)
+                if (commentIndex !== -1) {
+                    parentTweet.comments.splice(commentIndex, 1)
+                }
+            }
+
+            // Get parent tweet author's client (comments are stored on the same node as the tweet)
+            let parentAuthor = await this.getUser(parentAuthorId)
+            if (!parentAuthor || !parentAuthor.client) {
+                console.error("Failed to get parent tweet author's client for deleting comment")
+                return
+            }
+            
+            if (!parentAuthor.hostId) {
+                console.error("Parent tweet author's hostId is missing")
+                return
+            }
+
+            // Call delete_comment API with proper parameters matching server expectations
+            await parentAuthor.client.RunMApp("delete_comment", {
+                aid: this.appId,
+                ver: "last",
+                appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
+                tweetid: parentTweetId,         // ID of tweet containing the comment
+                commentid: commentId,            // ID of comment to delete
+                hostid: parentAuthor.hostId      // Node ID where the tweet is hosted
+            })
+        },
         
         /**
          * Open a temp file on target host

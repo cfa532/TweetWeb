@@ -595,11 +595,11 @@ function goBack() {
     <!-- Show comments of the original tweet if it is a retweet -->
     <div v-if="tweet">
         <div v-if="isRetweet">
-            <TweetView v-for="(comment, index) in originTweet.comments" :key="index" :tweet="comment" :is-comment="true" class="comment card mb-1 mt-3" />
+            <TweetView v-for="(comment, index) in originTweet.comments" :key="index" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
         </div>
         <!-- Show comments of the tweet -->
         <div v-else>
-            <TweetView v-for="(comment, index) in tweet.comments" :key="index" :tweet="comment" :is-comment="true" class="comment card mb-1 mt-3" />
+            <TweetView v-for="(comment, index) in tweet.comments" :key="index" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
         </div>
     </div>
 

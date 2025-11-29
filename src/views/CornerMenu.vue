@@ -8,14 +8,26 @@ const tweetStore = useTweetStore()
 const shareMenu = ref()
 const btnDelete = ref()
 const props = defineProps({ 
-    tweet: {type: Object as PropType<Tweet>, required: false}
+    tweet: {type: Object as PropType<Tweet>, required: false},
+    parentTweet: {type: Object as PropType<Tweet>, required: false},
+    isComment: {type: Boolean, required: false, default: false}
 })
 
 function showMenu() {
     shareMenu.value.hidden = false
-    if (tweetStore.loginUser && tweetStore.loginUser.mid==props.tweet?.authorId) {
-        btnDelete.value.hidden = false
+    
+    // Show delete button if:
+    // 1. User is the tweet/comment author, OR
+    // 2. It's a comment and user is the parent tweet author
+    if (tweetStore.loginUser && props.tweet) {
+        const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
+        const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
+        
+        if (isTweetAuthor || isParentTweetAuthor) {
+            btnDelete.value.hidden = false
+        }
     }
+    
     // toggle right menu on and off
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
@@ -42,9 +54,24 @@ function copyLink() {
     shareMenu.value.hidden = true
 }
 
-function deleteTweet() {
-  if (props.tweet) {
-    tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
+function deleteItem() {
+  if (!props.tweet || !tweetStore.loginUser) return
+  
+  if (props.isComment && props.parentTweet) {
+    // Delete comment - requires comment author OR parent tweet author
+    if (tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
+      tweetStore.deleteComment(
+        props.tweet.mid,
+        props.tweet.authorId,
+        props.parentTweet.mid,
+        props.parentTweet.authorId
+      )
+    }
+  } else {
+    // Delete regular tweet - requires tweet author
+    if (tweetStore.loginUser.mid === props.tweet.authorId) {
+      tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
+    }
   }
 }
 </script>
@@ -58,7 +85,7 @@ function deleteTweet() {
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ props.tweet?.mid }}
             </span>
         </div>
-        <div ref="btnDelete" class="item clickable-item" @click.stop="deleteTweet" hidden style="cursor: pointer;">
+        <div ref="btnDelete" class="item clickable-item" @click.stop="deleteItem" hidden style="cursor: pointer;">
             <span style="text-decoration: none;">Delete</span>
         </div>
     </div>

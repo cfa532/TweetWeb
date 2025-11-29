@@ -11,7 +11,9 @@ const props = defineProps({
     timestamp: {type: Number, required: false },
     isRetweet: {type: Boolean, required: false, default: false},
     by: {type: String, required: false},
-    tweet: {type: Object as PropType<Tweet>, required: false}
+    tweet: {type: Object as PropType<Tweet>, required: false},
+    parentTweet: {type: Object as PropType<Tweet>, required: false},
+    isComment: {type: Boolean, required: false, default: false}
 })
 const router = useRouter()
 const tweetStore = useTweetStore()
@@ -61,7 +63,7 @@ function openDetailView() {
     </div>
   </div>
   <div class='corner-menu-container'>
-    <CornerMenu :tweet="tweet" />
+    <CornerMenu :tweet="tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
   </div>
 </template>
 

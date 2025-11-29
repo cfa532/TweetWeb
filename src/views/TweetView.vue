@@ -12,7 +12,8 @@ const route = useRoute()
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
   isQuoted: { type: Boolean, required: false, default: false },
-  isComment: { type: Boolean, required: false, default: false }
+  isComment: { type: Boolean, required: false, default: false },
+  parentTweet: { type: Object as PropType<Tweet>, required: false }
 });
 
 const originalTweet = ref<Tweet | null>();
@@ -106,6 +107,8 @@ const attachmentGridRows = computed(() => {
         :timestamp='displayedTweet.timestamp as number'
         :is-retweet='isRetweet'
         :by='retweetedBy'
+        :parent-tweet='parentTweet'
+        :is-comment='isComment'
         v-if='isRetweet && originalTweet'
       />
       <ItemHeader
@@ -113,6 +116,8 @@ const attachmentGridRows = computed(() => {
         :tweet='displayedTweet'
         :author='displayedTweet.author'
         :timestamp='displayedTweet.timestamp as number'
+        :parent-tweet='parentTweet'
+        :is-comment='isComment'
       />
     </div>
     <div class='card-body' :id="props.tweet.mid">
