@@ -675,11 +675,9 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const maxStreamingBitrate720 = 3000; // Cap at 3Mbps for better streaming
   const maxStreamingBitrate480 = 1500; // Cap at 1.5Mbps for better streaming
   
-  const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
-  const originalBitrate480 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate480, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate480;
-  
-  const bitrate720 = 3000;  // Set to 3000k as requested
-  const bitrate480 = 2000;  // Keep as is
+  // Adaptive bitrate: use original if lower, otherwise cap at max
+  const bitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
+  const bitrate480 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate480, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate480;
   
   // Calculate optimal segment durations for each quality
   const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);
@@ -724,8 +722,9 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
 
   commands.push(cmd720p, cmd480p);
   
-  const bandwidth720 = 3000000;  // Matches 3000k
-  const bandwidth480 = 2000000;  // Keep as is
+  // Calculate bandwidth including audio (128k for AAC)
+  const bandwidth720 = bitrate720 * 1000 + 128000;  // Video bitrate + audio bitrate
+  const bandwidth480 = bitrate480 * 1000 + 128000;  // Video bitrate + audio bitrate
   
   const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
@@ -1419,11 +1418,11 @@ async function processVideoUploadInternal(req, jobId) {
       const dim720 = calculateSingleQualityDimensions(videoInfo, 720);
       const dim360 = calculateSingleQualityDimensions(videoInfo, 360);
 
-      // Bitrates
+      // Bitrates - adaptive: use original if lower, otherwise cap at max
       const maxStreamingBitrate720 = 3000;
       const maxStreamingBitrate360 = 1000;
-      const bitrate720 = Math.min(maxStreamingBitrate720, videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : maxStreamingBitrate720);
-      const bitrate360 = Math.min(maxStreamingBitrate360, videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000 / 3) : maxStreamingBitrate360);
+      const bitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
+      const bitrate360 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate360, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate360;
 
       // Segment durations
       const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);

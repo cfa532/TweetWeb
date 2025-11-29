@@ -249,8 +249,9 @@ Full algorithm: [VIDEO_CONVERSION.md#conversion-algorithm](VIDEO_CONVERSION.md#c
 
 | Quality | Resolution | Bitrate | Use Case |
 |---------|------------|---------|----------|
-| 720p | 1280x720 | 2000k | High quality, desktop |
-| 480p | 854x480 | 1000k | Lower bandwidth, mobile |
+| 720p | 1280x720 | Adaptive (capped at 3000k) | High quality, desktop |
+| 480p | 854x480 | Adaptive (capped at 1500k) | Lower bandwidth, mobile |
+| 360p | Scaled | Adaptive (capped at 1000k) | Low bandwidth, mobile |
 
 Full quality details: [VIDEO_CONVERSION.md#quality-profiles](VIDEO_CONVERSION.md#quality-profiles)
 

@@ -80,7 +80,8 @@ The server uses an intelligent encoder selection algorithm with the following de
    - Single HLS playlist
 
 2. **Large Files (>256MB)**:
-   - Single quality conversion (720p)
+   - Multi-quality conversion (720p + 360p)
+   - Master playlist with adaptive bitrate streaming
    - Encoder selection based on video properties
 
 3. **Regular Files (≤256MB)**:
@@ -113,13 +114,22 @@ The server uses an intelligent encoder selection algorithm with the following de
 
 #### Quality Profiles
 
+All quality levels use **adaptive bitrate** encoding:
+- Preserves original video bitrate if it's lower than the cap
+- Caps at maximum values to prevent excessive bandwidth usage
+
 **720p Stream**:
-- Bitrate: 2000k
+- Bitrate: Adaptive (capped at 3000k, uses original if lower)
 - Audio: AAC 128k
 - Scaling: Lanczos algorithm with aspect ratio preservation
 
 **480p Stream**:
-- Bitrate: 1000k
+- Bitrate: Adaptive (capped at 1500k, uses original if lower)
+- Audio: AAC 128k
+- Scaling: Lanczos algorithm with aspect ratio preservation
+
+**360p Stream**:
+- Bitrate: Adaptive (capped at 1000k, uses original if lower)
 - Audio: AAC 128k
 - Scaling: Lanczos algorithm with aspect ratio preservation
 

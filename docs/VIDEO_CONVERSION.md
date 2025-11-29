@@ -60,12 +60,12 @@ The system uses a three-tier decision tree for optimal conversion:
    └─ NO: Continue to step 2
 
 2. Check file size
-   ├─ >256MB: Single quality conversion (720p)
+   ├─ >256MB: Multi-quality conversion (720p + 360p)
    └─ ≤256MB: Multi-quality conversion (720p + 480p)
 
 3. Encoder selection
    ├─ Copy encoder eligible? (see conditions below)
-   │  ├─ YES & Single quality: Use copy encoder
+   │  ├─ YES & noResample mode: Use copy encoder
    │  └─ NO or Multi-quality: Use hardware/software encoder
    └─ Hardware acceleration available?
       ├─ YES: Use hardware encoder (NVIDIA/Intel/Apple/AMD)
@@ -96,29 +96,75 @@ When `noResample=true`:
 
 ### 2. Large Files (>256MB)
 
-Single quality 720p conversion:
+Multi-quality conversion with master playlist:
 
-**Rationale**: Large files take longer to process and consume more memory. Single quality conversion:
-- Reduces processing time (50% faster)
-- Uses less memory (50% reduction)
-- Maintains good quality
-- Faster IPFS upload
+**Qualities**:
+- 720p (adaptive bitrate, capped at 3000 kbps)
+- 360p (adaptive bitrate, capped at 1000 kbps)
 
-**Quality**: 720p at 2000 kbps
+**Rationale**: Large files benefit from adaptive streaming with multiple quality options while maintaining reasonable processing time.
+
+**Benefits**:
+- Adaptive bitrate streaming
+- Better user experience across different network conditions
+- Bandwidth optimization
+- Quality selection for users
 
 ### 3. Regular Files (≤256MB)
 
 Multi-quality conversion with master playlist:
 
 **Qualities**:
-- 720p at 2000 kbps
-- 480p at 1000 kbps
+- 720p (adaptive bitrate, capped at 3000 kbps)
+- 480p (adaptive bitrate, capped at 1500 kbps)
 
 **Benefits**:
 - Adaptive bitrate streaming
 - Better user experience
 - Bandwidth optimization
 - Quality selection for users
+
+## Adaptive Bitrate Encoding
+
+All quality levels (720p, 480p, 360p) use **adaptive bitrate encoding** that intelligently balances quality preservation and bandwidth efficiency.
+
+### How It Works
+
+1. **Detects Original Bitrate**: Uses `ffprobe` to detect the original video's bitrate
+2. **Compares to Cap**: Checks if original bitrate is lower than the quality cap
+3. **Applies Logic**: Uses `min(original_bitrate, quality_cap)`
+
+### Bitrate Caps
+
+| Quality | Maximum Cap | Adaptive Behavior |
+|---------|-------------|-------------------|
+| 720p | 3000 kbps | Uses original if ≤ 3000k, otherwise caps at 3000k |
+| 480p | 1500 kbps | Uses original if ≤ 1500k, otherwise caps at 1500k |
+| 360p | 1000 kbps | Uses original if ≤ 1000k, otherwise caps at 1000k |
+
+### Benefits
+
+- **Preserves Quality**: Low-quality source videos maintain their original bitrate
+- **Prevents Waste**: High-quality videos are capped to reasonable streaming limits
+- **Bandwidth Efficient**: Avoids unnecessary data transfer for low-quality sources
+- **Consistent Experience**: All videos get appropriate bitrate for their source quality
+
+### Examples
+
+**Example 1: Low-Quality Source**
+- Original video: 800 kbps
+- 720p output: 800 kbps (preserved, not increased to 3000k)
+- 480p output: 800 kbps (preserved, not increased to 1500k)
+
+**Example 2: High-Quality Source**
+- Original video: 5000 kbps
+- 720p output: 3000 kbps (capped for streaming)
+- 480p output: 1500 kbps (capped for streaming)
+
+**Example 3: Medium-Quality Source**
+- Original video: 2500 kbps
+- 720p output: 2500 kbps (preserved, below 3000k cap)
+- 480p output: 1500 kbps (capped, original exceeds cap)
 
 ## Encoder Selection
 
@@ -292,9 +338,9 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
 
 **Video**:
 - Resolution: 1280x720 (landscape) or scaled proportionally
-- Bitrate: 2000 kbps
-- Max Bitrate: 2000 kbps
-- Buffer Size: 2000 kbps
+- Bitrate: Adaptive (uses original if lower, capped at 3000 kbps)
+- Max Bitrate: 3000 kbps
+- Encoding: Preserves original quality when source bitrate is lower
 - GOP Size: 30 frames
 - Keyframe Interval: 30 frames
 
@@ -312,9 +358,23 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
 
 **Video**:
 - Resolution: 854x480 (landscape) or scaled proportionally
-- Bitrate: 1000 kbps
+- Bitrate: Adaptive (uses original if lower, capped at 1500 kbps)
+- Max Bitrate: 1500 kbps
+- Encoding: Preserves original quality when source bitrate is lower
+- GOP Size: 30 frames
+- Keyframe Interval: 30 frames
+
+**Audio**:
+- Codec: AAC
+- Bitrate: 128 kbps
+
+### 360p Stream
+
+**Video**:
+- Resolution: Scaled proportionally to max 360p height/width
+- Bitrate: Adaptive (uses original if lower, capped at 1000 kbps)
 - Max Bitrate: 1000 kbps
-- Buffer Size: 1000 kbps
+- Encoding: Preserves original quality when source bitrate is lower
 - GOP Size: 30 frames
 - Keyframe Interval: 30 frames
 

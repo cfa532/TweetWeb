@@ -97,55 +97,9 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         let isHLSConverted = false; // Track if video was converted to HLS
         
         if (file.size <= SMALL_VIDEO_THRESHOLD_BYTES) {
-          // For small videos (<50MB), use normalize-video endpoint
-          // Check if cloudDrivePort is available
-          if (author.cloudDrivePort === null || author.cloudDrivePort === undefined || author.cloudDrivePort === 0) {
-            useIPFSFallback = true;
-            fallbackReason = 'cloudDrivePort is not available';
-            console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
-            shouldWarnFallback = true;
-          } else {
-            const cloudDrivePort = author.cloudDrivePort.toString();
-            let ipAddress = author.providerIp || '';
-            if (ipAddress.includes(':')) {
-              ipAddress = ipAddress.split(':')[0];
-            }
-            const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
-            
-            // Check service availability before attempting normalization
-            const serviceAvailable = await checkServiceAvailability(baseUrl);
-            
-            if (!serviceAvailable) {
-              useIPFSFallback = true;
-              fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
-              console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
-              shouldWarnFallback = true;
-            } else {
-              // Try to normalize video directly - if it fails, fall back to IPFS
-              try {
-                console.log(`Normalizing video for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-                cid = await normalizeVideo(
-                file,
-                baseUrl,
-                cloudDrivePort,
-                (progress) => {
-                  uploadProgress[i] = progress;
-                  console.log(`Normalization progress for ${file.name}: ${uploadProgress[i]}%`);
-                }
-              );
-              if (!cid || cid.trim() === '') {
-                throw new Error('Video normalization failed: No CID returned from server');
-              }
-              uploadProgress[i] = 100; // Complete
-              isHLSConverted = false; // Video was normalized, not converted to HLS
-            } catch (normalizeError) {
-              console.error(`Video normalization failed: ${normalizeError}, falling back to IPFS`);
-              useIPFSFallback = true;
-              fallbackReason = `Normalization failed: ${normalizeError instanceof Error ? normalizeError.message : String(normalizeError)}`;
-              shouldWarnFallback = true;
-            }
-            }
-          }
+          // For small videos (<50MB), use direct IPFS upload route
+          useIPFSFallback = true;
+          fallbackReason = null; // No warning needed, this is the intended route
         } else {
           // Check 1: Is cloudDrivePort null, undefined, or 0?
           // Note: 0 explicitly means "no service available"
@@ -214,10 +168,14 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
           }
         }
         
-        // Use IPFS fallback if needed
+        // Use IPFS upload if needed (for small videos <50MB or as fallback)
         if (useIPFSFallback) {
           const reasonText = fallbackReason ? ` (Reason: ${fallbackReason})` : '';
-          console.log(`Using IPFS upload for video: ${file.name}${reasonText}`);
+          if (fallbackReason) {
+            console.log(`Using IPFS upload for video: ${file.name}${reasonText}`);
+          } else {
+            console.log(`Using direct IPFS upload for small video: ${file.name}`);
+          }
           if (shouldWarnFallback && fallbackReason) {
             useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
           }
