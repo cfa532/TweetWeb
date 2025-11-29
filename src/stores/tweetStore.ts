@@ -769,6 +769,12 @@ export const useTweetStore = defineStore('tweetStore', {
             if (comments) {
                 for (const e of comments) {
                     try {
+                        // Skip null or invalid comments
+                        if (!e || !e.mid || !e.authorId) {
+                            console.warn("Skipping invalid comment:", e)
+                            continue
+                        }
+                        
                         let author = await this.getUser(e.authorId)
                         if (author) {
                             tweet.comments?.push({
@@ -777,15 +783,18 @@ export const useTweetStore = defineStore('tweetStore', {
                                 author: author,
                                 content: e.content,
                                 timestamp: e.timestamp,
-                                attachments: e.attachments?.map((a: MimeiFileType) => {
-                                    // comments on the same node as the tweet.
-                                    a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
-                                    return a
-                                }),
+                                attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
+                                    .map((a: MimeiFileType) => {
+                                        // comments on the same node as the tweet.
+                                        if (a.mid && tweet.provider) {
+                                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
+                                        }
+                                        return a
+                                    }),
                             })
                         }
                     } catch (error) {
-                        console.error("Error processing comment:", e.mid, error)
+                        console.error("Error processing comment:", e?.mid || "unknown", error)
                         continue
                     }
                 }
