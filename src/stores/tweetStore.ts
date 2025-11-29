@@ -1000,15 +1000,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
 
-            // Remove comment from local cache
-            const parentTweet = this.tweets.find(t => t.mid === parentTweetId)
-            if (parentTweet && parentTweet.comments) {
-                const commentIndex = parentTweet.comments.findIndex(c => c.mid === commentId)
-                if (commentIndex !== -1) {
-                    parentTweet.comments.splice(commentIndex, 1)
-                }
-            }
-
             // Get parent tweet author's client (comments are stored on the same node as the tweet)
             let parentAuthor = await this.getUser(parentAuthorId)
             if (!parentAuthor || !parentAuthor.client) {
@@ -1030,6 +1021,36 @@ export const useTweetStore = defineStore('tweetStore', {
                 commentid: commentId,            // ID of comment to delete
                 hostid: parentAuthor.hostId      // Node ID where the tweet is hosted
             })
+
+            // After successful deletion, remove comment from local cache
+            // Helper function to remove comment from a tweet object
+            const removeCommentFromTweet = (tweet: Tweet) => {
+                if (tweet && tweet.comments) {
+                    const commentIndex = tweet.comments.findIndex(c => c.mid === commentId)
+                    if (commentIndex !== -1) {
+                        // Use Vue reactivity - replace array to trigger update
+                        tweet.comments = tweet.comments.filter(c => c.mid !== commentId)
+                        // Update comment count if it exists
+                        if (tweet.commentCount !== undefined) {
+                            tweet.commentCount = Math.max(0, (tweet.commentCount || 0) - 1)
+                        }
+                        return true
+                    }
+                }
+                return false
+            }
+
+            // Remove from tweets array
+            const parentTweet = this.tweets.find(t => t.mid === parentTweetId)
+            if (parentTweet) {
+                removeCommentFromTweet(parentTweet)
+            }
+
+            // Also check originalTweets array in case it's displayed as a retweet
+            const originalTweet = this.originalTweets.find(t => t.mid === parentTweetId)
+            if (originalTweet) {
+                removeCommentFromTweet(originalTweet)
+            }
         },
         
         /**

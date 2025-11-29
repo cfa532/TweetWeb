@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // share menu or other right click items
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useTweetStore } from '@/stores';
 import type { PropType } from 'vue'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
@@ -54,18 +54,40 @@ function copyLink() {
     shareMenu.value.hidden = true
 }
 
-function deleteItem() {
-  if (!props.tweet || !tweetStore.loginUser) return
+async function deleteItem() {
+  if (!props.tweet || !tweetStore.loginUser) {
+    shareMenu.value.hidden = true
+    return
+  }
+  
+  // Close the menu immediately
+  shareMenu.value.hidden = true
   
   if (props.isComment && props.parentTweet) {
     // Delete comment - requires comment author OR parent tweet author
     if (tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
-      tweetStore.deleteComment(
-        props.tweet.mid,
+      const commentIdToDelete = props.tweet.mid
+      
+      await tweetStore.deleteComment(
+        commentIdToDelete,
         props.tweet.authorId,
         props.parentTweet.mid,
         props.parentTweet.authorId
       )
+      
+      // Force update by replacing the comments array to trigger Vue reactivity
+      if (props.parentTweet.comments && Array.isArray(props.parentTweet.comments)) {
+        // Remove the comment from the array
+        props.parentTweet.comments = props.parentTweet.comments.filter((c: Tweet) => c && c.mid !== commentIdToDelete)
+        
+        // Update comment count if it exists
+        if (props.parentTweet.commentCount !== undefined) {
+          props.parentTweet.commentCount = Math.max(0, (props.parentTweet.commentCount || 0) - 1)
+        }
+        
+        // Force Vue to update by using nextTick
+        await nextTick()
+      }
     }
   } else {
     // Delete regular tweet - requires tweet author
