@@ -609,9 +609,25 @@ function handleVideoTap(event: Event) {
       
       // For iOS Safari, use webkitEnterFullscreen
       if ((video.value as any).webkitEnterFullscreen) {
-        // iOS Safari - webkitEnterFullscreen automatically plays the video
+        // iOS Safari - webkitEnterFullscreen automatically plays the video, but we'll ensure it plays
         try {
           (video.value as any).webkitEnterFullscreen();
+          // Explicitly play after entering fullscreen (webkitEnterFullscreen should auto-play, but ensure it)
+          setTimeout(() => {
+            if (video.value && video.value.paused) {
+              video.value.play().catch(() => {
+                // If play fails, try muted
+                video.value.muted = true;
+                video.value.play().then(() => {
+                  setTimeout(() => {
+                    if (video.value) {
+                      video.value.muted = false;
+                    }
+                  }, 100);
+                }).catch(() => {});
+              });
+            }
+          }, 200);
         } catch (e) {
           console.log('webkitEnterFullscreen failed:', e);
           // Fallback: try to play normally
@@ -642,25 +658,10 @@ function handleVideoTap(event: Event) {
             
             if (fullscreenPromise) {
               await fullscreenPromise;
-              // Wait a bit for fullscreen to fully activate
-              await new Promise(resolve => setTimeout(resolve, 100));
             }
             
-            // Now play the video
-            if (video.value) {
-              try {
-                await video.value.play();
-              } catch (playError) {
-                // If autoplay fails, try muted first
-                video.value.muted = true;
-                await video.value.play();
-                setTimeout(() => {
-                  if (video.value) {
-                    video.value.muted = false;
-                  }
-                }, 100);
-              }
-            }
+            // Play after fullscreen
+            await playAfterFullscreen();
           } catch (fullscreenError) {
             console.log('Fullscreen failed:', fullscreenError);
             // Restore playsinline if fullscreen failed
@@ -687,6 +688,39 @@ function handleVideoTap(event: Event) {
   }
 }
 
+// Helper function to play video after fullscreen
+async function playAfterFullscreen() {
+  if (!video.value) return;
+  
+  // Wait a bit for fullscreen to fully activate
+  await new Promise(resolve => setTimeout(resolve, 150));
+  
+  // Now play the video - ensure it plays
+  if (video.value) {
+    try {
+      await video.value.play();
+      // Ensure playing state is updated
+      if (video.value.paused) {
+        // If still paused, try again
+        await video.value.play();
+      }
+      isPlaying.value = true;
+      showPlayOverlay.value = false;
+    } catch (playError) {
+      // If autoplay fails, try muted first
+      video.value.muted = true;
+      await video.value.play();
+      isPlaying.value = true;
+      showPlayOverlay.value = false;
+      setTimeout(() => {
+        if (video.value) {
+          video.value.muted = false;
+        }
+      }, 100);
+    }
+  }
+}
+
 // Handle play overlay click
 function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
@@ -707,54 +741,80 @@ function handlePlayOverlayClick(event: Event) {
       
       // For iOS Safari, use webkitEnterFullscreen
       if ((video.value as any).webkitEnterFullscreen) {
-        (video.value as any).webkitEnterFullscreen();
-        isPlaying.value = true;
-        showPlayOverlay.value = false;
+        try {
+          (video.value as any).webkitEnterFullscreen();
+          // Explicitly play after entering fullscreen
+          setTimeout(() => {
+            if (video.value && video.value.paused) {
+              video.value.play().then(() => {
+                isPlaying.value = true;
+                showPlayOverlay.value = false;
+              }).catch(() => {
+                video.value.muted = true;
+                video.value.play().then(() => {
+                  isPlaying.value = true;
+                  showPlayOverlay.value = false;
+                  setTimeout(() => {
+                    if (video.value) {
+                      video.value.muted = false;
+                    }
+                  }, 100);
+                }).catch(() => {});
+              });
+            }
+          }, 200);
+        } catch (e) {
+          console.log('webkitEnterFullscreen failed:', e);
+          video.value.play();
+          isPlaying.value = true;
+          showPlayOverlay.value = false;
+        }
       } else {
-        // For other mobile browsers, try standard fullscreen APIs
-        const enterFullscreen = () => {
-          if (video.value.requestFullscreen) {
-            video.value.requestFullscreen();
-          } else if ((video.value as any).webkitRequestFullscreen) {
-            (video.value as any).webkitRequestFullscreen();
-          } else if ((video.value as any).mozRequestFullScreen) {
-            (video.value as any).mozRequestFullScreen();
-          } else if ((video.value as any).msRequestFullscreen) {
-            (video.value as any).msRequestFullscreen();
+        // For Android Chrome and other mobile browsers
+        // Remove playsinline temporarily to allow fullscreen
+        const hadPlaysinline = video.value.hasAttribute('playsinline');
+        if (hadPlaysinline) {
+          video.value.removeAttribute('playsinline');
+        }
+        
+        // Try to enter fullscreen
+        const enterFullscreen = async () => {
+          try {
+            let fullscreenPromise: Promise<void> | null = null;
+            
+            if (video.value.requestFullscreen) {
+              fullscreenPromise = video.value.requestFullscreen() as Promise<void>;
+            } else if ((video.value as any).webkitRequestFullscreen) {
+              fullscreenPromise = (video.value as any).webkitRequestFullscreen();
+            } else if ((video.value as any).mozRequestFullScreen) {
+              fullscreenPromise = (video.value as any).mozRequestFullScreen();
+            } else if ((video.value as any).msRequestFullscreen) {
+              fullscreenPromise = (video.value as any).msRequestFullscreen();
+            }
+            
+            if (fullscreenPromise) {
+              await fullscreenPromise;
+            }
+            
+            // Play after fullscreen
+            await playAfterFullscreen();
+          } catch (fullscreenError) {
+            console.log('Fullscreen failed:', fullscreenError);
+            // Restore playsinline if fullscreen failed
+            if (hadPlaysinline && video.value) {
+              video.value.setAttribute('playsinline', '');
+            }
+            // Try to play anyway
+            if (video.value) {
+              video.value.play().then(() => {
+                isPlaying.value = true;
+                showPlayOverlay.value = false;
+              }).catch(() => {});
+            }
           }
         };
         
         enterFullscreen();
-        
-        // Wait for fullscreen to enter before playing
-        const checkFullscreen = () => {
-          const isFullscreen = !!(
-            document.fullscreenElement ||
-            (document as any).webkitFullscreenElement ||
-            (document as any).mozFullScreenElement ||
-            (document as any).msFullscreenElement
-          );
-          
-          if (isFullscreen && video.value) {
-            video.value.play().then(() => {
-              isPlaying.value = true;
-              showPlayOverlay.value = false;
-            }).catch(() => {
-              video.value.muted = true;
-              video.value.play().then(() => {
-                isPlaying.value = true;
-                showPlayOverlay.value = false;
-                setTimeout(() => {
-                  video.value.muted = false;
-                }, 100);
-              }).catch(() => {});
-            });
-          } else if (video.value) {
-            setTimeout(checkFullscreen, 100);
-          }
-        };
-        
-        setTimeout(checkFullscreen, 100);
       }
     } else {
       // Desktop: Just play
