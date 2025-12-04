@@ -575,14 +575,21 @@ function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
 }
 
 
-// Handle video element tap/click for mobile
+// Detect if device is mobile browser
+function isMobileBrowser(): boolean {
+  // Check for touch capability and screen width
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  const isSmallScreen = window.innerWidth <= 768;
+  return hasTouch && isSmallScreen;
+}
+
+// Handle video element tap/click
 function handleVideoTap(event: Event) {
-  // Open video in fullscreen for both tweet list and detail view
   event.preventDefault();
   event.stopPropagation();
   
   if (video.value) {
-    // Stop all other videos on the page before going fullscreen
+    // Stop all other videos on the page
     const allVideos = document.querySelectorAll('video');
     allVideos.forEach(v => {
       if (v !== video.value && !v.paused) {
@@ -590,39 +597,93 @@ function handleVideoTap(event: Event) {
       }
     });
     
-    // Controls are already enabled
-    
-    // Keep unmuted for full audio experience
-    video.value.muted = false;
-    
-    // Try to enter fullscreen
-    if (video.value.requestFullscreen) {
-      video.value.requestFullscreen();
-    } else if (video.value.webkitRequestFullscreen) {
-      video.value.webkitRequestFullscreen();
-    } else if (video.value.mozRequestFullScreen) {
-      video.value.mozRequestFullScreen();
-    } else if (video.value.msRequestFullscreen) {
-      video.value.msRequestFullscreen();
-    }
-    
-    // Start playing after a short delay to ensure fullscreen is ready
-    setTimeout(() => {
-      if (video.value) {
-        video.value.play().catch(() => {
-          // If autoplay fails due to policy, try muted first then unmute
-          video.value.muted = true;
-          video.value.play().then(() => {
-            // Successfully started muted, now unmute
-            setTimeout(() => {
-              video.value.muted = false;
-            }, 100);
-          }).catch(() => {
-            // Still failed, keep muted
-          });
-        });
+    // Check if mobile browser
+    if (isMobileBrowser()) {
+      // Mobile: Play in fullscreen
+      // Pause video first if it's playing
+      if (!video.value.paused) {
+        video.value.pause();
       }
-    }, 300);
+      
+      video.value.muted = false;
+      
+      // For iOS Safari, use webkitEnterFullscreen
+      if ((video.value as any).webkitEnterFullscreen) {
+        // iOS Safari - webkitEnterFullscreen automatically plays the video
+        try {
+          (video.value as any).webkitEnterFullscreen();
+        } catch (e) {
+          console.log('webkitEnterFullscreen failed:', e);
+          // Fallback: try to play normally
+          video.value.play();
+        }
+      } else {
+        // For Android Chrome and other mobile browsers
+        // Remove playsinline temporarily to allow fullscreen
+        const hadPlaysinline = video.value.hasAttribute('playsinline');
+        if (hadPlaysinline) {
+          video.value.removeAttribute('playsinline');
+        }
+        
+        // Try to enter fullscreen
+        const enterFullscreen = async () => {
+          try {
+            let fullscreenPromise: Promise<void> | null = null;
+            
+            if (video.value.requestFullscreen) {
+              fullscreenPromise = video.value.requestFullscreen() as Promise<void>;
+            } else if ((video.value as any).webkitRequestFullscreen) {
+              fullscreenPromise = (video.value as any).webkitRequestFullscreen();
+            } else if ((video.value as any).mozRequestFullScreen) {
+              fullscreenPromise = (video.value as any).mozRequestFullScreen();
+            } else if ((video.value as any).msRequestFullscreen) {
+              fullscreenPromise = (video.value as any).msRequestFullscreen();
+            }
+            
+            if (fullscreenPromise) {
+              await fullscreenPromise;
+              // Wait a bit for fullscreen to fully activate
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            // Now play the video
+            if (video.value) {
+              try {
+                await video.value.play();
+              } catch (playError) {
+                // If autoplay fails, try muted first
+                video.value.muted = true;
+                await video.value.play();
+                setTimeout(() => {
+                  if (video.value) {
+                    video.value.muted = false;
+                  }
+                }, 100);
+              }
+            }
+          } catch (fullscreenError) {
+            console.log('Fullscreen failed:', fullscreenError);
+            // Restore playsinline if fullscreen failed
+            if (hadPlaysinline && video.value) {
+              video.value.setAttribute('playsinline', '');
+            }
+            // Try to play anyway
+            if (video.value) {
+              video.value.play().catch(() => {});
+            }
+          }
+        };
+        
+        enterFullscreen();
+      }
+    } else {
+      // Desktop: Just play/stop (toggle play/pause)
+      if (video.value.paused) {
+        video.value.play();
+      } else {
+        video.value.pause();
+      }
+    }
   }
 }
 
@@ -631,9 +692,76 @@ function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
   if (video.value) {
-    video.value.play();
-    isPlaying.value = true;
-    showPlayOverlay.value = false;
+    // Stop all other videos on the page
+    const allVideos = document.querySelectorAll('video');
+    allVideos.forEach(v => {
+      if (v !== video.value && !v.paused) {
+        v.pause();
+      }
+    });
+    
+    // Check if mobile browser
+    if (isMobileBrowser()) {
+      // Mobile: Play in fullscreen
+      video.value.muted = false;
+      
+      // For iOS Safari, use webkitEnterFullscreen
+      if ((video.value as any).webkitEnterFullscreen) {
+        (video.value as any).webkitEnterFullscreen();
+        isPlaying.value = true;
+        showPlayOverlay.value = false;
+      } else {
+        // For other mobile browsers, try standard fullscreen APIs
+        const enterFullscreen = () => {
+          if (video.value.requestFullscreen) {
+            video.value.requestFullscreen();
+          } else if ((video.value as any).webkitRequestFullscreen) {
+            (video.value as any).webkitRequestFullscreen();
+          } else if ((video.value as any).mozRequestFullScreen) {
+            (video.value as any).mozRequestFullScreen();
+          } else if ((video.value as any).msRequestFullscreen) {
+            (video.value as any).msRequestFullscreen();
+          }
+        };
+        
+        enterFullscreen();
+        
+        // Wait for fullscreen to enter before playing
+        const checkFullscreen = () => {
+          const isFullscreen = !!(
+            document.fullscreenElement ||
+            (document as any).webkitFullscreenElement ||
+            (document as any).mozFullScreenElement ||
+            (document as any).msFullscreenElement
+          );
+          
+          if (isFullscreen && video.value) {
+            video.value.play().then(() => {
+              isPlaying.value = true;
+              showPlayOverlay.value = false;
+            }).catch(() => {
+              video.value.muted = true;
+              video.value.play().then(() => {
+                isPlaying.value = true;
+                showPlayOverlay.value = false;
+                setTimeout(() => {
+                  video.value.muted = false;
+                }, 100);
+              }).catch(() => {});
+            });
+          } else if (video.value) {
+            setTimeout(checkFullscreen, 100);
+          }
+        };
+        
+        setTimeout(checkFullscreen, 100);
+      }
+    } else {
+      // Desktop: Just play
+      video.value.play();
+      isPlaying.value = true;
+      showPlayOverlay.value = false;
+    }
   }
 }
 
