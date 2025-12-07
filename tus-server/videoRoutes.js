@@ -423,6 +423,70 @@ function ensureEvenDimensions(width, height) {
   };
 }
 
+// Helper function to get audio conversion parameters for HLS
+// HLS requires specific audio format: AAC, 48kHz, stereo
+// Uses explicit audio track mapping based on language preference (English > Chinese > first)
+function getAudioConversionParams(videoInfo = null) {
+  // Check if we have audio track information
+  if (videoInfo && videoInfo.audioTrackIndex !== undefined && videoInfo.audioCodec) {
+    // Use explicit mapping to select the preferred audio track
+    // This ensures we get English > Chinese > first track as selected during analysis
+    const trackIndex = videoInfo.audioTrackIndex;
+    console.log(`[AUDIO] Using explicit audio track mapping: -map 0:a:${trackIndex}`);
+    return `-map 0:a:${trackIndex} -c:a aac -b:a 128k -ar 48000 -ac 2`;
+  } else if (videoInfo && videoInfo.audioCodec) {
+    // Have audio but no track index - use first track explicitly
+    return '-map 0:a:0 -c:a aac -b:a 128k -ar 48000 -ac 2';
+  } else {
+    // No audio info - let FFmpeg handle it automatically
+    // These parameters will be ignored if no audio exists
+    return '-c:a aac -b:a 128k -ar 48000 -ac 2';
+  }
+}
+
+// Helper function to get video encoding parameters for HLS
+// Ensures proper HLS-compatible video encoding with profile, level, pixel format, and GOP settings
+// Based on HLS best practices: GOP size must match segment duration for proper keyframe alignment
+function getVideoEncodingParams(encoderConfig, bitrate, segmentDuration, frameRate = 30, is10Bit = false) {
+  const videoProfile = encoderConfig.profile || 'main';
+  const videoLevel = '4.0'; // Use 4.0 for better compatibility (not 4.1)
+  const pixFmt = is10Bit ? 'yuv420p10le' : 'yuv420p';
+  
+  // Calculate GOP size based on frame rate and segment duration
+  // GOP size = frame rate * segment duration (ensures keyframe at each segment boundary)
+  const gopSize = Math.round(frameRate * segmentDuration);
+  const keyintMin = gopSize; // Minimum keyframe interval matches GOP
+  
+  // Force keyframes at segment boundaries for proper HLS segmentation
+  // This ensures each segment starts with a keyframe for proper HLS playback
+  const forceKeyFramesExpr = `expr:gte(t,n_forced*${segmentDuration})`;
+  
+  if (encoderConfig.hardware) {
+    // Hardware encoders: use bitrate mode (not CQ) for HLS compatibility
+    // Note: Hardware encoders have limited support for force_key_frames
+    if (encoderConfig.encoder === 'h264_nvenc') {
+      // NVIDIA encoder: use -forced-idr 1 to ensure IDR frames, and set GOP via -g
+      // force_key_frames may not work reliably, so rely on GOP size matching segment duration
+      return `-rc vbr -b:v ${bitrate}k -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0 -forced-idr 1`;
+    } else if (encoderConfig.encoder === 'h264_qsv') {
+      // Intel QSV: may not support force_key_frames well, rely on GOP size
+      return `-b:v ${bitrate}k -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0`;
+    } else if (encoderConfig.encoder === 'h264_videotoolbox') {
+      // VideoToolbox: may not support force_key_frames, rely on GOP size
+      return `-b:v ${bitrate}k -allow_sw 1 -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0`;
+    } else if (encoderConfig.encoder === 'h264_amf') {
+      // AMD AMF: try with force_key_frames but may not work
+      return `-rc vbr_peak -b:v ${bitrate}k -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -profile ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0`;
+    } else {
+      // Generic hardware encoder: basic parameters
+      return `-b:v ${bitrate}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0`;
+    }
+  } else {
+    // Software encoder (libx264): full parameter set including force_key_frames
+    return `-b:v ${bitrate}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0 -force_key_frames "${forceKeyFramesExpr}"`;
+  }
+}
+
 // Helper function to cleanup old temporary files and directories
 function cleanupOldTempFiles() {
   try {
@@ -715,10 +779,15 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   // Use optimized commands for small files
   let cmd720p, cmd480p;
   
-  // Use simplified commands based on Android implementation
+  // Use simplified commands based on Android implementation (from working commit f0a8052)
+  // Get proper audio conversion parameters to fix MKV audio corruption issues (current version)
+  const audioParams = getAudioConversionParams(videoInfo);
   console.log('[HLS-CONVERSION] Using simplified commands based on Android implementation');
-  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  console.log(`[HLS-CONVERSION] Audio conversion params: ${audioParams}`);
+  
+  // Use simple video encoding like the working commit: just encoder + hwParams + bitrate
+  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} ${audioParams} -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} ${audioParams} -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
   commands.push(cmd720p, cmd480p);
   
@@ -776,6 +845,52 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
 // Helper function to get hardware-specific encoding parameters (now uses global from app.js)
 function getHardwareEncodingParams(encoder, is10Bit = false) {
   return global.getHardwareEncodingParams(encoder, is10Bit);
+}
+
+// Helper function to get video encoding parameters for HLS
+// Ensures proper HLS-compatible video encoding with profile, level, pixel format, and GOP settings
+// Based on HLS best practices: GOP size must match segment duration for proper keyframe alignment
+function getVideoEncodingParams(encoderConfig, bitrate, segmentDuration, frameRate = 30, is10Bit = false) {
+  const videoProfile = encoderConfig.profile || 'main';
+  const videoLevel = '4.0'; // Use 4.0 for better compatibility (not 4.1)
+  const pixFmt = is10Bit ? 'yuv420p10le' : 'yuv420p';
+
+  // Calculate GOP size based on frame rate and segment duration
+  // GOP size = frame rate * segment duration (ensures keyframe at each segment boundary)
+  const gopSize = Math.round(frameRate * segmentDuration);
+  const keyintMin = gopSize; // Minimum keyframe interval matches GOP
+
+  // Force keyframes at segment boundaries for proper HLS segmentation
+  // This ensures each segment starts with a keyframe for proper HLS playback
+  const forceKeyFramesExpr = `expr:gte(t,n_forced*${segmentDuration})`;
+
+  // Base video parameters
+  const baseParams = `-profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0 -force_key_frames "${forceKeyFramesExpr}"`;
+
+  if (encoderConfig.hardware) {
+    // Hardware encoders: use bitrate mode (not CQ) for HLS compatibility
+    // Note: Hardware encoders have limited support for force_key_frames
+    if (encoderConfig.encoder === 'h264_nvenc') {
+      // NVIDIA encoder: use -forced-idr 1 to ensure IDR frames, and set GOP via -g
+      // force_key_frames may not work reliably, so rely on GOP size matching segment duration
+      return `-rc vbr -b:v ${bitrate}k -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0 -forced-idr 1`;
+    } else if (encoderConfig.encoder === 'h264_qsv') {
+      // Intel QSV: may not support force_key_frames well, rely on GOP size
+      return `-b:v ${bitrate}k -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0`;
+    } else if (encoderConfig.encoder === 'h264_videotoolbox') {
+      // VideoToolbox: may not support force_key_frames, rely on GOP size
+      return `-b:v ${bitrate}k -allow_sw 1 -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0`;
+    } else if (encoderConfig.encoder === 'h264_amf') {
+      // AMD AMF: try with force_key_frames but may not work
+      return `-rc vbr_peak -b:v ${bitrate}k -maxrate ${bitrate}k -bufsize ${bitrate * 2}k -profile ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0 -force_key_frames "${forceKeyFramesExpr}"`;
+    } else {
+      // Generic hardware encoder: basic parameters
+      return `-b:v ${bitrate}k -profile:v ${videoProfile} -level ${videoLevel} -pix_fmt ${pixFmt} -g ${gopSize} -keyint_min ${keyintMin} -sc_threshold 0 -force_key_frames "${forceKeyFramesExpr}"`;
+    }
+  } else {
+    // Software encoder: full parameter set for HLS
+    return `-b:v ${bitrate}k ${baseParams}`;
+  }
 }
 
 // Main video processing function
@@ -942,7 +1057,79 @@ async function processVideoUpload(req, res) {
                 const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
                 const originalBitrate = bitrate || formatBitrate;
                 
+                // Extract frame rate for GOP size calculation
+                let frameRate = 30; // Default to 30 fps
+                if (videoStream.r_frame_rate) {
+                  const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+                  if (den && den > 0) {
+                    frameRate = num / den;
+                  }
+                } else if (videoStream.avg_frame_rate) {
+                  const [num, den] = videoStream.avg_frame_rate.split('/').map(Number);
+                  if (den && den > 0) {
+                    frameRate = num / den;
+                  }
+                }
+                // Round to nearest integer for GOP calculation
+                frameRate = Math.round(frameRate);
+                
                 console.log(`[${requestId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
+                console.log(`[${requestId}] [INFO] Video frame rate: ${frameRate} fps`);
+                
+                // Extract audio stream information for proper conversion
+                // Find all audio streams to select the best one (English > Chinese > first)
+                const audioStreams = metadata.streams.filter(stream => stream.codec_type === 'audio');
+                let audioCodec = null;
+                let audioChannels = null;
+                let audioSampleRate = null;
+                let selectedAudioIndex = 0; // Default to first audio track
+                
+                if (audioStreams.length > 0) {
+                  // Find the best audio track: English > Chinese > first
+                  let englishIndex = -1;
+                  let chineseIndex = -1;
+                  
+                  audioStreams.forEach((stream, index) => {
+                    const language = stream.tags?.language || stream.language || '';
+                    const langLower = language.toLowerCase();
+                    
+                    if (langLower === 'eng' || langLower === 'en' || langLower === 'english') {
+                      if (englishIndex === -1) {
+                        englishIndex = index;
+                        console.log(`[${requestId}] [AUDIO] Found English audio track at index ${index}`);
+                      }
+                    } else if (langLower === 'chi' || langLower === 'zh' || langLower === 'chinese' || 
+                               langLower === 'zho' || langLower === 'cmn' || langLower === 'zh-cn' || 
+                               langLower === 'zh-tw') {
+                      if (chineseIndex === -1) {
+                        chineseIndex = index;
+                        console.log(`[${requestId}] [AUDIO] Found Chinese audio track at index ${index}`);
+                      }
+                    }
+                  });
+                  
+                  // Select best track: English > Chinese > first
+                  if (englishIndex !== -1) {
+                    selectedAudioIndex = englishIndex;
+                    console.log(`[${requestId}] [AUDIO] Selected English audio track (index ${englishIndex})`);
+                  } else if (chineseIndex !== -1) {
+                    selectedAudioIndex = chineseIndex;
+                    console.log(`[${requestId}] [AUDIO] Selected Chinese audio track (index ${chineseIndex})`);
+                  } else {
+                    selectedAudioIndex = 0;
+                    console.log(`[${requestId}] [AUDIO] Using first audio track (index 0) - no language preference found`);
+                  }
+                  
+                  const selectedStream = audioStreams[selectedAudioIndex];
+                  audioCodec = selectedStream.codec_name;
+                  audioChannels = selectedStream.channels;
+                  audioSampleRate = selectedStream.sample_rate ? parseInt(selectedStream.sample_rate) : null;
+                  
+                  console.log(`[${requestId}] [INFO] Selected audio: codec=${audioCodec}, channels=${audioChannels}, sample_rate=${audioSampleRate ? audioSampleRate + 'Hz' : 'unknown'}, language=${selectedStream.tags?.language || selectedStream.language || 'unknown'}, index=${selectedAudioIndex}`);
+                  console.log(`[${requestId}] [INFO] Total audio tracks found: ${audioStreams.length}`);
+                } else {
+                  console.log(`[${requestId}] [WARNING] No audio stream found in video`);
+                }
                 
                 resolve({
                   width: videoStream.width,
@@ -955,7 +1142,11 @@ async function processVideoUpload(req, res) {
                   pixelFormat: videoStream.pix_fmt,
                   profile: videoStream.profile,
                   codec: videoStream.codec_name,
-                  bitrate: originalBitrate
+                  bitrate: originalBitrate,
+                  audioCodec: audioCodec,
+                  audioChannels: audioChannels,
+                  audioSampleRate: audioSampleRate,
+                  audioTrackIndex: selectedAudioIndex
                 });
               } catch (parseError) {
                 console.error(`[${requestId}] [ERROR] Failed to parse ffprobe JSON:`, parseError);
@@ -988,8 +1179,13 @@ async function processVideoUpload(req, res) {
     const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
     
     if (noResample) {
-      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      // For no-resample mode, we still need to handle audio properly for MKV files
+      // Use explicit audio stream mapping even in copy mode to avoid issues
+      const audioParams = getAudioConversionParams(videoInfo);
+      // For copy mode, we can't force keyframes, so use split_by_time and independent_segments
+      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy ${audioParams} -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
+      console.log(`[${requestId}] [FFMPEG] No-resample HLS conversion command: ${ffmpegCommand}`);
       await executeWithProgress(ffmpegCommand, requestId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
       console.log(`[${requestId}] [SUCCESS] HLS conversion completed`);
     } else if (useSingleQuality) {
@@ -1014,12 +1210,18 @@ async function processVideoUpload(req, res) {
       const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);
       const segmentDuration360 = calculateOptimalSegmentDuration(videoInfo, bitrate360);
 
-      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
 
-      const cmd720p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+      // Get proper audio conversion parameters to fix MKV audio corruption issues
+      const audioParams = getAudioConversionParams(videoInfo);
+      console.log(`[${requestId}] [AUDIO] Using audio conversion params: ${audioParams}`);
 
-      const cmd360p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim360.width}:${dim360.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate360}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration360} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '360p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '360p/playlist.m3u8'))}`;
+      // Use simple video encoding like the working commit: just encoder + hwParams + bitrate
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+
+      const cmd720p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} ${audioParams} -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+
+      const cmd360p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} ${audioParams} -vf "scale=${dim360.width}:${dim360.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate360}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration360} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '360p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '360p/playlist.m3u8'))}`;
 
       await Promise.all([
         executeWithProgress(cmd720p, requestId, 0, 25, 'Converting large video to 720p HLS...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0),
@@ -1344,7 +1546,79 @@ async function processVideoUploadInternal(req, jobId) {
                 const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
                 const originalBitrate = bitrate || formatBitrate;
                 
+                // Extract frame rate for GOP size calculation
+                let frameRate = 30; // Default to 30 fps
+                if (videoStream.r_frame_rate) {
+                  const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+                  if (den && den > 0) {
+                    frameRate = num / den;
+                  }
+                } else if (videoStream.avg_frame_rate) {
+                  const [num, den] = videoStream.avg_frame_rate.split('/').map(Number);
+                  if (den && den > 0) {
+                    frameRate = num / den;
+                  }
+                }
+                // Round to nearest integer for GOP calculation
+                frameRate = Math.round(frameRate);
+                
                 console.log(`[${jobId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
+                console.log(`[${jobId}] [INFO] Video frame rate: ${frameRate} fps`);
+                
+                // Extract audio stream information for proper conversion
+                // Find all audio streams to select the best one (English > Chinese > first)
+                const audioStreams = metadata.streams.filter(stream => stream.codec_type === 'audio');
+                let audioCodec = null;
+                let audioChannels = null;
+                let audioSampleRate = null;
+                let selectedAudioIndex = 0; // Default to first audio track
+                
+                if (audioStreams.length > 0) {
+                  // Find the best audio track: English > Chinese > first
+                  let englishIndex = -1;
+                  let chineseIndex = -1;
+                  
+                  audioStreams.forEach((stream, index) => {
+                    const language = stream.tags?.language || stream.language || '';
+                    const langLower = language.toLowerCase();
+                    
+                    if (langLower === 'eng' || langLower === 'en' || langLower === 'english') {
+                      if (englishIndex === -1) {
+                        englishIndex = index;
+                        console.log(`[${jobId}] [AUDIO] Found English audio track at index ${index}`);
+                      }
+                    } else if (langLower === 'chi' || langLower === 'zh' || langLower === 'chinese' || 
+                               langLower === 'zho' || langLower === 'cmn' || langLower === 'zh-cn' || 
+                               langLower === 'zh-tw') {
+                      if (chineseIndex === -1) {
+                        chineseIndex = index;
+                        console.log(`[${jobId}] [AUDIO] Found Chinese audio track at index ${index}`);
+                      }
+                    }
+                  });
+                  
+                  // Select best track: English > Chinese > first
+                  if (englishIndex !== -1) {
+                    selectedAudioIndex = englishIndex;
+                    console.log(`[${jobId}] [AUDIO] Selected English audio track (index ${englishIndex})`);
+                  } else if (chineseIndex !== -1) {
+                    selectedAudioIndex = chineseIndex;
+                    console.log(`[${jobId}] [AUDIO] Selected Chinese audio track (index ${chineseIndex})`);
+                  } else {
+                    selectedAudioIndex = 0;
+                    console.log(`[${jobId}] [AUDIO] Using first audio track (index 0) - no language preference found`);
+                  }
+                  
+                  const selectedStream = audioStreams[selectedAudioIndex];
+                  audioCodec = selectedStream.codec_name;
+                  audioChannels = selectedStream.channels;
+                  audioSampleRate = selectedStream.sample_rate ? parseInt(selectedStream.sample_rate) : null;
+                  
+                  console.log(`[${jobId}] [INFO] Selected audio: codec=${audioCodec}, channels=${audioChannels}, sample_rate=${audioSampleRate ? audioSampleRate + 'Hz' : 'unknown'}, language=${selectedStream.tags?.language || selectedStream.language || 'unknown'}, index=${selectedAudioIndex}`);
+                  console.log(`[${jobId}] [INFO] Total audio tracks found: ${audioStreams.length}`);
+                } else {
+                  console.log(`[${jobId}] [WARNING] No audio stream found in video`);
+                }
                 
                 resolve({
                   width: videoStream.width,
@@ -1357,7 +1631,11 @@ async function processVideoUploadInternal(req, jobId) {
                   pixelFormat: videoStream.pix_fmt,
                   profile: videoStream.profile,
                   codec: videoStream.codec_name,
-                  bitrate: originalBitrate
+                  bitrate: originalBitrate,
+                  audioCodec: audioCodec,
+                  audioChannels: audioChannels,
+                  audioSampleRate: audioSampleRate,
+                  audioTrackIndex: selectedAudioIndex
                 });
               } catch (parseError) {
                 console.error(`[${jobId}] [ERROR] Failed to parse ffprobe JSON:`, parseError);
@@ -1393,7 +1671,11 @@ async function processVideoUploadInternal(req, jobId) {
     const useSingleQuality = fileSizeMB > 256; // Use single quality for files > 256MB
     
     if (noResample) {
-      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+      // For no-resample mode, we still need to handle audio properly for MKV files
+      // Use explicit audio stream mapping even in copy mode to avoid issues
+      const audioParams = getAudioConversionParams(videoInfo);
+      // For copy mode, we can't force keyframes, so use split_by_time and independent_segments
+      const ffmpegCommand = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy ${audioParams} -f hls -hls_time 6 -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags independent_segments+discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
       
       console.log(`[${jobId}] [FFMPEG] Starting no-resample conversion with command: ${ffmpegCommand}`);
       await executeWithProgress(ffmpegCommand, jobId, 0, 50, 'Converting video to HLS format...', uploadedFile.size, 0);
@@ -1431,14 +1713,19 @@ async function processVideoUploadInternal(req, jobId) {
       console.log(`[${jobId}] [INFO] 720p: ${dim720.width}x${dim720.height}, Bitrate: ${bitrate720}k, Segment: ${segmentDuration720}s`);
       console.log(`[${jobId}] [INFO] 360p: ${dim360.width}x${dim360.height}, Bitrate: ${bitrate360}k, Segment: ${segmentDuration360}s`);
 
-      // Encoding params
-      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
 
-      // Commands
-      const cmd720p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+      // Get proper audio conversion parameters to fix MKV audio corruption issues
+      const audioParams = getAudioConversionParams(videoInfo);
+      console.log(`[${jobId}] [AUDIO] Using audio conversion params: ${audioParams}`);
 
-      const cmd360p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${dim360.width}:${dim360.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate360}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration360} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '360p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '360p/playlist.m3u8'))}`;
+      // Use simple video encoding like the working commit: just encoder + hwParams + bitrate
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      
+      // Commands
+      const cmd720p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} ${audioParams} -vf "scale=${dim720.width}:${dim720.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+
+      const cmd360p = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} ${audioParams} -vf "scale=${dim360.width}:${dim360.height}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate360}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration360} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '360p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '360p/playlist.m3u8'))}`;
 
       // Execute in parallel
       await Promise.all([

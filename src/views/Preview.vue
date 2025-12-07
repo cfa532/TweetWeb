@@ -50,10 +50,20 @@ function thumbnail() {
         imageUrl.value = URL.createObjectURL(props.src)
         caption.value = props.src.name
     } else if (fileType.includes("video")) {
-        generateVideoThumbnail(props.src).then(url=>{
-            imageUrl.value = url
-            caption.value = props.src.name
-        })
+        // For videos, show a placeholder icon instead of capturing frame
+        const canvas = document.createElement("canvas");
+        let ctx = canvas.getContext("2d")!;
+        canvas.width = 120;
+        canvas.height = 120;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, 120, 120);
+        ctx.fillStyle = '#fff';
+        ctx.font = '48px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🎥', 60, 60);
+        imageUrl.value = canvas.toDataURL("image/png");
+        caption.value = props.src.name
     } else {
         // everything else, draw avtar with file extensioin
         const canvas = document.createElement("canvas");
@@ -65,44 +75,6 @@ function thumbnail() {
           imageUrl.value = canvas.toDataURL("image/png");
           caption.value = props.src.name
     }
-}
-const generateVideoThumbnail = (file: File) => {
-  return new Promise<string>((resolve) => {
-    const canvas = document.createElement("canvas");
-    const video = document.createElement("video");
-
-    // this is important
-    video.autoplay = true;
-    video.muted = true;
-    video.src = URL.createObjectURL(file) + '#t=1';     // delay 1s
-    video.onloadeddata = () => {
-      let ctx = canvas.getContext("2d");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
-      // Log video dimensions and aspect ratio for thumbnail generation
-      const aspectRatio = video.videoWidth / video.videoHeight;
-      console.log(`🎬 File: ${file.name}`);
-      console.log(`📐 Dimensions: ${video.videoWidth}x${video.videoHeight}`);
-      console.log(`📐 Aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
-      
-      ctx!.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-      video.pause();
-      return resolve(canvas.toDataURL("image/png"));
-    };
-  });
-};
-
-// Helper function to get human-readable aspect ratio names
-function getAspectRatioDisplayName(ratio: number): string {
-  const tolerance = 0.01;
-  if (Math.abs(ratio - (4/3)) < tolerance) return '4:3';
-  if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
-  if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
-  if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
-  if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
-  if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
-  return `${ratio.toFixed(3)}:1`;
 }
 </script>
 
