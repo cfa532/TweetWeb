@@ -138,9 +138,9 @@ All quality levels (720p, 480p, 360p) use **adaptive bitrate encoding** that int
 
 | Quality | Maximum Cap | Adaptive Behavior |
 |---------|-------------|-------------------|
-| 720p | 3000 kbps | Uses original if ≤ 3000k, otherwise caps at 3000k |
-| 480p | 1500 kbps | Uses original if ≤ 1500k, otherwise caps at 1500k |
-| 360p | 1000 kbps | Uses original if ≤ 1000k, otherwise caps at 1000k |
+| 720p | 1500 kbps | Uses original if ≤ 1500k, otherwise caps at 1500k |
+| 480p | 750 kbps | Uses original if ≤ 750k, otherwise caps at 750k |
+| 360p | 500 kbps | Uses original if ≤ 500k, otherwise caps at 500k |
 
 ### Benefits
 
@@ -158,8 +158,8 @@ All quality levels (720p, 480p, 360p) use **adaptive bitrate encoding** that int
 
 **Example 2: High-Quality Source**
 - Original video: 5000 kbps
-- 720p output: 3000 kbps (capped for streaming)
-- 480p output: 1500 kbps (capped for streaming)
+- 720p output: 1500 kbps (capped for streaming)
+- 480p output: 750 kbps (capped for streaming)
 
 **Example 3: Medium-Quality Source**
 - Original video: 2500 kbps

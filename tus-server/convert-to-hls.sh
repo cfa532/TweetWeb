@@ -207,6 +207,7 @@ if [ "$NO_RESAMPLE" = true ]; then
     
     ffmpeg -i "$INPUT_FILE" -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 \
         -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
+        -hls_flags discont_start+split_by_time \
         "$TEMP_DIR/playlist.m3u8" -y
     
     echo -e "${GREEN}[SUCCESS] HLS conversion completed${NC}"
@@ -300,8 +301,8 @@ if [ "$USE_SINGLE_QUALITY" = true ]; then
     WIDTH720=$(echo $DIM720 | cut -d' ' -f1)
     HEIGHT720=$(echo $DIM720 | cut -d' ' -f2)
     
-    # Calculate bitrate (cap at 3Mbps)
-    MAX_STREAMING_BITRATE=3000
+    # Calculate bitrate (cap at 1.5Mbps)
+    MAX_STREAMING_BITRATE=1500
     BITRATE720=$BITRATE_KBPS
     if [ $BITRATE720 -gt $MAX_STREAMING_BITRATE ]; then
         BITRATE720=$MAX_STREAMING_BITRATE
@@ -339,9 +340,9 @@ else
     WIDTH480=$(echo $DIM480 | cut -d' ' -f1)
     HEIGHT480=$(echo $DIM480 | cut -d' ' -f2)
     
-    # Calculate bitrates (cap at 3Mbps for 720p, 1.5Mbps for 480p)
-    MAX_STREAMING_BITRATE720=3000
-    MAX_STREAMING_BITRATE480=1500
+    # Calculate bitrates (cap at 1.5Mbps for 720p, 750kbps for 480p)
+    MAX_STREAMING_BITRATE720=1500
+    MAX_STREAMING_BITRATE480=750
     
     BITRATE720=$BITRATE_KBPS
     if [ $BITRATE720 -gt $MAX_STREAMING_BITRATE720 ]; then
@@ -383,8 +384,8 @@ else
         "$TEMP_DIR/480p/playlist.m3u8" -y
     
     # Create master playlist
-    BANDWIDTH720=2000000
-    BANDWIDTH480=1000000
+    BANDWIDTH720=1500000
+    BANDWIDTH480=750000
     
     cat > "$TEMP_DIR/master.m3u8" <<EOF
 #EXTM3U
