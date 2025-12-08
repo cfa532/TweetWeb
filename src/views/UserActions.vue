@@ -23,6 +23,13 @@ function showMenu() {
     // toggle right menu on and off
     setTimeout(() => {
         window.onclick = function (e: MouseEvent) {
+            // Don't interfere with video player interactions
+            const target = e.target as HTMLElement;
+            if (target && (target.tagName === 'VIDEO' || target.closest('video') ||
+                          target.classList.contains('video-js') || target.closest('.video-js'))) {
+                return; // Let video player handle this click
+            }
+
             if (e.target !== actionMenu.value) {
                 if (actionMenu.value)
                     actionMenu.value.hidden = true
