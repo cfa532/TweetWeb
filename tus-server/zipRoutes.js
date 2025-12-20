@@ -736,10 +736,10 @@ async function processZipUploadInternal(req, jobId) {
     uploadedFile = req.files.zipFile;
     console.log(`[${jobId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
 
-    const maxFileSize = 512 * 1024 * 1024; // 500MB for zip files
+    const maxFileSize = 1024 * 1024 * 1024; // 1GB for zip files
     if (uploadedFile.size > maxFileSize) {
       console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
-      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 500MB.`);
+      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 1GB.`);
     }
 
     const allowedTypes = [
