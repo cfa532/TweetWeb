@@ -317,9 +317,15 @@ function findHLSContentDirectory(extractedPath, requestId) {
   console.log(`[${requestId}] [DEBUG] Finding HLS content directory in: ${extractedPath}`);
   
   // Check if HLS content is directly in the extracted path
+  // Accept both master.m3u8 (multi-variant) and playlist.m3u8 (single-variant) in root
   const masterPath = path.join(extractedPath, 'master.m3u8');
+  const playlistPath = path.join(extractedPath, 'playlist.m3u8');
   if (fs.existsSync(masterPath)) {
-    console.log(`[${requestId}] [DEBUG] HLS content found directly in extracted path`);
+    console.log(`[${requestId}] [DEBUG] HLS content found directly in extracted path (master.m3u8 - multi-variant)`);
+    return extractedPath;
+  }
+  if (fs.existsSync(playlistPath)) {
+    console.log(`[${requestId}] [DEBUG] HLS content found directly in extracted path (playlist.m3u8 - single-variant)`);
     return extractedPath;
   }
   
@@ -375,7 +381,8 @@ function validateHLSStructure(extractedPath, requestId) {
   }
   
   // First, check if HLS content is directly in the extracted path
-  const requiredFiles = ['master.m3u8'];
+  // Accept both master.m3u8 (multi-variant) and playlist.m3u8 (single-variant) in root
+  const requiredFiles = ['master.m3u8', 'playlist.m3u8'];
   const hasRequiredFiles = requiredFiles.some(file => {
     const filePath = path.join(extractedPath, file);
     const exists = fs.existsSync(filePath);
@@ -384,11 +391,17 @@ function validateHLSStructure(extractedPath, requestId) {
   });
   
   if (hasRequiredFiles) {
-    console.log(`[${requestId}] [DEBUG] Valid HLS structure found (master.m3u8 exists)`);
+    const masterExists = fs.existsSync(path.join(extractedPath, 'master.m3u8'));
+    const playlistExists = fs.existsSync(path.join(extractedPath, 'playlist.m3u8'));
+    if (masterExists) {
+      console.log(`[${requestId}] [DEBUG] Valid HLS structure found (master.m3u8 exists in root - multi-variant)`);
+    } else if (playlistExists) {
+      console.log(`[${requestId}] [DEBUG] Valid HLS structure found (playlist.m3u8 exists in root - single-variant)`);
+    }
     return true;
   }
   
-  console.log(`[${requestId}] [DEBUG] No master.m3u8 found in root, checking subdirectories...`);
+  console.log(`[${requestId}] [DEBUG] No master.m3u8 or playlist.m3u8 found in root, checking subdirectories...`);
   
   // Check for subdirectories that might contain playlists or HLS content
   const subdirs = fs.readdirSync(extractedPath, { withFileTypes: true })
@@ -723,7 +736,7 @@ async function processZipUploadInternal(req, jobId) {
     uploadedFile = req.files.zipFile;
     console.log(`[${jobId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
 
-    const maxFileSize = 500 * 1024 * 1024; // 500MB for zip files
+    const maxFileSize = 512 * 1024 * 1024; // 500MB for zip files
     if (uploadedFile.size > maxFileSize) {
       console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
       throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 500MB.`);

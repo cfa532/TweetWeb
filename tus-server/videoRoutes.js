@@ -423,6 +423,14 @@ function ensureEvenDimensions(width, height) {
   };
 }
 
+// Helper function to get video resolution (p value)
+function getVideoResolution(displayWidth, displayHeight) {
+  // For landscape videos (width ≥ height): resolution = HEIGHT (e.g., 1280×720 = 720p)
+  // For portrait videos (height > width): resolution = WIDTH (e.g., 720×1280 = 720p)
+  const isPortrait = displayHeight > displayWidth;
+  return isPortrait ? displayWidth : displayHeight;
+}
+
 // Helper function to cleanup old temporary files and directories
 function cleanupOldTempFiles() {
   try {
@@ -1869,12 +1877,13 @@ async function processNormalizeVideoAsync(req, jobId) {
   }
 }
 
-// Internal video normalization function (normalizes to max 720p MP4, then uploads to IPFS)
+// Internal video normalization function (OPTIMIZED algorithm)
 async function processNormalizeVideoInternal(req, jobId) {
   console.log(`\n[${new Date().toISOString()}] [${jobId}] --- /normalize-video internal processing started ---`);
   
   let tempDir = null;
   let uploadedFile = null;
+  let normalizedFilePath = null;
   
   try {
     // Cleanup old temporary files (will skip any in activeTempDirs)
@@ -1884,7 +1893,7 @@ async function processNormalizeVideoInternal(req, jobId) {
     uploadedFile = req.files.videoFile;
     console.log(`[${jobId}] [INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
     
-    // Check file size (50MB limit)
+    // Check file size (50MB limit for normalization endpoint)
     const maxSize = 50 * 1024 * 1024; // 50MB
     if (uploadedFile.size > maxSize) {
       throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 50MB for normalization.`);
@@ -1896,7 +1905,6 @@ async function processNormalizeVideoInternal(req, jobId) {
     console.log(`[${jobId}] [INFO] Created temp directory: ${tempDir}`);
     
     const inputPath = uploadedFile.tempFilePath;
-    const outputPath = path.join(tempDir, 'normalized.mp4');
     
     // Step 1: Get video information using ffprobe
     console.log(`[${jobId}] [STEP 1] Analyzing video with ffprobe...`);
@@ -1916,67 +1924,155 @@ async function processNormalizeVideoInternal(req, jobId) {
     const streamInfo = videoInfo.streams && videoInfo.streams[0];
     const originalWidth = streamInfo ? streamInfo.width : null;
     const originalHeight = streamInfo ? streamInfo.height : null;
+
+    if (!originalWidth || !originalHeight) {
+      throw new Error('Could not determine video dimensions');
+    }
     
     console.log(`[${jobId}] [INFO] Original dimensions: ${originalWidth}x${originalHeight}`);
     
-    // Step 2: Normalize video (max 720p, MP4 format)
-    console.log(`[${jobId}] [STEP 2] Normalizing video to max 720p MP4...`);
+    // Handle rotation to get display dimensions
+    let displayWidth = originalWidth;
+    let displayHeight = originalHeight;
+
+    // Check for rotation metadata
+    if (streamInfo.side_data_list) {
+      for (const sideData of streamInfo.side_data_list) {
+        if (sideData.side_data_type === 'Display Matrix') {
+          const matrix = sideData.rotation;
+          if (matrix === -90 || matrix === 90) {
+            displayWidth = originalHeight;
+            displayHeight = originalWidth;
+          }
+          break;
+        }
+      }
+    }
+
+    console.log(`[${jobId}] [INFO] Display dimensions (after rotation): ${displayWidth}x${displayHeight}`);
+
+    // Determine video resolution using the new algorithm
+    const videoResolution = getVideoResolution(displayWidth, displayHeight);
+    console.log(`[${jobId}] [INFO] Video resolution: ${videoResolution}p`);
+
+    // Step 2: Apply normalization algorithm
+    console.log(`[${jobId}] [STEP 2] Applying normalization algorithm...`);
     normalizeJobs.set(jobId, {
       status: 'processing',
-      progress: 30,
-      message: 'Normalizing video...',
+      progress: 20,
+      message: 'Applying normalization algorithm...',
       startTime: normalizeJobs.get(jobId).startTime
     });
     
-    // Calculate output dimensions (max 720p, preserve aspect ratio)
-    let outputWidth = originalWidth;
-    let outputHeight = originalHeight;
-    const maxHeight = 720;
+    let finalFilePath;
+    let finalFileSize;
+
+    if (videoResolution <= 720) {
+      // Encode videos ≤ 720p with libx264 for compatibility, keep resolution, use proportional bitrate
+      console.log(`[${jobId}] [COMPATIBILITY] Video resolution (${videoResolution}p) ≤ 720p, encoding with libx264 for compatibility`);
+
+      const outputPath = path.join(tempDir, 'normalized.mp4');
+      normalizedFilePath = outputPath;
+
+      // Calculate proportional bitrate based on resolution
+      // Base bitrate for 720p is 1000k, scale proportionally
+      const proportionalBitrate = Math.max(500, Math.round((videoResolution / 720) * 1000)); // Min 500k bitrate
+      console.log(`[${jobId}] [INFO] Proportional bitrate: ${proportionalBitrate}k for ${videoResolution}p video`);
     
-    if (originalHeight && originalHeight > maxHeight) {
-      const scale = maxHeight / originalHeight;
-      outputWidth = Math.floor(originalWidth * scale);
-      outputHeight = maxHeight;
-      // Ensure dimensions are even (required for H.264)
-      outputWidth = outputWidth % 2 === 0 ? outputWidth : outputWidth - 1;
-      outputHeight = outputHeight % 2 === 0 ? outputHeight : outputHeight - 1;
-    }
-    
-    console.log(`[${jobId}] [INFO] Output dimensions: ${outputWidth}x${outputHeight}`);
-    
-    // Use hardware encoding if available
-    const encoderConfig = getAvailableHardwareEncoders();
-    const encoderParams = encoderConfig.apple ? getHardwareEncodingParams('h264_videotoolbox', false) : null;
-    
-    let ffmpegCmd;
-    if (encoderConfig.apple && encoderParams) {
-      // Use Apple hardware encoder
-      const hwParams = encoderParams.hardwareParams || '';
-      ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v h264_videotoolbox ${hwParams} -b:v 2500k -c:a aac -b:a 128k -vf "scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y`;
+      // Keep original dimensions but ensure even
+      const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
+      const targetWidth = evenDims.width;
+      const targetHeight = evenDims.height;
+
+      console.log(`[${jobId}] [INFO] Keeping original dimensions: ${targetWidth}x${targetHeight}`);
+
+      // Use libx264 for compatibility
+      const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -preset fast -tune zerolatency -threads 2 -c:a aac -b:v ${proportionalBitrate}k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y`;
+
+      console.log(`[${jobId}] [FFMPEG] Running compatibility encoding command...`);
+      await execAsync(ffmpegCmd);
+
+      finalFilePath = outputPath;
+      finalFileSize = fs.statSync(outputPath).size;
+      console.log(`[${jobId}] [INFO] Compatibility encoded file size: ${finalFileSize} bytes`);
     } else {
-      // Use software encoder
-      ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k -vf "scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y`;
-    }
+      // Normalize videos > 720p to 720p with 1500k bitrate
+      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p`);
+
+      const outputPath = path.join(tempDir, 'normalized.mp4');
+      normalizedFilePath = outputPath;
+
+      // Calculate 720p dimensions maintaining aspect ratio
+      let targetWidth, targetHeight;
+      const isPortrait = displayHeight > displayWidth;
+
+      if (isPortrait) {
+        // Portrait: maintain width, calculate height
+        targetWidth = 720;
+        targetHeight = Math.round((720 * displayHeight) / displayWidth);
+      } else {
+        // Landscape: maintain height, calculate width
+        targetHeight = 720;
+        targetWidth = Math.round((720 * displayWidth) / displayHeight);
+      }
+
+      // Ensure even dimensions
+      const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
+      targetWidth = evenDims.width;
+      targetHeight = evenDims.height;
+
+      console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}`);
+
+      // Use hardware encoding if available
+      const availableEncoders = await detectHardwareEncoders();
+      const encoderConfig = await getOptimalEncoder(availableEncoders, {
+        width: originalWidth,
+        height: originalHeight,
+        displayWidth: displayWidth,
+        displayHeight: displayHeight
+      });
+
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+
+      const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v 1500k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
     
-    console.log(`[${jobId}] [INFO] Running FFmpeg command...`);
+      console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await execAsync(ffmpegCmd);
     
-    console.log(`[${jobId}] [INFO] Video normalized successfully`);
+      finalFilePath = outputPath;
+      finalFileSize = fs.statSync(outputPath).size;
+      console.log(`[${jobId}] [INFO] Normalized file size: ${finalFileSize} bytes`);
+    }
     
-    // Step 3: Upload to IPFS
-    console.log(`[${jobId}] [STEP 3] Uploading to IPFS...`);
+    // Step 3: Route based on file size
+    console.log(`[${jobId}] [STEP 3] Routing based on file size...`);
     normalizeJobs.set(jobId, {
       status: 'processing',
-      progress: 70,
-      message: 'Uploading to IPFS...',
+      progress: 40,
+      message: 'Routing based on file size...',
       startTime: normalizeJobs.get(jobId).startTime
     });
     
-    const escapedPath = escapeShellArg(outputPath);
+    const fileSizeMB = finalFileSize / (1024 * 1024);
+    console.log(`[${jobId}] [INFO] Final file size: ${fileSizeMB.toFixed(2)}MB`);
+
+    let cid;
+
+    if (fileSizeMB <= 32) {
+      // Progressive video upload (≤32MB)
+      console.log(`[${jobId}] [ROUTE] File size (${fileSizeMB.toFixed(2)}MB) ≤ 32MB, uploading as progressive video`);
+      normalizeJobs.set(jobId, {
+        status: 'processing',
+        progress: 60,
+        message: 'Uploading progressive video...',
+        startTime: normalizeJobs.get(jobId).startTime
+      });
+
+      const escapedPath = escapeShellArg(finalFilePath);
     const cidOutput = await executeLeitherCommand(`ipfs add ${escapedPath}`, jobId, 600000); // 10 minutes timeout
     
     // Extract CID from output
-    let cid = null;
     const trimmedOutput = cidOutput.trim();
     const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
     if (ipfsAddOkMatch) {
@@ -1992,7 +2088,167 @@ async function processNormalizeVideoInternal(req, jobId) {
       throw new Error('Failed to extract CID from IPFS add output');
     }
     
-    console.log(`[${jobId}] [SUCCESS] Video normalized and uploaded to IPFS, CID: ${cid}`);
+      console.log(`[${jobId}] [SUCCESS] Progressive video uploaded to IPFS, CID: ${cid}`);
+
+    } else {
+      // HLS conversion (>32MB)
+      console.log(`[${jobId}] [ROUTE] File size (${fileSizeMB.toFixed(2)}MB) > 32MB, converting to HLS`);
+
+      // Determine HLS variants based on resolution
+      // For videos ≤720p, use original resolution; for videos >720p, use 720p after normalization
+      const finalResolution = videoResolution <= 720 ? videoResolution : 720; // Resolution after normalization
+      console.log(`[${jobId}] [HLS] Video resolution: ${videoResolution}p, Final resolution for HLS: ${finalResolution}p`);
+
+      let hlsVariants;
+      // Only create dual variants (720p + 480p) if final resolution is > 480p
+      // For resolutions ≤ 480p, create only 480p variant (single variant)
+      if (finalResolution > 480) {
+        hlsVariants = ['720p', '480p'];
+        console.log(`[${jobId}] [HLS] Creating dual variants: 720p + 480p (resolution ${finalResolution}p > 480p)`);
+      } else {
+        // Single variant: only 480p, files go in root directory
+        hlsVariants = ['480p'];
+        console.log(`[${jobId}] [HLS] Creating single variant: 480p only (resolution ${finalResolution}p ≤ 480p)`);
+        console.log(`[${jobId}] [HLS] Single variant - playlist.m3u8 and segments will be in root directory`);
+      }
+      
+      // Safety check: ensure hlsVariants is correct
+      if (hlsVariants.length === 0) {
+        throw new Error(`[${jobId}] [ERROR] hlsVariants is empty - this should not happen`);
+      }
+
+      // Create HLS conversion
+      const hlsTempDir = path.join(tempDir, 'hls');
+      fs.mkdirSync(hlsTempDir, { recursive: true });
+
+      // Only create subdirectories for multi-variant HLS
+      // IMPORTANT: For single variant (≤480p), files go in root directory, no subdirectories
+      if (hlsVariants.length > 1) {
+        console.log(`[${jobId}] [HLS] Creating subdirectories for multi-variant HLS`);
+        fs.mkdirSync(path.join(hlsTempDir, '720p'), { recursive: true });
+        fs.mkdirSync(path.join(hlsTempDir, '480p'), { recursive: true });
+      } else {
+        console.log(`[${jobId}] [HLS] Single variant - files will be in root directory, no subdirectories`);
+      }
+
+      // Get encoder config for HLS conversion
+      const availableEncoders = await detectHardwareEncoders();
+      const encoderConfig = await getOptimalEncoder(availableEncoders, {
+        width: displayWidth,
+        height: displayHeight,
+        displayWidth: displayWidth,
+        displayHeight: displayHeight
+      }, false); // Disable COPY for multi-quality
+
+      const commands = [];
+      const masterPlaylistEntries = [];
+
+      for (const variant of hlsVariants) {
+        // For single variant, put files in root directory; for multi-variant, use subdirectories
+        const variantDir = hlsVariants.length === 1 ? hlsTempDir : path.join(hlsTempDir, variant);
+        const segmentFilename = path.join(variantDir, 'segment%03d.ts');
+        // For single variant, use master.m3u8 as the playlist name
+        const playlistFilename = hlsVariants.length === 1 ? path.join(variantDir, 'master.m3u8') : path.join(variantDir, 'playlist.m3u8');
+
+        let targetResolution, bitrate;
+        if (variant === '720p') {
+          targetResolution = 720;
+          bitrate = 1500; // Always 1500k for 720p variant
+        } else { // 480p
+          targetResolution = 480;
+          bitrate = 800; // Always 800k for 480p variant
+        }
+
+        // Calculate dimensions for this variant
+        let variantWidth, variantHeight;
+        const isPortrait = displayHeight > displayWidth;
+
+        if (isPortrait) {
+          variantWidth = targetResolution;
+          variantHeight = Math.round((targetResolution * displayHeight) / displayWidth);
+        } else {
+          variantHeight = targetResolution;
+          variantWidth = Math.round((targetResolution * displayWidth) / displayHeight);
+        }
+
+        // Ensure even dimensions and don't upscale
+        const evenDims = ensureEvenDimensions(variantWidth, variantHeight);
+        variantWidth = Math.min(evenDims.width, displayWidth); // Never upscale beyond original
+        variantHeight = Math.min(evenDims.height, displayHeight);
+
+        console.log(`[${jobId}] [HLS] ${variant} variant: ${variantWidth}x${variantHeight}, bitrate: ${bitrate}k`);
+
+        // Calculate segment duration
+        const segmentDuration = calculateOptimalSegmentDuration({
+          displayWidth: variantWidth,
+          displayHeight: variantHeight,
+          duration: streamInfo ? streamInfo.duration : null
+        }, bitrate);
+
+        const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+        const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+
+        const cmd = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variantWidth}:${variantHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(segmentFilename)} -hls_flags discont_start+split_by_time ${escapeShellArg(playlistFilename)}`;
+
+        commands.push(cmd);
+
+        // Only add to master playlist entries for multi-variant HLS
+        if (hlsVariants.length > 1) {
+          const bandwidth = bitrate * 1000 + 128000; // video bitrate + audio bitrate
+          masterPlaylistEntries.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${variantWidth}x${variantHeight}`);
+          masterPlaylistEntries.push(`${variant}/playlist.m3u8`);
+        }
+      }
+
+      // Execute HLS conversion commands
+      normalizeJobs.set(jobId, {
+        status: 'processing',
+        progress: 60,
+        message: 'Converting to HLS...',
+        startTime: normalizeJobs.get(jobId).startTime
+      });
+
+      console.log(`[${jobId}] [HLS] Executing ${commands.length} conversion commands...`);
+      for (let i = 0; i < commands.length; i++) {
+        console.log(`[${jobId}] [FFMPEG] Command ${i + 1}: ${commands[i].substring(0, 100)}...`);
+        await execAsync(commands[i]);
+      }
+
+      // Create master playlist only for multi-variant HLS
+      if (hlsVariants.length > 1) {
+        const masterPlaylist = `#EXTM3U\n#EXT-X-VERSION:3\n${masterPlaylistEntries.join('\n')}`;
+        fs.writeFileSync(path.join(hlsTempDir, 'master.m3u8'), masterPlaylist);
+      }
+
+      // Upload HLS content to IPFS
+      normalizeJobs.set(jobId, {
+        status: 'processing',
+        progress: 80,
+        message: 'Uploading HLS to IPFS...',
+        startTime: normalizeJobs.get(jobId).startTime
+      });
+
+      const escapedHlsPath = escapeShellArg(hlsTempDir);
+      const cidOutput = await executeLeitherCommand(`ipfs add ${escapedHlsPath}`, jobId, 6 * 60 * 60 * 1000); // 6 hours for large HLS content
+
+      // Extract CID from output
+      const trimmedOutput = cidOutput.trim();
+      const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+      if (ipfsAddOkMatch) {
+        cid = ipfsAddOkMatch[1];
+      } else {
+        const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+        if (cidMatch) {
+          cid = cidMatch[1];
+        }
+      }
+
+      if (!cid) {
+        throw new Error('Failed to extract CID from IPFS add output for HLS content');
+      }
+
+      console.log(`[${jobId}] [SUCCESS] HLS content uploaded to IPFS, CID: ${cid}`);
+    }
     
     // Cleanup temp directory
     if (tempDir && fs.existsSync(tempDir)) {
