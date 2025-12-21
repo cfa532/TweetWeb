@@ -491,7 +491,8 @@ async function processZipUpload(req, res) {
     }
 
     uploadedFile = req.files.zipFile;
-    console.log(`[${requestId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+    const fileSizeMB = (uploadedFile.size / (1024 * 1024)).toFixed(2);
+    console.log(`[${requestId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size} bytes (${fileSizeMB} MB), type='${uploadedFile.mimetype}'`);
 
     const maxFileSize = 500 * 1024 * 1024; // 500MB for zip files
     if (uploadedFile.size > maxFileSize) {
@@ -734,7 +735,8 @@ async function processZipUploadInternal(req, jobId) {
     }
 
     uploadedFile = req.files.zipFile;
-    console.log(`[${jobId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
+    const fileSizeMB = (uploadedFile.size / (1024 * 1024)).toFixed(2);
+    console.log(`[${jobId}] [INFO] Received zip: name='${uploadedFile.name}', size=${uploadedFile.size} bytes (${fileSizeMB} MB), type='${uploadedFile.mimetype}'`);
 
     const maxFileSize = 1024 * 1024 * 1024; // 1GB for zip files
     if (uploadedFile.size > maxFileSize) {

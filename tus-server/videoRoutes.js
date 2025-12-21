@@ -2149,25 +2149,34 @@ async function processNormalizeVideoInternal(req, jobId) {
     
     let finalFilePath;
     let finalFileSize;
-    let wasNormalized = false; // Track if video was actually normalized
+    let normalizedResolution; // Track the resolution after normalization
+    
+    // Always normalize videos
+    const outputPath = path.join(tempDir, 'normalized.mp4');
+    normalizedFilePath = outputPath;
+
+    let targetWidth, targetHeight, bitrate;
 
     if (videoResolution <= 720) {
-      // Skip normalization for videos ≤ 720p, use original file
-      console.log(`[${jobId}] [SKIP] Video resolution (${videoResolution}p) ≤ 720p, skipping normalization, using original file`);
+      // Normalize videos ≤ 720p at their original resolution with proportional bitrate
+      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) ≤ 720p, normalizing at original resolution with proportional bitrate`);
 
-      finalFilePath = inputPath; // Use original file directly
-      finalFileSize = uploadedFile.size;
-      wasNormalized = false; // Not normalized
-      console.log(`[${jobId}] [INFO] Original file size: ${finalFileSize} bytes (${(finalFileSize / (1024 * 1024)).toFixed(2)}MB)`);
+      // Keep original dimensions but ensure even
+      const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
+      targetWidth = evenDims.width;
+      targetHeight = evenDims.height;
+      
+      // Calculate proportional bitrate based on resolution
+      // Base bitrate for 720p is 1000k, scale proportionally
+      bitrate = Math.max(500, Math.round((videoResolution / 720) * 1000)); // Min 500k bitrate
+      normalizedResolution = videoResolution;
+      
+      console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}, Proportional bitrate: ${bitrate}k`);
     } else {
       // Normalize videos > 720p to 720p with 1500k bitrate
       console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p`);
 
-      const outputPath = path.join(tempDir, 'normalized.mp4');
-      normalizedFilePath = outputPath;
-
       // Calculate 720p dimensions maintaining aspect ratio
-      let targetWidth, targetHeight;
       const isPortrait = displayHeight > displayWidth;
 
       if (isPortrait) {
@@ -2184,31 +2193,34 @@ async function processNormalizeVideoInternal(req, jobId) {
       const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
+      
+      bitrate = 1500; // Standard bitrate for 720p
+      normalizedResolution = 720;
 
-      console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}`);
-
-      // Use hardware encoding if available
-      const availableEncoders = await detectHardwareEncoders();
-      const encoderConfig = await getOptimalEncoder(availableEncoders, {
-        width: originalWidth,
-        height: originalHeight,
-        displayWidth: displayWidth,
-        displayHeight: displayHeight
-      });
-
-      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
-      const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
-
-      const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v 1500k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
-    
-      console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
-    await execAsync(ffmpegCmd);
-    
-      finalFilePath = outputPath;
-      finalFileSize = fs.statSync(outputPath).size;
-      wasNormalized = true; // Video was normalized to 720p
-      console.log(`[${jobId}] [INFO] Normalized file size: ${finalFileSize} bytes`);
+      console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}, Bitrate: ${bitrate}k`);
     }
+
+    // Use hardware encoding if available
+    const availableEncoders = await detectHardwareEncoders();
+    const encoderConfig = await getOptimalEncoder(availableEncoders, {
+      width: originalWidth,
+      height: originalHeight,
+      displayWidth: displayWidth,
+      displayHeight: displayHeight
+    });
+
+    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+    const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+  
+    console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
+    await execAsync(ffmpegCmd);
+  
+    finalFilePath = outputPath;
+    finalFileSize = fs.statSync(outputPath).size;
+    console.log(`[${jobId}] [INFO] Normalized file size: ${finalFileSize} bytes (${(finalFileSize / (1024 * 1024)).toFixed(2)}MB)`);
+    console.log(`[${jobId}] [INFO] Normalized resolution: ${normalizedResolution}p`);
     
     // Step 3: Route based on file size
     console.log(`[${jobId}] [STEP 3] Routing based on file size...`);
@@ -2259,17 +2271,21 @@ async function processNormalizeVideoInternal(req, jobId) {
       // HLS conversion (>32MB)
       console.log(`[${jobId}] [ROUTE] File size (${fileSizeMB.toFixed(2)}MB) > 32MB, converting to HLS`);
 
-      // Determine HLS variants based on resolution
-      // For videos ≤720p, use original resolution; for videos >720p, use 720p after normalization
-      const finalResolution = videoResolution <= 720 ? videoResolution : 720; // Resolution after normalization
-      console.log(`[${jobId}] [HLS] Video resolution: ${videoResolution}p, Final resolution for HLS: ${finalResolution}p`);
+      // Determine HLS variants based on normalized resolution
+      const finalResolution = normalizedResolution; // Use the resolution after normalization
+      console.log(`[${jobId}] [HLS] Original resolution: ${videoResolution}p, Normalized resolution: ${normalizedResolution}p, Final resolution for HLS: ${finalResolution}p`);
 
       let hlsVariants;
       // Only create dual variants (720p + 480p) if final resolution is > 480p
       // For resolutions ≤ 480p, create only 480p variant (single variant)
+      // Note: For resolutions between 480p-720p (e.g., 576p), we label them as "720p" 
+      // but use COPY encoder to avoid upscaling - the actual content remains at original resolution
       if (finalResolution > 480) {
         hlsVariants = ['720p', '480p'];
         console.log(`[${jobId}] [HLS] Creating dual variants: 720p + 480p (resolution ${finalResolution}p > 480p)`);
+        if (finalResolution < 720) {
+          console.log(`[${jobId}] [HLS] Note: 720p variant will be labeled as 720p but contain ${finalResolution}p content (no upscaling)`);
+        }
       } else {
         // Single variant: only 480p, files go in root directory
         hlsVariants = ['480p'];
@@ -2324,13 +2340,22 @@ async function processNormalizeVideoInternal(req, jobId) {
           bitrate = 800; // Always 800k for 480p variant
         }
 
-        // Check if we can use COPY encoder (avoid double normalization for 720p)
-        // Only use COPY if video was actually normalized from >720p to 720p
-        // Videos that were originally ≤720p should still be encoded when creating HLS segments
-        const useCopyEncoder = (variant === '720p' && wasNormalized);
+        // Check if we can use COPY encoder (avoid re-encoding)
+        // Use COPY if:
+        // 1. For 720p variant: normalized resolution is ≤720p and >480p (label as 720p, actual content at normalized resolution)
+        // 2. For 480p variant: normalized resolution is ≤480p (label as 480p, actual content at normalized resolution)
+        const useCopyEncoder = 
+          (variant === '720p' && normalizedResolution <= 720 && normalizedResolution > 480) ||
+          (variant === '480p' && normalizedResolution <= 480);
         
         if (useCopyEncoder) {
-          console.log(`[${jobId}] [HLS] Using COPY encoder for 720p variant (video was normalized to 720p, avoiding double encoding)`);
+          if (variant === '720p' && normalizedResolution < 720) {
+            console.log(`[${jobId}] [HLS] Using COPY encoder for ${variant} variant (labeled as 720p, actual content is ${normalizedResolution}p, no upscaling)`);
+          } else if (variant === '480p' && normalizedResolution < 480) {
+            console.log(`[${jobId}] [HLS] Using COPY encoder for ${variant} variant (labeled as 480p, actual content is ${normalizedResolution}p, no upscaling)`);
+          } else {
+            console.log(`[${jobId}] [HLS] Using COPY encoder for ${variant} variant (normalized resolution ${normalizedResolution}p matches variant, avoiding re-encoding)`);
+          }
           
           // Calculate segment duration for 720p
           const segmentDuration = calculateOptimalSegmentDuration({
