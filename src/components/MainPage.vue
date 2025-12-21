@@ -11,6 +11,19 @@ const pageNumber = ref(0);
 const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 
+// Localization for bot verification
+function getBotVerificationMessage(): string {
+    const language = navigator.language || 'en';
+    
+    if (language.startsWith('zh')) {
+        return '点击OK。证明你不是机器人\n\n芝麻，开门！';
+    } else if (language.startsWith('ja')) {
+        return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
+    } else {
+        return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
+    }
+}
+
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
     let timeout: any;
@@ -93,7 +106,7 @@ const handleScroll = debounce(async () => {
 
 onMounted(async () => {
     if (sessionStorage['isBot'] != 'No') {
-        if (confirm('芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!')) {
+        if (confirm(getBotVerificationMessage())) {
             sessionStorage['isBot'] = 'No'
             await loadTweetsWithMinimum()
         } else {

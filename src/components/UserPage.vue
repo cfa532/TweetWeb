@@ -15,6 +15,19 @@ const pageSize = 10; // Using the same page size as MainPage
 const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 
+// Localization for bot verification
+function getBotVerificationMessage(): string {
+    const language = navigator.language || 'en';
+    
+    if (language.startsWith('zh')) {
+        return '点击OK。证明你不是机器人\n\n芝麻，开门！';
+    } else if (language.startsWith('ja')) {
+        return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
+    } else {
+        return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
+    }
+}
+
 onMounted(async () => {
     tweetStore.removeUser(authorId.value);  // force reload user data from its host.
     await initialLoadTweets(authorId.value);
@@ -30,7 +43,7 @@ onUnmounted(() => {
 
 async function initialLoadTweets(authorId: MimeiId) {
     if (sessionStorage['isBot'] !== 'No') {
-        if (confirm('芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!')) {
+        if (confirm(getBotVerificationMessage())) {
             sessionStorage['isBot'] = 'No';
             await loadTweetsWithMinimum(authorId);
         } else {

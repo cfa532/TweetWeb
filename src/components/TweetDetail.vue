@@ -23,9 +23,22 @@ const showDownloadModal = ref(false)
 const isDownloading = ref(false)
 const qrSize = 100
 
+// Localization for bot verification
+function getBotVerificationMessage(): string {
+    const language = navigator.language || 'en';
+    
+    if (language.startsWith('zh')) {
+        return '点击OK。证明你不是机器人\n\n芝麻，开门！';
+    } else if (language.startsWith('ja')) {
+        return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
+    } else {
+        return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
+    }
+}
+
 onMounted(async () => {
     if (sessionStorage["isBot"] != "No") {
-        if (confirm("芝麻，开门！\nOpen Sesame!\n開け！ゴマ\nيا سمسم، افتح الباب!")) {
+        if (confirm(getBotVerificationMessage())) {
             sessionStorage["isBot"] = "No"
             loadDetail()
         } else {

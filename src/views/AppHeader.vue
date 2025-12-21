@@ -33,19 +33,6 @@ const downloadText = computed(() => {
     }
 })
 
-// Localization for direct download
-const directDownloadText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '直接下载安卓 APK'
-    } else if (language.startsWith('ja')) {
-        return '直接ダウンロード Android APK'
-    } else {
-        return 'Download Android APK'
-    }
-})
-
 const downloadingText = computed(() => {
     const language = navigator.language || 'en'
     
