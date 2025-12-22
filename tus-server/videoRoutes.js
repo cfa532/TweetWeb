@@ -16,6 +16,9 @@ const maxConcurrentUploads = 3;
 const uploadQueue = [];
 let isProcessingQueue = false;
 
+// Video quality constants
+const MIN_BITRATE = 300; // Minimum bitrate in kbps (reduced from 500k to avoid inflating low-bitrate videos)
+
 // Track active temporary directories to prevent cleanup during processing
 const activeTempDirs = new Set();
 
@@ -1242,9 +1245,9 @@ async function processVideoUpload(req, res) {
           // Calculate proportional bitrate based on pixel count ratio to 720p
           highQualityBitrate = Math.round((origPixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
 
-          // Ensure minimum bitrate of 500k
-          if (highQualityBitrate < 500) {
-            highQualityBitrate = 500;
+          // Ensure minimum bitrate
+          if (highQualityBitrate < MIN_BITRATE) {
+            highQualityBitrate = MIN_BITRATE;
           }
         }
 
@@ -1273,9 +1276,9 @@ async function processVideoUpload(req, res) {
       // 480p bitrate: proportional to 720p @ REFERENCE_720P_BITRATE based on actual pixel count
       const variant480Pixels = variant480Width * variant480Height;
       variant480Bitrate = Math.round((variant480Pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-      // Ensure minimum bitrate of 500k
-      if (variant480Bitrate < 500) {
-        variant480Bitrate = 500;
+      // Ensure minimum bitrate
+      if (variant480Bitrate < MIN_BITRATE) {
+        variant480Bitrate = MIN_BITRATE;
       }
 
       if (!(is480pVideo || wouldCreateIdenticalVariants)) {
@@ -1922,9 +1925,9 @@ async function processVideoUploadInternal(req, jobId) {
           // Calculate proportional bitrate based on pixel count ratio to 720p
           highQualityBitrate = Math.round((origPixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
 
-          // Ensure minimum bitrate of 500k
-          if (highQualityBitrate < 500) {
-            highQualityBitrate = 500;
+          // Ensure minimum bitrate
+          if (highQualityBitrate < MIN_BITRATE) {
+            highQualityBitrate = MIN_BITRATE;
           }
         }
 
@@ -1953,9 +1956,9 @@ async function processVideoUploadInternal(req, jobId) {
       // 480p bitrate: proportional to 720p @ REFERENCE_720P_BITRATE based on actual pixel count
       const variant480Pixels = variant480Width * variant480Height;
       variant480Bitrate = Math.round((variant480Pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-      // Ensure minimum bitrate of 500k
-      if (variant480Bitrate < 500) {
-        variant480Bitrate = 500;
+      // Ensure minimum bitrate
+      if (variant480Bitrate < MIN_BITRATE) {
+        variant480Bitrate = MIN_BITRATE;
       }
 
       if (!is480pVideo) {
@@ -2768,9 +2771,9 @@ async function processNormalizeVideoInternal(req, jobId) {
         // Calculate proportional bitrate based on pixel count ratio to 720p
         highQualityBitrate = Math.round((origPixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
         
-        // Ensure minimum bitrate of 500k
-        if (highQualityBitrate < 500) {
-          highQualityBitrate = 500;
+        // Ensure minimum bitrate
+        if (highQualityBitrate < MIN_BITRATE) {
+          highQualityBitrate = MIN_BITRATE;
         }
       }
       
@@ -2799,9 +2802,9 @@ async function processNormalizeVideoInternal(req, jobId) {
       // 480p bitrate: proportional to 720p @ REFERENCE_720P_BITRATE based on actual pixel count
       const variant480Pixels = variant480Width * variant480Height;
       let variant480Bitrate = Math.round((variant480Pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-      // Ensure minimum bitrate of 500k
-      if (variant480Bitrate < 500) {
-        variant480Bitrate = 500;
+      // Ensure minimum bitrate
+      if (variant480Bitrate < MIN_BITRATE) {
+        variant480Bitrate = MIN_BITRATE;
       }
 
       console.log(`[${jobId}] [HLS] High quality variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
