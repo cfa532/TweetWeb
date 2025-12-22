@@ -1444,8 +1444,13 @@ playlist.m3u8`;
         console.warn(`[${requestId}] [CLEANUP] Failed to delete normalized.mp4:`, cleanupError.message);
       }
 
-      // Create master playlist file
-      fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+      // Create master playlist file ONLY for dual variants (matches iOS behavior)
+      if (!isSingleVariant) {
+        fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+        console.log(`[${requestId}] [HLS] Created master.m3u8 for dual-variant HLS`);
+      } else {
+        console.log(`[${requestId}] [HLS] Single variant - no master.m3u8 needed (matches iOS)`);
+      }
 
       const variantDescription = isSingleVariant ? `Single-variant (${referenceDim}p)` : 'Dual-variant';
       console.log(`[${requestId}] [SUCCESS] ${variantDescription} HLS conversion completed`);
@@ -2116,13 +2121,16 @@ playlist.m3u8`;
         console.warn(`[${jobId}] [CLEANUP] Failed to delete normalized.mp4:`, cleanupError.message);
       }
 
-      // Create master playlist file
-      fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+      // Create master playlist file ONLY for dual variants (matches iOS behavior)
+      if (!isSingleVariant) {
+        fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+        console.log(`[${jobId}] [HLS] Created master.m3u8 for dual-variant HLS`);
+      } else {
+        console.log(`[${jobId}] [HLS] Single variant - no master.m3u8 needed (matches iOS)`);
+      }
 
       const variantDescription = isSingleVariant ? `Single-variant (${referenceDim}p)` : 'Dual-variant';
       console.log(`[${jobId}] [SUCCESS] ${variantDescription} HLS conversion completed`);
-      
-      console.log(`[${jobId}] [SUCCESS] HLS conversion completed`);
       
       // Upload HLS content to IPFS
       updateProgressSafe(jobId, 80, 'Uploading HLS to IPFS...');
