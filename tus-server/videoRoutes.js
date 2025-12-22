@@ -1317,17 +1317,23 @@ async function processVideoUpload(req, res) {
         console.log(`[${requestId}] [HLS] Dual variant 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
       }
 
-      // Always use libx264 for encoding (simple, reliable)
-      const encoderConfig = {
-        encoder: 'libx264',
-        preset: 'fast',
-        hardware: false,
-        is10Bit: false,
-        useCopy: false
-      };
+      // Use hardware encoder if available for better performance (server advantage over iOS)
+      const availableEncoders = await detectHardwareEncoders();
+      let encoderConfig = await getOptimalEncoder(availableEncoders, {
+        width: isSingleVariant ? variant480Width : highQualityWidth,
+        height: isSingleVariant ? variant480Height : highQualityHeight,
+        displayWidth: isSingleVariant ? variant480Width : highQualityWidth,
+        displayHeight: isSingleVariant ? variant480Height : highQualityHeight
+      }, false);
+      
+      // Safety check: ensure encoderConfig is valid
+      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
+        console.warn(`[${requestId}] [HARDWARE] Invalid encoder config, falling back to libx264`);
+        encoderConfig = { encoder: 'libx264', preset: 'fast', hardware: false, is10Bit: false };
+      }
 
-      const hwParams = '';
-      const softwareParams = `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
       const segmentDuration480 = calculateOptimalSegmentDuration({
@@ -1983,17 +1989,23 @@ async function processVideoUploadInternal(req, jobId) {
         console.log(`[${jobId}] [HLS] Dual variant 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
       }
 
-      // Always use libx264 for encoding
-      const encoderConfig = {
-        encoder: 'libx264',
-        preset: 'fast',
-        hardware: false,
-        is10Bit: false,
-        useCopy: false
-      };
+      // Use hardware encoder if available for better performance
+      const availableEncoders = await detectHardwareEncoders();
+      let encoderConfig = await getOptimalEncoder(availableEncoders, {
+        width: isSingleVariant ? variant480Width : highQualityWidth,
+        height: isSingleVariant ? variant480Height : highQualityHeight,
+        displayWidth: isSingleVariant ? variant480Width : highQualityWidth,
+        displayHeight: isSingleVariant ? variant480Height : highQualityHeight
+      }, false);
+      
+      // Safety check
+      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
+        console.warn(`[${jobId}] [HARDWARE] Invalid encoder config, falling back to libx264`);
+        encoderConfig = { encoder: 'libx264', preset: 'fast', hardware: false, is10Bit: false };
+      }
 
-      const hwParams = '';
-      const softwareParams = `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
       const segmentDuration480 = calculateOptimalSegmentDuration({
@@ -2809,16 +2821,23 @@ async function processNormalizeVideoInternal(req, jobId) {
       console.log(`[${jobId}] [HLS] 720p target: ${highQualityWidth}x${highQualityHeight}, can use COPY: ${canUseCopy720} (normalized >480p and ≤720p)`);
       console.log(`[${jobId}] [HLS] 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
       
-      // Always use libx264 for encoding
-      const encoderConfig = {
-        encoder: 'libx264',
-        preset: 'fast',
-        hardware: false,
-        is10Bit: false
-      };
+      // Use hardware encoder if available for better performance
+      const availableEncoders = await detectHardwareEncoders();
+      let encoderConfig = await getOptimalEncoder(availableEncoders, {
+        width: highQualityWidth,
+        height: highQualityHeight,
+        displayWidth: highQualityWidth,
+        displayHeight: highQualityHeight
+      }, false);
+      
+      // Safety check
+      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
+        console.warn(`[${jobId}] [HARDWARE] Invalid encoder config, falling back to libx264`);
+        encoderConfig = { encoder: 'libx264', preset: 'fast', hardware: false, is10Bit: false };
+      }
 
-      const hwParams = '';
-      const softwareParams = `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+      const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
       const segmentDuration720 = calculateOptimalSegmentDuration({
