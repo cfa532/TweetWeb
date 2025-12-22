@@ -344,10 +344,17 @@ async function initializeHardwareEncoders() {
  * Get available hardware encoders (from cache)
  */
 function getAvailableHardwareEncoders() {
-  if (hardwareEncoderCache && (Date.now() - hardwareEncoderCacheTime) < HARDWARE_CACHE_DURATION) {
-    return hardwareEncoderCache;
+  // Safety check: ensure cache is valid object
+  if (hardwareEncoderCache && typeof hardwareEncoderCache === 'object' && (Date.now() - hardwareEncoderCacheTime) < HARDWARE_CACHE_DURATION) {
+    // Ensure all required properties exist
+    return {
+      nvidia: hardwareEncoderCache.nvidia === true,
+      intel: hardwareEncoderCache.intel === true,
+      apple: hardwareEncoderCache.apple === true,
+      amd: hardwareEncoderCache.amd === true
+    };
   }
-  // Fallback if cache expired
+  // Fallback if cache expired, invalid, or not initialized
   return { nvidia: false, intel: false, apple: false, amd: false };
 }
 

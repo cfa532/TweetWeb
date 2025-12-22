@@ -467,11 +467,30 @@ function cleanupOldTempFiles() {
 // Helper function to detect available hardware encoders (now uses global from app.js)
 function detectHardwareEncoders() {
   console.log('[HARDWARE] Getting hardware encoders from app.js global cache');
-  return Promise.resolve(global.getAvailableHardwareEncoders());
+  try {
+    // Safely get hardware encoders with fallback
+    const encoders = global.getAvailableHardwareEncoders ? global.getAvailableHardwareEncoders() : null;
+    if (encoders && typeof encoders === 'object') {
+      return Promise.resolve(encoders);
+    }
+    // Fallback: no hardware encoders available
+    console.log('[HARDWARE] Hardware encoder detection unavailable, using software encoding fallback');
+    return Promise.resolve({ nvidia: false, intel: false, apple: false, amd: false });
+  } catch (error) {
+    console.error('[HARDWARE] Error detecting hardware encoders:', error.message);
+    console.log('[HARDWARE] Falling back to software encoding');
+    return Promise.resolve({ nvidia: false, intel: false, apple: false, amd: false });
+  }
 }
 
 // Helper function to get optimal encoder settings
 async function getOptimalEncoder(availableEncoders, videoInfo = null, allowCopy = true) {
+  // Safety check: ensure availableEncoders is a valid object
+  if (!availableEncoders || typeof availableEncoders !== 'object') {
+    console.warn('[HARDWARE] Invalid availableEncoders provided, defaulting to software encoding');
+    availableEncoders = { nvidia: false, intel: false, apple: false, amd: false };
+  }
+  
   console.log('[HARDWARE] Getting optimal encoder for:', availableEncoders, 'allowCopy:', allowCopy);
   const is10Bit = videoInfo && videoInfo.bitDepth && videoInfo.bitDepth > 8;
   console.log('[HARDWARE] Video is 10-bit:', is10Bit);
@@ -725,10 +744,17 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   // Use optimized commands for small files
   let cmd720p, cmd480p;
   
+  // Get frame rate for GOP size calculation (default to 30fps if not available)
+  const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
+  
+  // Calculate keyframe parameters for smooth HLS playback
+  const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
+  const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
+
   // Use simplified commands based on Android implementation
   console.log('[HLS-CONVERSION] Using simplified commands based on Android implementation');
-  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
   commands.push(cmd720p, cmd480p);
   
@@ -782,9 +808,31 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
   return segmentDuration;
 }
 
+// Helper function to calculate GOP size and keyframe parameters for HLS
+// Ensures keyframes align with segment boundaries for smooth playback
+function getHLSKeyframeParams(segmentDuration, frameRate = 30) {
+  // Calculate GOP size: segment duration in frames
+  // Round to nearest integer and ensure it's reasonable (between 30 and 600 frames)
+  const gopSize = Math.max(30, Math.min(600, Math.round(segmentDuration * frameRate)));
+  
+  // For HLS, keyframes must align with segment boundaries
+  // Use keyint_min equal to GOP size to ensure consistent keyframe interval
+  // sc_threshold=0 disables scene change detection to prevent unexpected keyframes
+  return `-g ${gopSize} -keyint_min ${gopSize} -sc_threshold 0`;
+}
+
 // Helper function to get hardware-specific encoding parameters (now uses global from app.js)
 function getHardwareEncodingParams(encoder, is10Bit = false) {
-  return global.getHardwareEncodingParams(encoder, is10Bit);
+  try {
+    if (global.getHardwareEncodingParams && typeof global.getHardwareEncodingParams === 'function') {
+      return global.getHardwareEncodingParams(encoder, is10Bit);
+    }
+    console.warn('[HARDWARE] getHardwareEncodingParams not available, returning empty params');
+    return '';
+  } catch (error) {
+    console.error('[HARDWARE] Error getting hardware encoding params:', error.message);
+    return '';
+  }
 }
 
 // Main video processing function
@@ -951,7 +999,22 @@ async function processVideoUpload(req, res) {
                 const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
                 const originalBitrate = bitrate || formatBitrate;
                 
+                // Extract frame rate
+                let frameRate = 30; // Default to 30fps if not available
+                if (videoStream.r_frame_rate) {
+                  const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
+                  if (den && den > 0) {
+                    frameRate = num / den;
+                  }
+                } else if (videoStream.avg_frame_rate) {
+                  const [num, den] = videoStream.avg_frame_rate.split('/').map(Number);
+                  if (den && den > 0) {
+                    frameRate = num / den;
+                  }
+                }
+                
                 console.log(`[${requestId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
+                console.log(`[${requestId}] [INFO] Video frame rate: ${frameRate.toFixed(2)} fps`);
                 
                 resolve({
                   width: videoStream.width,
@@ -964,7 +1027,8 @@ async function processVideoUpload(req, res) {
                   pixelFormat: videoStream.pix_fmt,
                   profile: videoStream.profile,
                   codec: videoStream.codec_name,
-                  bitrate: originalBitrate
+                  bitrate: originalBitrate,
+                  frameRate: frameRate
                 });
               } catch (parseError) {
                 console.error(`[${requestId}] [ERROR] Failed to parse ffprobe JSON:`, parseError);
@@ -1034,6 +1098,7 @@ async function processVideoUpload(req, res) {
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
       // Proportional bitrate: (resolution / 720) * REFERENCE_720P_BITRATE (matches iOS algorithm)
+      const REFERENCE_720P_BITRATE = 1000; // 1000 kbps
       bitrate = Math.round((videoResolution / 720) * REFERENCE_720P_BITRATE);
     }
     
@@ -1228,7 +1293,26 @@ async function processVideoUpload(req, res) {
       };
 
       const availableEncoders = await detectHardwareEncoders();
-      const encoderConfig = await getOptimalEncoder(availableEncoders, encoderConfigVideoInfo, false);
+      let encoderConfig = await getOptimalEncoder(availableEncoders, encoderConfigVideoInfo, false);
+      
+      // Safety check: ensure encoderConfig is valid, fallback to libx264 if not
+      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
+        console.warn(`[${requestId}] [HARDWARE] Invalid encoder config received, falling back to libx264`);
+        encoderConfig = {
+          encoder: 'libx264',
+          preset: 'fast',
+          hardware: false,
+          is10Bit: false
+        };
+      }
+      
+      // Ensure encoder name is safe (fallback to libx264 if unknown)
+      const validEncoders = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_videotoolbox', 'h264_amf', 'copy'];
+      if (!validEncoders.includes(encoderConfig.encoder)) {
+        console.warn(`[${requestId}] [HARDWARE] Unknown encoder "${encoderConfig.encoder}", falling back to libx264`);
+        encoderConfig.encoder = 'libx264';
+        encoderConfig.hardware = false;
+      }
 
       const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
@@ -1240,12 +1324,18 @@ async function processVideoUpload(req, res) {
         duration: videoInfo ? videoInfo.duration : null
       }, variant480Bitrate);
 
+      // Get frame rate for GOP size calculation (default to 30fps if not available)
+      const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
+      
+      // Calculate keyframe parameters for smooth HLS playback
+      const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
+
       let commands = [];
       let masterPlaylist = '';
 
       if (isSingleVariant) {
         // Single variant: playlist and segments at root level (simplified HLS structure)
-        const cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        const cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd, variant: `${referenceDim}p`, progressStart: 50, progressEnd: 80 }
@@ -1267,9 +1357,12 @@ playlist.m3u8`;
           duration: videoInfo ? videoInfo.duration : null
         }, highQualityBitrate);
 
-        const cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        // Calculate keyframe parameters for both variants
+        const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
 
-        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+        const cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+
+        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd720p, variant: '720p', progressStart: 50, progressEnd: 65 },
@@ -1624,6 +1717,8 @@ async function processVideoUploadInternal(req, jobId) {
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
       // Proportional bitrate: (pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE
+      const REFERENCE_720P_PIXELS = 921600; // 1280x720 = 921,600 pixels
+      const REFERENCE_720P_BITRATE = 1000; // 1000 kbps
       bitrate = Math.round(((targetWidth * targetHeight) / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
     }
     
@@ -1827,7 +1922,26 @@ async function processVideoUploadInternal(req, jobId) {
       };
 
       const availableEncoders = await detectHardwareEncoders();
-      const encoderConfig = await getOptimalEncoder(availableEncoders, encoderConfigVideoInfo, false);
+      let encoderConfig = await getOptimalEncoder(availableEncoders, encoderConfigVideoInfo, false);
+      
+      // Safety check: ensure encoderConfig is valid, fallback to libx264 if not
+      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
+        console.warn(`[${requestId}] [HARDWARE] Invalid encoder config received, falling back to libx264`);
+        encoderConfig = {
+          encoder: 'libx264',
+          preset: 'fast',
+          hardware: false,
+          is10Bit: false
+        };
+      }
+      
+      // Ensure encoder name is safe (fallback to libx264 if unknown)
+      const validEncoders = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_videotoolbox', 'h264_amf', 'copy'];
+      if (!validEncoders.includes(encoderConfig.encoder)) {
+        console.warn(`[${requestId}] [HARDWARE] Unknown encoder "${encoderConfig.encoder}", falling back to libx264`);
+        encoderConfig.encoder = 'libx264';
+        encoderConfig.hardware = false;
+      }
 
       const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
       const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
@@ -1839,12 +1953,18 @@ async function processVideoUploadInternal(req, jobId) {
         duration: videoInfo ? videoInfo.duration : null
       }, variant480Bitrate);
 
+      // Get frame rate for GOP size calculation (default to 30fps if not available)
+      const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
+      
+      // Calculate keyframe parameters for smooth HLS playback
+      const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
+
       let commands = [];
       let masterPlaylist = '';
 
       if (isSingleVariant) {
         // Single variant: playlist and segments at root level (simplified HLS structure)
-        const cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        const cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd, variant: `${referenceDim}p`, progressStart: 60, progressEnd: 80 }
@@ -1867,9 +1987,12 @@ playlist.m3u8`;
           duration: videoInfo ? videoInfo.duration : null
         }, highQualityBitrate);
 
-        const cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        // Calculate keyframe parameters for both variants
+        const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
 
-        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+        const cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+
+        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd720p, variant: '720p', progressStart: 60, progressEnd: 70 },
@@ -2386,6 +2509,7 @@ async function processNormalizeVideoInternal(req, jobId) {
       
       // Calculate proportional bitrate based on pixel count
       // Base bitrate for 720p is 1000k, scale proportionally
+      const REFERENCE_720P_PIXELS = 921600; // 1280x720 = 921,600 pixels
       bitrate = Math.round(((targetWidth * targetHeight) / REFERENCE_720P_PIXELS) * 1000);
       normalizedResolution = videoResolution;
       
@@ -2609,10 +2733,28 @@ async function processNormalizeVideoInternal(req, jobId) {
         duration: streamInfo ? streamInfo.duration : null
       }, variant480Bitrate);
 
-      // Build FFmpeg commands for both variants
-      const cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+      // Get frame rate for GOP size calculation (default to 30fps if not available)
+      let frameRate = 30;
+      if (streamInfo && streamInfo.r_frame_rate) {
+        const [num, den] = streamInfo.r_frame_rate.split('/').map(Number);
+        if (den && den > 0) {
+          frameRate = num / den;
+        }
+      } else if (streamInfo && streamInfo.avg_frame_rate) {
+        const [num, den] = streamInfo.avg_frame_rate.split('/').map(Number);
+        if (den && den > 0) {
+          frameRate = num / den;
+        }
+      }
       
-      const cmd480p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '480p/playlist.m3u8'))}`;
+      // Calculate keyframe parameters for smooth HLS playback
+      const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
+      const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
+
+      // Build FFmpeg commands for both variants
+      const cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+      
+      const cmd480p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '480p/playlist.m3u8'))}`;
 
       const commands = [cmd720p, cmd480p];
 
