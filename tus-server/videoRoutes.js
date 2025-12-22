@@ -1104,16 +1104,31 @@ async function processVideoUpload(req, res) {
     
     console.log(`[${requestId}] [INFO] Normalization target: ${targetWidth}x${targetHeight}, bitrate: ${bitrate}k`);
     
-    // Get encoder config
-    const availableEncoders = await detectHardwareEncoders();
-    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
+    // Check if scaling is needed (target dimensions differ from original)
+    const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
     
-    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+    // Get encoder config - force re-encoding if scaling is needed (copy encoder can't use filters)
+    const availableEncoders = await detectHardwareEncoders();
+    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, !needsScaling);
+    
+    // If copy encoder was selected but we need scaling, force re-encoding
+    let finalEncoder = encoderConfig.encoder;
+    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && needsScaling) {
+      console.log(`[${requestId}] [NORMALIZE] Scaling needed but copy encoder selected, forcing re-encoding with libx264`);
+      finalEncoder = 'libx264';
+      encoderConfig.hardware = false;
+      encoderConfig.preset = 'fast';
+    }
+    
+    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(finalEncoder, encoderConfig.is10Bit) : '';
     const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+    
+    // Build scale filter only if needed
+    const scaleFilter = needsScaling ? `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"` : '';
     
     // Normalize to MP4
     const normalizedFilePath = path.join(tempDir, 'normalized.mp4');
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${scaleFilter ? ` ${scaleFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
     
     console.log(`[${requestId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, requestId, 0, 50, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
@@ -1280,42 +1295,39 @@ async function processVideoUpload(req, res) {
         fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
         fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
       }
-      const encoderConfigVideoInfo = isSingleVariant ? {
-        width: variant480Width,
-        height: variant480Height,
-        displayWidth: variant480Width,
-        displayHeight: variant480Height
-      } : {
-        width: highQualityWidth,
-        height: highQualityHeight,
-        displayWidth: highQualityWidth,
-        displayHeight: highQualityHeight
+
+      // Check if we can use COPY encoder for HLS conversion
+      // Matches iOS logic: COPY is used based on resolution ranges, not exact dimensions
+      // - 720p variant: use COPY if normalized resolution is between 480p and 720p (avoids upscaling)
+      // - 480p variant: use COPY if normalized resolution is ≤480p (avoids upscaling)
+      // This allows e.g. 576p content to use COPY for 720p variant (labeled as 720p but actual content is 576p)
+      
+      // Get normalized video resolution (reference dimension) - use the same logic as earlier
+      const normalizedIsPortrait = targetHeight > targetWidth;
+      const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
+      
+      const canUseCopySingle = isSingleVariant && (normalizedReferenceDim <= 480);
+      const canUseCopyDual720 = !isSingleVariant && (normalizedReferenceDim > 480 && normalizedReferenceDim <= 720);
+      
+      console.log(`[${requestId}] [HLS] Normalized video: ${targetWidth}x${targetHeight} (${normalizedReferenceDim}p)`);
+      if (isSingleVariant) {
+        console.log(`[${requestId}] [HLS] Single variant target: ${variant480Width}x${variant480Height}, can use COPY: ${canUseCopySingle} (normalized ≤480p)`);
+      } else {
+        console.log(`[${requestId}] [HLS] Dual variant 720p target: ${highQualityWidth}x${highQualityHeight}, can use COPY: ${canUseCopyDual720} (normalized >480p and ≤720p)`);
+        console.log(`[${requestId}] [HLS] Dual variant 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
+      }
+
+      // Always use libx264 for encoding (simple, reliable)
+      const encoderConfig = {
+        encoder: 'libx264',
+        preset: 'fast',
+        hardware: false,
+        is10Bit: false,
+        useCopy: false
       };
 
-      const availableEncoders = await detectHardwareEncoders();
-      let encoderConfig = await getOptimalEncoder(availableEncoders, encoderConfigVideoInfo, false);
-      
-      // Safety check: ensure encoderConfig is valid, fallback to libx264 if not
-      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
-        console.warn(`[${requestId}] [HARDWARE] Invalid encoder config received, falling back to libx264`);
-        encoderConfig = {
-          encoder: 'libx264',
-          preset: 'fast',
-          hardware: false,
-          is10Bit: false
-        };
-      }
-      
-      // Ensure encoder name is safe (fallback to libx264 if unknown)
-      const validEncoders = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_videotoolbox', 'h264_amf', 'copy'];
-      if (!validEncoders.includes(encoderConfig.encoder)) {
-        console.warn(`[${requestId}] [HARDWARE] Unknown encoder "${encoderConfig.encoder}", falling back to libx264`);
-        encoderConfig.encoder = 'libx264';
-        encoderConfig.hardware = false;
-      }
-
-      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
-      const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+      const hwParams = '';
+      const softwareParams = `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
       const segmentDuration480 = calculateOptimalSegmentDuration({
@@ -1335,7 +1347,16 @@ async function processVideoUpload(req, res) {
 
       if (isSingleVariant) {
         // Single variant: playlist and segments at root level (simplified HLS structure)
-        const cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        let cmd;
+        if (canUseCopySingle) {
+          // Use COPY encoder - no scaling, no re-encoding
+          console.log(`[${requestId}] [HLS] Using COPY encoder for single variant (no scaling needed)`);
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        } else {
+          // Use libx264 encoder with scaling
+          console.log(`[${requestId}] [HLS] Using libx264 encoder for single variant (scaling needed)`);
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        }
 
         commands = [
           { cmd: cmd, variant: `${referenceDim}p`, progressStart: 50, progressEnd: 80 }
@@ -1360,9 +1381,19 @@ playlist.m3u8`;
         // Calculate keyframe parameters for both variants
         const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
 
-        const cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        // 720p variant: use COPY if dimensions match, otherwise libx264
+        let cmd720p;
+        if (canUseCopyDual720) {
+          console.log(`[${requestId}] [HLS] Using COPY encoder for 720p variant (no scaling needed)`);
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        } else {
+          console.log(`[${requestId}] [HLS] Using libx264 encoder for 720p variant (scaling needed)`);
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        }
 
-        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+        // 480p variant: always use libx264 (always needs scaling)
+        console.log(`[${requestId}] [HLS] Using libx264 encoder for 480p variant (scaling needed)`);
+        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd720p, variant: '720p', progressStart: 50, progressEnd: 65 },
@@ -1395,6 +1426,17 @@ playlist.m3u8`;
           videoInfo && videoInfo.duration ? videoInfo.duration : 0
         )
       ));
+
+      // Delete normalized.mp4 file after HLS conversion (cleanup)
+      console.log(`[${requestId}] [CLEANUP] Deleting normalized.mp4 from HLS directory...`);
+      try {
+        if (fs.existsSync(normalizedFilePath)) {
+          fs.unlinkSync(normalizedFilePath);
+          console.log(`[${requestId}] [CLEANUP] Successfully deleted normalized.mp4`);
+        }
+      } catch (cleanupError) {
+        console.warn(`[${requestId}] [CLEANUP] Failed to delete normalized.mp4:`, cleanupError.message);
+      }
 
       // Create master playlist file
       fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
@@ -1724,16 +1766,31 @@ async function processVideoUploadInternal(req, jobId) {
     
     console.log(`[${jobId}] [INFO] Normalization target: ${targetWidth}x${targetHeight}, bitrate: ${bitrate}k`);
     
-    // Get encoder config
-    const availableEncoders = await detectHardwareEncoders();
-    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo);
+    // Check if scaling is needed (target dimensions differ from original)
+    const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
     
-    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+    // Get encoder config - force re-encoding if scaling is needed (copy encoder can't use filters)
+    const availableEncoders = await detectHardwareEncoders();
+    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, !needsScaling);
+    
+    // If copy encoder was selected but we need scaling, force re-encoding
+    let finalEncoder = encoderConfig.encoder;
+    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && needsScaling) {
+      console.log(`[${jobId}] [NORMALIZE] Scaling needed but copy encoder selected, forcing re-encoding with libx264`);
+      finalEncoder = 'libx264';
+      encoderConfig.hardware = false;
+      encoderConfig.preset = 'fast';
+    }
+    
+    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(finalEncoder, encoderConfig.is10Bit) : '';
     const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+    
+    // Build scale filter only if needed
+    const scaleFilter = needsScaling ? `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"` : '';
     
     // Normalize to MP4
     const normalizedFilePath = path.join(tempDir, 'normalized.mp4');
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${scaleFilter ? ` ${scaleFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
     
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, jobId, 40, 60, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
@@ -1909,42 +1966,34 @@ async function processVideoUploadInternal(req, jobId) {
         fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
         fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
       }
-      const encoderConfigVideoInfo = isSingleVariant ? {
-        width: variant480Width,
-        height: variant480Height,
-        displayWidth: variant480Width,
-        displayHeight: variant480Height
-      } : {
-        width: highQualityWidth,
-        height: highQualityHeight,
-        displayWidth: highQualityWidth,
-        displayHeight: highQualityHeight
+
+      // Check if we can use COPY encoder for HLS conversion
+      // Matches iOS logic: COPY is used based on resolution ranges, not exact dimensions
+      const normalizedIsPortrait = targetHeight > targetWidth;
+      const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
+      
+      const canUseCopySingle = isSingleVariant && (normalizedReferenceDim <= 480);
+      const canUseCopyDual720 = !isSingleVariant && (normalizedReferenceDim > 480 && normalizedReferenceDim <= 720);
+      
+      console.log(`[${jobId}] [HLS] Normalized video: ${targetWidth}x${targetHeight} (${normalizedReferenceDim}p)`);
+      if (isSingleVariant) {
+        console.log(`[${jobId}] [HLS] Single variant target: ${variant480Width}x${variant480Height}, can use COPY: ${canUseCopySingle} (normalized ≤480p)`);
+      } else {
+        console.log(`[${jobId}] [HLS] Dual variant 720p target: ${highQualityWidth}x${highQualityHeight}, can use COPY: ${canUseCopyDual720} (normalized >480p and ≤720p)`);
+        console.log(`[${jobId}] [HLS] Dual variant 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
+      }
+
+      // Always use libx264 for encoding
+      const encoderConfig = {
+        encoder: 'libx264',
+        preset: 'fast',
+        hardware: false,
+        is10Bit: false,
+        useCopy: false
       };
 
-      const availableEncoders = await detectHardwareEncoders();
-      let encoderConfig = await getOptimalEncoder(availableEncoders, encoderConfigVideoInfo, false);
-      
-      // Safety check: ensure encoderConfig is valid, fallback to libx264 if not
-      if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
-        console.warn(`[${requestId}] [HARDWARE] Invalid encoder config received, falling back to libx264`);
-        encoderConfig = {
-          encoder: 'libx264',
-          preset: 'fast',
-          hardware: false,
-          is10Bit: false
-        };
-      }
-      
-      // Ensure encoder name is safe (fallback to libx264 if unknown)
-      const validEncoders = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_videotoolbox', 'h264_amf', 'copy'];
-      if (!validEncoders.includes(encoderConfig.encoder)) {
-        console.warn(`[${requestId}] [HARDWARE] Unknown encoder "${encoderConfig.encoder}", falling back to libx264`);
-        encoderConfig.encoder = 'libx264';
-        encoderConfig.hardware = false;
-      }
-
-      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
-      const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+      const hwParams = '';
+      const softwareParams = `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
       const segmentDuration480 = calculateOptimalSegmentDuration({
@@ -1964,7 +2013,14 @@ async function processVideoUploadInternal(req, jobId) {
 
       if (isSingleVariant) {
         // Single variant: playlist and segments at root level (simplified HLS structure)
-        const cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        let cmd;
+        if (canUseCopySingle) {
+          console.log(`[${jobId}] [HLS] Using COPY encoder for single variant (no scaling needed)`);
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        } else {
+          console.log(`[${jobId}] [HLS] Using libx264 encoder for single variant (scaling needed)`);
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+        }
 
         commands = [
           { cmd: cmd, variant: `${referenceDim}p`, progressStart: 60, progressEnd: 80 }
@@ -1990,9 +2046,19 @@ playlist.m3u8`;
         // Calculate keyframe parameters for both variants
         const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
 
-        const cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        // 720p variant: use COPY if dimensions match, otherwise libx264
+        let cmd720p;
+        if (canUseCopyDual720) {
+          console.log(`[${jobId}] [HLS] Using COPY encoder for 720p variant (no scaling needed)`);
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        } else {
+          console.log(`[${jobId}] [HLS] Using libx264 encoder for 720p variant (scaling needed)`);
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+        }
 
-        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+        // 480p variant: always use libx264 (always needs scaling)
+        console.log(`[${jobId}] [HLS] Using libx264 encoder for 480p variant (scaling needed)`);
+        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd720p, variant: '720p', progressStart: 60, progressEnd: 70 },
@@ -2026,6 +2092,17 @@ playlist.m3u8`;
           videoInfo && videoInfo.duration ? videoInfo.duration : 0
         )
       ));
+
+      // Delete normalized.mp4 file after HLS conversion (cleanup)
+      console.log(`[${jobId}] [CLEANUP] Deleting normalized.mp4 from HLS directory...`);
+      try {
+        if (fs.existsSync(normalizedFilePath)) {
+          fs.unlinkSync(normalizedFilePath);
+          console.log(`[${jobId}] [CLEANUP] Successfully deleted normalized.mp4`);
+        }
+      } catch (cleanupError) {
+        console.warn(`[${jobId}] [CLEANUP] Failed to delete normalized.mp4:`, cleanupError.message);
+      }
 
       // Create master playlist file
       fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
@@ -2542,19 +2619,34 @@ async function processNormalizeVideoInternal(req, jobId) {
       console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}, Bitrate: ${bitrate}k`);
     }
 
-    // Use hardware encoding if available
+    // Check if scaling is needed (target dimensions differ from original)
+    const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
+    
+    // Use hardware encoding if available - force re-encoding if scaling is needed (copy encoder can't use filters)
     const availableEncoders = await detectHardwareEncoders();
     const encoderConfig = await getOptimalEncoder(availableEncoders, {
       width: originalWidth,
       height: originalHeight,
       displayWidth: displayWidth,
       displayHeight: displayHeight
-    });
+    }, !needsScaling);
+    
+    // If copy encoder was selected but we need scaling, force re-encoding
+    let finalEncoder = encoderConfig.encoder;
+    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && needsScaling) {
+      console.log(`[${jobId}] [NORMALIZE] Scaling needed but copy encoder selected, forcing re-encoding with libx264`);
+      finalEncoder = 'libx264';
+      encoderConfig.hardware = false;
+      encoderConfig.preset = 'fast';
+    }
 
-    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
+    const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(finalEncoder, encoderConfig.is10Bit) : '';
     const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
+    
+    // Build scale filter only if needed
+    const scaleFilter = needsScaling ? `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"` : '';
 
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k -vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${scaleFilter ? ` ${scaleFilter}` : ''} -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
   
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await execAsync(ffmpegCmd);
@@ -2708,17 +2800,25 @@ async function processNormalizeVideoInternal(req, jobId) {
       fs.mkdirSync(path.join(hlsTempDir, '720p'), { recursive: true });
       fs.mkdirSync(path.join(hlsTempDir, '480p'), { recursive: true });
 
-      // Get encoder config for HLS conversion
-      const availableEncoders = await detectHardwareEncoders();
-      const encoderConfig = await getOptimalEncoder(availableEncoders, {
-        width: highQualityWidth,
-        height: highQualityHeight,
-        displayWidth: highQualityWidth,
-        displayHeight: highQualityHeight
-      }, false);
+      // Check if we can use COPY encoder for HLS conversion
+      // Matches iOS logic: COPY is used based on resolution ranges
+      // - 720p variant: use COPY if normalized resolution is between 480p and 720p (avoids upscaling)
+      const canUseCopy720 = (referenceDim > 480 && referenceDim <= 720);
+      
+      console.log(`[${jobId}] [HLS] Normalized video: ${displayWidth}x${displayHeight} (${referenceDim}p)`);
+      console.log(`[${jobId}] [HLS] 720p target: ${highQualityWidth}x${highQualityHeight}, can use COPY: ${canUseCopy720} (normalized >480p and ≤720p)`);
+      console.log(`[${jobId}] [HLS] 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
+      
+      // Always use libx264 for encoding
+      const encoderConfig = {
+        encoder: 'libx264',
+        preset: 'fast',
+        hardware: false,
+        is10Bit: false
+      };
 
-      const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(encoderConfig.encoder, encoderConfig.is10Bit) : '';
-      const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
+      const hwParams = '';
+      const softwareParams = `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
       const segmentDuration720 = calculateOptimalSegmentDuration({
@@ -2752,9 +2852,19 @@ async function processNormalizeVideoInternal(req, jobId) {
       const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
 
       // Build FFmpeg commands for both variants
-      const cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+      // 720p variant: use COPY if dimensions match, otherwise libx264
+      let cmd720p;
+      if (canUseCopy720) {
+        console.log(`[${jobId}] [HLS] Using COPY encoder for 720p variant (no scaling needed)`);
+        cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+      } else {
+        console.log(`[${jobId}] [HLS] Using libx264 encoder for 720p variant (scaling needed)`);
+        cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+      }
       
-      const cmd480p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '480p/playlist.m3u8'))}`;
+      // 480p variant: always use libx264 (always needs scaling)
+      console.log(`[${jobId}] [HLS] Using libx264 encoder for 480p variant (scaling needed)`);
+      const cmd480p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '480p/playlist.m3u8'))}`;
 
       const commands = [cmd720p, cmd480p];
 
