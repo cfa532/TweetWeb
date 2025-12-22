@@ -260,14 +260,12 @@ if [ "$ROTATION" != "0" ]; then
 fi
 echo -e "${GREEN}[INFO] Bitrate: ${BITRATE_KBPS}k${NC}"
 
-# Determine conversion strategy based on file size (>256MB = single quality)
-USE_SINGLE_QUALITY=false
-if [ "$FILE_SIZE" -gt $((256 * 1024 * 1024)) ]; then
-    USE_SINGLE_QUALITY=true
-    echo -e "${YELLOW}[INFO] Large file detected, using single-quality 720p conversion${NC}"
-else
-    echo -e "${GREEN}[INFO] Using multi-quality conversion (720p + 480p)${NC}"
-fi
+# Normalization logic: all videos are normalized to a single quality
+# - Resolution >720p: normalize to 720p @ 1500k
+# - Resolution =720p: normalize to 720p @ 1000k  
+# - Resolution <720p: keep original resolution with proportional bitrate (no upscaling)
+
+echo -e "${GREEN}[INFO] Normalizing video to optimized HLS format...${NC}"
 
 # Calculate aspect-ratio-preserving dimensions
 calculate_dimensions() {
@@ -293,111 +291,77 @@ calculate_dimensions() {
 
 ESCAPED_INPUT=$(escape_shell_arg "$INPUT_FILE")
 
-if [ "$USE_SINGLE_QUALITY" = true ]; then
-    # Single quality 720p conversion
-    echo -e "${GREEN}[INFO] Converting to single quality 720p...${NC}"
-    
-    DIM720=$(calculate_dimensions 720 $DISPLAY_WIDTH $DISPLAY_HEIGHT)
-    WIDTH720=$(echo $DIM720 | cut -d' ' -f1)
-    HEIGHT720=$(echo $DIM720 | cut -d' ' -f2)
-    
-    # Calculate bitrate (cap at 1.5Mbps)
-    MAX_STREAMING_BITRATE=1500
-    BITRATE720=$BITRATE_KBPS
-    if [ $BITRATE720 -gt $MAX_STREAMING_BITRATE ]; then
-        BITRATE720=$MAX_STREAMING_BITRATE
-    fi
-    
-    RESOLUTION=$((DISPLAY_WIDTH * DISPLAY_HEIGHT))
-    SEGMENT_DURATION=$(calculate_segment_duration $RESOLUTION $BITRATE720)
-    
-    echo -e "${GREEN}[INFO] Target dimensions: ${WIDTH720}x${HEIGHT720}, Bitrate: ${BITRATE720}k, Segment duration: ${SEGMENT_DURATION}s${NC}"
-    
-    PLAYLIST_PATH=$(escape_shell_arg "$TEMP_DIR/playlist.m3u8")
-    SEGMENT_PATH=$(escape_shell_arg "$TEMP_DIR/segment%03d.ts")
-    
-    ffmpeg -i "$INPUT_FILE" -c:v libx264 -c:a aac \
-        -vf "scale=${WIDTH720}:${HEIGHT720}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-        -b:v ${BITRATE720}k -b:a 128k -preset fast -tune zerolatency -threads 2 \
-        -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
-        -f hls -hls_time ${SEGMENT_DURATION} -hls_list_size 0 \
-        -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
-        -hls_flags discont_start+split_by_time \
-        "$TEMP_DIR/playlist.m3u8" -y
-    
-    echo -e "${GREEN}[SUCCESS] Single-quality HLS conversion completed${NC}"
+# Determine target resolution and bitrate based on original resolution
+# 720p reference: 1280x720 = 921,600 pixels
+REFERENCE_720P_PIXELS=921600
+REFERENCE_720P_BITRATE=1000
+
+# Calculate original resolution in pixels
+ORIG_RESOLUTION=$((DISPLAY_WIDTH * DISPLAY_HEIGHT))
+
+# Determine if portrait or landscape, and get the reference dimension
+if [ $DISPLAY_HEIGHT -gt $DISPLAY_WIDTH ]; then
+    # Portrait video
+    IS_PORTRAIT=true
+    REFERENCE_DIM=$DISPLAY_WIDTH
 else
-    # Multi-quality conversion (720p + 480p)
-    echo -e "${GREEN}[INFO] Converting to multi-quality (720p + 480p)...${NC}"
-    
-    mkdir -p "$TEMP_DIR/720p" "$TEMP_DIR/480p"
-    
-    DIM720=$(calculate_dimensions 720 $DISPLAY_WIDTH $DISPLAY_HEIGHT)
-    WIDTH720=$(echo $DIM720 | cut -d' ' -f1)
-    HEIGHT720=$(echo $DIM720 | cut -d' ' -f2)
-    
-    DIM480=$(calculate_dimensions 480 $DISPLAY_WIDTH $DISPLAY_HEIGHT)
-    WIDTH480=$(echo $DIM480 | cut -d' ' -f1)
-    HEIGHT480=$(echo $DIM480 | cut -d' ' -f2)
-    
-    # Calculate bitrates (cap at 1.5Mbps for 720p, 750kbps for 480p)
-    MAX_STREAMING_BITRATE720=1500
-    MAX_STREAMING_BITRATE480=750
-    
-    BITRATE720=$BITRATE_KBPS
-    if [ $BITRATE720 -gt $MAX_STREAMING_BITRATE720 ]; then
-        BITRATE720=$MAX_STREAMING_BITRATE720
-    fi
-    
-    BITRATE480=$BITRATE_KBPS
-    if [ $BITRATE480 -gt $MAX_STREAMING_BITRATE480 ]; then
-        BITRATE480=$MAX_STREAMING_BITRATE480
-    fi
-    
-    RESOLUTION=$((DISPLAY_WIDTH * DISPLAY_HEIGHT))
-    SEGMENT_DURATION720=$(calculate_segment_duration $RESOLUTION $BITRATE720)
-    SEGMENT_DURATION480=$(calculate_segment_duration $RESOLUTION $BITRATE480)
-    
-    echo -e "${GREEN}[INFO] 720p: ${WIDTH720}x${HEIGHT720}, Bitrate: ${BITRATE720}k, Segment: ${SEGMENT_DURATION720}s${NC}"
-    echo -e "${GREEN}[INFO] 480p: ${WIDTH480}x${HEIGHT480}, Bitrate: ${BITRATE480}k, Segment: ${SEGMENT_DURATION480}s${NC}"
-    
-    # Convert to 720p
-    echo -e "${GREEN}[INFO] Converting to 720p...${NC}"
-    ffmpeg -i "$INPUT_FILE" -c:v libx264 -c:a aac \
-        -vf "scale=${WIDTH720}:${HEIGHT720}:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-        -b:v ${BITRATE720}k -b:a 128k -preset fast -tune zerolatency -threads 2 \
-        -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
-        -f hls -hls_time ${SEGMENT_DURATION720} -hls_list_size 0 \
-        -hls_segment_filename "$TEMP_DIR/720p/segment%03d.ts" \
-        -hls_flags discont_start+split_by_time \
-        "$TEMP_DIR/720p/playlist.m3u8" -y
-    
-    # Convert to 480p
-    echo -e "${GREEN}[INFO] Converting to 480p...${NC}"
-    ffmpeg -i "$INPUT_FILE" -c:v libx264 -c:a aac \
-        -vf "scale=${WIDTH480}:${HEIGHT480}:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-        -b:v ${BITRATE480}k -b:a 128k -preset fast -tune zerolatency -threads 2 \
-        -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
-        -f hls -hls_time ${SEGMENT_DURATION480} -hls_list_size 0 \
-        -hls_segment_filename "$TEMP_DIR/480p/segment%03d.ts" \
-        -hls_flags discont_start+split_by_time \
-        "$TEMP_DIR/480p/playlist.m3u8" -y
-    
-    # Create master playlist
-    BANDWIDTH720=1500000
-    BANDWIDTH480=750000
-    
-    cat > "$TEMP_DIR/master.m3u8" <<EOF
-#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=${BANDWIDTH720},RESOLUTION=${WIDTH720}x${HEIGHT720}
-720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=${BANDWIDTH480},RESOLUTION=${WIDTH480}x${HEIGHT480}
-480p/playlist.m3u8
-EOF
-    
-    echo -e "${GREEN}[SUCCESS] Multi-quality HLS conversion completed${NC}"
+    # Landscape video
+    IS_PORTRAIT=false
+    REFERENCE_DIM=$DISPLAY_HEIGHT
 fi
+
+# Determine normalization strategy
+if [ $REFERENCE_DIM -gt 720 ]; then
+    # Resolution >720p: normalize to 720p @ 1500k
+    echo -e "${YELLOW}[INFO] Video resolution >720p, normalizing to 720p @ 1500k${NC}"
+    TARGET_DIM=720
+    TARGET_BITRATE=1500
+elif [ $REFERENCE_DIM -eq 720 ]; then
+    # Resolution =720p: normalize to 720p @ 1000k
+    echo -e "${YELLOW}[INFO] Video resolution =720p, normalizing @ 1000k${NC}"
+    TARGET_DIM=720
+    TARGET_BITRATE=1000
+else
+    # Resolution <720p: keep original resolution with proportional bitrate
+    echo -e "${YELLOW}[INFO] Video resolution <720p, keeping original resolution with proportional bitrate${NC}"
+    TARGET_DIM=$REFERENCE_DIM
+    
+    # Calculate proportional bitrate based on pixel count ratio to 720p
+    # bitrate = (original_pixels / 720p_pixels) * 1000k
+    TARGET_BITRATE=$(awk "BEGIN {printf \"%.0f\", ($ORIG_RESOLUTION / $REFERENCE_720P_PIXELS) * $REFERENCE_720P_BITRATE}")
+    
+    # Ensure minimum bitrate of 500k
+    if [ $TARGET_BITRATE -lt 500 ]; then
+        TARGET_BITRATE=500
+    fi
+fi
+
+# Calculate target dimensions
+DIMS=$(calculate_dimensions $TARGET_DIM $DISPLAY_WIDTH $DISPLAY_HEIGHT)
+TARGET_WIDTH=$(echo $DIMS | cut -d' ' -f1)
+TARGET_HEIGHT=$(echo $DIMS | cut -d' ' -f2)
+
+# Calculate segment duration
+TARGET_RESOLUTION=$((TARGET_WIDTH * TARGET_HEIGHT))
+SEGMENT_DURATION=$(calculate_segment_duration $TARGET_RESOLUTION $TARGET_BITRATE)
+
+echo -e "${GREEN}[INFO] Original: ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT} (${ORIG_RESOLUTION} pixels)${NC}"
+echo -e "${GREEN}[INFO] Target: ${TARGET_WIDTH}x${TARGET_HEIGHT}, Bitrate: ${TARGET_BITRATE}k, Segment: ${SEGMENT_DURATION}s${NC}"
+
+PLAYLIST_PATH=$(escape_shell_arg "$TEMP_DIR/playlist.m3u8")
+SEGMENT_PATH=$(escape_shell_arg "$TEMP_DIR/segment%03d.ts")
+
+# Dual-variant HLS conversion (but script only does single for simplicity)
+ffmpeg -i "$INPUT_FILE" -c:v libx264 -c:a aac \
+    -vf "scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" \
+    -b:v ${TARGET_BITRATE}k -b:a 128k -preset fast -tune zerolatency -threads 2 \
+    -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 \
+    -f hls -hls_time ${SEGMENT_DURATION} -hls_list_size 0 \
+    -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
+    -hls_flags discont_start+split_by_time \
+    "$TEMP_DIR/playlist.m3u8" -y
+
+echo -e "${GREEN}[SUCCESS] Normalized HLS conversion completed${NC}"
 
 # Output the directory path
 echo -e "${GREEN}[SUCCESS] HLS files created in: $TEMP_DIR${NC}"

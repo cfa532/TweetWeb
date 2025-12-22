@@ -22,10 +22,12 @@ TweetWeb automatically converts uploaded videos to HLS (HTTP Live Streaming) for
 ### Key Features
 
 - **Automatic HLS Conversion**: All videos converted to HLS format
-- **Adaptive Bitrate**: Multiple quality levels (720p, 480p)
+- **Dual-Variant Streaming**: High quality + 480p adaptive bitrate
+- **Intelligent Normalization**: Resolution-based quality optimization
+- **No Upscaling**: Preserves original quality for sub-720p videos
 - **Hardware Acceleration**: Support for GPU-based encoding
 - **Smart Encoding**: Intelligent encoder selection
-- **Copy Optimization**: Stream copy for compatible videos
+- **Proportional Bitrates**: Bitrate scales with resolution
 - **Progress Tracking**: Real-time conversion progress
 - **Concurrent Processing**: Up to 3 simultaneous conversions
 
@@ -50,26 +52,32 @@ TweetWeb automatically converts uploaded videos to HLS (HTTP Live Streaming) for
 
 ## Conversion Algorithm
 
-The system uses a three-tier decision tree for optimal conversion:
+The system uses a streamlined normalization approach for all videos:
 
 ### Decision Tree
 
 ```
 1. Check noResample parameter
    ├─ YES: Use copy mode (-c:v copy -c:a copy)
-   └─ NO: Continue to step 2
+   └─ NO: Continue to normalization
 
-2. Check file size
-   ├─ >256MB: Multi-quality conversion (720p + 360p)
-   └─ ≤256MB: Multi-quality conversion (720p + 480p)
+2. Check source video resolution
+   ├─ =480p: Single variant 480p @ 500k (like iOS singleVariant480p=true)
+   ├─ ≤480p: Single variant original resolution @ 500k (optimization - avoids duplicates)
+   └─ >480p: Continue to dual-variant logic
 
-3. Encoder selection
-   ├─ Copy encoder eligible? (see conditions below)
-   │  ├─ YES & noResample mode: Use copy encoder
-   │  └─ NO or Multi-quality: Use hardware/software encoder
+3. For dual variants: normalize video based on resolution
+   ├─ Resolution >720p: High quality 720p @ 1500k + 480p @ 667k
+   ├─ Resolution =720p: High quality 720p @ 1000k + 480p @ 667k
+   └─ Resolution <720p & !=480p: High quality original @ proportional + 480p @ 667k
+                        (No upscaling, bitrate = (pixels / 720p_pixels) * 1000k, min 500k)
+
+4. Encoder selection
    └─ Hardware acceleration available?
       ├─ YES: Use hardware encoder (NVIDIA/Intel/Apple/AMD)
       └─ NO: Use software encoder (libx264)
+
+5. Create master playlist for adaptive streaming
 ```
 
 ### 1. No Resample Mode
@@ -94,126 +102,193 @@ When `noResample=true`:
 - No bitrate control
 - Single quality only
 
-### 2. Large Files (>256MB)
+### 2. Dual-Variant HLS Output
 
-Multi-quality conversion with master playlist:
+All videos are converted to dual-variant HLS with adaptive bitrate streaming:
 
-**Qualities**:
-- 720p (adaptive bitrate, capped at 3000 kbps)
-- 360p (adaptive bitrate, capped at 1000 kbps)
+**High Quality Variant** (labeled as 720p):
+- **Resolution >720p** (e.g., 1080p, 4K): Downscaled to 720p @ 1500 kbps
+- **Resolution =720p**: Kept at 720p @ 1000 kbps
+- **Resolution <720p** (e.g., 480p, 360p): Original resolution @ proportional bitrate
+  - Formula: `(pixels / 921,600) * 1000k` (minimum 500k)
+  - Example: 480p (409,920 pixels) = 445k
 
-**Rationale**: Large files benefit from adaptive streaming with multiple quality options while maintaining reasonable processing time.
+**480p Variant**:
+- Fixed bitrate: 667 kbps (proportional to 720p @ 1000k)
+- Resolution: Scaled to 480p (don't upscale if source is lower)
+- Always included for network adaptability
 
-**Benefits**:
-- Adaptive bitrate streaming
-- Better user experience across different network conditions
-- Bandwidth optimization
-- Quality selection for users
-
-### 3. Regular Files (≤256MB)
-
-Multi-quality conversion with master playlist:
-
-**Qualities**:
-- 720p (adaptive bitrate, capped at 3000 kbps)
-- 480p (adaptive bitrate, capped at 1500 kbps)
+**Master Playlist**:
+- Enables automatic quality switching
+- Adapts to network conditions
+- Seamless transition between variants
 
 **Benefits**:
-- Adaptive bitrate streaming
-- Better user experience
-- Bandwidth optimization
-- Quality selection for users
+- Adaptive bitrate streaming for all network conditions
+- No upscaling artifacts
+- Optimized bandwidth usage
+- Better user experience across devices
 
-## Adaptive Bitrate Encoding
+## Normalization Bitrate Strategy
 
-All quality levels (720p, 480p, 360p) use **adaptive bitrate encoding** that intelligently balances quality preservation and bandwidth efficiency.
+The system uses **intelligent bitrate normalization** based on video resolution to ensure optimal streaming performance.
 
 ### How It Works
 
-1. **Detects Original Bitrate**: Uses `ffprobe` to detect the original video's bitrate
-2. **Compares to Cap**: Checks if original bitrate is lower than the quality cap
-3. **Applies Logic**: Uses `min(original_bitrate, quality_cap)`
+1. **Analyzes Resolution**: Determines original video resolution
+2. **Applies Normalization Rules**: Based on resolution category
+3. **Calculates Proportional Bitrate**: For sub-720p videos
 
-### Bitrate Caps
+### Normalization Rules
 
-| Quality | Maximum Cap | Adaptive Behavior |
-|---------|-------------|-------------------|
-| 720p | 1500 kbps | Uses original if ≤ 1500k, otherwise caps at 1500k |
-| 480p | 750 kbps | Uses original if ≤ 750k, otherwise caps at 750k |
-| 360p | 500 kbps | Uses original if ≤ 500k, otherwise caps at 500k |
+| Original Resolution | Target Resolution | Bitrate | Calculation |
+|---------------------|-------------------|---------|-------------|
+| **>720p** (1080p, 4K, etc.) | 720p | 1500 kbps | Fixed at 1500k |
+| **=720p** | 720p | 1000 kbps | Fixed at 1000k |
+| **<720p** (480p, 360p, etc.) | Original (no upscaling) | Proportional | (pixels / 921,600) * 1000k, min 500k |
+
+### Proportional Bitrate Calculation
+
+For videos with resolution <720p:
+
+```javascript
+// 720p reference: 1280x720 = 921,600 pixels
+// Base bitrate: 1000 kbps
+
+bitrate = (original_width * original_height / 921600) * 1000
+bitrate = Math.max(bitrate, 500) // Minimum 500 kbps
+```
 
 ### Benefits
 
-- **Preserves Quality**: Low-quality source videos maintain their original bitrate
-- **Prevents Waste**: High-quality videos are capped to reasonable streaming limits
-- **Bandwidth Efficient**: Avoids unnecessary data transfer for low-quality sources
-- **Consistent Experience**: All videos get appropriate bitrate for their source quality
+- **No Upscaling**: Lower resolution videos maintain original quality
+- **Optimized for Streaming**: Higher resolution videos normalized to efficient streaming size
+- **Proportional Quality**: Bitrate scales with pixel count
+- **Consistent Performance**: Predictable bandwidth usage
 
 ### Examples
 
-**Example 1: Low-Quality Source**
-- Original video: 800 kbps
-- 720p output: 800 kbps (preserved, not increased to 3000k)
-- 480p output: 800 kbps (preserved, not increased to 1500k)
+**Example 1: 4K Video (3840×2160)**
+- Original: 3840×2160 pixels
+- High quality variant: 1280×720 @ 1500 kbps
+- 480p variant: 854×480 @ 667 kbps
+- Result: Excellent streaming quality with adaptive bitrate
 
-**Example 2: High-Quality Source**
-- Original video: 5000 kbps
-- 720p output: 1500 kbps (capped for streaming)
-- 480p output: 750 kbps (capped for streaming)
+**Example 2: 720p Video (1280×720)**
+- Original: 1280×720 pixels
+- High quality variant: 1280×720 @ 1000 kbps (no rescaling)
+- 480p variant: 854×480 @ 667 kbps
+- Result: Optimized bitrate with fallback option
 
-**Example 3: Medium-Quality Source**
-- Original video: 2500 kbps
-- 720p output: 2500 kbps (preserved, below 3000k cap)
-- 480p output: 1500 kbps (capped, original exceeds cap)
+**Example 3: 480p Video (854×480)**
+- Original: 854×480 = 409,920 pixels
+- **Single variant mode** (like iOS): 854×480 @ 500k minimum bitrate
+- Result: Optimized single quality for 480p content, no duplicate variants
+
+**Example 4: 360p Video (640×360)**
+- Original: 640×360 = 230,400 pixels
+- **Single variant mode** (optimization): 640×360 @ 500k minimum bitrate
+- **Simplified structure**: playlist.m3u8 and segments at root level (no subdirectories)
+- Result: Efficient single quality - avoids creating duplicate identical variants
+
+### HLS Directory Structure
+
+#### Single Variant (≤480p videos):
+```
+hls/
+├── master.m3u8        # Master playlist (redirects to playlist.m3u8)
+├── playlist.m3u8      # Media playlist with segments
+├── segment000.ts     # Video segments
+├── segment001.ts
+└── ...
+```
+
+#### Dual Variant (>480p videos):
+```
+hls/
+├── master.m3u8        # Master playlist with 2 streams
+├── 720p/
+│   ├── playlist.m3u8
+│   └── segment*.ts
+└── 480p/
+    ├── playlist.m3u8
+    └── segment*.ts
+```
+
+**Example 4: 360p Video (640×360)**
+- Original: 640×360 = 230,400 pixels  
+- High quality variant: 640×360 @ 500 kbps (no upscaling)
+  - Calculation: (230,400 / 921,600) * 1000 = 250k → 500k (minimum)
+- 480p variant: 640×360 @ 500 kbps (no upscaling from 360p to 480p)
+- Result: Minimum viable streaming quality, adaptive capabilities
+
+### Algorithm Summary
+
+The adaptive normalization algorithm provides:
+
+✅ **Smart Variant Selection**: Single variant for ≤480p videos (480p like iOS, others optimization)
+✅ **Adaptive Streaming**: Quality variants based on content resolution and network needs
+✅ **No Upscaling**: Videos maintain original resolution when beneficial
+✅ **Optimized Streaming**: >720p normalized to 720p @ 1500k, others proportional
+✅ **Consistent Bitrates**: Predictable bandwidth (500-1500k range with minimums)
+✅ **Quality Preservation**: Proportional bitrates prevent degradation
+✅ **Efficiency Optimization**: Eliminates duplicate identical variants for low-res content
+✅ **Cross-Platform Consistency**: Matches iOS app behavior with intelligent optimizations
+
+**Performance Characteristics**:
+- **Max Concurrent**: 3 simultaneous conversions
+- **Hardware Acceleration**: 5-10x faster than software
+- **Conversion Mode**: Parallel for dual variants, sequential for single variants
+- **Typical Conversion Times**:
+  - <10MB: ~10-30 seconds (single/dual variants)
+  - 50-200MB: ~1-5 minutes (single/dual variants)
+  - 500MB+: ~5-20 minutes (single/dual variants)
+  - 4K videos: ~10-30 minutes (includes downscaling to 720p + 480p)
 
 ## Encoder Selection
 
 ### Copy Encoder (Stream Copy)
 
-The copy encoder is the **fastest** option but has strict requirements.
+The copy encoder is the **fastest** option but is only used in `noResample` mode.
 
-#### Conditions for Copy Encoder
+#### When Copy Encoder is Used
 
-ALL of the following must be true:
+Copy encoder is **only** used when:
 
-1. **Resolution Requirement**:
-   - Landscape: Width ≤ 1280 pixels
-   - Portrait: Height ≤ 1280 pixels
+1. **noResample flag is set**: User explicitly requests no re-encoding
+2. **Quick preview mode**: For testing or preview purposes
 
-2. **Codec Compatibility**:
-   - ✅ H.264 (avc, h264)
-   - ✅ H.265 (hevc)
-   - ❌ MPEG-4 (mpeg4, divx, xvid)
-   - ❌ Other incompatible codecs
+#### Normal Operation (Always Re-encodes)
 
-3. **Quality Mode**:
-   - ✅ Single quality mode
-   - ❌ Multi-quality mode (cannot scale)
+In normal operation, the system **always re-encodes** to ensure:
 
-4. **File Size**:
-   - Typically used for files >256MB in single quality mode
-
-#### Why No Copy for Multi-Quality?
-
-**Problem**: Copy encoder cannot scale video.
-
-```bash
-# This would create IDENTICAL streams
-# 720p output: 1920x1080 (original)
-# 480p output: 1920x1080 (NOT scaled!)
-ffmpeg -i input.mp4 -c:v copy 720p/output.m3u8
-ffmpeg -i input.mp4 -c:v copy 480p/output.m3u8
-```
-
-**Solution**: System automatically overrides copy encoder for multi-quality:
+1. **Consistent Quality**: All videos normalized to optimal streaming bitrates
+2. **Resolution Optimization**: >720p videos downscaled to 720p
+3. **Bitrate Control**: Precise bitrate management for streaming
+4. **Format Compatibility**: Ensures H.264/AAC compatibility
 
 ```javascript
-if (encoderConfig.useCopy && isMultiQuality) {
-  console.log('[HLS-CONVERSION] Multi-quality conversion detected - overriding COPY encoder');
-  encoderConfig.useCopy = false;
-  encoderConfig.encoder = hardwareEncoder || 'libx264';
-}
+// Normal operation always uses encoder (hardware or software)
+const encoder = detectHardwareEncoder() || 'libx264';
 ```
+
+#### Copy Mode (noResample=true)
+
+When `noResample=true`, performs fast stream copy:
+
+```bash
+ffmpeg -i input.mp4 -c:v copy -c:a copy \
+  -f hls -hls_time 6 -hls_list_size 0 \
+  -hls_segment_filename 'segment%03d.ts' \
+  -hls_flags discont_start+split_by_time \
+  playlist.m3u8
+```
+
+**Limitations**:
+- No quality adjustment
+- No resolution scaling
+- No bitrate control
+- Must be compatible codec (H.264/H.265)
 
 ### Hardware Encoders
 
@@ -332,61 +407,37 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
 - More responsive seeking
 - Better for low-bandwidth scenarios
 
-## Quality Profiles
+## Quality Profile
 
-### 720p Stream
+### Single Normalized Stream
 
-**Video**:
-- Resolution: 1280x720 (landscape) or scaled proportionally
-- Bitrate: Adaptive (uses original if lower, capped at 3000 kbps)
-- Max Bitrate: 3000 kbps
-- Encoding: Preserves original quality when source bitrate is lower
+All videos are normalized to a single optimized quality:
+
+**Video Encoding**:
+- Resolution: Depends on original (see normalization rules)
+- Bitrate: Resolution-dependent (500k - 1500k)
+- Codec: H.264
+- Profile: High
+- Level: 4.1
 - GOP Size: 30 frames
 - Keyframe Interval: 30 frames
 
-**Audio**:
+**Audio Encoding**:
 - Codec: AAC
 - Bitrate: 128 kbps
+- Sample Rate: 48 kHz
 - Channels: Stereo
 
-**Scaling**:
+**Scaling** (when needed):
 ```bash
--vf "scale=1280:720:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2"
+-vf "scale=WIDTH:HEIGHT:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2"
 ```
 
-### 480p Stream
-
-**Video**:
-- Resolution: 854x480 (landscape) or scaled proportionally
-- Bitrate: Adaptive (uses original if lower, capped at 1500 kbps)
-- Max Bitrate: 1500 kbps
-- Encoding: Preserves original quality when source bitrate is lower
-- GOP Size: 30 frames
-- Keyframe Interval: 30 frames
-
-**Audio**:
-- Codec: AAC
-- Bitrate: 128 kbps
-
-### 360p Stream
-
-**Video**:
-- Resolution: Scaled proportionally to max 360p height/width
-- Bitrate: Adaptive (uses original if lower, capped at 1000 kbps)
-- Max Bitrate: 1000 kbps
-- Encoding: Preserves original quality when source bitrate is lower
-- GOP Size: 30 frames
-- Keyframe Interval: 30 frames
-
-**Audio**:
-- Codec: AAC
-- Bitrate: 128 kbps
-- Channels: Stereo
-
-**Scaling**:
-```bash
--vf "scale=854:480:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2"
-```
+**HLS Parameters**:
+- Segment Duration: Adaptive (4-15 seconds based on resolution/bitrate)
+- Playlist Type: Single quality
+- Container: MPEG-TS (.ts segments)
+- Playlist Format: M3U8
 
 ### Aspect Ratio Preservation
 
@@ -476,41 +527,49 @@ const intelWorks = await testHardwareEncoder('h264_qsv');
 const encoder = selectOptimalEncoder(availableEncoders, videoInfo);
 ```
 
-#### 4. HLS Conversion (40-60%)
+#### 4. HLS Conversion (40-80%)
 
-**Single Quality**:
+**Single Normalized Quality**:
 ```bash
+# Example: 1080p video normalized to 720p @ 1500k
 ffmpeg -i input.mp4 \
-  -c:v h264_nvenc -rc vbr -cq 23 \
+  -c:v h264_nvenc \
   -c:a aac -b:a 128k \
-  -vf "scale=1280:720:flags=lanczos" \
-  -b:v 2000k -maxrate 2000k -bufsize 2000k \
-  -g 30 -keyint_min 30 -sc_threshold 0 \
+  -vf "scale=1280:720:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" \
+  -b:v 1500k \
+  -preset fast -tune zerolatency -threads 2 \
+  -fflags +genpts+igndts+flush_packets \
+  -avoid_negative_ts make_zero -max_interleave_delta 0 \
   -f hls -hls_time ${segmentDuration} -hls_list_size 0 \
   -hls_segment_filename 'segment%03d.ts' \
+  -hls_flags discont_start+split_by_time \
   playlist.m3u8
 ```
 
-**Multi-Quality** (parallel execution):
+**Examples by Resolution**:
+
 ```bash
-# 720p stream
-ffmpeg -i input.mp4 ... 720p/playlist.m3u8 &
+# 4K video (3840×2160) → 720p @ 1500k
+ffmpeg -i 4k_input.mp4 -vf "scale=1280:720" -b:v 1500k ... playlist.m3u8
 
-# 480p stream
-ffmpeg -i input.mp4 ... 480p/playlist.m3u8 &
+# 720p video (1280×720) → 720p @ 1000k (no rescaling)
+ffmpeg -i 720p_input.mp4 -vf "scale=1280:720" -b:v 1000k ... playlist.m3u8
 
-# Wait for both to complete
-wait
+# 480p video (854×480) → 480p @ ~445k (no upscaling)
+ffmpeg -i 480p_input.mp4 -vf "scale=854:480" -b:v 445k ... playlist.m3u8
+```
 
-# Create master playlist
-cat > master.m3u8 << EOF
-#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720
-720p/playlist.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=854x480
-480p/playlist.m3u8
-EOF
+**Examples by Resolution**:
+
+```bash
+# 4K video (3840×2160) → 720p @ 1500k
+ffmpeg -i 4k_input.mp4 -vf "scale=1280:720" -b:v 1500k ... playlist.m3u8
+
+# 720p video (1280×720) → 720p @ 1000k (no rescaling)
+ffmpeg -i 720p_input.mp4 -vf "scale=1280:720" -b:v 1000k ... playlist.m3u8
+
+# 480p video (854×480) → 480p @ ~445k (no upscaling)
+ffmpeg -i 480p_input.mp4 -vf "scale=854:480" -b:v 445k ... playlist.m3u8
 ```
 
 #### 5. IPFS Upload (60-95%)
