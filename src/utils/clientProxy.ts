@@ -31,20 +31,26 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolMan
         return true;
       }
       
-      // For any other property/method, return a function that uses the pool
-      return async function(...args: any[]) {
-        const client = await connectionPool.getConnection(ip);
-        try {
-          // Call the method on the actual client
-          const method = (client as any)[prop];
-          if (typeof method === 'function') {
-            return await method.apply(client, args);
+      // Return a wrapper function that will acquire connection only when called
+      // This prevents acquiring connections on property access
+      return function(...args: any[]) {
+        // Return a promise that handles the connection lifecycle
+        return (async () => {
+          const client = await connectionPool.getConnection(ip);
+          try {
+            // Get the method from the actual client
+            const method = (client as any)[prop];
+            if (typeof method === 'function') {
+              // Call the method and await its result
+              return await method.apply(client, args);
+            }
+            // If it's a property, return it
+            return method;
+          } finally {
+            // Always release the connection
+            connectionPool.releaseConnection(ip, client);
           }
-          // If it's a property, return it
-          return method;
-        } finally {
-          connectionPool.releaseConnection(ip, client);
-        }
+        })();
       };
     },
     
