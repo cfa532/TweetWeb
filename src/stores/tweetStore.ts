@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
+import { createPooledClient } from '@/utils/clientProxy';
 const GUEST_ID = "000000000000000000000000000"
 const TWEET_COUNT = 30
 
@@ -26,7 +27,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             if (sessionStorage.getItem("user")) {
                 let usr = JSON.parse(sessionStorage.getItem("user")!)
-                usr.client = state.lapi.getClient(usr.providerIp)
+                usr.client = createPooledClient(usr.providerIp, state.lapi.connectionPool)
                 state._user = usr
                 return usr
             }
@@ -564,7 +565,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
             if (sessionStorage.getItem(tweetId)) {
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
-                t.author.client = this.lapi.getClient(t.author.providerIp)  // hprose client cannot be serielized.
+                t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)  // hprose client cannot be serielized.
                 return t
             }
             // Get IP address of the provider of this tweet
@@ -647,7 +648,7 @@ export const useTweetStore = defineStore('tweetStore', {
             
             // Store original provider IP to detect loops
             const originalProviderIp = providerIp
-            let providerClient = this.lapi.getClient(providerIp)
+            let providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
 
             let user = await providerClient.RunMApp("get_user", {
                 aid: this.appId, ver: "last", userid: userId,
@@ -673,7 +674,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.log(`User not found on node ${providerIp}, redirecting to correct node: ${user}`)
                     // Retry with the correct provider IP
                     providerIp = user
-                    providerClient = this.lapi.getClient(providerIp)
+                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
                     user = await providerClient.RunMApp("get_user", {
                         aid: this.appId, ver: "last", userid: userId,
                     })
@@ -892,7 +893,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                             user.providerIp = ip
                             sessionStorage.setItem("user", JSON.stringify(user))
-                            user.client = this.lapi.getClient(ip)
+                            user.client = createPooledClient(ip, this.lapi.connectionPool)
                             this._user = user
                             this.addFollowing(userId)
                             useAlertStore().success("Login successful!")

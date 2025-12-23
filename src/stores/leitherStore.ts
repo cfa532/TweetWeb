@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import ConnectionPoolManager from '@/utils/connectionPool';
 
 const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGetAllKeys",
     "MFOpenByPath","DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs",
@@ -27,6 +28,9 @@ function getCurNodeIP() {
 };
 const curIP = getCurNodeIP();
 
+// Create a singleton connection pool manager
+const connectionPool = new ConnectionPoolManager(ayApi);
+
 export const useLeitherStore = defineStore({
     id: 'LeitherApiHandler', 
     state: ()=>({
@@ -37,10 +41,47 @@ export const useLeitherStore = defineStore({
         baseUrl: window.location.protocol+'//'+curIP+'/',
         client: window.hprose.Client.create("ws://" + curIP +"/ws/", ayApi),
         logoUrl: import.meta.env.VITE_APP_LOGO,
+        connectionPool: connectionPool,
     }),
     actions: {
-        getClient(ip: string) {
-            return window.hprose.Client.create("ws://" + ip +"/ws/", ayApi)
+        /**
+         * Get a client from the connection pool
+         * @param ip The IP address to connect to
+         * @returns A promise that resolves to an hprose client
+         */
+        async getClient(ip: string) {
+            return await this.connectionPool.getConnection(ip);
         },
+        
+        /**
+         * Release a client back to the connection pool
+         * @param ip The IP address of the client
+         * @param client The client to release
+         */
+        releaseClient(ip: string, client: any) {
+            this.connectionPool.releaseConnection(ip, client);
+        },
+        
+        /**
+         * Execute a function with a pooled client, automatically releasing it when done
+         * @param ip The IP address to connect to
+         * @param fn The function to execute with the client
+         * @returns The result of the function
+         */
+        async withClient<T>(ip: string, fn: (client: any) => Promise<T>): Promise<T> {
+            const client = await this.getClient(ip);
+            try {
+                return await fn(client);
+            } finally {
+                this.releaseClient(ip, client);
+            }
+        },
+        
+        /**
+         * Get connection pool statistics
+         */
+        getPoolStats() {
+            return this.connectionPool.getStats();
+        }
     }
 })
