@@ -23,8 +23,8 @@ interface PendingRequest {
 class ConnectionPoolManager {
   private connections: Map<string, PooledConnection[]> = new Map();
   private pendingRequests: PendingRequest[] = [];
-  private readonly maxConnectionsPerIp: number = 4; // 4 connections per IP
-  private readonly maxTotalConnections: number = 8; // Total 8 connections across all IPs
+  private readonly maxConnectionsPerIp: number = 8; // 8 connections per IP
+  private readonly maxTotalConnections: number = 16; // Total 16 connections across all IPs
   private readonly connectionTimeout: number = 30000; // 30 seconds
   private readonly idleTimeout: number = 60000; // 1 minute idle before cleanup
   private readonly ayApi: string[];

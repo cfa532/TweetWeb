@@ -31,24 +31,47 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolMan
         return true;
       }
       
+      // Ignore Vue/JavaScript internal properties that shouldn't trigger connection
+      const ignoredProps = [
+        'toJSON', 'toString', 'valueOf', 'constructor', 'prototype',
+        '__proto__', '__v_isRef', '__v_isReadonly', '__v_isReactive',
+        '__v_skip', 'then', 'catch', 'finally', Symbol.toStringTag,
+        Symbol.iterator, Symbol.asyncIterator, Symbol.hasInstance
+      ];
+      
+      if (ignoredProps.includes(prop as any) || typeof prop === 'symbol') {
+        return undefined;
+      }
+      
       // Return a wrapper function that will acquire connection only when called
       // This prevents acquiring connections on property access
       return function(...args: any[]) {
         // Return a promise that handles the connection lifecycle
         return (async () => {
-          const client = await connectionPool.getConnection(ip);
+          let client;
           try {
+            client = await connectionPool.getConnection(ip);
+            console.log(`[CLIENT-PROXY] Acquired connection for ${prop}`);
+            
             // Get the method from the actual client
             const method = (client as any)[prop];
             if (typeof method === 'function') {
               // Call the method and await its result
-              return await method.apply(client, args);
+              const result = await method.apply(client, args);
+              console.log(`[CLIENT-PROXY] Method ${String(prop)} completed`);
+              return result;
             }
             // If it's a property, return it
             return method;
+          } catch (error) {
+            console.error(`[CLIENT-PROXY] Error in ${String(prop)}:`, error);
+            throw error;
           } finally {
             // Always release the connection
-            connectionPool.releaseConnection(ip, client);
+            if (client) {
+              console.log(`[CLIENT-PROXY] Releasing connection for ${prop}`);
+              connectionPool.releaseConnection(ip, client);
+            }
           }
         })();
       };

@@ -105,15 +105,22 @@ const handleScroll = debounce(async () => {
 }, 300); // Increased debounce delay to reduce conflicts
 
 onMounted(async () => {
+    // Only load tweets if we don't have any yet or if this is a fresh session
+    const shouldLoad = tweetStore.tweets.length === 0 || initialLoad.value;
+    
     if (sessionStorage['isBot'] != 'No') {
         if (confirm(getBotVerificationMessage())) {
             sessionStorage['isBot'] = 'No'
-            await loadTweetsWithMinimum()
+            if (shouldLoad) {
+                await loadTweetsWithMinimum()
+            }
         } else {
             history.go(-1)
         }
     } else {
-        await loadTweetsWithMinimum()
+        if (shouldLoad) {
+            await loadTweetsWithMinimum()
+        }
     }
     window.addEventListener('scroll', handleScroll);
 });
