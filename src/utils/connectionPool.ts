@@ -53,8 +53,6 @@ class ConnectionPoolManager {
    * @returns A promise that resolves to an hprose client
    */
   async getConnection(ip: string): Promise<any> {
-    console.log(`[CONNECTION-POOL] Request connection for ${ip}`);
-    
     // Get or create connections array for this IP
     if (!this.connections.has(ip)) {
       this.connections.set(ip, []);
@@ -67,7 +65,6 @@ class ConnectionPoolManager {
       if (!conn.inUse) {
         conn.inUse = true;
         conn.lastUsed = Date.now();
-        console.log(`[CONNECTION-POOL] Reusing connection for ${ip} (${ipConnections.filter(c => c.inUse).length}/${ipConnections.length} in use)`);
         return conn.client;
       }
     }
@@ -80,7 +77,6 @@ class ConnectionPoolManager {
     
     if (canCreateConnection) {
       // Create new connection
-      console.log(`[CONNECTION-POOL] Creating new connection for ${ip} (total: ${totalConnections + 1}/${this.maxTotalConnections})`);
       const client = this.createClient(ip);
       
       const connection: PooledConnection = {
@@ -96,8 +92,6 @@ class ConnectionPoolManager {
     }
     
     // All connections are busy, queue the request
-    console.log(`[CONNECTION-POOL] All connections busy for ${ip}, queuing request (${this.pendingRequests.length} pending)`);
-    
     return new Promise<any>((resolve, reject) => {
       const request: PendingRequest = {
         ip,
@@ -127,7 +121,6 @@ class ConnectionPoolManager {
   releaseConnection(ip: string, client: any): void {
     const ipConnections = this.connections.get(ip);
     if (!ipConnections) {
-      console.warn(`[CONNECTION-POOL] No connections found for ${ip}`);
       return;
     }
     
@@ -135,7 +128,6 @@ class ConnectionPoolManager {
     if (conn) {
       conn.inUse = false;
       conn.lastUsed = Date.now();
-      console.log(`[CONNECTION-POOL] Released connection for ${ip} (${ipConnections.filter(c => c.inUse).length}/${ipConnections.length} in use)`);
       
       // Process pending requests for this IP first
       this.processPendingRequests(ip);
@@ -186,7 +178,6 @@ class ConnectionPoolManager {
         conn.inUse = true;
         conn.lastUsed = Date.now();
         this.pendingRequests.splice(requestIndex, 1);
-        console.log(`[CONNECTION-POOL] Fulfilled pending request for ${request.ip} (waited ${Date.now() - request.timestamp}ms)`);
         request.resolve(conn.client);
         return;
       }
@@ -200,7 +191,6 @@ class ConnectionPoolManager {
     
     if (canCreateConnection) {
       this.pendingRequests.splice(requestIndex, 1);
-      console.log(`[CONNECTION-POOL] Creating new connection for pending request ${request.ip}`);
       
       const client = this.createClient(request.ip);
       const connection: PooledConnection = {
@@ -223,7 +213,6 @@ class ConnectionPoolManager {
    */
   private createClient(ip: string): any {
     const client = window.hprose.Client.create("ws://" + ip + "/ws/", this.ayApi);
-    console.log(`[CONNECTION-POOL] Created new client for ws://${ip}/ws/`);
     return client;
   }
 
@@ -232,17 +221,11 @@ class ConnectionPoolManager {
    */
   private cleanupIdleConnections(): void {
     const now = Date.now();
-    let removedCount = 0;
     
     for (const [ip, connections] of this.connections) {
       const activeConnections = connections.filter(conn => {
         const isIdle = !conn.inUse && (now - conn.lastUsed > this.idleTimeout);
-        if (isIdle) {
-          console.log(`[CONNECTION-POOL] Removing idle connection for ${ip} (idle for ${Math.round((now - conn.lastUsed) / 1000)}s)`);
-          removedCount++;
-          return false;
-        }
-        return true;
+        return !isIdle;
       });
       
       if (activeConnections.length === 0) {
@@ -250,10 +233,6 @@ class ConnectionPoolManager {
       } else {
         this.connections.set(ip, activeConnections);
       }
-    }
-    
-    if (removedCount > 0) {
-      console.log(`[CONNECTION-POOL] Cleanup: removed ${removedCount} idle connections, ${this.getTotalConnectionCount()} remaining`);
     }
   }
 
@@ -282,7 +261,6 @@ class ConnectionPoolManager {
    * Clear all connections (useful for testing or cleanup)
    */
   clearAll(): void {
-    console.log(`[CONNECTION-POOL] Clearing all connections`);
     this.connections.clear();
     
     // Reject all pending requests

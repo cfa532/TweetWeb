@@ -51,25 +51,18 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolMan
           let client;
           try {
             client = await connectionPool.getConnection(ip);
-            console.log(`[CLIENT-PROXY] Acquired connection for ${prop}`);
             
             // Get the method from the actual client
             const method = (client as any)[prop];
             if (typeof method === 'function') {
               // Call the method and await its result
-              const result = await method.apply(client, args);
-              console.log(`[CLIENT-PROXY] Method ${String(prop)} completed`);
-              return result;
+              return await method.apply(client, args);
             }
             // If it's a property, return it
             return method;
-          } catch (error) {
-            console.error(`[CLIENT-PROXY] Error in ${String(prop)}:`, error);
-            throw error;
           } finally {
             // Always release the connection
             if (client) {
-              console.log(`[CLIENT-PROXY] Releasing connection for ${prop}`);
               connectionPool.releaseConnection(ip, client);
             }
           }
