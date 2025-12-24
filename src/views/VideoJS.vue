@@ -18,6 +18,12 @@ const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
+
+// Touch handling for mobile scroll detection
+const touchStartX = ref(0);
+const touchStartY = ref(0);
+const touchStartTime = ref(0);
+const isScrolling = ref(false);
   const isHLS = computed(() => {
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'hls_video';
@@ -612,37 +618,163 @@ function isControlArea(clickY: number, videoHeight: number): boolean {
 
 // Open media viewer
 function openMediaViewer() {
-  if (!props.tweet) return;
+  console.log('VideoJS: openMediaViewer called');
+  console.log('VideoJS: props.tweet:', props.tweet);
+  console.log('VideoJS: props.mediaList:', props.mediaList);
+  console.log('VideoJS: props.mediaIndex:', props.mediaIndex);
   
-  // Get all media items from the tweet
-  const allMedia = props.mediaList || (props.tweet?.attachments || []);
+  // Try to get tweet from props, or find it from the DOM
+  let tweet = props.tweet;
+  let allMedia = props.mediaList;
+  
+  // If tweet not in props, try to find it from parent container
+  if (!tweet && vdiv.value) {
+    const tweetContainer = vdiv.value.closest('.tweet-container');
+    if (tweetContainer) {
+      // Try to get tweet data from data attributes or find the tweet store
+      const tweetId = tweetContainer.id;
+      // For now, we'll use the mediaList if available
+    }
+  }
+  
+  // If still no media list, try to get from tweet attachments
+  if (!allMedia && tweet) {
+    allMedia = tweet.attachments || [];
+  }
+  
+  // If we still don't have media, create a single-item list
+  if (!allMedia || allMedia.length === 0) {
+    allMedia = [props.media];
+  }
   
   // Find current video index
   const currentIndex = props.mediaIndex !== undefined 
     ? props.mediaIndex 
     : allMedia.findIndex(media => media.mid === props.media.mid);
   
+  console.log('VideoJS: Final media list:', allMedia);
+  console.log('VideoJS: Current index:', currentIndex);
+  
   // Store media data in session storage for the modal
-  sessionStorage.setItem('mediaViewerData', JSON.stringify({
+  const mediaViewerData = {
     mediaList: allMedia,
-    initialIndex: currentIndex,
-    tweet: props.tweet
-  }));
+    initialIndex: currentIndex >= 0 ? currentIndex : 0,
+    tweet: tweet || null
+  };
+  
+  console.log('VideoJS: Storing media viewer data:', mediaViewerData);
+  sessionStorage.setItem('mediaViewerData', JSON.stringify(mediaViewerData));
   
   // Navigate to media viewer
+  console.log('VideoJS: Navigating to media viewer');
   router.push('/media-viewer');
+}
+
+// Handle touch start for scroll detection
+function handleTouchStart(event: TouchEvent) {
+  if (!isMobileBrowser()) return;
+  
+  if (event.touches.length === 1) {
+    touchStartX.value = event.touches[0].clientX;
+    touchStartY.value = event.touches[0].clientY;
+    touchStartTime.value = Date.now();
+    isScrolling.value = false;
+  }
+}
+
+// Handle touch move to detect scrolling
+function handleTouchMove(event: TouchEvent) {
+  if (!isMobileBrowser()) return;
+  
+  if (event.touches.length === 1 && touchStartX.value !== 0) {
+    const deltaX = Math.abs(event.touches[0].clientX - touchStartX.value);
+    const deltaY = Math.abs(event.touches[0].clientY - touchStartY.value);
+    
+    // If movement is significant (more than 10px), it's a scroll
+    if (deltaX > 10 || deltaY > 10) {
+      isScrolling.value = true;
+    }
+  }
+}
+
+// Handle touch end
+function handleTouchEnd(event: TouchEvent) {
+  if (!isMobileBrowser()) return;
+  
+  // If user was scrolling, don't open media viewer
+  if (isScrolling.value) {
+    isScrolling.value = false;
+    touchStartX.value = 0;
+    touchStartY.value = 0;
+    return;
+  }
+  
+  // Check if it was a quick tap (less than 300ms)
+  const touchDuration = Date.now() - touchStartTime.value;
+  if (touchDuration > 300) {
+    // Too long, probably not a tap
+    touchStartX.value = 0;
+    touchStartY.value = 0;
+    return;
+  }
+  
+  // It's a tap, handle it
+  handleVideoTap(event);
+  
+  touchStartX.value = 0;
+  touchStartY.value = 0;
 }
 
 // Handle video element tap/click
 function handleVideoTap(event: Event) {
-  const mouseEvent = event as MouseEvent;
+  const mouseEvent = event as MouseEvent | TouchEvent;
+  const target = event.target as HTMLElement;
   
-  if (!video.value) return;
+  if (!video.value) {
+    console.log('VideoJS: handleVideoTap - no video element');
+    return;
+  }
   
-  // Get click position relative to video
+  // On mobile, check if touch is on video controls
+  if (isMobileBrowser()) {
+    // Get touch position
+    let clickY = 0;
+    const videoHeight = video.value.offsetHeight || video.value.clientHeight;
+    
+    if (mouseEvent instanceof TouchEvent) {
+      if (mouseEvent.changedTouches && mouseEvent.changedTouches.length > 0) {
+        const touch = mouseEvent.changedTouches[0];
+        const rect = video.value.getBoundingClientRect();
+        clickY = touch.clientY - rect.top;
+      }
+    } else if (mouseEvent instanceof MouseEvent) {
+      const rect = video.value.getBoundingClientRect();
+      clickY = mouseEvent.clientY - rect.top;
+    }
+    
+    // Check if touch is on controls area (bottom 20% for mobile - controls are larger)
+    const isOnControls = clickY > videoHeight * 0.8;
+    
+    // If touch is directly on video element (not wrapper), it might be on controls
+    if (target === video.value || target.closest('video') === video.value) {
+      // Check if it's in the controls area
+      if (isOnControls) {
+        console.log('VideoJS: Touch on video controls, letting native handle');
+        return; // Let native controls handle it
+      }
+    }
+    
+    console.log('VideoJS: Mobile browser - opening media viewer');
+    event.preventDefault();
+    event.stopPropagation();
+    openMediaViewer();
+    return;
+  }
+  
+  // Desktop behavior - get click position
   const rect = video.value.getBoundingClientRect();
-  const clickY = mouseEvent.clientY - rect.top;
-  const clickX = mouseEvent.clientX - rect.left;
+  const clickY = (mouseEvent as MouseEvent).clientY - rect.top;
+  const clickX = (mouseEvent as MouseEvent).clientX - rect.left;
   const videoHeight = rect.height;
   const videoWidth = rect.width;
   
@@ -677,7 +809,7 @@ function handleVideoTap(event: Event) {
       }
     });
     
-    return; // Don't proceed to mobile fullscreen logic
+    return;
   } else {
     // Controls are visible
     if (isOnControls) {
@@ -1223,28 +1355,34 @@ function stopVideo() {
         </div>
       </div>
       
-      <video
-        ref="video"
-        class="video"
-        :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
-        :autoplay=props.autoplay
-        controls
-        :controlslist=controls
-        preload="auto"
-        playsinline
-        webkit-playsinline
-        x5-playsinline
-        x5-video-player-type="h5"
-        x5-video-player-fullscreen="true"
-        @loadedmetadata="checkVideoOrientation"
-        @contextmenu="disableRightClick"
+      <div 
+        class="video-tap-handler"
         @click="handleVideoTap"
-        @touchend="handleVideoTap"
+        @touchstart="handleTouchStart"
+        @touchmove="handleTouchMove"
+        @touchend="handleTouchEnd"
       >
-          <!-- For regular videos only - HLS videos are handled by HLS.js -->
-          <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
-        Your browser does not support the video tag.
-      </video>
+        <video
+          ref="video"
+          class="video"
+          :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
+          :autoplay=props.autoplay
+          controls
+          :controlslist=controls
+          preload="auto"
+          playsinline
+          webkit-playsinline
+          x5-playsinline
+          x5-video-player-type="h5"
+          x5-video-player-fullscreen="true"
+          @loadedmetadata="checkVideoOrientation"
+          @contextmenu="disableRightClick"
+        >
+            <!-- For regular videos only - HLS videos are handled by HLS.js -->
+            <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
+          Your browser does not support the video tag.
+        </video>
+      </div>
     </div>
     <p class="video-filename">
       {{ media.fileName }}
@@ -1271,6 +1409,13 @@ function stopVideo() {
   background-color: #000;
   /* Maintain minimum height to prevent collapse when video ends */
   min-height: 200px;
+}
+
+.video-tap-handler {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .video {
