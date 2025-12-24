@@ -55,6 +55,8 @@ div.media-attachments div.grid-item div.container img {
     display: block !important;
     margin: 0 !important;
     padding: 0 !important;
+    vertical-align: middle !important;
+    line-height: 0 !important;
 }
 
 

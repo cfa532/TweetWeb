@@ -330,12 +330,13 @@ const isLandscape = (attachment: MimeiFileType) => {
 
 .single-attachment {
   width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  max-height: 50vh;
+  height: 100%;
+  display: block;
+  position: relative;
   overflow: hidden;
   background-color: #000;
+  margin: 0;
+  padding: 0;
 }
 
 .media-attachments {
@@ -424,42 +425,61 @@ const isLandscape = (attachment: MimeiFileType) => {
   max-height: none !important;
   min-width: 0 !important;
   min-height: 0 !important;
+  vertical-align: middle !important;
+  line-height: 0 !important;
 }
 
+/* Force videos to fill grid containers - highest specificity */
+.media-attachments .grid-item .video-container,
 .grid-item .video-container {
   width: 100% !important;
   height: 100% !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background-color: #000;
-  margin: 0;
-  padding: 0;
-  min-height: 0;
+  display: block !important;
+  position: relative !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 0 !important;
 }
 
+.media-attachments .grid-item .video-wrapper,
 .grid-item .video-wrapper {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-  min-height: 0;
+  display: block !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 0 !important;
 }
 
+.media-attachments .grid-item .video,
 .grid-item .video {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
   object-fit: cover !important;
-  object-position: center;
-  min-height: 0;
+  object-position: center !important;
+  min-height: 0 !important;
   aspect-ratio: unset !important;
-  margin: 0;
-  padding: 0;
+  max-width: none !important;
+  max-height: none !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  vertical-align: middle !important;
+  line-height: 0 !important;
 }
 
 /* 2 items - Both portrait: horizontal layout */
@@ -652,10 +672,45 @@ const isLandscape = (attachment: MimeiFileType) => {
 }
 
 .portrait-center {
-  object-fit: contain;
-  object-position: top;
-  max-height: 100%;
-  max-width: 100%;
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+  height: 100%;
+}
+
+/* Ensure single attachment media fills container */
+.single-attachment .container {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  position: relative !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+}
+
+.single-attachment .container img,
+.single-attachment .container video,
+.single-attachment .video-container,
+.single-attachment .video-wrapper,
+.single-attachment .video {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  vertical-align: middle !important;
+  line-height: 0 !important;
 }
 
 .card {

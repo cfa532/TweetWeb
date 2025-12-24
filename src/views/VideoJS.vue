@@ -1306,6 +1306,67 @@ function stopVideo() {
   flex-shrink: 0;
 }
 
+/* Grid items - force video to fill container */
+.grid-item .video-container,
+.media-attachments .grid-item .video-container {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: relative !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+}
+
+/* Hide filename in grid context */
+.grid-item .video-filename,
+.media-attachments .grid-item .video-filename {
+  display: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 0 !important;
+  visibility: hidden !important;
+}
+
+.grid-item .video-wrapper,
+.media-attachments .grid-item .video-wrapper {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+}
+
+.grid-item .video,
+.media-attachments .grid-item .video {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  max-width: none !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  aspect-ratio: unset !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  vertical-align: middle !important;
+  line-height: 0 !important;
+}
+
 .video-filename {
   margin-top: 5px;
   font-size: small;
