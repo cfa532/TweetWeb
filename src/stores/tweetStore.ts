@@ -589,7 +589,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 providerIp = await this.getProviderIp(tweetId)
                 if (!providerIp)
                     return null
-                providerClient = this.lapi.getClient(providerIp)
+                providerClient = await this.lapi.getClient(providerIp)
                 // Get tweet data from Tweet App Mimei. Its definition is different from this app.
                 tweetInDB = await providerClient.RunMApp("get_tweet", {
                     aid: this.lapi.appId,
@@ -1214,7 +1214,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
 
-            const hproseClient = this.lapi.getClient(ip)
+            const hproseClient = await this.lapi.getClient(ip)
             let file = await hproseClient.RunMApp("get_shared_file", {
                 aid: this.lapi.appId,
                 ver: "last",

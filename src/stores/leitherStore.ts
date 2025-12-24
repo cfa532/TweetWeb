@@ -41,7 +41,7 @@ export const useLeitherStore = defineStore({
         baseUrl: window.location.protocol+'//'+curIP+'/',
         client: window.hprose.Client.create("ws://" + curIP +"/ws/", ayApi),
         logoUrl: import.meta.env.VITE_APP_LOGO,
-        connectionPool: connectionPool,
+        connectionPool: connectionPool as ConnectionPoolManager,
     }),
     actions: {
         /**

@@ -7,13 +7,16 @@
 
 import type ConnectionPoolManager from './connectionPool';
 
+// Type for the connection pool interface that matches what lapi.connectionPool provides
+export type ConnectionPoolInterface = Pick<ConnectionPoolManager, 'getConnection' | 'releaseConnection' | 'getStats' | 'clearAll'>;
+
 /**
  * Creates a proxy client that automatically uses the connection pool
  * @param ip The IP address to connect to
  * @param connectionPool The connection pool manager
  * @returns A proxy object that mimics an hprose client
  */
-export function createPooledClient(ip: string, connectionPool: ConnectionPoolManager): any {
+export function createPooledClient(ip: string, connectionPool: ConnectionPoolInterface): any {
   // Create a proxy that intercepts all method calls
   const proxy = new Proxy({}, {
     get(target, prop, receiver) {
@@ -96,7 +99,7 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolMan
  */
 export async function executeWithPool(
   ip: string,
-  connectionPool: ConnectionPoolManager,
+  connectionPool: ConnectionPoolInterface,
   methodName: string,
   ...args: any[]
 ): Promise<any> {

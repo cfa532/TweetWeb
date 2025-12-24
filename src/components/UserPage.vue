@@ -79,13 +79,13 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         while (isLoading.value && round < 10) {
             // Add timeout to each page load
             const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
-            const timeoutPromise = new Promise<number>((_, reject) => 
+            const timeoutPromise = new Promise<never>((_, reject) => 
                 setTimeout(() => reject(new Error('Page load timeout')), 8000)
             );
             
             let loadedPageSize: number;
             try {
-                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]);
+                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
             } catch (error) {
                 console.warn("Init load failed in round", round, error);
                 break;
