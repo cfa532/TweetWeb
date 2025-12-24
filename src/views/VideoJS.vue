@@ -299,43 +299,25 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
     
-    // Try both playlists simultaneously
-    let masterHls: Hls | null = null;
-    let playlistHls: Hls | null = null;
-    let isResolved = false;
-    let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
-    
-    const cleanupLoser = (loser: Hls | null) => {
-      if (loser) {
+    // Helper function to create and attach HLS instance
+    const createHLSInstance = (url: string, sourceName: string) => {
+      // Clean up any existing HLS instance
+      if (hls) {
         try {
-          loser.destroy();
+          hls.destroy();
         } catch (e) {
-          console.log('Error destroying loser HLS instance:', e);
+          console.log('Error destroying existing HLS instance:', e);
         }
-      }
-    };
-    
-    const resolveWinner = (winningUrl: string, sourceName: string) => {
-      if (isResolved) return;
-      isResolved = true;
-      
-      // Clear fallback timeout
-      if (fallbackTimeout) {
-        clearTimeout(fallbackTimeout);
-        fallbackTimeout = null;
+        hls = null;
       }
       
-      // Cleanup both temporary instances
-      cleanupLoser(masterHls);
-      cleanupLoser(playlistHls);
-      
-      // Create final HLS instance with the winning source
-      console.log(`HLS.js: ${sourceName} playlist succeeded first, creating final instance`);
+      // Create new HLS instance
+      console.log(`HLS.js: Creating instance with ${sourceName} playlist`);
       hls = new Hls(hlsConfig);
-      hls.loadSource(winningUrl);
+      hls.loadSource(url);
       hls.attachMedia(videoElement);
       
-      // Clear timeout when manifest is parsed
+      // Handle manifest parsed
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log(`HLS.js: ${sourceName} playlist manifest parsed successfully`);
         // Start playing if autoplay is enabled
@@ -347,7 +329,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         }
       });
       
-      // Error handling for the final instance
+      // Error handling for the instance
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.log(`HLS Error (${sourceName}):`, data);
         
@@ -365,31 +347,39 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
           }
         } else {
           console.log(`HLS fatal error on ${sourceName}, attempting retry...`);
-          handleHLSFatalError(data, sourceName, winningUrl, videoElement);
+          handleHLSFatalError(data, sourceName, url, videoElement);
         }
       });
     };
     
-    // Try master playlist (without attaching to video yet)
-    console.log('HLS.js: Loading master playlist:', masterUrl);
-    masterHls = new Hls(hlsConfig);
+    // Try master playlist first
+    console.log('HLS.js: Trying master playlist first:', masterUrl);
+    const testMasterHls = new Hls(hlsConfig);
     
     const masterManifestPromise = new Promise<'master' | 'failed'>((resolve) => {
-      masterHls!.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (!isResolved) {
-          resolveWinner(masterUrl, 'master');
-          resolve('master');
-        } else {
-          resolve('master'); // Already resolved, but signal success
+      testMasterHls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('HLS.js: Master playlist loaded successfully');
+        // Clean up test instance
+        try {
+          testMasterHls.destroy();
+        } catch (e) {
+          console.log('Error destroying test master HLS instance:', e);
         }
+        // Create final instance with master
+        createHLSInstance(masterUrl, 'master');
+        resolve('master');
       });
       
-      masterHls!.on(Hls.Events.ERROR, (event, data) => {
+      testMasterHls.on(Hls.Events.ERROR, (event, data) => {
         if (data.fatal) {
-          if (!isResolved) {
-            console.log('Master playlist fatal error:', data);
+          console.log('Master playlist fatal error:', data);
+          // Clean up test instance
+          try {
+            testMasterHls.destroy();
+          } catch (e) {
+            console.log('Error destroying test master HLS instance:', e);
           }
-          resolve('failed'); // Resolve with failure status, don't reject
+          resolve('failed');
         } else {
           // Non-fatal errors can recover, wait for manifest
           console.log('Master playlist non-fatal error:', data);
@@ -397,49 +387,47 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       });
     });
     
-    masterHls.loadSource(masterUrl);
+    testMasterHls.loadSource(masterUrl);
     
-    // Try playlist simultaneously (without attaching to video yet)
-    console.log('HLS.js: Loading playlist:', playlistUrl);
-    playlistHls = new Hls(hlsConfig);
-    
-    const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
-      playlistHls!.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (!isResolved) {
-          resolveWinner(playlistUrl, 'playlist');
-          resolve('playlist');
-        } else {
-          resolve('playlist'); // Already resolved, but signal success
-        }
-      });
-      
-      playlistHls!.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          if (!isResolved) {
-            console.log('Playlist fatal error:', data);
-          }
-          resolve('failed'); // Resolve with failure status, don't reject
-        } else {
-          // Non-fatal errors can recover, wait for manifest
-          console.log('Playlist non-fatal error:', data);
-        }
-      });
-    });
-    
-    playlistHls.loadSource(playlistUrl);
-    
-    // Race both promises - first one to succeed wins
-    Promise.race([masterManifestPromise, playlistManifestPromise]).catch(() => {
-      // If race fails, wait for the other one
-      if (!isResolved) {
-        Promise.allSettled([masterManifestPromise, playlistManifestPromise]).then(() => {
-          if (!isResolved) {
-            console.error('HLS.js: Both playlists failed');
-            cleanupLoser(masterHls);
-            cleanupLoser(playlistHls);
-            isResolved = true;
-          }
+    // If master fails, try playlist
+    masterManifestPromise.then((result) => {
+      if (result === 'failed') {
+        console.log('HLS.js: Master playlist failed, trying playlist:', playlistUrl);
+        const testPlaylistHls = new Hls(hlsConfig);
+        
+        const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
+          testPlaylistHls.on(Hls.Events.MANIFEST_PARSED, () => {
+            console.log('HLS.js: Playlist loaded successfully');
+            // Clean up test instance
+            try {
+              testPlaylistHls.destroy();
+            } catch (e) {
+              console.log('Error destroying test playlist HLS instance:', e);
+            }
+            // Create final instance with playlist
+            createHLSInstance(playlistUrl, 'playlist');
+            resolve('playlist');
+          });
+          
+          testPlaylistHls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              console.log('Playlist fatal error:', data);
+              // Clean up test instance
+              try {
+                testPlaylistHls.destroy();
+              } catch (e) {
+                console.log('Error destroying test playlist HLS instance:', e);
+              }
+              console.error('HLS.js: Both master and playlist failed, cannot play HLS video');
+              resolve('failed');
+            } else {
+              // Non-fatal errors can recover, wait for manifest
+              console.log('Playlist non-fatal error:', data);
+            }
+          });
         });
+        
+        testPlaylistHls.loadSource(playlistUrl);
       }
     });
 }
