@@ -60,57 +60,82 @@ onMounted(async () => {
 });
 async function loadDetail() {
     isLoading.value = true
-    let s = sessionStorage.getItem("tweetDetail")
-    if (s) {
-        tweet.value = JSON.parse(s)
-        tweet.value.author = await tweetStore.getUser(tweet.value.author.mid)
-        showTweet()
-    }
-    else {
-        // Fetch tweet if it is not in session already.
-        tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value) as Tweet
-        if (!tweet.value) {
-            window.setTimeout(() => {
-                window.location.reload()
-            }, 5000)                        // wait 5s before reload
-        } else {
-            showTweet()
+    
+    // Safety timeout: hide spinner after 5 seconds regardless of loading state
+    const timeoutId = setTimeout(() => {
+        isLoading.value = false
+    }, 5000)
+    
+    try {
+        let s = sessionStorage.getItem("tweetDetail")
+        if (s) {
+            tweet.value = JSON.parse(s)
+            tweet.value.author = await tweetStore.getUser(tweet.value.author.mid)
+            await showTweet(timeoutId)
         }
-    }
-    console.log(tweet.value)
-
-    // display url as link
-    document.addEventListener("DOMContentLoaded", function () {
-        const contentElement = document.getElementById('content');
-        const paragraphs = contentElement?.getElementsByClassName('card-text');
-        if (paragraphs)
-            for (let i = 0; i < paragraphs.length; i++) {
-                const paragraph = paragraphs[i];
-                paragraph.innerHTML = linkify(paragraph.innerHTML);
+        else {
+            // Fetch tweet if it is not in session already.
+            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value) as Tweet
+            if (!tweet.value) {
+                clearTimeout(timeoutId)
+                isLoading.value = false
+                window.setTimeout(() => {
+                    window.location.reload()
+                }, 5000)                        // wait 5s before reload
+            } else {
+                await showTweet(timeoutId)
             }
-    });
-}
-async function showTweet() {
-    sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-    if (authorId.value) {
-        author.value = await tweetStore.getUser(authorId.value);
-    } else if (tweet) {
-        author.value = await tweetStore.getUser(tweet.value.author.mid);
-    }
-    // load orginalTweet
-    if (tweet.value.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
-        if (!tweet.value.content && !tweet.value.attachments) {
-            isRetweet.value = true
-            await tweetStore.loadComments(originTweet.value)
         }
-    } else {
-        await tweetStore.loadComments(tweet.value)
+        console.log(tweet.value)
+
+        // display url as link
+        document.addEventListener("DOMContentLoaded", function () {
+            const contentElement = document.getElementById('content');
+            const paragraphs = contentElement?.getElementsByClassName('card-text');
+            if (paragraphs)
+                for (let i = 0; i < paragraphs.length; i++) {
+                    const paragraph = paragraphs[i];
+                    paragraph.innerHTML = linkify(paragraph.innerHTML);
+                }
+        });
+    } catch (error) {
+        console.error('Error loading tweet detail:', error);
+        clearTimeout(timeoutId)
+        isLoading.value = false
     }
-    document.title = formattedTitle.value
-    tweetStore.addFollowing(tweet.value.author.mid)
-    isLoading.value = false
-    await refreshShareMetadata()
+}
+async function showTweet(timeoutId?: number) {
+    try {
+        sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
+        if (authorId.value) {
+            author.value = await tweetStore.getUser(authorId.value);
+        } else if (tweet.value) {
+            author.value = await tweetStore.getUser(tweet.value.author.mid);
+        }
+        // load orginalTweet
+        if (tweet.value.originalTweetId) {
+            originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+            if (!tweet.value.content && !tweet.value.attachments) {
+                isRetweet.value = true
+                await tweetStore.loadComments(originTweet.value)
+            }
+        } else {
+            await tweetStore.loadComments(tweet.value)
+        }
+        document.title = formattedTitle.value
+        tweetStore.addFollowing(tweet.value.author.mid)
+        // Set loading to false before refreshShareMetadata as it's not critical for displaying the tweet
+        if (timeoutId) clearTimeout(timeoutId)
+        isLoading.value = false
+        // Refresh share metadata asynchronously without blocking
+        refreshShareMetadata().catch(error => {
+            console.error('Error refreshing share metadata:', error)
+        })
+    } catch (error) {
+        console.error('Error in showTweet:', error)
+        if (timeoutId) clearTimeout(timeoutId)
+        isLoading.value = false
+    }
 };
 
 const MAX_TITLE_LENGTH = 40
@@ -428,13 +453,29 @@ const downloadingText = computed(() => {
 
 watch(tweetId, async (newValue, oldValue)=>{
     if (newValue && oldValue !== newValue) {
-        let t = await tweetStore.getTweet(newValue, authorId.value)
-        if (t) {
-            console.log(t)
-            tweet.value = t
-            sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-            await showTweet()
-            // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
+        isLoading.value = true
+        
+        // Safety timeout: hide spinner after 5 seconds regardless of loading state
+        const timeoutId = setTimeout(() => {
+            isLoading.value = false
+        }, 5000)
+        
+        try {
+            let t = await tweetStore.getTweet(newValue, authorId.value)
+            if (t) {
+                console.log(t)
+                tweet.value = t
+                sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
+                await showTweet(timeoutId)
+                // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
+            } else {
+                clearTimeout(timeoutId)
+                isLoading.value = false
+            }
+        } catch (error) {
+            console.error('Error in watch tweetId:', error)
+            clearTimeout(timeoutId)
+            isLoading.value = false
         }
     }
 });
@@ -699,7 +740,7 @@ function goBack() {
 
             <div v-if="mediaAttachments.length > 0" class="media-attachments">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="index" class="img-fluid mb-1"></MediaView>
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="index" class="img-fluid"></MediaView>
             </div>
             <div v-if='documentAttachments.length > 0' class='document-attachments'>
                 <div 
@@ -873,17 +914,32 @@ function goBack() {
 }
 
 .media-attachments {
-    max-width: 100%;
+    width: calc(100% + 5px);
+    max-width: calc(100% + 5px);
+    margin-left: -5px;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 0;
+    overflow: hidden;
 }
 
-/* Mobile: Full-width media */
-@media (max-width: 767px) {
-    .media-attachments {
-        margin-left: -8px;
-        margin-right: -8px;
-        width: calc(100% + 16px);
-        max-width: calc(100% + 16px);
-    }
+.media-attachments :deep(.container) {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.media-attachments :deep(img),
+.media-attachments :deep(video),
+.media-attachments :deep(.video-container),
+.media-attachments :deep(.video-wrapper),
+.media-attachments :deep(.video) {
+    width: 100% !important;
+    display: block;
+    margin: 0 !important;
+    padding: 0 !important;
+    object-fit: cover;
 }
 
 .rounded-circle {
@@ -1144,8 +1200,8 @@ function goBack() {
 .document-row {
     display: flex;
     align-items: center;
-    padding: 8px 12px;
-    margin-bottom: 6px;
+    padding: 6px 12px;
+    margin-bottom: 2px;
     background-color: #f8f9fa;
     border-radius: 4px;
     transition: background-color 0.2s;
@@ -1168,6 +1224,7 @@ function goBack() {
 
 .document-filename {
     flex: 1;
+    min-width: 0;
     font-weight: 500;
     color: #333;
     overflow: hidden;

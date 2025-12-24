@@ -958,12 +958,12 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .document-row {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  margin-bottom: 6px;
   background-color: #f8f9fa;
   border-radius: 4px;
   transition: background-color 0.2s;
   cursor: pointer;
+  padding: 6px 12px;
+  margin-bottom: 2px;
 }
 
 .document-row:hover {
@@ -982,6 +982,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 
 .document-filename {
   flex: 1;
+  min-width: 0;
   font-weight: 500;
   color: #333;
   overflow: hidden;
