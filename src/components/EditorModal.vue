@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
 import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
 
 // Helper function to get human-readable aspect ratio names
 function getAspectRatioDisplayName(ratio: number): string {
@@ -75,7 +76,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       let cid: string = '';
 
       // Handle different file types
-      if (fileType === 'Image') {
+      if (isImageType(fileType)) {
         // Compress image to under 2MB
         processedFile = await compressImage(file);
         uploadProgress[i] = 50; // Show progress for compression
@@ -87,7 +88,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
         hproseClient.timeout = defaultTimeout;
         
-      } else if (fileType === 'Video') {
+      } else if (isVideoType(fileType)) {
         // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
         
@@ -200,21 +201,21 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         hproseClient.timeout = defaultTimeout;
       }
 
-      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : 
-                         fileType === 'Image' ? await getImageAspectRatio(file) : null;
+      const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) : 
+                         isImageType(fileType) ? await getImageAspectRatio(file) : null;
       
       // Log aspect ratio detection result
-      if (fileType === 'Video' && aspectRatio) {
+      if (isVideoType(fileType) && aspectRatio) {
         console.log(`🎬 [VIDEO PREVIEW] File: ${file.name}`);
         console.log(`📐 [VIDEO PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
-      } else if (fileType === 'Image' && aspectRatio) {
+      } else if (isImageType(fileType) && aspectRatio) {
         console.log(`🖼️ [IMAGE PREVIEW] File: ${file.name}`);
         console.log(`📐 [IMAGE PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
       }
       
       const fi = {
         mid: cid,
-        type: fileType === 'Video' ? ((file as any).__isHLSConverted ? 'hls_video' : 'Video') : fileType,
+        type: isVideoType(fileType) ? ((file as any).__isHLSConverted ? MEDIA_TYPES.HLS_VIDEO : MEDIA_TYPES.VIDEO) : fileType,
         size: processedFile.size,
         fileName: file.name,
         timestamp: file.lastModified,

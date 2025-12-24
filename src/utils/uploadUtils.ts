@@ -689,31 +689,33 @@ export async function getImageAspectRatio(file: File): Promise<number> {
   });
 }
 
+import { MEDIA_TYPES } from '@/lib';
+
 /**
  * Determines the media type of a file based on its MIME type and filename
  * @param mimeType The MIME type of the file
  * @param filename Optional filename to check extension as fallback
- * @returns string The media type ('Image', 'Video', 'Audio', or 'Unknown')
+ * @returns string The media type (lowercase: 'image', 'video', 'audio', or 'unknown')
  */
 export function getMediaType(mimeType: string, filename?: string): string {
   const lowerMimeType = mimeType.toLowerCase();
-  if (lowerMimeType.startsWith('image/')) return 'Image';
-  if (lowerMimeType.startsWith('video/')) return 'Video';
-  if (lowerMimeType.startsWith('audio/')) return 'Audio';
+  if (lowerMimeType.startsWith('image/')) return MEDIA_TYPES.IMAGE;
+  if (lowerMimeType.startsWith('video/')) return MEDIA_TYPES.VIDEO;
+  if (lowerMimeType.startsWith('audio/')) return MEDIA_TYPES.AUDIO;
   
   // Fallback to file extension if MIME type is not recognized
   if (filename) {
     const ext = filename.toLowerCase().split('.').pop();
     if (['mkv', 'avi', 'mp4', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'].includes(ext || '')) {
-      return 'Video';
+      return MEDIA_TYPES.VIDEO;
     }
     if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff'].includes(ext || '')) {
-      return 'Image';
+      return MEDIA_TYPES.IMAGE;
     }
     if (['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a', 'wma'].includes(ext || '')) {
-      return 'Audio';
+      return MEDIA_TYPES.AUDIO;
     }
   }
   
-  return 'Unknown';
+  return MEDIA_TYPES.UNKNOWN;
 }

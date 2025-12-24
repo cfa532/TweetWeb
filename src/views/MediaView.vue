@@ -3,6 +3,7 @@ import { computed } from "vue";
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { Image, PDFView, VideoJS, BlobData } from './index'
+import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -20,12 +21,12 @@ const mediaMid = computed(() => {
 })
 
 const userComponent = computed(() => {
-    let p = props.media.type?.toLowerCase() || ''
-    if (p.includes("image")) {
+    const mediaType = normalizeMediaType(props.media.type);
+    if (isImageType(mediaType) || mediaType.includes("image")) {
         return Image
-    } else if (p.includes("pdf")) {
+    } else if (mediaType.includes("pdf")) {
         return PDFView
-    } else if (p.includes("video") || p.includes("audio") ) {
+    } else if (isVideoType(mediaType) || mediaType.includes("video") || mediaType.includes("audio")) {
         return VideoJS
     } else {
         return BlobData
@@ -33,15 +34,15 @@ const userComponent = computed(() => {
 })
 
 const isMediaViewable = computed(() => {
-    const mediaType = props.media.type?.toLowerCase() || '';
-    return mediaType.includes("image") || mediaType.includes("video") || mediaType.includes("hls_video");
+    const mediaType = normalizeMediaType(props.media.type);
+    return isImageType(mediaType) || isVideoType(mediaType) || mediaType.includes("image") || mediaType.includes("video");
 });
 
 function handleMediaClick(event: MouseEvent) {
-    const mediaType = props.media.type?.toLowerCase() || '';
+    const mediaType = normalizeMediaType(props.media.type);
     
     // For images, always open media viewer
-    if (mediaType.includes("image")) {
+    if (isImageType(mediaType) || mediaType.includes("image")) {
         // Prevent the tweet click event from firing
         event.stopPropagation();
         

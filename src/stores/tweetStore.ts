@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
+import { normalizeMediaType } from '@/lib';
 const GUEST_ID = "000000000000000000000000000"
 const TWEET_COUNT = 30
 
@@ -124,6 +125,9 @@ export const useTweetStore = defineStore('tweetStore', {
                                 }
                             }
                         }
+                        
+                        // Normalize media type to lowercase for consistent comparison
+                        mediaType = normalizeMediaType(mediaType);
                         
                         return {
                             mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
