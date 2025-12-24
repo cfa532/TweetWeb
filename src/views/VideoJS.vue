@@ -7,6 +7,9 @@ import { useRouter } from 'vue-router';
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
   autoplay: { type: Boolean, required: false },
+  tweet: { type: Object as PropType<Tweet>, required: false },
+  mediaList: { type: Array as PropType<MimeiFileType[]>, required: false },
+  mediaIndex: { type: Number, required: false },
 })
 const router = useRouter();
 const vdiv = ref();
@@ -601,12 +604,71 @@ function isMobileBrowser(): boolean {
   return hasTouch && isSmallScreen;
 }
 
+// Check if click is on video control area
+function isControlArea(clickY: number, videoHeight: number): boolean {
+  const controlsArea = videoHeight * 0.15; // Bottom 15% is controls area
+  return clickY > videoHeight - controlsArea;
+}
+
+// Open media viewer
+function openMediaViewer() {
+  if (!props.tweet) return;
+  
+  // Get all media items from the tweet
+  const allMedia = props.mediaList || (props.tweet?.attachments || []);
+  
+  // Find current video index
+  const currentIndex = props.mediaIndex !== undefined 
+    ? props.mediaIndex 
+    : allMedia.findIndex(media => media.mid === props.media.mid);
+  
+  // Store media data in session storage for the modal
+  sessionStorage.setItem('mediaViewerData', JSON.stringify({
+    mediaList: allMedia,
+    initialIndex: currentIndex,
+    tweet: props.tweet
+  }));
+  
+  // Navigate to media viewer
+  router.push('/media-viewer');
+}
+
 // Handle video element tap/click
 function handleVideoTap(event: Event) {
-  event.preventDefault();
-  event.stopPropagation();
+  const mouseEvent = event as MouseEvent;
   
-  if (video.value) {
+  if (!video.value) return;
+  
+  // Get click position relative to video
+  const rect = video.value.getBoundingClientRect();
+  const clickY = mouseEvent.clientY - rect.top;
+  const clickX = mouseEvent.clientX - rect.left;
+  const videoHeight = rect.height;
+  const videoWidth = rect.width;
+  
+  // Check if click is on control area (bottom 15% of video)
+  const isOnControls = isControlArea(clickY, videoHeight);
+  
+  // Check if controls are visible (video is playing or has been interacted with)
+  const controlsVisible = !video.value.paused || video.value.currentTime > 0;
+  
+  if (!controlsVisible) {
+    // Controls not visible - show them and play
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // Focus video to show controls
+    video.value.focus();
+    
+    // Play the video
+    if (video.value.paused) {
+      video.value.play().catch(() => {
+        // If autoplay fails, try muted
+        video.value.muted = true;
+        video.value.play().catch(() => {});
+      });
+    }
+    
     // Stop all other videos on the page
     const allVideos = document.querySelectorAll('video');
     allVideos.forEach(v => {
@@ -615,93 +677,18 @@ function handleVideoTap(event: Event) {
       }
     });
     
-    // Check if mobile browser
-    if (isMobileBrowser()) {
-      // Mobile: Play in fullscreen
-      // Pause video first if it's playing
-      if (!video.value.paused) {
-        video.value.pause();
-      }
-      
-      video.value.muted = false;
-      
-      // For iOS Safari, use webkitEnterFullscreen
-      if ((video.value as any).webkitEnterFullscreen) {
-        // iOS Safari - webkitEnterFullscreen automatically plays the video, but we'll ensure it plays
-        try {
-          (video.value as any).webkitEnterFullscreen();
-          // Explicitly play after entering fullscreen (webkitEnterFullscreen should auto-play, but ensure it)
-          setTimeout(() => {
-            if (video.value && video.value.paused) {
-              video.value.play().catch(() => {
-                // If play fails, try muted
-                video.value.muted = true;
-                video.value.play().then(() => {
-                  setTimeout(() => {
-                    if (video.value) {
-                      video.value.muted = false;
-                    }
-                  }, 100);
-                }).catch(() => {});
-              });
-            }
-          }, 200);
-        } catch (e) {
-          console.log('webkitEnterFullscreen failed:', e);
-          // Fallback: try to play normally
-          video.value.play();
-        }
-      } else {
-        // For Android Chrome and other mobile browsers
-        // Remove playsinline temporarily to allow fullscreen
-        const hadPlaysinline = video.value.hasAttribute('playsinline');
-        if (hadPlaysinline) {
-          video.value.removeAttribute('playsinline');
-        }
-        
-        // Try to enter fullscreen
-        const enterFullscreen = async () => {
-          try {
-            let fullscreenPromise: Promise<void> | null = null;
-            
-            if (video.value.requestFullscreen) {
-              fullscreenPromise = video.value.requestFullscreen() as Promise<void>;
-            } else if ((video.value as any).webkitRequestFullscreen) {
-              fullscreenPromise = (video.value as any).webkitRequestFullscreen();
-            } else if ((video.value as any).mozRequestFullScreen) {
-              fullscreenPromise = (video.value as any).mozRequestFullScreen();
-            } else if ((video.value as any).msRequestFullscreen) {
-              fullscreenPromise = (video.value as any).msRequestFullscreen();
-            }
-            
-            if (fullscreenPromise) {
-              await fullscreenPromise;
-            }
-            
-            // Play after fullscreen
-            await playAfterFullscreen();
-          } catch (fullscreenError) {
-            console.log('Fullscreen failed:', fullscreenError);
-            // Restore playsinline if fullscreen failed
-            if (hadPlaysinline && video.value) {
-              video.value.setAttribute('playsinline', '');
-            }
-            // Try to play anyway
-            if (video.value) {
-              video.value.play().catch(() => {});
-            }
-          }
-        };
-        
-        enterFullscreen();
-      }
+    return; // Don't proceed to mobile fullscreen logic
+  } else {
+    // Controls are visible
+    if (isOnControls) {
+      // Click is on controls - let native controls handle it
+      return;
     } else {
-      // Desktop: Just play/stop (toggle play/pause)
-      if (video.value.paused) {
-        video.value.play();
-      } else {
-        video.value.pause();
-      }
+      // Click is on video area (not controls) - open media viewer
+      event.preventDefault();
+      event.stopPropagation();
+      openMediaViewer();
+      return;
     }
   }
 }

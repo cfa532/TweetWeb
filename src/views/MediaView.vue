@@ -34,33 +34,36 @@ const userComponent = computed(() => {
 
 const isMediaViewable = computed(() => {
     const mediaType = props.media.type?.toLowerCase() || '';
-    // Only allow tap gesture for images, not videos since they have native full-screen
-    return mediaType.includes("image");
+    return mediaType.includes("image") || mediaType.includes("video") || mediaType.includes("hls_video");
 });
 
 function handleMediaClick(event: MouseEvent) {
-    // Only open full-screen for images (videos have their own full-screen button)
-    if (!isMediaViewable.value) return;
+    const mediaType = props.media.type?.toLowerCase() || '';
     
-    // Prevent the tweet click event from firing
-    event.stopPropagation();
-    
-    // Get all media items from the tweet
-    const allMedia = props.mediaList || (props.tweet?.attachments || []);
-    
-    // Filter to only images and find the current image's index within the filtered list
-    const imageMedia = allMedia.filter(media => media.type?.toLowerCase().includes('image'));
-    const currentImageIndex = imageMedia.findIndex(media => media.mid === props.media.mid);
-    
-    // Store media data in session storage for the modal
-    sessionStorage.setItem('mediaViewerData', JSON.stringify({
-        mediaList: allMedia,
-        initialIndex: currentImageIndex,
-        tweet: props.tweet
-    }));
-    
-    // Navigate to media viewer
-    router.push('/media-viewer');
+    // For images, always open media viewer
+    if (mediaType.includes("image")) {
+        // Prevent the tweet click event from firing
+        event.stopPropagation();
+        
+        // Get all media items from the tweet
+        const allMedia = props.mediaList || (props.tweet?.attachments || []);
+        
+        // Filter to only images and find the current image's index within the filtered list
+        const imageMedia = allMedia.filter(media => media.type?.toLowerCase().includes('image'));
+        const currentImageIndex = imageMedia.findIndex(media => media.mid === props.media.mid);
+        
+        // Store media data in session storage for the modal
+        sessionStorage.setItem('mediaViewerData', JSON.stringify({
+            mediaList: allMedia,
+            initialIndex: currentImageIndex,
+            tweet: props.tweet
+        }));
+        
+        // Navigate to media viewer
+        router.push('/media-viewer');
+    }
+    // For videos, the click is handled by VideoJS component
+    // MediaView just needs to allow the click to pass through
 }
 </script>
 
