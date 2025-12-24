@@ -86,15 +86,46 @@ const processedContent = computed(() => {
   }
 });
 
-const attachmentGridColumns = computed(() => {
-  const attachmentCount = displayedTweet.value.attachments?.length || 0;
-  return (attachmentCount === 2 || attachmentCount >= 3) ? 'repeat(2, 1fr)' : '';
+// iOS MediaGrid algorithm implementation
+const gridAspectRatio = computed(() => {
+  const attachments = displayedTweet.value.attachments || [];
+  const count = attachments.length;
+  
+  if (count === 0) return 1;
+  if (count === 1) {
+    const ar = attachments[0].aspectRatio || 1;
+    if (ar < 0.9) return 0.9; // Portrait aspect ratio
+    return ar; // Use actual aspect ratio for landscape
+  }
+  if (count === 2) {
+    const ar0 = attachments[0].aspectRatio ?? 1;
+    const ar1 = attachments[1].aspectRatio ?? 1;
+    const isPortrait0 = ar0 < 1;
+    const isPortrait1 = ar1 < 1;
+    const isLandscape0 = ar0 > 1;
+    const isLandscape1 = ar1 > 1;
+    
+    if (isPortrait0 && isPortrait1) {
+      return 3.0 / 2.0; // Both portrait: horizontal, aspect 3:2
+    } else if (isLandscape0 && isLandscape1) {
+      return 4.0 / 5.0; // Both landscape: vertical, aspect 4:5
+    } else {
+      return 2.0; // Mixed: horizontal, aspect 2:1
+    }
+  }
+  // For 4+ items, always use square (1:1) aspect ratio
+  return 1.0;
 });
 
-const attachmentGridRows = computed(() => {
-  const attachmentCount = displayedTweet.value.attachments?.length || 0;
-  return attachmentCount <= 2 ? '1fr' : (attachmentCount >= 3 ? 'repeat(2, 1fr)' : '');
-});
+const isPortrait = (attachment: MimeiFileType) => {
+  const ar = attachment.aspectRatio || 1;
+  return ar < 1.0;
+};
+
+const isLandscape = (attachment: MimeiFileType) => {
+  const ar = attachment.aspectRatio || 1;
+  return ar > 1.0;
+};
 
 </script>
 
@@ -122,7 +153,8 @@ const attachmentGridRows = computed(() => {
     </div>
     <div class='card-body' :id="props.tweet.mid">
       <p v-if='displayedTweet.content' class='card-text' v-html='processedContent'></p>
-      <div v-if='displayedTweet.attachments?.length' class='media-attachments'>
+      <div v-if='displayedTweet.attachments?.length' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
+        <!-- 1 item -->
         <div v-if='displayedTweet.attachments.length === 1' class='single-attachment'>
           <MediaView
             :media='displayedTweet.attachments[0]'
@@ -132,21 +164,158 @@ const attachmentGridRows = computed(() => {
             class='img-fluid portrait-center'
           ></MediaView>
         </div>
-        <div v-else-if='displayedTweet.attachments.length > 1' :class='["multiple-attachments"]' :style='{ "grid-template-columns": attachmentGridColumns, "grid-template-rows": attachmentGridRows }'>
-          <MediaView
-            v-for='(media, index) in displayedTweet.attachments.slice(0, 4)'
-            :media='media'
-            :tweet='displayedTweet'
-            :media-list='displayedTweet.attachments'
-            :media-index='index'
-            :key='index'
-            class='img-fluid'
-            :addtional-items='
-              index === 3 && displayedTweet.attachments.length > 4
-                ? displayedTweet.attachments.length - 4
-                : undefined
-            '
-          ></MediaView>
+        
+        <!-- 2 items -->
+        <template v-else-if='displayedTweet.attachments.length === 2'>
+          <div v-if='isPortrait(displayedTweet.attachments[0]) && isPortrait(displayedTweet.attachments[1])' class='grid-2-portrait'>
+            <MediaView
+              v-for='(media, index) in displayedTweet.attachments'
+              :key='index'
+              :media='media'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='index'
+              class='grid-item'
+            ></MediaView>
+          </div>
+          <div v-else-if='isLandscape(displayedTweet.attachments[0]) && isLandscape(displayedTweet.attachments[1])' class='grid-2-landscape'>
+            <MediaView
+              v-for='(media, index) in displayedTweet.attachments'
+              :key='index'
+              :media='media'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='index'
+              class='grid-item'
+            ></MediaView>
+          </div>
+          <div v-else class='grid-2-mixed'>
+            <MediaView
+              :media='displayedTweet.attachments[0]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='0'
+              :class='["grid-item", isPortrait(displayedTweet.attachments[0]) ? "grid-item-portrait" : "grid-item-landscape"]'
+            ></MediaView>
+            <MediaView
+              :media='displayedTweet.attachments[1]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='1'
+              :class='["grid-item", isPortrait(displayedTweet.attachments[1]) ? "grid-item-portrait" : "grid-item-landscape"]'
+            ></MediaView>
+          </div>
+        </template>
+        
+        <!-- 3 items -->
+        <template v-else-if='displayedTweet.attachments.length === 3'>
+          <div v-if='isPortrait(displayedTweet.attachments[0]) && isPortrait(displayedTweet.attachments[1]) && isPortrait(displayedTweet.attachments[2])' class='grid-3-all-portrait'>
+            <MediaView
+              :media='displayedTweet.attachments[0]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='0'
+              class='grid-item grid-item-golden-left'
+            ></MediaView>
+            <div class='grid-item-golden-right'>
+              <MediaView
+                v-for='idx in [1, 2]'
+                :key='idx'
+                :media='displayedTweet.attachments[idx]'
+                :tweet='displayedTweet'
+                :media-list='displayedTweet.attachments'
+                :media-index='idx'
+                class='grid-item'
+              ></MediaView>
+            </div>
+          </div>
+          <div v-else-if='isLandscape(displayedTweet.attachments[0]) && isLandscape(displayedTweet.attachments[1]) && isLandscape(displayedTweet.attachments[2])' class='grid-3-all-landscape'>
+            <MediaView
+              :media='displayedTweet.attachments[0]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='0'
+              class='grid-item grid-item-golden-top'
+            ></MediaView>
+            <div class='grid-item-golden-bottom'>
+              <MediaView
+                v-for='idx in [1, 2]'
+                :key='idx'
+                :media='displayedTweet.attachments[idx]'
+                :tweet='displayedTweet'
+                :media-list='displayedTweet.attachments'
+                :media-index='idx'
+                class='grid-item'
+              ></MediaView>
+            </div>
+          </div>
+          <div v-else-if='isPortrait(displayedTweet.attachments[0])' class='grid-3-first-portrait'>
+            <MediaView
+              :media='displayedTweet.attachments[0]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='0'
+              class='grid-item grid-item-left-tall'
+            ></MediaView>
+            <div class='grid-item-right-stacked'>
+              <MediaView
+                v-for='idx in [1, 2]'
+                :key='idx'
+                :media='displayedTweet.attachments[idx]'
+                :tweet='displayedTweet'
+                :media-list='displayedTweet.attachments'
+                :media-index='idx'
+                class='grid-item'
+              ></MediaView>
+            </div>
+          </div>
+          <div v-else class='grid-3-first-landscape'>
+            <MediaView
+              :media='displayedTweet.attachments[0]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='0'
+              class='grid-item grid-item-top-wide'
+            ></MediaView>
+            <div class='grid-item-bottom-two'>
+              <MediaView
+                v-for='idx in [1, 2]'
+                :key='idx'
+                :media='displayedTweet.attachments[idx]'
+                :tweet='displayedTweet'
+                :media-list='displayedTweet.attachments'
+                :media-index='idx'
+                class='grid-item'
+              ></MediaView>
+            </div>
+          </div>
+        </template>
+        
+        <!-- 4+ items -->
+        <div v-else class='grid-4-plus'>
+          <div class='grid-row'>
+            <MediaView
+              v-for='idx in [0, 1]'
+              :key='idx'
+              :media='displayedTweet.attachments[idx]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='idx'
+              class='grid-item'
+            ></MediaView>
+          </div>
+          <div class='grid-row'>
+            <MediaView
+              v-for='idx in [2, 3]'
+              :key='idx'
+              :media='displayedTweet.attachments[idx]'
+              :tweet='displayedTweet'
+              :media-list='displayedTweet.attachments'
+              :media-index='idx'
+              class='grid-item'
+              :addtional-items='idx === 3 && displayedTweet.attachments.length > 4 ? displayedTweet.attachments.length - 4 : undefined'
+            ></MediaView>
+          </div>
         </div>
       </div>
     </div>
@@ -165,32 +334,296 @@ const attachmentGridRows = computed(() => {
   justify-content: center;
   align-items: center;
   max-height: 50vh;
+  overflow: hidden;
+  background-color: #000;
 }
 
 .media-attachments {
   width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
   position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: #000;
 }
 
-.multiple-attachments {
-  display: grid;
-  gap: 2px;
-  position: relative;
-  counter-increment: item-counter;
-}
-
-.multiple-attachments .img-fluid {
+/* iOS MediaGrid Algorithm Styles */
+.media-attachments {
   width: 100%;
-  height: 0;
-  padding-bottom: 100%;
-  object-fit: cover;
-  object-position: center;
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.grid-item {
+  width: 100%;
+  height: 100%;
   display: block;
   overflow: hidden;
   position: relative;
+  background-color: #000;
+}
+
+/* Ensure MediaView container fills the grid item */
+.grid-item > * {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.grid-item .container {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  overflow: hidden;
+  background-color: #000;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: relative;
+}
+
+/* Force images in grid to fill containers - override Bootstrap img-fluid */
+.media-attachments .grid-item,
+.media-attachments .grid-item .container,
+.media-attachments .grid-item .container img {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.media-attachments .grid-item .container {
+  position: relative !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+}
+
+.media-attachments .grid-item .container img {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.grid-item .video-container {
+  width: 100% !important;
+  height: 100% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background-color: #000;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+}
+
+.grid-item .video-wrapper {
+  width: 100% !important;
+  height: 100% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+}
+
+.grid-item .video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center;
+  min-height: 0;
+  aspect-ratio: unset !important;
+  margin: 0;
+  padding: 0;
+}
+
+/* 2 items - Both portrait: horizontal layout */
+.grid-2-portrait {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-2-portrait .grid-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 2 items - Both landscape: vertical layout */
+.grid-2-landscape {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-2-landscape .grid-item {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* 2 items - Mixed: horizontal, portrait 1/3, landscape 2/3 */
+.grid-2-mixed {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-2-mixed .grid-item-portrait {
+  flex: 0 0 33.333%;
+  min-width: 0;
+}
+
+.grid-2-mixed .grid-item-landscape {
+  flex: 0 0 66.666%;
+  min-width: 0;
+}
+
+/* 3 items - All portrait: golden ratio layout */
+.grid-3-all-portrait {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-3-all-portrait .grid-item-golden-left {
+  flex: 0 0 61.8%;
+  min-width: 0;
+}
+
+.grid-3-all-portrait .grid-item-golden-right {
+  flex: 0 0 38.2%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.grid-3-all-portrait .grid-item-golden-right .grid-item {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* 3 items - All landscape: golden ratio layout */
+.grid-3-all-landscape {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-3-all-landscape .grid-item-golden-top {
+  flex: 0 0 61.8%;
+  min-height: 0;
+}
+
+.grid-3-all-landscape .grid-item-golden-bottom {
+  flex: 0 0 38.2%;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+}
+
+.grid-3-all-landscape .grid-item-golden-bottom .grid-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 3 items - First portrait: left tall, right stacked */
+.grid-3-first-portrait {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-3-first-portrait .grid-item-left-tall {
+  flex: 0 0 50%;
+  min-width: 0;
+}
+
+.grid-3-first-portrait .grid-item-right-stacked {
+  flex: 0 0 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.grid-3-first-portrait .grid-item-right-stacked .grid-item {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* 3 items - First landscape: top wide, bottom two */
+.grid-3-first-landscape {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-3-first-landscape .grid-item-top-wide {
+  flex: 0 0 50%;
+  min-height: 0;
+}
+
+.grid-3-first-landscape .grid-item-bottom-two {
+  flex: 0 0 50%;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+}
+
+.grid-3-first-landscape .grid-item-bottom-two .grid-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 4+ items - 2x2 grid */
+.grid-4-plus {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  width: 100%;
+}
+
+.grid-4-plus .grid-row {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.grid-4-plus .grid-row .grid-item {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .portrait-center {

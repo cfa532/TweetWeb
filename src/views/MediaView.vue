@@ -82,6 +82,20 @@ function handleMediaClick(event: MouseEvent) {
 <style>
 .container {
     position: relative;
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: hidden;
+    background-color: #000;
+}
+
+/* In grid context, ensure container fills completely */
+.grid-item .container {
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 .clickable-media {

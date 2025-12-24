@@ -29,7 +29,36 @@ const props = defineProps({
     width: 100%;
     height: auto;
     max-height: 90vh;
-    object-fit: contain; /* Add this line to maintain aspect ratio */
+    object-fit: contain; /* Default for single images */
+    object-position: center;
+}
+
+
+/* When in grid context, use cover to fill space */
+.grid-item .container {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+    background-color: #000 !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.grid-item .container img {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+    max-height: none !important;
+    max-width: none !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 /* Mobile: Full-width images */
