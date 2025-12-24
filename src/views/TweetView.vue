@@ -361,6 +361,8 @@ const isLandscape = (attachment: MimeiFileType) => {
   overflow: hidden;
   position: relative;
   background-color: #000;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Ensure MediaView container fills the grid item */
@@ -398,10 +400,19 @@ const isLandscape = (attachment: MimeiFileType) => {
   background-color: #000 !important;
 }
 
-.media-attachments .grid-item .container img {
+/* Force images to fill grid containers - highest specificity */
+.media-attachments .grid-item .container {
+  position: relative !important;
+}
+
+.media-attachments .grid-item .container img,
+.media-attachments .grid-item .container > img,
+.media-attachments .grid-item img {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
   object-fit: cover !important;
@@ -411,6 +422,8 @@ const isLandscape = (attachment: MimeiFileType) => {
   padding: 0 !important;
   max-width: none !important;
   max-height: none !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
 }
 
 .grid-item .video-container {
@@ -624,6 +637,10 @@ const isLandscape = (attachment: MimeiFileType) => {
 .grid-4-plus .grid-row .grid-item {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  position: relative;
 }
 
 .portrait-center {
