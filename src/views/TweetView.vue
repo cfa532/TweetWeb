@@ -4,6 +4,7 @@ import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
 import { MediaView, ItemHeader } from '@/views';
 import { useTweetStore } from '@/stores';
+import { normalizeMediaType } from '@/lib';
 
 const tweetStore = useTweetStore()
 const router = useRouter()
@@ -88,7 +89,7 @@ const processedContent = computed(() => {
 
 // iOS MediaGrid algorithm implementation
 const gridAspectRatio = computed(() => {
-  const attachments = displayedTweet.value.attachments || [];
+  const attachments = mediaAttachments.value;
   const count = attachments.length;
   
   if (count === 0) return 1;
@@ -143,6 +144,95 @@ const isLandscape = (attachment: MimeiFileType) => {
   return ar > 1.0;
 };
 
+// Filter media attachments (image, video, audio only)
+const mediaAttachments = computed(() => {
+  const attachments = displayedTweet.value.attachments || [];
+  return attachments.filter((attachment: MimeiFileType) => {
+    const normalizedType = normalizeMediaType(attachment.type);
+    return normalizedType.includes('image') || 
+           normalizedType.includes('video') || 
+           normalizedType.includes('audio');
+  });
+});
+
+// Filter out media attachments (image, video, audio) to get documents
+const documentAttachments = computed(() => {
+  const attachments = displayedTweet.value.attachments || [];
+  return attachments.filter((attachment: MimeiFileType) => {
+    const normalizedType = normalizeMediaType(attachment.type);
+    return !normalizedType.includes('image') && 
+           !normalizedType.includes('video') && 
+           !normalizedType.includes('audio');
+  });
+});
+
+// Format file size in human-readable form
+function formatFileSize(bytes: number | undefined): string {
+  if (!bytes || bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Handle document click - download the document with its filename
+async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
+  // Prevent the tweet detail view from opening
+  event.stopPropagation();
+  
+  // Get the document URL
+  let docUrl: string;
+  
+  // If mid is already a full URL, use it directly
+  if (doc.mid.startsWith('http://') || doc.mid.startsWith('https://')) {
+    docUrl = doc.mid;
+  } else {
+    // Extract hash from mid if it contains a path separator
+    const lastIndexOf = doc.mid.lastIndexOf("/");
+    const hash = lastIndexOf > 0 ? doc.mid.substring(lastIndexOf + 1) : doc.mid;
+    
+    // Get provider IP from the tweet
+    const providerIp = displayedTweet.value.provider || displayedTweet.value.author?.providerIp;
+    const baseUrl = providerIp ? `http://${providerIp}` : window.location.origin;
+    
+    // Construct the full URL using tweetStore.getMediaUrl
+    docUrl = tweetStore.getMediaUrl(hash, baseUrl);
+  }
+  
+  // Get the filename, fallback to a default name if not available
+  const filename = doc.fileName || 'document';
+  
+  try {
+    // Fetch the file as a blob
+    const response = await fetch(docUrl);
+    if (!response.ok) {
+      throw new Error('Network response was not ok');
+    }
+    
+    const blob = await response.blob();
+    
+    // Create a blob URL
+    const blobUrl = window.URL.createObjectURL(blob);
+    
+    // Create download link with the filename
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Clean up the blob URL after a short delay
+    setTimeout(() => {
+      window.URL.revokeObjectURL(blobUrl);
+    }, 100);
+  } catch (error) {
+    console.error('Download failed:', error);
+    // Fallback: open in new tab if download fails
+    window.open(docUrl, '_blank');
+  }
+}
+
 </script>
 
 <template>
@@ -169,67 +259,67 @@ const isLandscape = (attachment: MimeiFileType) => {
     </div>
     <div class='card-body' :id="props.tweet.mid">
       <p v-if='displayedTweet.content' class='card-text' v-html='processedContent'></p>
-      <div v-if='displayedTweet.attachments?.length' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
+      <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
-        <div v-if='displayedTweet.attachments.length === 1' class='single-attachment'>
+        <div v-if='mediaAttachments.length === 1' class='single-attachment'>
           <MediaView
-            :media='displayedTweet.attachments[0]'
+            :media='mediaAttachments[0]'
             :tweet='displayedTweet'
-            :media-list='displayedTweet.attachments'
+            :media-list='mediaAttachments'
             :media-index='0'
             class='img-fluid portrait-center'
           ></MediaView>
         </div>
         
         <!-- 2 items -->
-        <template v-else-if='displayedTweet.attachments.length === 2'>
-          <div v-if='isPortrait(displayedTweet.attachments[0]) && isPortrait(displayedTweet.attachments[1])' class='grid-2-portrait'>
+        <template v-else-if='mediaAttachments.length === 2'>
+          <div v-if='isPortrait(mediaAttachments[0]) && isPortrait(mediaAttachments[1])' class='grid-2-portrait'>
             <MediaView
-              v-for='(media, index) in displayedTweet.attachments'
+              v-for='(media, index) in mediaAttachments'
               :key='index'
               :media='media'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='index'
               class='grid-item'
             ></MediaView>
           </div>
-          <div v-else-if='isLandscape(displayedTweet.attachments[0]) && isLandscape(displayedTweet.attachments[1])' class='grid-2-landscape'>
+          <div v-else-if='isLandscape(mediaAttachments[0]) && isLandscape(mediaAttachments[1])' class='grid-2-landscape'>
             <MediaView
-              v-for='(media, index) in displayedTweet.attachments'
+              v-for='(media, index) in mediaAttachments'
               :key='index'
               :media='media'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='index'
               class='grid-item'
             ></MediaView>
           </div>
           <div v-else class='grid-2-mixed'>
             <MediaView
-              :media='displayedTweet.attachments[0]'
+              :media='mediaAttachments[0]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='0'
-              :class='["grid-item", isPortrait(displayedTweet.attachments[0]) ? "grid-item-portrait" : "grid-item-landscape"]'
+              :class='["grid-item", isPortrait(mediaAttachments[0]) ? "grid-item-portrait" : "grid-item-landscape"]'
             ></MediaView>
             <MediaView
-              :media='displayedTweet.attachments[1]'
+              :media='mediaAttachments[1]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='1'
-              :class='["grid-item", isPortrait(displayedTweet.attachments[1]) ? "grid-item-portrait" : "grid-item-landscape"]'
+              :class='["grid-item", isPortrait(mediaAttachments[1]) ? "grid-item-portrait" : "grid-item-landscape"]'
             ></MediaView>
           </div>
         </template>
         
         <!-- 3 items -->
-        <template v-else-if='displayedTweet.attachments.length === 3'>
-          <div v-if='isPortrait(displayedTweet.attachments[0]) && isPortrait(displayedTweet.attachments[1]) && isPortrait(displayedTweet.attachments[2])' class='grid-3-all-portrait'>
+        <template v-else-if='mediaAttachments.length === 3'>
+          <div v-if='isPortrait(mediaAttachments[0]) && isPortrait(mediaAttachments[1]) && isPortrait(mediaAttachments[2])' class='grid-3-all-portrait'>
             <MediaView
-              :media='displayedTweet.attachments[0]'
+              :media='mediaAttachments[0]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='0'
               class='grid-item grid-item-golden-left'
             ></MediaView>
@@ -237,19 +327,19 @@ const isLandscape = (attachment: MimeiFileType) => {
               <MediaView
                 v-for='idx in [1, 2]'
                 :key='idx'
-                :media='displayedTweet.attachments[idx]'
+                :media='mediaAttachments[idx]'
                 :tweet='displayedTweet'
-                :media-list='displayedTweet.attachments'
+                :media-list='mediaAttachments'
                 :media-index='idx'
                 class='grid-item'
               ></MediaView>
             </div>
           </div>
-          <div v-else-if='isLandscape(displayedTweet.attachments[0]) && isLandscape(displayedTweet.attachments[1]) && isLandscape(displayedTweet.attachments[2])' class='grid-3-all-landscape'>
+          <div v-else-if='isLandscape(mediaAttachments[0]) && isLandscape(mediaAttachments[1]) && isLandscape(mediaAttachments[2])' class='grid-3-all-landscape'>
             <MediaView
-              :media='displayedTweet.attachments[0]'
+              :media='mediaAttachments[0]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='0'
               class='grid-item grid-item-golden-top'
             ></MediaView>
@@ -257,19 +347,19 @@ const isLandscape = (attachment: MimeiFileType) => {
               <MediaView
                 v-for='idx in [1, 2]'
                 :key='idx'
-                :media='displayedTweet.attachments[idx]'
+                :media='mediaAttachments[idx]'
                 :tweet='displayedTweet'
-                :media-list='displayedTweet.attachments'
+                :media-list='mediaAttachments'
                 :media-index='idx'
                 class='grid-item'
               ></MediaView>
             </div>
           </div>
-          <div v-else-if='isPortrait(displayedTweet.attachments[0])' class='grid-3-first-portrait'>
+          <div v-else-if='isPortrait(mediaAttachments[0])' class='grid-3-first-portrait'>
             <MediaView
-              :media='displayedTweet.attachments[0]'
+              :media='mediaAttachments[0]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='0'
               class='grid-item grid-item-left-tall'
             ></MediaView>
@@ -277,9 +367,9 @@ const isLandscape = (attachment: MimeiFileType) => {
               <MediaView
                 v-for='idx in [1, 2]'
                 :key='idx'
-                :media='displayedTweet.attachments[idx]'
+                :media='mediaAttachments[idx]'
                 :tweet='displayedTweet'
-                :media-list='displayedTweet.attachments'
+                :media-list='mediaAttachments'
                 :media-index='idx'
                 class='grid-item'
               ></MediaView>
@@ -287,9 +377,9 @@ const isLandscape = (attachment: MimeiFileType) => {
           </div>
           <div v-else class='grid-3-first-landscape'>
             <MediaView
-              :media='displayedTweet.attachments[0]'
+              :media='mediaAttachments[0]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='0'
               class='grid-item grid-item-top-wide'
             ></MediaView>
@@ -297,9 +387,9 @@ const isLandscape = (attachment: MimeiFileType) => {
               <MediaView
                 v-for='idx in [1, 2]'
                 :key='idx'
-                :media='displayedTweet.attachments[idx]'
+                :media='mediaAttachments[idx]'
                 :tweet='displayedTweet'
-                :media-list='displayedTweet.attachments'
+                :media-list='mediaAttachments'
                 :media-index='idx'
                 class='grid-item'
               ></MediaView>
@@ -313,9 +403,9 @@ const isLandscape = (attachment: MimeiFileType) => {
             <MediaView
               v-for='idx in [0, 1]'
               :key='idx'
-              :media='displayedTweet.attachments[idx]'
+              :media='mediaAttachments[idx]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='idx'
               class='grid-item'
             ></MediaView>
@@ -324,14 +414,26 @@ const isLandscape = (attachment: MimeiFileType) => {
             <MediaView
               v-for='idx in [2, 3]'
               :key='idx'
-              :media='displayedTweet.attachments[idx]'
+              :media='mediaAttachments[idx]'
               :tweet='displayedTweet'
-              :media-list='displayedTweet.attachments'
+              :media-list='mediaAttachments'
               :media-index='idx'
               class='grid-item'
-              :addtional-items='idx === 3 && displayedTweet.attachments.length > 4 ? displayedTweet.attachments.length - 4 : undefined'
+              :addtional-items='idx === 3 && mediaAttachments.length > 4 ? mediaAttachments.length - 4 : undefined'
             ></MediaView>
           </div>
+        </div>
+      </div>
+      <div v-if='documentAttachments.length > 0' class='document-attachments'>
+        <div 
+          v-for='(doc, index) in documentAttachments' 
+          :key='index' 
+          class='document-row'
+          @click='handleDocumentClick($event, doc)'
+        >
+          <span class='document-icon'>📄</span>
+          <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+          <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
         </div>
       </div>
     </div>
@@ -796,5 +898,53 @@ const isLandscape = (attachment: MimeiFileType) => {
   color: rgba(0, 0, 0, 0.787);
   font-weight: bold;
   pointer-events: none;
+}
+
+.document-attachments {
+  margin-top: 12px;
+  padding: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.document-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  cursor: pointer;
+}
+
+.document-row:hover {
+  background-color: #e9ecef;
+}
+
+.document-row:last-child {
+  margin-bottom: 0;
+}
+
+.document-icon {
+  font-size: 20px;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.document-filename {
+  flex: 1;
+  font-weight: 500;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-size {
+  margin-left: 12px;
+  color: #6c757d;
+  font-size: 0.9em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 </style>
