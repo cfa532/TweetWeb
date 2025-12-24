@@ -3,6 +3,7 @@ import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, ItemHeader, TweetView, QRCoder } from "@/views";
+import { normalizeMediaType } from '@/lib';
 
 const route = useRoute();
 const router = useRouter();
@@ -513,6 +514,111 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
     return !!firstVideo && firstVideo.mid === media.mid
 }
 
+// Filter media attachments (image, video, audio only) for the displayed tweet
+const displayedTweet = computed(() => {
+    return isRetweet.value && originTweet.value ? originTweet.value : tweet.value;
+});
+
+const mediaAttachments = computed(() => {
+    const attachments = displayedTweet.value?.attachments || [];
+    return attachments.filter((attachment: MimeiFileType) => {
+        const normalizedType = normalizeMediaType(attachment.type);
+        return normalizedType.includes('image') || 
+               normalizedType.includes('video') || 
+               normalizedType.includes('audio');
+    });
+});
+
+// Filter out media attachments (image, video, audio) to get documents
+const documentAttachments = computed(() => {
+    const attachments = displayedTweet.value?.attachments || [];
+    return attachments.filter((attachment: MimeiFileType) => {
+        const normalizedType = normalizeMediaType(attachment.type);
+        return !normalizedType.includes('image') && 
+               !normalizedType.includes('video') && 
+               !normalizedType.includes('audio');
+    });
+});
+
+// Format file size in human-readable form
+function formatFileSize(bytes: number | undefined): string {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Handle document click - open PDFs/HTML directly, download others with filename
+async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
+    // Prevent any parent click handlers
+    event.stopPropagation();
+    
+    // Get the document URL
+    let docUrl: string;
+    
+    // If mid is already a full URL, use it directly
+    if (doc.mid.startsWith('http://') || doc.mid.startsWith('https://')) {
+        docUrl = doc.mid;
+    } else {
+        // Extract hash from mid if it contains a path separator
+        const lastIndexOf = doc.mid.lastIndexOf("/");
+        const hash = lastIndexOf > 0 ? doc.mid.substring(lastIndexOf + 1) : doc.mid;
+        
+        // Get provider IP from the tweet
+        const currentTweet = displayedTweet.value;
+        const providerIp = currentTweet?.provider || currentTweet?.author?.providerIp;
+        const baseUrl = providerIp ? `http://${providerIp}` : window.location.origin;
+        
+        // Construct the full URL using tweetStore.getMediaUrl
+        docUrl = tweetStore.getMediaUrl(hash, baseUrl);
+    }
+    
+    // Check if the document type is PDF or HTML - open directly in browser
+    const normalizedType = normalizeMediaType(doc.type);
+    const isPdf = normalizedType.includes('pdf');
+    const isHtml = normalizedType.includes('html') || normalizedType.includes('text/html');
+    
+    if (isPdf || isHtml) {
+        // Open PDF and HTML files directly in a new tab
+        window.open(docUrl, '_blank');
+        return;
+    }
+    
+    // For other document types, download with filename
+    const filename = doc.fileName || 'document';
+    
+    try {
+        // Fetch the file as a blob
+        const response = await fetch(docUrl);
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        
+        const blob = await response.blob();
+        
+        // Create a blob URL
+        const blobUrl = window.URL.createObjectURL(blob);
+        
+        // Create download link with the filename
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the blob URL after a short delay
+        setTimeout(() => {
+            window.URL.revokeObjectURL(blobUrl);
+        }, 100);
+    } catch (error) {
+        console.error('Download failed:', error);
+        // Fallback: open in new tab if download fails
+        window.open(docUrl, '_blank');
+    }
+}
+
 const isFromComment = computed(() => !!route.query.fromComment);
 const parentTweetId = computed(() => route.query.parentTweetId as string | undefined);
 const parentAuthorId = computed(() => route.query.parentAuthorId as string | undefined);
@@ -553,9 +659,21 @@ function goBack() {
 
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
 
-            <div v-if="originTweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in originTweet.attachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, originTweet.attachments)" :media-list="originTweet.attachments" :media-index="index" class="img-fluid mb-1"></MediaView>
+            <div v-if="mediaAttachments.length > 0" class="media-attachments">
+                <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="index" class="img-fluid mb-1"></MediaView>
+            </div>
+            <div v-if='documentAttachments.length > 0' class='document-attachments'>
+                <div 
+                    v-for='(doc, index) in documentAttachments' 
+                    :key='index' 
+                    class='document-row'
+                    @click='handleDocumentClick($event, doc)'
+                >
+                    <span class='document-icon'>📄</span>
+                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
+                </div>
             </div>
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
                 <div class='icon-item d-flex align-items-center'>
@@ -577,10 +695,22 @@ function goBack() {
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
 
-            <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, tweet.attachments)" :media-list="tweet.attachments" :media-index="index" class="img-fluid">
+            <div v-if="mediaAttachments.length > 0" class="media-attachments">
+                <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="index" class="img-fluid">
                 </MediaView>
+            </div>
+            <div v-if='documentAttachments.length > 0' class='document-attachments'>
+                <div 
+                    v-for='(doc, index) in documentAttachments' 
+                    :key='index' 
+                    class='document-row'
+                    @click='handleDocumentClick($event, doc)'
+                >
+                    <span class='document-icon'>📄</span>
+                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
+                </div>
             </div>
 
             <!-- quoted tweet -->
@@ -965,5 +1095,53 @@ function goBack() {
 
 .back-button:hover {
     opacity: 0.7;
+}
+
+.document-attachments {
+    margin-top: 12px;
+    padding: 8px;
+    border-top: 1px solid #e0e0e0;
+}
+
+.document-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    cursor: pointer;
+}
+
+.document-row:hover {
+    background-color: #e9ecef;
+}
+
+.document-row:last-child {
+    margin-bottom: 0;
+}
+
+.document-icon {
+    font-size: 20px;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.document-filename {
+    flex: 1;
+    font-weight: 500;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.document-size {
+    margin-left: 12px;
+    color: #6c757d;
+    font-size: 0.9em;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 </style>

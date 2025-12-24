@@ -175,7 +175,7 @@ function formatFileSize(bytes: number | undefined): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Handle document click - download the document with its filename
+// Handle document click - open PDFs/HTML directly, download others with filename
 async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   // Prevent the tweet detail view from opening
   event.stopPropagation();
@@ -199,7 +199,18 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     docUrl = tweetStore.getMediaUrl(hash, baseUrl);
   }
   
-  // Get the filename, fallback to a default name if not available
+  // Check if the document type is PDF or HTML - open directly in browser
+  const normalizedType = normalizeMediaType(doc.type);
+  const isPdf = normalizedType.includes('pdf');
+  const isHtml = normalizedType.includes('html') || normalizedType.includes('text/html');
+  
+  if (isPdf || isHtml) {
+    // Open PDF and HTML files directly in a new tab
+    window.open(docUrl, '_blank');
+    return;
+  }
+  
+  // For other document types, download with filename
   const filename = doc.fileName || 'document';
   
   try {
