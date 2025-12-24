@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
+import { useTweetStore } from '@/stores';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -12,6 +13,7 @@ const props = defineProps({
   mediaIndex: { type: Number, required: false },
 })
 const router = useRouter();
+const tweetStore = useTweetStore();
 const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
@@ -200,8 +202,14 @@ function setupHLS() {
       videoElement.style.willChange = 'transform'; // Optimize for animations
     }
   
-  // Check if HLS is supported natively
-  if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+  // Check if HLS is supported natively (Safari only - other browsers need hls.js)
+  // Only use native HLS if canPlayType returns 'probably' (Safari) not just truthy (Chrome/Edge return 'maybe')
+  const nativeHLS = videoElement.canPlayType('application/vnd.apple.mpegurl');
+  const isSafari = /^((?!chrome|android|edg).)*safari/i.test(navigator.userAgent) || 
+                   (/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream);
+  const useNativeHLS = isSafari && nativeHLS === 'probably';
+  
+  if (useNativeHLS) {
     // Simple approach: try master first, then playlist if master fails
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
@@ -216,12 +224,30 @@ function setupHLS() {
       videoElement.src = playlistUrl;
       videoElement.load();
       
-      // If playlist also fails, give up
+      // If playlist also fails, fall back to hls.js
       videoElement.addEventListener('error', () => {
-        console.error('Native HLS: Both playlists failed, cannot play HLS video');
+        console.log('Native HLS: Both playlists failed, falling back to hls.js');
+        // Clean up native attempt
+        videoElement.src = '';
+        videoElement.load();
+        // Use hls.js as fallback
+        if (Hls.isSupported()) {
+          setupHLSWithJS(videoElement);
+        } else {
+          console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
+        }
       }, { once: true });
     }, { once: true });
   } else if (Hls.isSupported()) {
+    // Use hls.js for all non-Safari browsers or when native HLS is not available
+    setupHLSWithJS(videoElement);
+  } else {
+    console.error('HLS is not supported in this browser');
+  }
+}
+
+// Setup HLS using hls.js library
+function setupHLSWithJS(videoElement: HTMLVideoElement) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
     const hlsConfig = isInTweetList.value ? {
       // Low quality settings for tweet list with hardware acceleration
@@ -416,7 +442,6 @@ function setupHLS() {
         });
       }
     });
-  }
 }
 
 // Setup regular video playback (non-HLS)
@@ -527,18 +552,43 @@ function getVideoSource(): string {
 }
 
 function getHLSSource(): string {
-  // For HLS videos, props.media.mid already contains the full IPFS URL
-  // We need to append the playlist filename
-  const playlistUrl = props.media.mid + '/playlist.m3u8';
+  // Get the base media URL (full URL)
+  const baseUrl = getBaseMediaUrl();
+  // Append the playlist filename
+  const playlistUrl = baseUrl + '/playlist.m3u8';
   console.log('Trying playlist.m3u8:', playlistUrl);
   return playlistUrl;
 }
 
 function getHLSMasterSource(): string {
-  // For HLS videos with multiple resolutions, try master playlist first
-  const masterUrl = props.media.mid + '/master.m3u8';
+  // Get the base media URL (full URL)
+  const baseUrl = getBaseMediaUrl();
+  // Append the master playlist filename
+  const masterUrl = baseUrl + '/master.m3u8';
   console.log('Trying master.m3u8:', masterUrl);
   return masterUrl;
+}
+
+function getBaseMediaUrl(): string {
+  // If props.media.mid is already a full URL, use it as-is
+  if (props.media.mid.startsWith('http://') || props.media.mid.startsWith('https://')) {
+    return props.media.mid;
+  }
+  
+  // Otherwise, construct the full URL from the hash using tweetStore.getMediaUrl
+  // Try to get provider IP from tweet author
+  let baseUrl = '';
+  if (props.tweet?.author?.providerIp) {
+    baseUrl = `http://${props.tweet.author.providerIp}`;
+  } else if (props.tweet?.provider) {
+    baseUrl = `http://${props.tweet.provider}`;
+  } else {
+    // Fallback to current origin (shouldn't happen in normal flow)
+    baseUrl = window.location.origin;
+  }
+  
+  // Use tweetStore.getMediaUrl to construct the URL (handles /ipfs/ vs /mm/ logic)
+  return tweetStore.getMediaUrl(props.media.mid, baseUrl);
 }
 
 // Fallback to progressive video when HLS streaming fails

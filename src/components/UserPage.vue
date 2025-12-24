@@ -61,45 +61,78 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     pageNumber.value = 0; // Reset page number for initial load
     hasMoreTweets.value = true; // Reset the flag for initial load
     
-    // Load initial page
-    await tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
-    
-    // Keep loading more pages until we have at least 6 tweets or no more tweets
-    const minTweets = 6;
-    let tweetsLoaded = 0;
-    let round = 0;
-    
-    while (isLoading.value && round < 10) {
-        // Load initial page
-        const loadedPageSize = await tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
-        if (loadedPageSize) {
-            tweetsLoaded += loadedPageSize;
-            round++;
-        } else {
-            console.warn("Init load failed. Cannot load tweets in round", round);
-            break;
+    // Set timeout to hide spinner after 5 seconds
+    const timeoutId = setTimeout(() => {
+        if (isLoading.value) {
+            console.warn('Initial load timeout after 5 seconds, hiding spinner');
+            isLoading.value = false;
+            initialLoad.value = false;
         }
-        if (tweetsLoaded >= minTweets) {
-            break;
+    }, 5000);
+    
+    try {
+        // Keep loading more pages until we have at least 6 tweets or no more tweets
+        const minTweets = 6;
+        let tweetsLoaded = 0;
+        let round = 0;
+        
+        while (isLoading.value && round < 10) {
+            // Add timeout to each page load
+            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
+            const timeoutPromise = new Promise<number>((_, reject) => 
+                setTimeout(() => reject(new Error('Page load timeout')), 8000)
+            );
+            
+            let loadedPageSize: number;
+            try {
+                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]);
+            } catch (error) {
+                console.warn("Init load failed in round", round, error);
+                break;
+            }
+            
+            if (loadedPageSize) {
+                tweetsLoaded += loadedPageSize;
+                round++;
+            } else {
+                console.warn("Init load failed. Cannot load tweets in round", round);
+                break;
+            }
+            
+            if (tweetsLoaded >= minTweets) {
+                break;
+            }
+            
+            // If fewer tweets than requested were loaded, there are no more tweets
+            if (loadedPageSize < pageSize) {
+                console.log('No more tweets available from backend. Page number:', pageNumber.value);
+                break;
+            } else {
+                // Load next page
+                pageNumber.value++;
+                console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
+            }
         }
         
-        // If fewer tweets than requested were loaded, there are no more tweets
-        if (loadedPageSize < pageSize) {
-            console.log('No more tweets available from backend. Page number:', pageNumber.value);
-            break;
-        } else {
-            // Load next page
-            pageNumber.value++;
-            console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
+        // Load pinned tweets (with timeout protection)
+        try {
+            const pinnedPromise = tweetStore.loadPinnedTweets(authorId);
+            const pinnedTimeout = new Promise<Tweet[]>((_, reject) => 
+                setTimeout(() => reject(new Error('Pinned tweets timeout')), 5000)
+            );
+            pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);
+            pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+        } catch (error) {
+            console.warn('Error loading pinned tweets:', error);
+            pinnedTweets.value = [];
         }
+    } catch (error) {
+        console.error('Error in loadTweetsWithMinimum:', error);
+    } finally {
+        clearTimeout(timeoutId);
+        isLoading.value = false;
+        initialLoad.value = false;
     }
-    
-    // Load pinned tweets
-    pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
-    pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
-    
-    isLoading.value = false;
-    initialLoad.value = false;
 }
 
 async function loadMoreTweets(isManualRetry = false) {
@@ -111,8 +144,25 @@ async function loadMoreTweets(isManualRetry = false) {
     }
     
     isLoading.value = true;
+    
+    // Set timeout to hide spinner after 5 seconds
+    const timeoutId = setTimeout(() => {
+        if (isLoading.value) {
+            console.warn('Load more tweets timeout after 5 seconds, hiding spinner');
+            isLoading.value = false;
+        }
+    }, 5000);
+    
     try {
-        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
+        // Add timeout to the API call itself
+        const loadPromise = tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
+        const timeoutPromise = new Promise<number>((_, reject) => 
+            setTimeout(() => reject(new Error('Load timeout')), 8000)
+        );
+        
+        const tweetsLoaded = await Promise.race([loadPromise, timeoutPromise]);
+        
+        clearTimeout(timeoutId);
         
         if (tweetsLoaded && tweetsLoaded > 0) {
             hasMoreTweets.value = true; // Re-enable loading if we got tweets
@@ -126,6 +176,7 @@ async function loadMoreTweets(isManualRetry = false) {
             // For manual retries, do nothing - let user keep trying
         }
     } catch (error) {
+        clearTimeout(timeoutId);
         console.error('Error loading more tweets:', error);
         
         // For automatic loading, stop on error
@@ -134,6 +185,7 @@ async function loadMoreTweets(isManualRetry = false) {
         }
         // For manual retries, do nothing - let user keep trying
     } finally {
+        clearTimeout(timeoutId);
         isLoading.value = false;
     }
 }
