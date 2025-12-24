@@ -95,6 +95,12 @@ onMounted(() => {
         });
         video.value.addEventListener('ended', () => {
           isPlaying.value = false;
+          // Keep video at the end, don't reset to beginning
+          // This maintains the video container space
+          if (video.value) {
+            // Ensure video maintains its dimensions
+            video.value.style.minHeight = video.value.offsetHeight + 'px';
+          }
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
@@ -109,6 +115,18 @@ onMounted(() => {
           lastHandledError = null;
           if (video.value) {
             console.log('Video metadata loaded, duration:', video.value.duration);
+            // Capture video dimensions to maintain space after video ends
+            const videoHeight = video.value.videoHeight;
+            const videoWidth = video.value.videoWidth;
+            if (videoHeight > 0 && videoWidth > 0) {
+              // Calculate aspect ratio and set min-height based on width
+              const aspectRatio = videoHeight / videoWidth;
+              const containerWidth = video.value.offsetWidth || video.value.clientWidth;
+              if (containerWidth > 0) {
+                const calculatedHeight = containerWidth * aspectRatio;
+                video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
+              }
+            }
           }
         }, { once: true });
         
@@ -1264,6 +1282,8 @@ function stopVideo() {
   align-items: center;
   justify-content: center;
   background-color: #000;
+  /* Maintain minimum height to prevent collapse when video ends */
+  min-height: 200px;
 }
 
 .video {
@@ -1282,6 +1302,8 @@ function stopVideo() {
   background-color: #000;
   /* Center the video */
   margin: 0 auto;
+  /* Maintain dimensions after video ends - prevent collapse */
+  flex-shrink: 0;
 }
 
 .video-filename {
