@@ -621,17 +621,22 @@ const isLandscape = (attachment: MimeiFileType) => {
 .grid-4-plus {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .grid-4-plus .grid-row {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   flex: 1 1 0;
   min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 
 .grid-4-plus .grid-row .grid-item {
@@ -641,6 +646,9 @@ const isLandscape = (attachment: MimeiFileType) => {
   width: 100%;
   height: 100%;
   position: relative;
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 
 .portrait-center {
