@@ -549,7 +549,49 @@ function formatFileSize(bytes: number | undefined): string {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Handle document click - open PDFs/HTML directly, download others with filename
+// Check if a file type can be viewed directly in the browser
+function isBrowserViewable(doc: MimeiFileType): boolean {
+    const normalizedType = normalizeMediaType(doc.type);
+    const fileName = doc.fileName?.toLowerCase() || '';
+    
+    // Check MIME types that browsers can display
+    const viewableMimeTypes = [
+        'application/pdf',
+        'text/html',
+        'application/xhtml+xml',
+        'text/plain',
+        'text/css',
+        'text/javascript',
+        'text/json',
+        'text/xml',
+        'application/xml',
+        'application/json',
+        'text/markdown',
+        'text/x-markdown',
+        'text/csv',
+        'application/javascript',
+        'application/x-javascript'
+    ];
+    
+    // Check if MIME type is viewable
+    for (const viewableType of viewableMimeTypes) {
+        if (normalizedType.includes(viewableType)) {
+            return true;
+        }
+    }
+    
+    // Also check file extensions as fallback
+    const viewableExtensions = ['.pdf', '.html', '.htm', '.txt', '.css', '.js', '.json', '.xml', '.md', '.markdown', '.csv'];
+    for (const ext of viewableExtensions) {
+        if (fileName.endsWith(ext)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Handle document click - open browser-viewable files directly, download others with filename
 async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     // Prevent any parent click handlers
     event.stopPropagation();
@@ -574,18 +616,14 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         docUrl = tweetStore.getMediaUrl(hash, baseUrl);
     }
     
-    // Check if the document type is PDF or HTML - open directly in browser
-    const normalizedType = normalizeMediaType(doc.type);
-    const isPdf = normalizedType.includes('pdf');
-    const isHtml = normalizedType.includes('html') || normalizedType.includes('text/html');
-    
-    if (isPdf || isHtml) {
-        // Open PDF and HTML files directly in a new tab
+    // Check if the document can be viewed directly in the browser
+    if (isBrowserViewable(doc)) {
+        // Open browser-viewable files directly in a new tab
         window.open(docUrl, '_blank');
         return;
     }
     
-    // For other document types, download with filename
+    // For files that browsers cannot display, download with filename
     const filename = doc.fileName || 'document';
     
     try {
