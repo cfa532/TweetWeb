@@ -113,7 +113,23 @@ const gridAspectRatio = computed(() => {
       return 2.0; // Mixed: horizontal, aspect 2:1
     }
   }
-  // For 4+ items, always use square (1:1) aspect ratio
+  // For 4+ items, check orientation of first 4 items
+  if (count >= 4) {
+    const ar0 = attachments[0].aspectRatio ?? 1;
+    const ar1 = attachments[1].aspectRatio ?? 1;
+    const ar2 = attachments[2].aspectRatio ?? 1;
+    const ar3 = attachments[3].aspectRatio ?? 1;
+    
+    const allPortrait = ar0 < 1 && ar1 < 1 && ar2 < 1 && ar3 < 1;
+    const allLandscape = ar0 > 1 && ar1 > 1 && ar2 > 1 && ar3 > 1;
+    
+    if (allPortrait) {
+      return 0.8; // All portrait: aspect 0.8
+    } else if (allLandscape) {
+      return 1.618; // All landscape: golden ratio
+    }
+  }
+  // Default for 4+ items (mixed orientations)
   return 1.0;
 });
 

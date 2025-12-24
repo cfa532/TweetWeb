@@ -116,6 +116,8 @@ function handleMediaClick(event: MouseEvent) {
     position: absolute;
     top: 0;
     left: 0;
+    right: 0;
+    bottom: 0;
     width: 100%;
     height: 100%;
     background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
@@ -126,5 +128,24 @@ function handleMediaClick(event: MouseEvent) {
     font-size: 48px;
     font-weight: bold;
     pointer-events: none; /* Ensures the overlay doesn't interfere with clicks */
+    margin: 0;
+    padding: 0;
+}
+
+/* Ensure overlay is centered in grid items */
+.grid-item .overlay,
+.media-attachments .grid-item .overlay {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    text-align: center !important;
+    line-height: 1 !important;
 }
 </style>
