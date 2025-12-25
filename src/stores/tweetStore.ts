@@ -741,17 +741,105 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param mid The Mimei ID to find provider for
          * @returns The IP address of the best provider or null if not found
          */
-        async getProviderIp(mid: string): Promise<string | null> {
-            let ip = await this.lapi.client.RunMApp("get_provider_ip", {
-                aid: this.lapi.appId,
-                ver: "last",
-                mid: mid,
-            })
-            if (!ip) {
-                console.error("No provider found for", mid)
-                return null
+        /**
+         * Check if a server is healthy by calling its health endpoint
+         * @param ip The IP address (with optional port) to check
+         * @returns True if server is healthy, false otherwise
+         */
+        async isServerHealthy(ip: string): Promise<boolean> {
+            try {
+                const baseUrl = `http://${ip}`;
+                const client = createPooledClient(ip, this.lapi.connectionPool);
+                
+                const response = await client.RunMApp("health", {
+                    aid: this.lapi.appId,
+                    ver: "last"
+                });
+                
+                if (response && typeof response === 'object' && response.success === true) {
+                    console.log(`[isServerHealthy] Server ${ip} is healthy`);
+                    return true;
+                }
+                
+                console.log(`[isServerHealthy] Server ${ip} health check failed:`, response);
+                return false;
+            } catch (error) {
+                console.error(`[isServerHealthy] Health check error for ${ip}:`, error);
+                return false;
             }
-            return ip
+        },
+
+        /**
+         * Get provider IP for a user with health checking
+         * Calls get_provider_ips API and iterates through the list to find a healthy IP
+         * @param mid User's member ID
+         * @returns A healthy provider IP address, or null if none found
+         */
+        async getProviderIp(mid: string): Promise<string | null> {
+            try {
+                // Call get_provider_ips (plural) to get list of IPs
+                const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    version: "v2",
+                    mid: mid,
+                });
+                
+                if (!ipResponse) {
+                    console.error("[getProviderIp] No response from get_provider_ips for", mid);
+                    return null;
+                }
+                
+                // Handle the response - could be array or wrapped in data property
+                let ipList: string[] = [];
+                
+                if (Array.isArray(ipResponse)) {
+                    ipList = ipResponse;
+                } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
+                    ipList = ipResponse.data;
+                } else if (typeof ipResponse === 'string') {
+                    // Single IP as string
+                    ipList = [ipResponse];
+                } else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') {
+                    // Single IP wrapped in data
+                    ipList = [ipResponse.data];
+                } else {
+                    console.error("[getProviderIp] Invalid response format from get_provider_ips:", ipResponse);
+                    return null;
+                }
+                
+                // Filter and trim IP addresses
+                const ipAddresses = ipList
+                    .map(ip => ip.trim())
+                    .filter(ip => ip.length > 0);
+                
+                if (ipAddresses.length === 0) {
+                    console.error("[getProviderIp] No valid IPs returned for", mid);
+                    return null;
+                }
+                
+                console.log(`[getProviderIp] Checking ${ipAddresses.length} provider IPs for ${mid}:`, ipAddresses);
+                
+                // Check each IP for health and return the first healthy one
+                for (const ip of ipAddresses) {
+                    const isHealthy = await this.isServerHealthy(ip);
+                    
+                    if (isHealthy) {
+                        console.log(`[getProviderIp] Found healthy provider IP: ${ip}`);
+                        return ip;
+                    } else {
+                        console.log(`[getProviderIp] IP ${ip} failed health check, trying next...`);
+                    }
+                }
+                
+                // If no healthy IP found
+                console.error(`[getProviderIp] No healthy provider IP found in list for ${mid}:`, ipAddresses);
+                return null;
+                
+            } catch (error) {
+                console.error("[getProviderIp] Error getting provider IP for", mid, error);
+                return null;
+            }
         },
         /**
          * Load comments of a tweet into its comments attribute. 
