@@ -62,7 +62,7 @@ async function loadDetail() {
     isLoading.value = true
     
     // Safety timeout: hide spinner after 5 seconds regardless of loading state
-    const timeoutId = setTimeout(() => {
+    const timeoutId = window.setTimeout(() => {
         isLoading.value = false
     }, 5000)
     
@@ -456,7 +456,7 @@ watch(tweetId, async (newValue, oldValue)=>{
         isLoading.value = true
         
         // Safety timeout: hide spinner after 5 seconds regardless of loading state
-        const timeoutId = setTimeout(() => {
+        const timeoutId = window.setTimeout(() => {
             isLoading.value = false
         }, 5000)
         
