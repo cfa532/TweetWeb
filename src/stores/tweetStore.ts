@@ -850,12 +850,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     
                     // Test this batch in parallel with 5s timeout (reduced for faster initial loads)
                     // Return immediately when first healthy IP is found
-                    const healthChecks = batch.map(async (ip, index) => {
+                    const healthChecks: Array<Promise<{ip: string, isHealthy: boolean}>> = batch.map(async (ip, index) => {
                         const absoluteIndex = batchStart + index + 1;
                         console.log(`[getProviderIp] Testing IP ${absoluteIndex}/${ipAddresses.length}: ${ip}`);
-                        
+
                         const isHealthy = await this.isServerHealthyWithTimeout(ip, healthCheckTimeout);
-                        
+
                         if (isHealthy) {
                             console.log(`[getProviderIp] ✅ IP test PASSED: ${ip}`);
                             return { ip, isHealthy: true };
@@ -864,41 +864,25 @@ export const useTweetStore = defineStore('tweetStore', {
                             return { ip, isHealthy: false };
                         }
                     });
-                    
-                    // Race to find the first healthy IP - return immediately when one is found
-                    const racePromise = Promise.race(
-                        healthChecks.map(async (check) => {
-                            const result = await check;
-                            if (result.isHealthy) {
-                                return result.ip;
-                            }
-                            // If not healthy, keep promise pending to let other IPs race
-                            return new Promise<string>(() => {}); // Never resolves
-                        })
-                    );
-                    
-                    // Also wait for all to complete to check if none are healthy
-                    const allChecksPromise = Promise.all(healthChecks);
-                    
-                    // Use Promise.race to return as soon as we find a healthy IP
-                    // or when all checks complete (whichever comes first)
-                    const result = await Promise.race([
-                        racePromise,
-                        allChecksPromise.then(results => {
-                            // All checks completed, find any healthy one
-                            const healthyResult = results.find(r => r.isHealthy);
-                            return healthyResult ? healthyResult.ip : null;
-                        })
-                    ]);
-                    
-                    if (result) {
-                        console.log(`[getProviderIp] Found healthy provider IP: ${result}`);
-                        return result;
+
+                    // Wait for all checks to complete and find the first healthy IP
+                    const results = await Promise.all(healthChecks);
+                    const healthyResult: {ip: string, isHealthy: boolean} | undefined = results.find(r => r.isHealthy);
+
+                    if (healthyResult) {
+                        console.log(`[getProviderIp] Found healthy provider IP in batch: ${healthyResult.ip}`);
+                        return healthyResult.ip;
                     }
                 }
                 
-                // If no healthy IP found in any batch
-                console.error(`[getProviderIp] No healthy provider IP found in list for ${mid}:`, ipAddresses);
+                // If no healthy IP found in any batch, health checks may be unreliable
+                // Return the first IP anyway since health checks can give false negatives
+                if (ipAddresses.length > 0) {
+                    console.warn(`[getProviderIp] All health checks failed for ${mid}, but returning first IP anyway: ${ipAddresses[0]}`);
+                    return ipAddresses[0];
+                }
+                
+                console.error(`[getProviderIp] No IPs available for ${mid}`);
                 return null;
                 
             } catch (error) {
