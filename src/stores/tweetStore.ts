@@ -800,6 +800,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     ver: "last",
                     version: "v2",
                     mid: mid,
+                    v4only: "true", // Request IPv4 only to avoid IPv6 issues
                 });
                 
                 if (!ipResponse) {
@@ -837,22 +838,23 @@ export const useTweetStore = defineStore('tweetStore', {
                 
                 console.log(`[getProviderIp] Retrieved ${ipAddresses.length} IP address(es) from get_provider_ips API`);
                 
-                // Test IPs in pairs (batches of 2) with 10-second timeout
+                // Test IPs in pairs (batches of 2) with 5-second timeout (reduced from 10s for faster initial loads)
                 // Return immediately when first healthy IP is found
                 const batchSize = 2;
+                const healthCheckTimeout = 5000; // 5 seconds - reduced from 10s for faster resolution
                 for (let batchStart = 0; batchStart < ipAddresses.length; batchStart += batchSize) {
                     const batchEnd = Math.min(batchStart + batchSize, ipAddresses.length);
                     const batch = ipAddresses.slice(batchStart, batchEnd);
                     
                     console.log(`[getProviderIp] Testing batch: IPs ${batchStart + 1}-${batchEnd} of ${ipAddresses.length}`);
                     
-                    // Test this batch in parallel with 10s timeout
+                    // Test this batch in parallel with 5s timeout (reduced for faster initial loads)
                     // Return immediately when first healthy IP is found
                     const healthChecks = batch.map(async (ip, index) => {
                         const absoluteIndex = batchStart + index + 1;
                         console.log(`[getProviderIp] Testing IP ${absoluteIndex}/${ipAddresses.length}: ${ip}`);
                         
-                        const isHealthy = await this.isServerHealthyWithTimeout(ip, 10000);
+                        const isHealthy = await this.isServerHealthyWithTimeout(ip, healthCheckTimeout);
                         
                         if (isHealthy) {
                             console.log(`[getProviderIp] ✅ IP test PASSED: ${ip}`);

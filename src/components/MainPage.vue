@@ -155,34 +155,48 @@ async function loadTweetsWithMinimum() {
     pageNumber.value = 0; // Reset page number for initial load
     hasMoreTweets.value = true; // Reset the flag for initial load
 
-    // Set timeout to hide spinner after 5 seconds
+    // Set timeout to hide spinner after 15 seconds (increased to accommodate getProviderIp health checks)
     const timeoutId = setTimeout(() => {
         if (isLoading.value) {
-            console.warn('Initial load timeout after 5 seconds, hiding spinner');
+            console.warn('Initial load timeout after 15 seconds, hiding spinner');
             isLoading.value = false;
             initialLoad.value = false;
         }
-    }, 5000);
+    }, 15000);
 
     try {
         // Load exactly 3 pages (30 tweets) initially
         const pagesToLoad = 3;
         let tweetsLoaded = 0;
         let round = 0;
+        let consecutiveFailures = 0;
+        const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
         
         while (isLoading.value && round < pagesToLoad) {
-            // Add timeout to each page load
+            // Add timeout to each page load - increased to 20 seconds to accommodate getProviderIp health checks
             const loadPromise = tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
             const timeoutPromise = new Promise<never>((_, reject) => 
-                setTimeout(() => reject(new Error('Page load timeout')), 8000)
+                setTimeout(() => reject(new Error('Page load timeout')), 20000)
             );
             
             let loadedPageSize: number;
             try {
                 loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
+                consecutiveFailures = 0; // Reset on success
             } catch (error) {
                 console.warn("Init load failed in round", round, error);
-                break;
+                consecutiveFailures++;
+                
+                // Continue to next page if we haven't exceeded max failures
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    console.warn("Too many consecutive failures, stopping initial load");
+                    break;
+                }
+                
+                // Still increment page number and round to try next page
+                pageNumber.value++;
+                round++;
+                continue;
             }
             
             if (loadedPageSize) {
@@ -190,7 +204,18 @@ async function loadTweetsWithMinimum() {
                 round++;
             } else {
                 console.warn("Init load failed. Cannot load tweets in round", round);
-                break;
+                consecutiveFailures++;
+                
+                // Continue to next page if we haven't exceeded max failures
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    console.warn("Too many consecutive failures, stopping initial load");
+                    break;
+                }
+                
+                // Still increment page number and round to try next page
+                pageNumber.value++;
+                round++;
+                continue;
             }
             
             // If fewer tweets than requested were loaded, there are no more tweets
@@ -202,6 +227,13 @@ async function loadTweetsWithMinimum() {
                 pageNumber.value++;
                 console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
             }
+        }
+        
+        // Log final result
+        if (tweetsLoaded > 0) {
+            console.log(`Initial load completed: ${tweetsLoaded} tweets loaded in ${round} round(s)`);
+        } else {
+            console.warn('Initial load completed with no tweets loaded');
         }
     } catch (error) {
         console.error('Error in loadTweetsWithMinimum:', error);
