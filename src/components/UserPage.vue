@@ -29,9 +29,20 @@ function getBotVerificationMessage(): string {
 }
 
 onMounted(async () => {
+    // Wait a tick for route params to be fully available
+    if (!authorId.value) {
+        console.error('UserPage: authorId is undefined, waiting for route to be ready...');
+        // Wait for next tick and check again
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!authorId.value) {
+            console.error('UserPage: authorId still undefined after wait');
+            return;
+        }
+    }
+    
+    console.log('UserPage mounted for authorId:', authorId.value);
     tweetStore.removeUser(authorId.value);  // force reload user data from its host.
     await initialLoadTweets(authorId.value);
-    console.log('UserPage mounted', await tweetStore.getUser(authorId.value));
     window.addEventListener('scroll', handleScroll);
     // Scroll to top when page is opened
     window.scrollTo(0, 0);
@@ -61,14 +72,14 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     pageNumber.value = 0; // Reset page number for initial load
     hasMoreTweets.value = true; // Reset the flag for initial load
     
-    // Set timeout to hide spinner after 5 seconds
+    // Set timeout to hide spinner after 15 seconds (matching MainPage)
     const timeoutId = setTimeout(() => {
         if (isLoading.value) {
-            console.warn('Initial load timeout after 5 seconds, hiding spinner');
+            console.warn('Initial load timeout after 15 seconds, hiding spinner');
             isLoading.value = false;
             initialLoad.value = false;
         }
-    }, 5000);
+    }, 15000);
     
     try {
         // Keep loading more pages until we have at least 6 tweets or no more tweets
@@ -77,10 +88,10 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         let round = 0;
         
         while (isLoading.value && round < 10) {
-            // Add timeout to each page load
+            // Add timeout to each page load (20 seconds to accommodate getProviderIp health checks)
             const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
             const timeoutPromise = new Promise<never>((_, reject) => 
-                setTimeout(() => reject(new Error('Page load timeout')), 8000)
+                setTimeout(() => reject(new Error('Page load timeout')), 20000)
             );
             
             let loadedPageSize: number;
@@ -118,7 +129,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         try {
             const pinnedPromise = tweetStore.loadPinnedTweets(authorId);
             const pinnedTimeout = new Promise<Tweet[]>((_, reject) => 
-                setTimeout(() => reject(new Error('Pinned tweets timeout')), 5000)
+                setTimeout(() => reject(new Error('Pinned tweets timeout')), 15000)
             );
             pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);
             pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));

@@ -788,20 +788,29 @@ export const useTweetStore = defineStore('tweetStore', {
          * Get provider IP for a user with health checking
          * Calls get_provider_ips API and tests IPs in pairs with 10-second timeout
          * @param mid User's member ID
+         * @param v4only If true, filter out IPv6 addresses. Default is true.
          * @returns A healthy provider IP address, or null if none found
          */
-        async getProviderIp(mid: string): Promise<string | null> {
+        async getProviderIp(mid: string, v4only: boolean = true): Promise<string | null> {
             try {
-                console.log(`[getProviderIp] Getting provider IPs for ${mid}...`);
+                console.log(`[getProviderIp] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
                 
                 // Call get_provider_ips (plural) to get list of IPs
-                const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", {
+                const params: any = {
                     aid: this.lapi.appId,
                     ver: "last",
                     version: "v2",
                     mid: mid,
-                    v4only: "true", // Request IPv4 only to avoid IPv6 issues
-                });
+                };
+                
+                // Only add v4only parameter if true
+                if (v4only) {
+                    params.v4only = "true";
+                }
+                
+                const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
+                
+                console.log(`[getProviderIp] Raw response from get_provider_ips for ${mid}:`, ipResponse);
                 
                 if (!ipResponse) {
                     console.error("[getProviderIp] No response from get_provider_ips for", mid);
@@ -826,10 +835,23 @@ export const useTweetStore = defineStore('tweetStore', {
                     return null;
                 }
                 
-                // Filter and trim IP addresses
+                // Filter and trim IP addresses, optionally removing IPv6 addresses
                 const ipAddresses = ipList
                     .map(ip => ip.trim())
-                    .filter(ip => ip.length > 0);
+                    .filter(ip => {
+                        if (ip.length === 0) return false;
+                        
+                        // If v4only is true, filter out IPv6 addresses
+                        if (v4only) {
+                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
+                            if (ip.includes('[') || ip.includes(']')) return false;
+                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                            const colonCount = (ip.match(/:/g) || []).length;
+                            if (colonCount > 1) return false;
+                        }
+                        
+                        return true;
+                    });
                 
                 if (ipAddresses.length === 0) {
                     console.error("[getProviderIp] No valid IPs returned for", mid);
