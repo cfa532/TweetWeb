@@ -848,9 +848,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     
                     console.log(`[getProviderIp] Testing batch: IPs ${batchStart + 1}-${batchEnd} of ${ipAddresses.length}`);
                     
-                    // Test this batch in parallel with 5s timeout (reduced for faster initial loads)
-                    // Return immediately when first healthy IP is found
-                    const healthChecks: Array<Promise<{ip: string, isHealthy: boolean}>> = batch.map(async (ip, index) => {
+                    // Test this batch in parallel - return immediately when first healthy IP is found
+                    const healthCheckPromises = batch.map(async (ip, index) => {
                         const absoluteIndex = batchStart + index + 1;
                         console.log(`[getProviderIp] Testing IP ${absoluteIndex}/${ipAddresses.length}: ${ip}`);
 
@@ -858,20 +857,23 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         if (isHealthy) {
                             console.log(`[getProviderIp] ✅ IP test PASSED: ${ip}`);
-                            return { ip, isHealthy: true };
+                            return ip; // Return the IP immediately
                         } else {
                             console.log(`[getProviderIp] ❌ IP test FAILED: ${ip}`);
-                            return { ip, isHealthy: false };
+                            // Don't return, throw to keep promise pending
+                            return new Promise<string>(() => {}); // Never resolves
                         }
                     });
 
-                    // Wait for all checks to complete and find the first healthy IP
-                    const results = await Promise.all(healthChecks);
-                    const healthyResult: {ip: string, isHealthy: boolean} | undefined = results.find(r => r.isHealthy);
-
-                    if (healthyResult) {
-                        console.log(`[getProviderIp] Found healthy provider IP in batch: ${healthyResult.ip}`);
-                        return healthyResult.ip;
+                    // Use Promise.race to return as soon as ANY healthy IP is found
+                    try {
+                        const fastestHealthyIp = await Promise.race(healthCheckPromises);
+                        if (fastestHealthyIp && typeof fastestHealthyIp === 'string') {
+                            console.log(`[getProviderIp] Found healthy provider IP immediately: ${fastestHealthyIp}`);
+                            return fastestHealthyIp;
+                        }
+                    } catch (error) {
+                        // All failed in this batch, continue to next batch
                     }
                 }
                 
