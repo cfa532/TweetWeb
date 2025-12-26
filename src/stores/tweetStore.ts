@@ -770,13 +770,30 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Check if a server is healthy with a timeout
+         * @param ip The IP address (with optional port) to check
+         * @param timeout Timeout in milliseconds (default: 10000ms = 10s)
+         * @returns True if server is healthy within timeout, false otherwise
+         */
+        async isServerHealthyWithTimeout(ip: string, timeout: number = 10000): Promise<boolean> {
+            return Promise.race([
+                this.isServerHealthy(ip),
+                new Promise<boolean>((resolve) => {
+                    setTimeout(() => resolve(false), timeout);
+                })
+            ]);
+        },
+
+        /**
          * Get provider IP for a user with health checking
-         * Calls get_provider_ips API and iterates through the list to find a healthy IP
+         * Calls get_provider_ips API and tests IPs in pairs with 10-second timeout
          * @param mid User's member ID
          * @returns A healthy provider IP address, or null if none found
          */
         async getProviderIp(mid: string): Promise<string | null> {
             try {
+                console.log(`[getProviderIp] Getting provider IPs for ${mid}...`);
+                
                 // Call get_provider_ips (plural) to get list of IPs
                 const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", {
                     aid: this.lapi.appId,
@@ -818,21 +835,67 @@ export const useTweetStore = defineStore('tweetStore', {
                     return null;
                 }
                 
-                console.log(`[getProviderIp] Checking ${ipAddresses.length} provider IPs for ${mid}:`, ipAddresses);
+                console.log(`[getProviderIp] Retrieved ${ipAddresses.length} IP address(es) from get_provider_ips API`);
                 
-                // Check each IP for health and return the first healthy one
-                for (const ip of ipAddresses) {
-                    const isHealthy = await this.isServerHealthy(ip);
+                // Test IPs in pairs (batches of 2) with 10-second timeout
+                // Return immediately when first healthy IP is found
+                const batchSize = 2;
+                for (let batchStart = 0; batchStart < ipAddresses.length; batchStart += batchSize) {
+                    const batchEnd = Math.min(batchStart + batchSize, ipAddresses.length);
+                    const batch = ipAddresses.slice(batchStart, batchEnd);
                     
-                    if (isHealthy) {
-                        console.log(`[getProviderIp] Found healthy provider IP: ${ip}`);
-                        return ip;
-                    } else {
-                        console.log(`[getProviderIp] IP ${ip} failed health check, trying next...`);
+                    console.log(`[getProviderIp] Testing batch: IPs ${batchStart + 1}-${batchEnd} of ${ipAddresses.length}`);
+                    
+                    // Test this batch in parallel with 10s timeout
+                    // Return immediately when first healthy IP is found
+                    const healthChecks = batch.map(async (ip, index) => {
+                        const absoluteIndex = batchStart + index + 1;
+                        console.log(`[getProviderIp] Testing IP ${absoluteIndex}/${ipAddresses.length}: ${ip}`);
+                        
+                        const isHealthy = await this.isServerHealthyWithTimeout(ip, 10000);
+                        
+                        if (isHealthy) {
+                            console.log(`[getProviderIp] ✅ IP test PASSED: ${ip}`);
+                            return { ip, isHealthy: true };
+                        } else {
+                            console.log(`[getProviderIp] ❌ IP test FAILED: ${ip}`);
+                            return { ip, isHealthy: false };
+                        }
+                    });
+                    
+                    // Race to find the first healthy IP - return immediately when one is found
+                    const racePromise = Promise.race(
+                        healthChecks.map(async (check) => {
+                            const result = await check;
+                            if (result.isHealthy) {
+                                return result.ip;
+                            }
+                            // If not healthy, keep promise pending to let other IPs race
+                            return new Promise<string>(() => {}); // Never resolves
+                        })
+                    );
+                    
+                    // Also wait for all to complete to check if none are healthy
+                    const allChecksPromise = Promise.all(healthChecks);
+                    
+                    // Use Promise.race to return as soon as we find a healthy IP
+                    // or when all checks complete (whichever comes first)
+                    const result = await Promise.race([
+                        racePromise,
+                        allChecksPromise.then(results => {
+                            // All checks completed, find any healthy one
+                            const healthyResult = results.find(r => r.isHealthy);
+                            return healthyResult ? healthyResult.ip : null;
+                        })
+                    ]);
+                    
+                    if (result) {
+                        console.log(`[getProviderIp] Found healthy provider IP: ${result}`);
+                        return result;
                     }
                 }
                 
-                // If no healthy IP found
+                // If no healthy IP found in any batch
                 console.error(`[getProviderIp] No healthy provider IP found in list for ${mid}:`, ipAddresses);
                 return null;
                 
@@ -920,21 +983,27 @@ export const useTweetStore = defineStore('tweetStore', {
             const maxRetries = 2;
             let lastError: any = null;
 
+            console.log(`[login] Starting login for username: ${username}`);
+
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
+                    console.log(`[login] Attempt ${attempt + 1}/${maxRetries + 1}`);
+                    
                     // given username, get UserId
+                    console.log(`[login] Calling get_userid for username: ${username}`);
                     let userId = await this.lapi.client.RunMApp("get_userid", {
                         aid: this.appId, ver: "last", username: username
                     })
-                    console.log("Login user ID", userId)
+                    console.log(`[login] Got userId: ${userId}`)
                     if (!userId) {
-                        console.error("Login failed: User not found", username)
+                        console.error(`[login] getUserId returned null for username: ${username}`)
                         useAlertStore().error("User not found. Please check your username.")
                         return
                     }
                     
+                    console.log(`[login] Calling getUser for userId: ${userId}`);
                     let user = await this.getUser(userId)
-                    console.log("Login user", user)
+                    console.log(`[login] getUser returned:`, user ? `user with providerIp: ${user.providerIp}` : 'null')
                     if (!user) {
                         // Retry on user fetch failure (could be network issue)
                         if (attempt < maxRetries) {
@@ -948,9 +1017,11 @@ export const useTweetStore = defineStore('tweetStore', {
                         return
                     }
                     
+                    console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
                     let ret = await user.client.RunMApp("login", {
                         aid: this.appId, ver: "last", username: username, password: password
                     })
+                    console.log(`[login] Login API returned:`, ret);
                     if (!ret) {
                         // Retry on authentication failure (could be network issue)
                         if (attempt < maxRetries) {
@@ -965,12 +1036,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     
                     if (ret["status"] === 'success') {
+                        console.log(`[login] Login successful for ${username}`);
                         /**
                          * Now find the IP of a host where user has write permission
                          */
                         if (user.hostId) {
+                            console.log(`[login] Getting writable host IP for user`);
                             const ip = await this.getNodeIp(user, true)
-                            console.log("Host IP", ip)
+                            console.log(`[login] Writable host IP: ${ip}`)
                             if (!ip) {
                                 // Retry on IP fetch failure (could be network issue)
                                 if (attempt < maxRetries) {
@@ -988,6 +1061,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             user.client = createPooledClient(ip, this.lapi.connectionPool)
                             this._user = user
                             this.addFollowing(userId)
+                            console.log(`[login] Login flow completed successfully for ${username}`);
                             useAlertStore().success("Login successful!")
                             return user
                         } else {

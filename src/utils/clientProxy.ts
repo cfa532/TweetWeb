@@ -22,8 +22,8 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
     get(target, prop, receiver) {
       // Special properties that should be handled directly
       if (prop === 'timeout') {
-        // Return a default timeout value
-        return 30000;
+        // Return a default timeout value (10 seconds)
+        return 10000;
       }
       
       if (prop === 'ip') {

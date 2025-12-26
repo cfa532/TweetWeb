@@ -25,7 +25,7 @@ class ConnectionPoolManager {
   private pendingRequests: PendingRequest[] = [];
   private readonly maxConnectionsPerIp: number = 8; // 8 connections per IP
   private readonly maxTotalConnections: number = 16; // Total 16 connections across all IPs
-  private readonly connectionTimeout: number = 30000; // 30 seconds
+  private readonly connectionTimeout: number = 10000; // 10 seconds (reduced from 30s for faster failure detection)
   private readonly idleTimeout: number = 60000; // 1 minute idle before cleanup
   private readonly ayApi: string[];
   
