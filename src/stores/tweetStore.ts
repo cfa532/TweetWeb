@@ -15,7 +15,9 @@ export const useTweetStore = defineStore('tweetStore', {
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
         installApk: import.meta.env.VITE_APP_PKG,
-        _user: null as User | null      // login user data
+        _user: null as User | null,      // login user data
+        healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(), // Cache health check results
+        healthCheckInProgress: new Map<string, Promise<boolean>>() // Track ongoing health checks
     }),
     getters: {
         /**
@@ -742,31 +744,70 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The IP address of the best provider or null if not found
          */
         /**
-         * Check if a server is healthy by calling its health endpoint
+         * Check if a server is alive by making a simple HTTP HEAD request
+         * Uses caching to avoid redundant checks
          * @param ip The IP address (with optional port) to check
-         * @returns True if server is healthy, false otherwise
+         * @returns True if server responds, false otherwise
          */
         async isServerHealthy(ip: string): Promise<boolean> {
-            try {
-                const baseUrl = `http://${ip}`;
-                const client = createPooledClient(ip, this.lapi.connectionPool);
-                
-                const response = await client.RunMApp("health", {
-                    aid: this.lapi.appId,
-                    ver: "last"
-                });
-                
-                if (response && typeof response === 'object' && response.success === true) {
-                    console.log(`[isServerHealthy] Server ${ip} is healthy`);
-                    return true;
-                }
-                
-                console.log(`[isServerHealthy] Server ${ip} health check failed:`, response);
-                return false;
-            } catch (error) {
-                console.error(`[isServerHealthy] Health check error for ${ip}:`, error);
-                return false;
+            const now = Date.now();
+            const cacheTTL = 30 * 60 * 1000; // 30 minutes cache
+            
+            // Check if we have a recent cached result
+            const cached = this.healthCheckCache.get(ip);
+            if (cached && (now - cached.timestamp) < cacheTTL) {
+                console.log(`[isServerHealthy] Using cached result for ${ip}: ${cached.isHealthy ? 'healthy' : 'unhealthy'}`);
+                return cached.isHealthy;
             }
+            
+            // Check if a health check is already in progress for this IP
+            const inProgress = this.healthCheckInProgress.get(ip);
+            if (inProgress) {
+                console.log(`[isServerHealthy] Health check already in progress for ${ip}, waiting...`);
+                return await inProgress;
+            }
+            
+            // Start a new health check
+            const healthCheckPromise = (async () => {
+                try {
+                    const baseUrl = `http://${ip}`;
+                    
+                    // Make a simple HEAD request to check if server is alive
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout for HEAD request
+                    
+                    const response = await fetch(baseUrl, {
+                        method: 'HEAD',
+                        signal: controller.signal,
+                        mode: 'no-cors', // Allow cross-origin requests
+                    }).catch(() => null);
+                    
+                    clearTimeout(timeoutId);
+                    
+                    // For no-cors mode, we just check if the request completed without error
+                    // If we get here without exception, the server is reachable
+                    const isHealthy = response !== null;
+                    
+                    // Cache the result
+                    this.healthCheckCache.set(ip, { isHealthy, timestamp: Date.now() });
+                    
+                    console.log(`[isServerHealthy] Server ${ip} is ${isHealthy ? 'reachable' : 'not reachable'}`);
+                    return isHealthy;
+                } catch (error) {
+                    console.error(`[isServerHealthy] Health check error for ${ip}:`, error);
+                    // Cache negative result
+                    this.healthCheckCache.set(ip, { isHealthy: false, timestamp: Date.now() });
+                    return false;
+                } finally {
+                    // Remove from in-progress map
+                    this.healthCheckInProgress.delete(ip);
+                }
+            })();
+            
+            // Store the promise so other callers can wait for it
+            this.healthCheckInProgress.set(ip, healthCheckPromise);
+            
+            return await healthCheckPromise;
         },
 
         /**
