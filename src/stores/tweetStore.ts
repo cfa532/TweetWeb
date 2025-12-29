@@ -609,6 +609,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     // 1. No need to fetch user first (blocks racing)
                     // 2. Can start racing immediately
                     // 3. User is fetched after race completes
+                    console.log('[fetchTweet TIMING] Starting race for tweet:', tweetId, new Date().toISOString())
                     const providerIps = await this.getProviderIps(tweetId)
                     if (providerIps.length === 0)
                         return null
@@ -631,6 +632,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweetInDB = raceResult.result;
                     providerIp = raceResult.ip;
                     providerClient = await this.lapi.getClient(providerIp);
+                    console.log('[fetchTweet TIMING] ✅ Tweet data received from race:', new Date().toISOString());
                 } else {
                     // Normal flow: Get single provider IP (old behavior)
                     providerIp = await this.getProviderIp(tweetId)
@@ -649,7 +651,9 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log("Get tweet from db", tweetInDB, providerIp, author)
             if (!tweetInDB)
                 return null
+            console.log('[fetchTweet TIMING] Fetching author data...', new Date().toISOString())
             author = author ? author : await this.getUser(tweetInDB.authorId)
+            console.log('[fetchTweet TIMING] ✅ Author data received:', new Date().toISOString())
             // convert Tweet App's definition to this app's definition.
             let tweet = {
                 mid: tweetInDB.mid,
@@ -671,6 +675,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 bookmarkCount: tweetInDB.bookmarkCount,
                 commentCount: tweetInDB.commentCount,
             }
+            console.log('[fetchTweet TIMING] ✅ Complete tweet object constructed:', new Date().toISOString())
             sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
             return tweet
         },

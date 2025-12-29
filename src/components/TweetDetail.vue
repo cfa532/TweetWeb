@@ -15,6 +15,7 @@ const originTweet = ref()
 const isRetweet = ref(false)
 const isLoading = ref(false)
 const loadError = ref(false)
+const hasLoadAttempted = ref(false)
 const author = ref<User>();
 const DEFAULT_PREVIEW_IMAGE = `${window.location.origin}/ic_splash.png`
 const videoPreviewCache = new Map<string, string>()
@@ -35,6 +36,19 @@ function getBotVerificationMessage(): string {
         return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
     } else {
         return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
+    }
+}
+
+// Localization for loading retry message
+function getLoadingRetryMessage(): string {
+    const language = navigator.language || 'en';
+    
+    if (language.startsWith('zh')) {
+        return '正在加载推文，1秒后重试...';
+    } else if (language.startsWith('ja')) {
+        return 'ツイートを読み込んでいます、1秒後に再試行...';
+    } else {
+        return 'Loading tweet, retrying in 1s...';
     }
 }
 
@@ -62,6 +76,7 @@ onMounted(async () => {
 async function loadDetail() {
     isLoading.value = true
     loadError.value = false
+    hasLoadAttempted.value = true
     
     // Safety timeout: hide spinner after 5 seconds regardless of loading state
     const timeoutId = window.setTimeout(() => {
@@ -81,7 +96,9 @@ async function loadDetail() {
         else {
             // Fetch tweet if it is not in session already.
             // Use racing for faster loading on TweetDetail page
+            console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
             tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+            console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
             if (!tweet.value) {
                 clearTimeout(timeoutId)
                 isLoading.value = false
@@ -481,6 +498,7 @@ watch(tweetId, async (newValue, oldValue)=>{
     if (newValue && oldValue !== newValue) {
         isLoading.value = true
         loadError.value = false
+        hasLoadAttempted.value = true
         
         // Safety timeout: hide spinner after 5 seconds regardless of loading state
         const timeoutId = window.setTimeout(() => {
@@ -753,13 +771,12 @@ function goBack() {
         ← Back to Tweet
     </div>
     
-    <!-- Error message when tweet fails to load -->
-    <div v-if="loadError && !isLoading" class="alert alert-warning text-center my-4">
-        <h5>⚠️ Failed to load tweet</h5>
-        <p>Retrying in a moment...</p>
-        <div class="spinner-border spinner-border-sm" role="status">
+    <!-- Loading retry message - only show after load attempt fails -->
+    <div v-if="loadError && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
+        <div class="spinner-border text-primary mb-2" role="status">
             <span class="visually-hidden">Loading...</span>
         </div>
+        <p class="mb-0">{{ getLoadingRetryMessage() }}</p>
     </div>
     
     <div v-if="tweet" class="card mb-1">
@@ -923,6 +940,18 @@ function goBack() {
 </template>
 
 <style scoped>
+/* Loading retry message styling */
+.loading-retry-message {
+    padding: 2rem 1rem;
+    color: #495057;
+    background-color: transparent;
+}
+
+.loading-retry-message p {
+    font-size: 1rem;
+    color: #6c757d;
+}
+
 .card {
     width: 100%;
     margin: 0px 0px 30px 5px;
