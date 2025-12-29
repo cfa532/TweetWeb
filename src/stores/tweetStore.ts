@@ -173,7 +173,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 
                 this.tweets.push(tweet);
-                console.log(`[addTweetToStore] ✅ Tweet cached: ${tweet.mid} - Will skip fetch on detail page`);
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -682,6 +681,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * Retrieves user data by user ID, caching the result
+         * Implements retry mechanism: if first attempt fails, retry once with refreshed providerIP
          * @param userId The user ID to retrieve data for
          * @returns The user object or undefined if not found
          */
@@ -692,71 +692,68 @@ export const useTweetStore = defineStore('tweetStore', {
             if (this.users.get(userId))
                 return this.users.get(userId)
 
-            // Get single provider IP (no racing for user lookups)
-            let providerIp = await this.getProviderIp(userId)
-            console.log("Get user provider IP", providerIp)
-            if (!providerIp) {
-                console.warn("No provider found for user", userId)
-                return
+            // Try to get user with retry mechanism
+            let providerIp: string | null = null
+            let user: any = null
+            let providerClient: any = null
+            
+            // First attempt
+            try {
+                providerIp = await this.getProviderIp(userId)
+                console.log("Get user provider IP (first attempt)", providerIp)
+                if (!providerIp) {
+                    console.warn("No provider found for user", userId)
+                    return
+                }
+                
+                providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
+                
+                user = await providerClient.RunMApp("get_user", {
+                    aid: this.appId, 
+                    ver: "last", 
+                    version: "v3",
+                    userid: userId,
+                })
+                
+                console.log("get_user result (first attempt):", user)
+            } catch (error) {
+                console.error("First attempt to get user failed:", error)
+                user = null
             }
             
-            // Store original provider IP to detect loops
-            const originalProviderIp = providerIp
-            let providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-
-            let user = await providerClient.RunMApp("get_user", {
-                aid: this.appId, ver: "last", userid: userId,
-            })
-            
-            // Print the result of get_user for debugging
-            console.log("get_user result:", user)
-            
-            // Check if user is a string - if it's an IP address, retry with that IP
-            if (typeof user === 'string') {
-                // Check if the string looks like an IP address (with optional port)
-                // Format: "ip:port" or just "ip" (e.g., "115.196.201.208:8081" or "127.0.0.1:4800")
-                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/
-                if (ipPattern.test(user)) {
-                    // Check if returned IP is the same as the one used for the call
-                    // This indicates the user should be on this server but something is wrong
-                    if (user === originalProviderIp) {
-                        const errorMsg = `get_user returned the same IP as the provider IP (${originalProviderIp}). User should be on this server but get_user failed. This indicates a server-side error. User object should be on server: ${user}`
-                        console.error(errorMsg)
-                        throw new Error(errorMsg)
-                    }
+            // If first attempt failed (user is null or not valid), retry with refreshed providerIP
+            if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
+                console.log("First attempt failed, retrying with refreshed providerIP...")
+                
+                try {
+                    // Refresh providerIP by calling getProviderIp again
+                    providerIp = await this.getProviderIp(userId)
+                    console.log("Get user provider IP (retry attempt)", providerIp)
                     
-                    console.log(`User not found on node ${providerIp}, redirecting to correct node: ${user}`)
-                    // Retry with the correct provider IP
-                    providerIp = user
-                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-                    user = await providerClient.RunMApp("get_user", {
-                        aid: this.appId, ver: "last", userid: userId,
-                    })
-                    
-                    // Print the result after retry
-                    console.log("get_user result after retry:", user)
-                    
-                    // If it's still a string after retry, it's an error
-                    if (typeof user === 'string') {
-                        // Check again if it's the same as the retry IP
-                        if (user === providerIp) {
-                            const errorMsg = `get_user returned the same IP even after retry (${providerIp}). User should be on this server but get_user failed. User object should be on server: ${user}`
-                            console.error(errorMsg)
-                            throw new Error(errorMsg)
-                        }
-                        console.error("get_user returned string even after retry with correct IP:", user)
+                    if (!providerIp) {
+                        console.warn("No provider found for user on retry", userId)
                         return undefined
                     }
-                } else {
-                    // Not an IP address, it's an error message
-                    console.error("get_user returned error string:", user)
+                    
+                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
+                    
+                    user = await providerClient.RunMApp("get_user", {
+                        aid: this.appId, 
+                        ver: "last", 
+                        version: "v3",
+                        userid: userId,
+                    })
+                    
+                    console.log("get_user result (retry attempt):", user)
+                } catch (error) {
+                    console.error("Retry attempt to get user failed:", error)
                     return undefined
                 }
             }
             
-            // Ensure user has required properties for a User object
+            // Validate user object
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
-                console.error("get_user returned invalid User object:", user)
+                console.error("get_user returned invalid User object after retry:", user)
                 return undefined
             }
             
@@ -1435,14 +1432,24 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns MimeiId of the install package
          */
         async uploadPackage(cid: string, mini: boolean = false) {
-            const params: any = {
-                aid: this.lapi.appId, ver: "last", cid: cid
+            const originalTimeout = this.loginUser?.client.timeout
+            
+            try {
+                // Use longer timeout for package upload (10 minutes)
+                this.loginUser!.client.timeout = 10 * 60 * 1000
+                
+                const params: any = {
+                    aid: this.lapi.appId, ver: "last", cid: cid
+                }
+                if (mini) {
+                    params.mini = "mini"
+                }
+                let mid = await this.loginUser?.client.RunMApp("upload_package", params)
+                return mid
+            } finally {
+                // Restore original timeout
+                this.loginUser!.client.timeout = originalTimeout
             }
-            if (mini) {
-                params.mini = "mini"
-            }
-            let mid = await this.loginUser?.client.RunMApp("upload_package", params)
-            return mid
         },
         /**
          * Upload a file to mm database, and add referrence to userId.
@@ -1450,13 +1457,23 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns mid of uploaded file
          */
         async uploadFile(cid: string, filename: string) {
-            let mid = await this.loginUser?.client.RunMApp("upload_file", {
-                aid: this.lapi.appId,
-                ver: "last", 
-                cid: cid,
-                userid: this.loginUser?.mid
-            })
-            return mid
+            const originalTimeout = this.loginUser?.client.timeout
+            
+            try {
+                // Use longer timeout for file upload (10 minutes)
+                this.loginUser!.client.timeout = 10 * 60 * 1000
+                
+                let mid = await this.loginUser?.client.RunMApp("upload_file", {
+                    aid: this.lapi.appId,
+                    ver: "last", 
+                    cid: cid,
+                    userid: this.loginUser?.mid
+                })
+                return mid
+            } finally {
+                // Restore original timeout
+                this.loginUser!.client.timeout = originalTimeout
+            }
         },
         /**
          * Shares a file with other users
@@ -1757,19 +1774,90 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * Gets the IP address list of a node, after removing local IPv4
-         * @param nodeId The node ID to get IPs for
-         * @returns The first non-local IP address found
+         * Calls get_node_ips with version=v2 which returns a list of IPs
+         * @param user The user object containing client and hostId
+         * @param v4Only Whether to filter out IPv6 addresses (default: false)
+         * @returns The first non-local IP address found, or null if none available
          */
         async getNodeIp(
             user: User,
             v4Only = false
         ): Promise<string | null> {
-            return await user.client.RunMApp("get_node_ip", {
-                aid: this.lapi.appId,
-                ver: "last",
-                nodeid: user.hostId,
-                v4only: v4Only ? "true" : "false"
-            })
+            try {
+                console.log(`[getNodeIp] Getting node IPs for nodeId ${user.hostId} (v4Only: ${v4Only})...`);
+                
+                // Call get_node_ips (plural) with version v2 to get list of IPs
+                const params: any = {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    version: "v2",
+                    nodeid: user.hostId,
+                };
+                
+                // Only add v4only parameter if true
+                if (v4Only) {
+                    params.v4only = "true";
+                }
+                
+                const ipResponse = await user.client.RunMApp("get_node_ips", params);
+                
+                console.log(`[getNodeIp] Raw response from get_node_ips for nodeId ${user.hostId}:`, ipResponse);
+                
+                if (!ipResponse) {
+                    console.error("[getNodeIp] No response from get_node_ips for nodeId", user.hostId);
+                    return null;
+                }
+                
+                // Handle the response - could be array or wrapped in data property
+                let ipList: string[] = [];
+                
+                if (Array.isArray(ipResponse)) {
+                    ipList = ipResponse;
+                } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
+                    ipList = ipResponse.data;
+                } else if (typeof ipResponse === 'string') {
+                    // Single IP as string
+                    ipList = [ipResponse];
+                } else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') {
+                    // Single IP wrapped in data
+                    ipList = [ipResponse.data];
+                } else {
+                    console.error("[getNodeIp] Invalid response format from get_node_ips:", ipResponse);
+                    return null;
+                }
+                
+                // Filter and trim IP addresses, optionally removing IPv6 addresses
+                const ipAddresses = ipList
+                    .map(ip => ip.trim())
+                    .filter(ip => {
+                        if (ip.length === 0) return false;
+                        
+                        // If v4Only is true, filter out IPv6 addresses
+                        if (v4Only) {
+                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
+                            if (ip.includes('[') || ip.includes(']')) return false;
+                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                            const colonCount = (ip.match(/:/g) || []).length;
+                            if (colonCount > 1) return false;
+                        }
+                        
+                        return true;
+                    });
+                
+                if (ipAddresses.length === 0) {
+                    console.error("[getNodeIp] No valid IPs returned for nodeId", user.hostId);
+                    return null;
+                }
+                
+                // Return first IP address
+                const resultIp = ipAddresses[0];
+                console.log(`[getNodeIp] Returning IP address for nodeId ${user.hostId}:`, resultIp);
+                return resultIp;
+                
+            } catch (error) {
+                console.error("[getNodeIp] Error getting node IPs for nodeId", user.hostId, error);
+                return null;
+            }
         },
 
         /**

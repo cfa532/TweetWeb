@@ -81,11 +81,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         processedFile = await compressImage(file);
         uploadProgress[i] = 50; // Show progress for compression
         
-        // Upload compressed image using existing method
-        const fsid = await tweetStore.openTempFile();
+        // Upload compressed image using new upload_ipfs API (matches iOS)
         const defaultTimeout = hproseClient.timeout;
         hproseClient.timeout = 0;
-        cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
+        cid = await uploadFileToIPFS(await processedFile.arrayBuffer(), i, file.name);
         hproseClient.timeout = defaultTimeout;
         
       } else if (isVideoType(fileType)) {
@@ -181,11 +180,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
             useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
           }
           
-          // Use the same IPFS upload method as other files
-          const fsid = await tweetStore.openTempFile();
+          // Use the new upload_ipfs API (matches iOS)
           const defaultTimeout = hproseClient.timeout;
           hproseClient.timeout = 0;
-          cid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i);
+          cid = await uploadFileToIPFS(await file.arrayBuffer(), i, file.name);
           hproseClient.timeout = defaultTimeout;
         }
         
@@ -193,11 +191,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         (file as any).__isHLSConverted = isHLSConverted;
         
       } else {
-        // Handle other file types with existing method
-        const fsid = await tweetStore.openTempFile();
+        // Handle other file types with new upload_ipfs API (matches iOS)
         const defaultTimeout = hproseClient.timeout;
         hproseClient.timeout = 0;
-        cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
+        cid = await uploadFileToIPFS(await processedFile.arrayBuffer(), i, file.name);
         hproseClient.timeout = defaultTimeout;
       }
 
@@ -251,6 +248,13 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
 async function onSubmit() {
   console.log('[TWEET-SUBMIT] Starting tweet submission...');
+  
+  // Check if user is logged in (matches iOS behavior)
+  if (!tweetStore.loginUser) {
+    useAlertStore().error('Please log in to post a tweet')
+    return
+  }
+  
   loading.value = true
   let attachments = <MimeiFileType[]>[]
   try {
@@ -275,7 +279,7 @@ async function onSubmit() {
     
     // upload tweet
     let tweet = {
-      authorId: tweetStore.loginUser?.mid,
+      authorId: tweetStore.loginUser!.mid,  // Safe: we validated loginUser exists above
       title: tweetTitle.value,
       content: txtConent.value,
       attachments: attachments.concat(mmFiles.value),
@@ -373,26 +377,100 @@ async function onSubmit() {
   }
 }
 
-async function readFileSlice(
-  fsid: string,
-  arr: ArrayBuffer,
-  start: number,
-  index: number
+// Upload file using upload_ipfs API (matches iOS implementation)
+async function uploadFileToIPFS(
+  data: ArrayBuffer,
+  fileIndex: number,
+  fileName: string
 ): Promise<string> {
-  // reading file slice by slice, start at given position
-  var end = Math.min(start + sliceSize, arr.byteLength)
-  let count = await hproseClient.MFSetData(fsid, arr.slice(start, end), start)
-  // Calculate progress
-  uploadProgress[index] = Math.floor(((start + count) / arr.byteLength) * 100)
-  console.log('Uploading...', uploadProgress[index] + '%', end, arr.byteLength)
-
-  if (end === arr.byteLength) {
-    // last slice read. Convert temp to IPFS file
-    const cid = await hproseClient.MFTemp2Ipfs(fsid)
-    return cid
-  } else {
-    // recursive call
-    return await readFileSlice(fsid, arr, start + count, index)
+  console.log(`[UPLOAD] Starting upload for ${fileName} (${(data.byteLength / 1024 / 1024).toFixed(2)}MB)`)
+  
+  const chunkSize = 1024 * 1024 // 1MB chunks to match iOS
+  let offset = 0
+  let fsid: string | null = null
+  let chunkNumber = 0
+  
+  // Get a direct connection for uploads to avoid connection pool timeout
+  // File uploads are long-running and shouldn't use the shared pool
+  const providerIp = tweetStore.loginUser?.providerIp
+  if (!providerIp) {
+    throw new Error('Provider IP not available')
+  }
+  
+  const uploadClient = await tweetStore.lapi.connectionPool.getConnection(providerIp)
+  
+  try {
+    // Set a longer timeout for file uploads (10 minutes)
+    uploadClient.timeout = 10 * 60 * 1000
+    
+    while (offset < data.byteLength) {
+      const end = Math.min(offset + chunkSize, data.byteLength)
+      const chunk = data.slice(offset, end)
+      chunkNumber++
+      
+      // Build request object (matches iOS structure)
+      const request: any = {
+        aid: tweetStore.appId,
+        ver: 'last',
+        version: 'v2',
+        offset: offset
+      }
+      
+      if (fsid) {
+        request.fsid = fsid
+      }
+      
+      // Mark as finished on last chunk
+      if (end === data.byteLength) {
+        request.finished = 'true'
+      }
+      
+      console.log(`[UPLOAD] Uploading chunk ${chunkNumber} for ${fileName}: ${((offset / data.byteLength) * 100).toFixed(1)}%`)
+      
+      // Call upload_ipfs API directly (matches iOS implementation)
+      const response = await uploadClient.RunMApp('upload_ipfs', request, [new Uint8Array(chunk)])
+      
+      // Update progress
+      uploadProgress[fileIndex] = Math.floor((end / data.byteLength) * 100)
+      
+      // Handle v2 response format: {success: true, data: fsid|cid} or {success: false, message: string}
+      if (response && typeof response === 'object') {
+        if (response.success === false) {
+          throw new Error(response.message || 'Upload failed')
+        }
+        
+        if (response.success === true && response.data) {
+          fsid = response.data
+          offset = end
+        } else {
+          throw new Error(`Invalid response structure: ${JSON.stringify(response)}`)
+        }
+      } else if (typeof response === 'string') {
+        // Handle non-v2 response (direct string)
+        fsid = response
+        offset = end
+      } else {
+        throw new Error(`Unexpected response type: ${typeof response}`)
+      }
+    }
+    
+    if (!fsid) {
+      throw new Error('No file ID returned from server')
+    }
+    
+    uploadProgress[fileIndex] = 100
+    console.log(`[UPLOAD] Upload completed for ${fileName}, CID: ${fsid}`)
+    return fsid
+    
+  } catch (error) {
+    console.error(`[UPLOAD] Error uploading ${fileName}:`, error)
+    throw error
+  } finally {
+    // Always release the connection back to the pool
+    if (providerIp) {
+      tweetStore.lapi.connectionPool.releaseConnection(providerIp, uploadClient)
+      console.log(`[UPLOAD] Released connection for ${fileName}`)
+    }
   }
 }
 

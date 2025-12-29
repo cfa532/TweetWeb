@@ -32,10 +32,20 @@ async function uploadFile(file: File, index: number = 0): Promise<string> {
     // Assign initial progress value
     uploadProgress[index] = 0
 
-    // Create a FileInfo object with file name, last modified time,
-    const fsid = await tweetStore.openTempFile()
-    let mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // return an IPFS cid
-    return mid
+    // Save original timeout and set a longer one for the entire upload process
+    const originalTimeout = hproseClient.timeout
+    try {
+        // Set 15 minute timeout for large file uploads (includes slicing, uploading, and IPFS conversion)
+        hproseClient.timeout = 15 * 60 * 1000
+        
+        // Create a FileInfo object with file name, last modified time,
+        const fsid = await tweetStore.openTempFile()
+        let mid = await readFileSlice(fsid, await file.arrayBuffer(), 0, index) // return an IPFS cid
+        return mid
+    } finally {
+        // Restore original timeout
+        hproseClient.timeout = originalTimeout
+    }
 }
 
 async function onSubmit() {
@@ -73,11 +83,9 @@ async function readFileSlice(
 
     if (end === arr.byteLength) {
         // last slice read. Convert temp to IPFS file
-        const t = hproseClient.timeout
-        hproseClient.timeout = 0      // do Not timeout
+        // Note: timeout is already set to 15 minutes in uploadFile function
         const cid = await hproseClient.MFTemp2Ipfs(fsid)
         console.log("file cid=", cid)
-        hproseClient.timeout = t
         if (isAppPackage.value)
             // upload app installation package.
             return await tweetStore.uploadPackage(cid, isMini.value)
