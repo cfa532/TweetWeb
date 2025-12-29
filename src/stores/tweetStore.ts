@@ -528,20 +528,22 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async getTweet(
             tweetId: MimeiId,
-            authorId: MimeiId | undefined = undefined
+            authorId: MimeiId | undefined = undefined,
+            useRacing: boolean = false
         ): Promise<Tweet | null> {
-            let tweet = await this.fetchTweet(tweetId, authorId)
+            let tweet = await this.fetchTweet(tweetId, authorId, useRacing)
             console.log("Get tweet", tweet)
             if (!tweet ) {
                 // Author node has not data, try to load the tweet by id alone from some other provider.
-                tweet = await this.fetchTweet(tweetId)
+                tweet = await this.fetchTweet(tweetId, undefined, useRacing)
                 if (!tweet) return null
             }
 
             if (tweet?.originalTweetId) {
-                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                // Original tweets don't use racing (loaded after main tweet)
+                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId, false)
                 if (!tweet.originalTweet) {
-                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId)
+                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, undefined, false)
                     if (!tweet.originalTweet) { 
                         console.info("Missing originalTweet", tweet)
                         return null
@@ -558,11 +560,13 @@ export const useTweetStore = defineStore('tweetStore', {
          * author data is also available on the provider. Get author data too.
          * @param tweetId The ID of the tweet to fetch
          * @param authorId Optional author ID to help locate the tweet
+         * @param useRacing If true, race multiple provider IPs for faster loading (TweetDetail page only)
          * @returns The tweet object or undefined if not found
          */
         async fetchTweet(
             tweetId: MimeiId,
-            authorId: MimeiId | undefined = undefined
+            authorId: MimeiId | undefined = undefined,
+            useRacing: boolean = false
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweets.find(e => e.mid == tweetId)
@@ -576,7 +580,8 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             // Get IP address of the provider of this tweet
             let author, providerClient, providerIp, tweetInDB
-            if (authorId) {
+            if (authorId && !useRacing) {
+                // Use authorId only when NOT racing (for faster racing, skip this branch)
                 author = await this.getUser(authorId)
                 if (!author)
                     return null
@@ -592,17 +597,48 @@ export const useTweetStore = defineStore('tweetStore', {
                     hostid: author?.hostId,
                 })
             } else {
-                providerIp = await this.getProviderIp(tweetId)
-                if (!providerIp)
-                    return null
-                providerClient = await this.lapi.getClient(providerIp)
-                // Get tweet data from Tweet App Mimei. Its definition is different from this app.
-                tweetInDB = await providerClient.RunMApp("get_tweet", {
-                    aid: this.lapi.appId,
-                    ver: "last",
-                    tweetid: tweetId,
-                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
-                })
+                if (useRacing) {
+                    // TweetDetail page: Get multiple provider IPs and race them for faster loading
+                    // Using only tweetId (ignoring authorId) is faster because:
+                    // 1. No need to fetch user first (blocks racing)
+                    // 2. Can start racing immediately
+                    // 3. User is fetched after race completes
+                    const providerIps = await this.getProviderIps(tweetId)
+                    if (providerIps.length === 0)
+                        return null
+                    
+                    // Race the API calls with multiple IPs
+                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                        return await client.RunMApp("get_tweet", {
+                            aid: this.lapi.appId,
+                            ver: "last",
+                            tweetid: tweetId,
+                            appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                        })
+                    })
+                    
+                    if (!raceResult) {
+                        console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
+                        return null;
+                    }
+                    
+                    tweetInDB = raceResult.result;
+                    providerIp = raceResult.ip;
+                    providerClient = await this.lapi.getClient(providerIp);
+                } else {
+                    // Normal flow: Get single provider IP (old behavior)
+                    providerIp = await this.getProviderIp(tweetId)
+                    if (!providerIp)
+                        return null
+                    providerClient = await this.lapi.getClient(providerIp)
+                    // Get tweet data from Tweet App Mimei. Its definition is different from this app.
+                    tweetInDB = await providerClient.RunMApp("get_tweet", {
+                        aid: this.lapi.appId,
+                        ver: "last",
+                        tweetid: tweetId,
+                        appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                    })
+                }
             }
             console.log("Get tweet from db", tweetInDB, providerIp, author)
             if (!tweetInDB)
@@ -645,6 +681,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (this.users.get(userId))
                 return this.users.get(userId)
 
+            // Get single provider IP (no racing for user lookups)
             let providerIp = await this.getProviderIp(userId)
             console.log("Get user provider IP", providerIp)
             if (!providerIp) {
@@ -832,9 +869,67 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param v4only If true, filter out IPv6 addresses. Default is true.
          * @returns A healthy provider IP address, or null if none found
          */
-        async getProviderIp(mid: string, v4only: boolean = false): Promise<string | null> {
+        /**
+         * Race multiple API calls with different provider IPs, return result from first successful call
+         * @param ips Array of IP addresses to try
+         * @param apiCall Function that takes an IP and client, returns a promise of the API call
+         * @returns Result from the first successful API call, or null if all fail
+         */
+        async raceProviderIps<T>(
+            ips: string[],
+            apiCall: (ip: string, client: any) => Promise<T>
+        ): Promise<{ result: T, ip: string } | null> {
+            if (ips.length === 0) {
+                return null;
+            }
+
+            console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
+
+            // Create promises for each IP
+            const racePromises = ips.map(async (ip) => {
+                try {
+                    console.log(`[raceProviderIps] Trying IP: ${ip}`);
+                    const client = await this.lapi.getClient(ip);
+                    const result = await apiCall(ip, client);
+                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}`);
+                    return { result, ip };
+                } catch (error) {
+                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
+                    // Return a never-resolving promise so race continues with other IPs
+                    return new Promise<{ result: T, ip: string }>(() => {});
+                }
+            });
+
             try {
-                console.log(`[getProviderIp] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
+                // Race all promises, return first successful result
+                const winner = await Promise.race(racePromises);
+                return winner;
+            } catch (error) {
+                console.error(`[raceProviderIps] All IPs failed:`, error);
+                return null;
+            }
+        },
+
+        /**
+         * Get a single provider IP for a given mid (returns first available)
+         * @param mid The mid to get provider IP for
+         * @param v4only Whether to filter out IPv6 addresses (default: false)
+         * @returns A single IP address, or null if none found
+         */
+        async getProviderIp(mid: string, v4only: boolean = false): Promise<string | null> {
+            const ips = await this.getProviderIps(mid, v4only);
+            return ips.length > 0 ? ips[0] : null;
+        },
+
+        /**
+         * Get the first pair of provider IPs for a given mid without testing them
+         * @param mid The mid to get provider IPs for
+         * @param v4only Whether to filter out IPv6 addresses (default: false)
+         * @returns Array of IP addresses (up to 2), or empty array if none found
+         */
+        async getProviderIps(mid: string, v4only: boolean = false): Promise<string[]> {
+            try {
+                console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
                 
                 // Call get_provider_ips (plural) to get list of IPs
                 const params: any = {
@@ -851,11 +946,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 
                 const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
                 
-                console.log(`[getProviderIp] Raw response from get_provider_ips for ${mid}:`, ipResponse);
+                console.log(`[getProviderIps] Raw response from get_provider_ips for ${mid}:`, ipResponse);
                 
                 if (!ipResponse) {
-                    console.error("[getProviderIp] No response from get_provider_ips for", mid);
-                    return null;
+                    console.error("[getProviderIps] No response from get_provider_ips for", mid);
+                    return [];
                 }
                 
                 // Handle the response - could be array or wrapped in data property
@@ -872,8 +967,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     // Single IP wrapped in data
                     ipList = [ipResponse.data];
                 } else {
-                    console.error("[getProviderIp] Invalid response format from get_provider_ips:", ipResponse);
-                    return null;
+                    console.error("[getProviderIps] Invalid response format from get_provider_ips:", ipResponse);
+                    return [];
                 }
                 
                 // Filter and trim IP addresses, optionally removing IPv6 addresses
@@ -895,64 +990,18 @@ export const useTweetStore = defineStore('tweetStore', {
                     });
                 
                 if (ipAddresses.length === 0) {
-                    console.error("[getProviderIp] No valid IPs returned for", mid);
-                    return null;
+                    console.error("[getProviderIps] No valid IPs returned for", mid);
+                    return [];
                 }
                 
-                console.log(`[getProviderIp] Retrieved ${ipAddresses.length} IP address(es) from get_provider_ips API`);
-                
-                // Test IPs in pairs (batches of 2) with 5-second timeout (reduced from 10s for faster initial loads)
-                // Return immediately when first healthy IP is found
-                const batchSize = 2;
-                const healthCheckTimeout = 5000; // 5 seconds - reduced from 10s for faster resolution
-                for (let batchStart = 0; batchStart < ipAddresses.length; batchStart += batchSize) {
-                    const batchEnd = Math.min(batchStart + batchSize, ipAddresses.length);
-                    const batch = ipAddresses.slice(batchStart, batchEnd);
-                    
-                    console.log(`[getProviderIp] Testing batch: IPs ${batchStart + 1}-${batchEnd} of ${ipAddresses.length}`);
-                    
-                    // Test this batch in parallel - return immediately when first healthy IP is found
-                    const healthCheckPromises = batch.map(async (ip, index) => {
-                        const absoluteIndex = batchStart + index + 1;
-                        console.log(`[getProviderIp] Testing IP ${absoluteIndex}/${ipAddresses.length}: ${ip}`);
-
-                        const isHealthy = await this.isServerHealthyWithTimeout(ip, healthCheckTimeout);
-
-                        if (isHealthy) {
-                            console.log(`[getProviderIp] ✅ IP test PASSED: ${ip}`);
-                            return ip; // Return the IP immediately
-                        } else {
-                            console.log(`[getProviderIp] ❌ IP test FAILED: ${ip}`);
-                            // Don't return, throw to keep promise pending
-                            return new Promise<string>(() => {}); // Never resolves
-                        }
-                    });
-
-                    // Use Promise.race to return as soon as ANY healthy IP is found
-                    try {
-                        const fastestHealthyIp = await Promise.race(healthCheckPromises);
-                        if (fastestHealthyIp && typeof fastestHealthyIp === 'string') {
-                            console.log(`[getProviderIp] Found healthy provider IP immediately: ${fastestHealthyIp}`);
-                            return fastestHealthyIp;
-                        }
-                    } catch (error) {
-                        // All failed in this batch, continue to next batch
-                    }
-                }
-                
-                // If no healthy IP found in any batch, health checks may be unreliable
-                // Return the first IP anyway since health checks can give false negatives
-                if (ipAddresses.length > 0) {
-                    console.warn(`[getProviderIp] All health checks failed for ${mid}, but returning first IP anyway: ${ipAddresses[0]}`);
-                    return ipAddresses[0];
-                }
-                
-                console.error(`[getProviderIp] No IPs available for ${mid}`);
-                return null;
+                // Return first 2 IPs without testing them
+                const resultIps = ipAddresses.slice(0, 2);
+                console.log(`[getProviderIps] Returning ${resultIps.length} IP address(es) for ${mid}:`, resultIps);
+                return resultIps;
                 
             } catch (error) {
-                console.error("[getProviderIp] Error getting provider IP for", mid, error);
-                return null;
+                console.error("[getProviderIps] Error getting provider IPs for", mid, error);
+                return [];
             }
         },
         /**

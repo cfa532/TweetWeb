@@ -75,7 +75,8 @@ async function loadDetail() {
         }
         else {
             // Fetch tweet if it is not in session already.
-            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value) as Tweet
+            // Use racing for faster loading on TweetDetail page
+            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
             if (!tweet.value) {
                 clearTimeout(timeoutId)
                 isLoading.value = false
@@ -471,7 +472,8 @@ watch(tweetId, async (newValue, oldValue)=>{
         }, 5000)
         
         try {
-            let t = await tweetStore.getTweet(newValue, authorId.value)
+            // Use racing for faster loading on TweetDetail page
+            let t = await tweetStore.getTweet(newValue, authorId.value, true)
             if (t) {
                 console.log(t)
                 tweet.value = t
