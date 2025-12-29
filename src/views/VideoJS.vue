@@ -901,6 +901,11 @@ function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
   if (video.value) {
+    // Reset video to beginning if it has ended
+    if (video.value.ended || video.value.currentTime >= video.value.duration) {
+      video.value.currentTime = 0;
+    }
+    
     // Stop all other videos on the page
     const allVideos = document.querySelectorAll('video');
     allVideos.forEach(v => {

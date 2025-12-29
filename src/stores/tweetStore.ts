@@ -173,6 +173,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 
                 this.tweets.push(tweet);
+                console.log(`[addTweetToStore] ✅ Tweet cached: ${tweet.mid} - Will skip fetch on detail page`);
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -570,14 +571,19 @@ export const useTweetStore = defineStore('tweetStore', {
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweets.find(e => e.mid == tweetId)
-            if (cachedTweet)
+            if (cachedTweet) {
+                console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
+            }
 
             if (sessionStorage.getItem(tweetId)) {
+                console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
                 t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)  // hprose client cannot be serielized.
                 return t
             }
+
+            console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (useRacing: ${useRacing})`)
             // Get IP address of the provider of this tweet
             let author, providerClient, providerIp, tweetInDB
             if (authorId && !useRacing) {
