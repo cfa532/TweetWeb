@@ -107,30 +107,40 @@ async function loadDetail() {
 async function showTweet(timeoutId?: number) {
     try {
         sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-        if (authorId.value) {
-            author.value = await tweetStore.getUser(authorId.value);
-        } else if (tweet.value) {
-            author.value = await tweetStore.getUser(tweet.value.author.mid);
-        }
-        // load orginalTweet
-        if (tweet.value.originalTweetId) {
-            originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
-            if (!tweet.value.content && !tweet.value.attachments) {
-                isRetweet.value = true
-                await tweetStore.loadComments(originTweet.value)
-            }
-        } else {
-            await tweetStore.loadComments(tweet.value)
-        }
+
+        // Tweet content is ready to display - set loading to false early
         document.title = formattedTitle.value
-        tweetStore.addFollowing(tweet.value.author.mid)
-        // Set loading to false before refreshShareMetadata as it's not critical for displaying the tweet
         if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
-        // Refresh share metadata asynchronously without blocking
-        refreshShareMetadata().catch(error => {
+
+        // Load comments and additional data in parallel (non-blocking)
+        const loadPromises = []
+
+        // Load original tweet if needed
+        if (tweet.value.originalTweetId) {
+            loadPromises.push((async () => {
+                originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+                if (!tweet.value.content && !tweet.value.attachments) {
+                    isRetweet.value = true
+                    await tweetStore.loadComments(originTweet.value)
+                }
+            })())
+        } else {
+            loadPromises.push(tweetStore.loadComments(tweet.value))
+        }
+
+        // Update following status (non-critical)
+        loadPromises.push((async () => {
+            tweetStore.addFollowing(tweet.value.author.mid)
+        })())
+
+        // Refresh share metadata asynchronously
+        loadPromises.push(refreshShareMetadata().catch(error => {
             console.error('Error refreshing share metadata:', error)
-        })
+        }))
+
+        // Wait for all background operations to complete
+        await Promise.all(loadPromises)
     } catch (error) {
         console.error('Error in showTweet:', error)
         if (timeoutId) clearTimeout(timeoutId)
