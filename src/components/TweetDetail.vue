@@ -14,6 +14,7 @@ const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
 const isLoading = ref(false)
+const loadError = ref(false)
 const author = ref<User>();
 const DEFAULT_PREVIEW_IMAGE = `${window.location.origin}/ic_splash.png`
 const videoPreviewCache = new Map<string, string>()
@@ -60,10 +61,14 @@ onMounted(async () => {
 });
 async function loadDetail() {
     isLoading.value = true
+    loadError.value = false
     
     // Safety timeout: hide spinner after 5 seconds regardless of loading state
     const timeoutId = window.setTimeout(() => {
         isLoading.value = false
+        if (!tweet.value) {
+            loadError.value = true
+        }
     }, 5000)
     
     try {
@@ -80,10 +85,14 @@ async function loadDetail() {
             if (!tweet.value) {
                 clearTimeout(timeoutId)
                 isLoading.value = false
+                loadError.value = true
+                console.error('[TweetDetail] Failed to load tweet, retrying in 1 second...')
                 window.setTimeout(() => {
+                    console.log('[TweetDetail] Retrying to load tweet...')
                     window.location.reload()
-                }, 5000)                        // wait 5s before reload
+                }, 1000)                        // wait 1s before reload
             } else {
+                loadError.value = false
                 await showTweet(timeoutId)
             }
         }
@@ -103,6 +112,12 @@ async function loadDetail() {
         console.error('Error loading tweet detail:', error);
         clearTimeout(timeoutId)
         isLoading.value = false
+        loadError.value = true
+        // Retry after error
+        window.setTimeout(() => {
+            console.log('[TweetDetail] Retrying after error...')
+            window.location.reload()
+        }, 1000)
     }
 }
 async function showTweet(timeoutId?: number) {
@@ -465,10 +480,14 @@ const downloadingText = computed(() => {
 watch(tweetId, async (newValue, oldValue)=>{
     if (newValue && oldValue !== newValue) {
         isLoading.value = true
+        loadError.value = false
         
         // Safety timeout: hide spinner after 5 seconds regardless of loading state
         const timeoutId = window.setTimeout(() => {
             isLoading.value = false
+            if (!tweet.value) {
+                loadError.value = true
+            }
         }, 5000)
         
         try {
@@ -477,17 +496,21 @@ watch(tweetId, async (newValue, oldValue)=>{
             if (t) {
                 console.log(t)
                 tweet.value = t
+                loadError.value = false
                 sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
                 await showTweet(timeoutId)
                 // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
             } else {
                 clearTimeout(timeoutId)
                 isLoading.value = false
+                loadError.value = true
+                console.error('[TweetDetail watch] Failed to load tweet')
             }
         } catch (error) {
             console.error('Error in watch tweetId:', error)
             clearTimeout(timeoutId)
             isLoading.value = false
+            loadError.value = true
         }
     }
 });
@@ -729,6 +752,16 @@ function goBack() {
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
         ← Back to Tweet
     </div>
+    
+    <!-- Error message when tweet fails to load -->
+    <div v-if="loadError && !isLoading" class="alert alert-warning text-center my-4">
+        <h5>⚠️ Failed to load tweet</h5>
+        <p>Retrying in a moment...</p>
+        <div class="spinner-border spinner-border-sm" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+    
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
             <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
