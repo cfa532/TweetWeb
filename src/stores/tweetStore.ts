@@ -832,7 +832,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param v4only If true, filter out IPv6 addresses. Default is true.
          * @returns A healthy provider IP address, or null if none found
          */
-        async getProviderIp(mid: string, v4only: boolean = true): Promise<string | null> {
+        async getProviderIp(mid: string, v4only: boolean = false): Promise<string | null> {
             try {
                 console.log(`[getProviderIp] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
                 
