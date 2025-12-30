@@ -188,30 +188,23 @@ async function loadMoreTweets(isManualRetry = false) {
     
     isLoading.value = true;
     
-    // Set timeout to hide spinner after 5 seconds
-    const timeoutId = setTimeout(() => {
-        if (isLoading.value) {
-            console.warn('Load more tweets timeout after 5 seconds, hiding spinner');
-            isLoading.value = false;
-        }
-    }, 5000);
-    
     try {
-        // Add timeout to the API call itself
-        const loadPromise = tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
-        const timeoutPromise = new Promise<number>((_, reject) => 
-            setTimeout(() => reject(new Error('Load timeout')), 8000)
-        );
-        
-        const tweetsLoaded = await Promise.race([loadPromise, timeoutPromise]);
-        
-        clearTimeout(timeoutId);
+        // Load tweets without aggressive timeout - let connection pool handle timeouts
+        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
         
         if (tweetsLoaded && tweetsLoaded > 0) {
-            hasMoreTweets.value = true; // Re-enable loading if we got tweets
+            // Check if we've reached the end of the list
+            if (tweetsLoaded < pageSize) {
+                // Fewer tweets than requested = no more tweets available
+                console.log(`Reached end of tweet list. Loaded ${tweetsLoaded} tweets (less than page size ${pageSize})`);
+                hasMoreTweets.value = false;
+            } else {
+                // Full page loaded, there might be more
+                hasMoreTweets.value = true;
+            }
             pageNumber.value++;
         } else {
-            // For automatic loading, stop immediately
+            // No tweets loaded
             if (!isManualRetry) {
                 console.log('No more tweets available from backend');
                 hasMoreTweets.value = false;
@@ -219,7 +212,6 @@ async function loadMoreTweets(isManualRetry = false) {
             // For manual retries, do nothing - let user keep trying
         }
     } catch (error) {
-        clearTimeout(timeoutId);
         console.error('Error loading more tweets:', error);
         
         // For automatic loading, stop on error
@@ -228,7 +220,6 @@ async function loadMoreTweets(isManualRetry = false) {
         }
         // For manual retries, do nothing - let user keep trying
     } finally {
-        clearTimeout(timeoutId);
         isLoading.value = false;
     }
 }
