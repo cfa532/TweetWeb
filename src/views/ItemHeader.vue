@@ -12,6 +12,7 @@ const props = defineProps({
     isRetweet: {type: Boolean, required: false, default: false},
     by: {type: String, required: false},
     tweet: {type: Object as PropType<Tweet>, required: false},
+    actualTweet: {type: Object as PropType<Tweet>, required: false}, // The actual tweet to delete (for retweets, this is the retweet wrapper)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false}
 })
@@ -63,7 +64,7 @@ function openDetailView() {
     </div>
   </div>
   <div class='corner-menu-container'>
-    <CornerMenu :tweet="tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
+    <CornerMenu :tweet="actualTweet || tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
   </div>
 </template>
 

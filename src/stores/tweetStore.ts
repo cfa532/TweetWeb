@@ -149,7 +149,15 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (originalTweet) {
                             tweet.originalTweet = originalTweet
                         } else {
+                            // Try fetching with authorId first
+                            console.log(`[addTweetToStore] Fetching original tweet ${tweet.originalTweetId} with authorId ${tweet.originalAuthorId}`)
                             tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                            
+                            // If that fails, retry without authorId (like getTweet does)
+                            if (!tweet.originalTweet) {
+                                console.log(`[addTweetToStore] First attempt failed, retrying without authorId for ${tweet.originalTweetId}`)
+                                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, undefined)
+                            }
                         }
                         
                         // If originalTweetId exists but originalTweet is null, skip this tweet
