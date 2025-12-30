@@ -106,6 +106,44 @@ onMounted(() => {
         });
         video.value.addEventListener('ended', () => {
           isPlaying.value = false;
+          
+          // Debug logging
+          if (video.value) {
+            console.log('🎬 VIDEO ENDED - Debug Info:', {
+              fileName: props.media.fileName,
+              mediaType: props.media.type,
+              isHLS: isHLS.value,
+              currentTime: video.value.currentTime,
+              duration: video.value.duration,
+              readyState: video.value.readyState,
+              readyStateText: ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'][video.value.readyState],
+              networkState: video.value.networkState,
+              networkStateText: ['NETWORK_EMPTY', 'NETWORK_IDLE', 'NETWORK_LOADING', 'NETWORK_NO_SOURCE'][video.value.networkState],
+              videoWidth: video.value.videoWidth,
+              videoHeight: video.value.videoHeight,
+              poster: video.value.poster,
+              src: video.value.src ? video.value.src.substring(0, 100) + '...' : 'HLS',
+              paused: video.value.paused,
+              ended: video.value.ended,
+              buffered: video.value.buffered.length > 0 ? {
+                start: video.value.buffered.start(0),
+                end: video.value.buffered.end(video.value.buffered.length - 1),
+                length: video.value.buffered.length
+              } : 'No buffered data'
+            });
+            
+            // Check if HLS instance exists and has buffer info
+            if (isHLS.value && hls) {
+              console.log('🎬 HLS Buffer Info:', {
+                levels: hls.levels?.length || 0,
+                currentLevel: hls.currentLevel,
+                loadLevel: hls.loadLevel,
+                autoLevelEnabled: hls.autoLevelEnabled,
+                media: hls.media ? 'attached' : 'detached'
+              });
+            }
+          }
+          
           // Keep video at the end, don't reset to beginning
           // This maintains the video container space
           if (video.value) {
