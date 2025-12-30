@@ -32,7 +32,6 @@ const txtConent = ref()
 const divAttach = ref()
 const dropHere = ref()
 const textArea = ref<HTMLTextAreaElement>()
-const sliceSize = 1024 * 1024 * 10 // 10MB per slice of file
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
@@ -43,7 +42,6 @@ const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
 const tweetStore = useTweetStore()
-const hproseClient = tweetStore.loginUser?.client
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
 const mmFiles = ref<MimeiFileType[]>([]);
@@ -82,10 +80,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         uploadProgress[i] = 50; // Show progress for compression
         
         // Upload compressed image using new upload_ipfs API (matches iOS)
-        const defaultTimeout = hproseClient.timeout;
-        hproseClient.timeout = 0;
         cid = await uploadFileToIPFS(await processedFile.arrayBuffer(), i, file.name);
-        hproseClient.timeout = defaultTimeout;
         
       } else if (isVideoType(fileType)) {
         // Upload video through new endpoint or fallback to IPFS
@@ -181,10 +176,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
           }
           
           // Use the new upload_ipfs API (matches iOS)
-          const defaultTimeout = hproseClient.timeout;
-          hproseClient.timeout = 0;
           cid = await uploadFileToIPFS(await file.arrayBuffer(), i, file.name);
-          hproseClient.timeout = defaultTimeout;
         }
         
         // Store HLS conversion status for later use
@@ -192,10 +184,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         
       } else {
         // Handle other file types with new upload_ipfs API (matches iOS)
-        const defaultTimeout = hproseClient.timeout;
-        hproseClient.timeout = 0;
         cid = await uploadFileToIPFS(await processedFile.arrayBuffer(), i, file.name);
-        hproseClient.timeout = defaultTimeout;
       }
 
       const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) : 

@@ -683,13 +683,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * Retrieves user data by user ID, caching the result
          * Implements retry mechanism: if first attempt fails, retry once with refreshed providerIP
          * @param userId The user ID to retrieve data for
+         * @param forceRefresh If true, bypass cache and fetch fresh data from server (used during login)
          * @returns The user object or undefined if not found
          */
-        async getUser(userId: MimeiId): Promise<User | undefined> {
-            // check if the user has been cached.
-            if (this.loginUser && this.loginUser.mid == userId)
+        async getUser(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
+            // check if the user has been cached (unless forcing refresh)
+            if (!forceRefresh && this.loginUser && this.loginUser.mid == userId)
                 return this.loginUser
-            if (this.users.get(userId))
+            if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
             // Try to get user with retry mechanism
@@ -1109,8 +1110,14 @@ export const useTweetStore = defineStore('tweetStore', {
                         return
                     }
                     
-                    console.log(`[login] Calling getUser for userId: ${userId}`);
-                    let user = await this.getUser(userId)
+                    console.log(`[login] Calling getUser for userId: ${userId} with forceRefresh=true`);
+                    // Force refresh to bypass cache and get fresh IP (like iOS does)
+                    // Clear any cached user data before retry to force fresh IP resolution
+                    if (attempt > 0) {
+                        this.removeUser(userId)
+                        sessionStorage.removeItem(userId)
+                    }
+                    let user = await this.getUser(userId, true)
                     console.log(`[login] getUser returned:`, user ? `user with providerIp: ${user.providerIp}` : 'null')
                     if (!user) {
                         // Retry on user fetch failure (could be network issue)
@@ -1126,9 +1133,22 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     
                     console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
-                    let ret = await user.client.RunMApp("login", {
-                        aid: this.appId, ver: "last", username: username, password: password
-                    })
+                    // Set timeout for login API call (15 seconds for faster failure detection)
+                    const originalTimeout = user.client.timeout
+                    user.client.timeout = 15000  // 15 seconds
+                    let ret
+                    try {
+                        ret = await user.client.RunMApp("login", {
+                            aid: this.appId, 
+                            ver: "last", 
+                            version: "v2",  // Request v2 format response
+                            username: username, 
+                            password: password
+                        })
+                    } finally {
+                        // Restore original timeout
+                        user.client.timeout = originalTimeout
+                    }
                     console.log(`[login] Login API returned:`, ret);
                     if (!ret) {
                         // Retry on authentication failure (could be network issue)
@@ -1143,25 +1163,54 @@ export const useTweetStore = defineStore('tweetStore', {
                         return
                     }
                     
-                    if (ret["status"] === 'success') {
+                    // Handle v2 format: check success field first, then status field for backward compatibility
+                    let loginSuccess = false
+                    let failureReason = ""
+                    
+                    if (ret["success"] !== undefined) {
+                        // v2 format response
+                        loginSuccess = ret["success"] === true
+                        if (!loginSuccess) {
+                            failureReason = ret["message"] || "Login failed"
+                        }
+                    } else if (ret["status"] !== undefined) {
+                        // Legacy format response
+                        loginSuccess = ret["status"] === 'success'
+                        if (!loginSuccess) {
+                            failureReason = ret["reason"] || "Login failed"
+                        }
+                    } else {
+                        // Invalid response format
+                        console.error("Invalid login response format", ret)
+                        failureReason = "Invalid server response"
+                    }
+                    
+                    if (loginSuccess) {
                         console.log(`[login] Login successful for ${username}`);
                         /**
                          * Now find the IP of a host where user has write permission
                          */
                         if (user.hostId) {
-                            console.log(`[login] Getting writable host IP for user`);
-                            const ip = await this.getNodeIp(user, true)
+                            console.log(`[login] Getting writable host IP for user (hostId: ${user.hostId})`);
+                            // Try to get writable host IP with timeout
+                            const ipPromise = this.getNodeIp(user, true)
+                            const timeoutPromise = new Promise<string | null>((resolve) => {
+                                setTimeout(() => resolve(null), 10000) // 10 second timeout
+                            })
+                            const ip = await Promise.race([ipPromise, timeoutPromise])
                             console.log(`[login] Writable host IP: ${ip}`)
                             if (!ip) {
                                 // Retry on IP fetch failure (could be network issue)
                                 if (attempt < maxRetries) {
                                     console.warn(`Login attempt ${attempt + 1} failed: No writable host found. Retrying...`)
                                     lastError = new Error("No writable host found")
+                                    // Clear user cache to force fresh IP on next attempt
+                                    this.removeUser(userId)
                                     await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
                                     continue
                                 }
-                                console.error("No writable host found for user", ip, user)
-                                useAlertStore().error("No writable host found for user. Please contact support.")
+                                console.error("No writable host found for user after all retries", user)
+                                useAlertStore().error("No writable host found. The server may be temporarily unavailable. Please try again later.")
                                 return
                             }
                             user.providerIp = ip
@@ -1179,8 +1228,8 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                     } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)
-                        console.error("Login failed", ret["reason"])
-                        useAlertStore().error(ret["reason"] || "Login failed. Please check your credentials.")
+                        console.error("Login failed:", failureReason)
+                        useAlertStore().error(failureReason || "Login failed. Please check your credentials.")
                         return
                     }
                 } catch (error) {

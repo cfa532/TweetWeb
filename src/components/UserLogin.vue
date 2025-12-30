@@ -70,8 +70,6 @@ async function onSubmit(values: any) {
     <div class="card m-3">
         <h4 class="card-header">Login</h4>
         <div class="card-body">
-            <h5 class="mb-4">Welcome to dTweet</h5>
-            
             <Form @submit="onSubmit" :validation-schema="schema" v-slot="{ errors, isSubmitting }">
                 <div class="form-group" style="margin-top: 0px;">
                     <label>Username</label>
