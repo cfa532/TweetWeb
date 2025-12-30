@@ -1106,8 +1106,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.log(`[login] Got userId: ${userId}`)
                     if (!userId) {
                         console.error(`[login] getUserId returned null for username: ${username}`)
-                        useAlertStore().error("User not found. Please check your username.")
-                        return
+                        throw new Error("User not found. Please check your username.")
                     }
                     
                     console.log(`[login] Calling getUser for userId: ${userId} with forceRefresh=true`);
@@ -1128,8 +1127,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             continue
                         }
                         console.error("Login failed: Could not fetch user data", userId)
-                        useAlertStore().error("Could not fetch user data. Please try again.")
-                        return
+                        throw new Error("Could not fetch user data. Please try again.")
                     }
                     
                     console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
@@ -1159,8 +1157,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             continue
                         }
                         console.error("Login failed: Authentication failed", userId)
-                        useAlertStore().error("Authentication failed. Please check your credentials.")
-                        return
+                        throw new Error("Authentication failed. Please check your credentials.")
                     }
                     
                     // Handle v2 format: check success field first, then status field for backward compatibility
@@ -1210,8 +1207,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                     continue
                                 }
                                 console.error("No writable host found for user after all retries", user)
-                                useAlertStore().error("No writable host found. The server may be temporarily unavailable. Please try again later.")
-                                return
+                                throw new Error("No writable host found. The server may be temporarily unavailable. Please try again later.")
                             }
                             user.providerIp = ip
                             sessionStorage.setItem("user", JSON.stringify(user))
@@ -1223,14 +1219,12 @@ export const useTweetStore = defineStore('tweetStore', {
                             return user
                         } else {
                             console.error("Login failed: User has no host ID", user)
-                            useAlertStore().error("User account configuration error. Please contact support.")
-                            return
+                            throw new Error("User account configuration error. Please contact support.")
                         }
                     } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)
                         console.error("Login failed:", failureReason)
-                        useAlertStore().error(failureReason || "Login failed. Please check your credentials.")
-                        return
+                        throw new Error(failureReason || "Login failed. Please check your credentials.")
                     }
                 } catch (error) {
                     lastError = error
@@ -1241,17 +1235,16 @@ export const useTweetStore = defineStore('tweetStore', {
                         continue
                     }
                     console.error("Login error:", error)
-                    useAlertStore().error("Login failed due to network error. Please try again.")
-                    return
+                    // Re-throw to let UserLogin.vue handle the error display
+                    throw error
                 }
             }
 
             // If we exhausted all retries
             if (lastError) {
                 console.error("Login failed after all retries:", lastError)
-                useAlertStore().error("Login failed after multiple attempts. Please try again later.")
+                throw new Error("Login failed after multiple attempts. Please try again later.")
             }
-            return
         },
 
         /**
