@@ -150,25 +150,37 @@ export const useTweetStore = defineStore('tweetStore', {
                             tweet.originalTweet = originalTweet
                         } else {
                             // Try fetching with authorId first
-                            console.log(`[addTweetToStore] Fetching original tweet ${tweet.originalTweetId} with authorId ${tweet.originalAuthorId}`)
+                            console.log(`[addTweetToStore] ⚠️ Original tweet not in cache, attempting to fetch: ${tweet.originalTweetId} (authorId: ${tweet.originalAuthorId})`)
                             tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
                             
                             // If that fails, retry without authorId (like getTweet does)
                             if (!tweet.originalTweet) {
-                                console.log(`[addTweetToStore] First attempt failed, retrying without authorId for ${tweet.originalTweetId}`)
+                                console.log(`[addTweetToStore] First fetch attempt failed, retrying without authorId for ${tweet.originalTweetId}`)
                                 tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, undefined)
                             }
                         }
                         
                         // If originalTweetId exists but originalTweet is null, skip this tweet
                         if (!tweet.originalTweet) {
-                            console.warn("Skipping tweet with missing original tweet:", tweet.mid, "originalTweetId:", tweet.originalTweetId)
+                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
+  Retweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}
+  Original Author ID: ${tweet.originalAuthorId}
+  Possible causes: 
+    - Original tweet was deleted
+    - Original tweet is private/restricted
+    - Backend failed to include original tweet in response
+    - Network/provider node is unreachable
+  Note: This reduces visible tweet count and may affect pagination`)
                             return
                         }
                     } catch (error) {
-                        console.error("Error fetching original tweet:", tweet.originalTweetId, error)
+                        console.error(`[addTweetToStore] ❌ ERROR fetching original tweet:
+  Retweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}
+  Error:`, error)
                         // Skip this tweet if original tweet cannot be fetched
-                        console.warn("Skipping tweet due to original tweet fetch error:", tweet.mid)
+                        console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
                         return
                     }
                 }
@@ -229,6 +241,22 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Extract tweets and originalTweets from the new response format
                 const tweetsData = response.tweets
                 const originalTweetsData = response.originalTweets
+
+                // Check for potential backend issue: retweets without original tweets
+                if (tweetsData && tweetsData.length > 0) {
+                    const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
+                    const originalTweetsCount = originalTweetsData?.length || 0
+                    if (retweetCount > 0 && originalTweetsCount === 0) {
+                        console.warn(`[loadTweetsByUser] ⚠️ BACKEND ISSUE DETECTED:
+  Backend returned ${retweetCount} retweet(s) but 0 original tweets
+  This will cause retweets to be skipped if originals cannot be fetched individually
+  User: ${user.mid}, Page: ${pageNumber}`)
+                    } else if (retweetCount > originalTweetsCount) {
+                        console.warn(`[loadTweetsByUser] ⚠️ Potential backend issue:
+  Backend returned ${retweetCount} retweet(s) but only ${originalTweetsCount} original tweet(s)
+  Some retweets may be skipped if their originals are missing`)
+                    }
+                }
 
                 // Cache original tweets first (same as getTweetFeed)
                 if (originalTweetsData) {
@@ -399,12 +427,30 @@ export const useTweetStore = defineStore('tweetStore', {
                     return null
                 }
 
+                // Extract tweets from the new response format
+                const tweetsData = response.tweets
+                const originalTweetsData = response.originalTweets
+
+                // Check for potential backend issue: retweets without original tweets
+                if (tweetsData && tweetsData.length > 0) {
+                    const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
+                    const originalTweetsCount = originalTweetsData?.length || 0
+                    if (retweetCount > 0 && originalTweetsCount === 0) {
+                        console.warn(`[getTweetFeed] ⚠️ BACKEND ISSUE DETECTED:
+  Backend returned ${retweetCount} retweet(s) but 0 original tweets
+  This will cause retweets to be skipped if originals cannot be fetched individually
+  Page: ${pageNumber}`)
+                    } else if (retweetCount > originalTweetsCount) {
+                        console.warn(`[getTweetFeed] ⚠️ Potential backend issue:
+  Backend returned ${retweetCount} retweet(s) but only ${originalTweetsCount} original tweet(s)
+  Some retweets may be skipped if their originals are missing`)
+                    }
+                }
+
                 // Cache original tweets first
                 if (response.originalTweets) {
                     await this.updateOriginalTweets(response.originalTweets)
                 }
-                // Extract tweets from the new response format
-                const tweetsData = response.tweets
 
                 // Process main tweets
                 if (tweetsData) {

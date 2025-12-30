@@ -86,6 +86,8 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         const minTweets = 6;
         let tweetsLoaded = 0;
         let round = 0;
+        let consecutiveFailures = 0;
+        const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
         
         while (isLoading.value && round < 10) {
             // Add timeout to each page load (20 seconds to accommodate getProviderIp health checks)
@@ -97,9 +99,21 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             let loadedPageSize: number;
             try {
                 loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
+                consecutiveFailures = 0; // Reset on success
             } catch (error) {
                 console.warn("Init load failed in round", round, error);
-                break;
+                consecutiveFailures++;
+                
+                // Continue to next page if we haven't exceeded max failures
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    console.warn("Too many consecutive failures, stopping initial load");
+                    break;
+                }
+                
+                // Still increment page number and round to try next page
+                pageNumber.value++;
+                round++;
+                continue;
             }
             
             if (loadedPageSize) {
@@ -107,7 +121,18 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
                 round++;
             } else {
                 console.warn("Init load failed. Cannot load tweets in round", round);
-                break;
+                consecutiveFailures++;
+                
+                // Continue to next page if we haven't exceeded max failures
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    console.warn("Too many consecutive failures, stopping initial load");
+                    break;
+                }
+                
+                // Still increment page number and round to try next page
+                pageNumber.value++;
+                round++;
+                continue;
             }
             
             if (tweetsLoaded >= minTweets) {
@@ -123,6 +148,13 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
                 pageNumber.value++;
                 console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
             }
+        }
+        
+        // Log final result
+        if (tweetsLoaded > 0) {
+            console.log(`Initial load completed: ${tweetsLoaded} tweets loaded in ${round} round(s)`);
+        } else {
+            console.warn('Initial load completed with no tweets loaded');
         }
         
         // Load pinned tweets (with timeout protection)
@@ -247,27 +279,9 @@ const handleScroll = debounce(async () => {
     const documentHeight = document.documentElement.scrollHeight;
 
     if (documentHeight - scrollPosition < scrollThreshold) {
-        // Store current scroll position before loading
-        const currentScrollY = window.scrollY;
-        const currentDocumentHeight = documentHeight;
-        
         // Only load more tweets if we have more tweets available
         if (hasMoreTweets.value) {
             await loadMoreTweets(false); // Automatic loading
-        }
-        
-        // Restore scroll position after loading to prevent jumping
-        // Only if the document height increased (new content was added)
-        const newDocumentHeight = document.documentElement.scrollHeight;
-        if (newDocumentHeight > currentDocumentHeight) {
-            // Use requestAnimationFrame for smooth scroll restoration
-            requestAnimationFrame(() => {
-                const heightDifference = newDocumentHeight - currentDocumentHeight;
-                window.scrollTo({
-                    top: currentScrollY + heightDifference,
-                    behavior: 'instant' // Use instant to prevent animation conflicts
-                });
-            });
         }
     }
 }, 300); // Increased debounce delay to reduce conflicts

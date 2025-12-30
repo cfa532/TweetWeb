@@ -98,27 +98,9 @@ const handleScroll = debounce(async () => {
     const documentHeight = document.documentElement.scrollHeight;
 
     if (documentHeight - scrollPosition < scrollThreshold) {
-        // Store current scroll position before loading
-        const currentScrollY = window.scrollY;
-        const currentDocumentHeight = documentHeight;
-        
         // Only load more tweets if we have more tweets available
         if (hasMoreTweets.value) {
             await loadMoreTweets(false); // Automatic loading
-        }
-        
-        // Restore scroll position after loading to prevent jumping
-        // Only if the document height increased (new content was added)
-        const newDocumentHeight = document.documentElement.scrollHeight;
-        if (newDocumentHeight > currentDocumentHeight) {
-            // Use requestAnimationFrame for smooth scroll restoration
-            requestAnimationFrame(() => {
-                const heightDifference = newDocumentHeight - currentDocumentHeight;
-                window.scrollTo({
-                    top: currentScrollY + heightDifference,
-                    behavior: 'instant' // Use instant to prevent animation conflicts
-                });
-            });
         }
     }
 }, 300); // Increased debounce delay to reduce conflicts
