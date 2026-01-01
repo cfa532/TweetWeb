@@ -515,7 +515,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     aid: this.appId,
                     ver: "last",
                     appuserid: this.loginUser.mid,
-                    hostid: this.loginUser.hostId
+                    hostid: this.loginUser.hostIds?.[0]
                 }
 
                 console.log("Calling update_following_tweets with params:", params)
@@ -653,7 +653,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweetid: tweetId,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                     userid: authorId,     // author of the tweet
-                    hostid: author?.hostId,
+                    hostid: author?.hostIds?.[0],
                 })
             } else {
                 if (useRacing) {
@@ -779,33 +779,33 @@ export const useTweetStore = defineStore('tweetStore', {
             // If first attempt failed (user is null or not valid), retry with refreshed providerIP
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
                 console.log("First attempt failed, retrying with refreshed providerIP...")
-                
+
                 try {
                     // Refresh providerIP by calling getProviderIp again
                     providerIp = await this.getProviderIp(userId)
                     console.log("Get user provider IP (retry attempt)", providerIp)
-                    
+
                     if (!providerIp) {
                         console.warn("No provider found for user on retry", userId)
                         return undefined
                     }
-                    
+
                     providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-                    
+
                     user = await providerClient.RunMApp("get_user", {
-                        aid: this.appId, 
-                        ver: "last", 
+                        aid: this.appId,
+                        ver: "last",
                         version: "v3",
                         userid: userId,
                     })
-                    
+
                     console.log("get_user result (retry attempt):", user)
                 } catch (error) {
                     console.error("Retry attempt to get user failed:", error)
                     return undefined
                 }
             }
-            
+
             // Validate user object
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
                 console.error("get_user returned invalid User object after retry:", user)
@@ -814,7 +814,6 @@ export const useTweetStore = defineStore('tweetStore', {
             
             // cache the user data
             user.providerIp = providerIp
-            user.hostId = user.hostIds[0]
             // Use server's cloudDrivePort if available
             // IMPORTANT: Use nullish coalescing (??) to allow 0 as a valid value (meaning no service)
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
@@ -824,6 +823,10 @@ export const useTweetStore = defineStore('tweetStore', {
             user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
             delete user.baseUrl
             delete user.writableUrl
+            // Initialize writableHostIp if not already set
+            if (user.writableHostIp === undefined) {
+                user.writableHostIp = null
+            }
             this.users.set(userId, user)
             
             return user
@@ -1238,43 +1241,22 @@ export const useTweetStore = defineStore('tweetStore', {
                     
                     if (loginSuccess) {
                         console.log(`[login] Login successful for ${username}`);
-                        /**
-                         * Now find the IP of a host where user has write permission
-                         */
-                        if (user.hostId) {
-                            console.log(`[login] Getting writable host IP for user (hostId: ${user.hostId})`);
-                            // Try to get writable host IP with timeout
-                            const ipPromise = this.getNodeIp(user, true)
-                            const timeoutPromise = new Promise<string | null>((resolve) => {
-                                setTimeout(() => resolve(null), 10000) // 10 second timeout
-                            })
-                            const ip = await Promise.race([ipPromise, timeoutPromise])
-                            console.log(`[login] Writable host IP: ${ip}`)
-                            if (!ip) {
-                                // Retry on IP fetch failure (could be network issue)
-                                if (attempt < maxRetries) {
-                                    console.warn(`Login attempt ${attempt + 1} failed: No writable host found. Retrying...`)
-                                    lastError = new Error("No writable host found")
-                                    // Clear user cache to force fresh IP on next attempt
-                                    this.removeUser(userId)
-                                    await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
-                                    continue
-                                }
-                                console.error("No writable host found for user after all retries", user)
-                                throw new Error("No writable host found. The server may be temporarily unavailable. Please try again later.")
-                            }
-                            user.providerIp = ip
-                            sessionStorage.setItem("user", JSON.stringify(user))
-                            user.client = createPooledClient(ip, this.lapi.connectionPool)
-                            this._user = user
-                            this.addFollowing(userId)
-                            console.log(`[login] Login flow completed successfully for ${username}`);
-                            useAlertStore().success("Login successful!")
-                            return user
-                        } else {
-                            console.error("Login failed: User has no host ID", user)
-                            throw new Error("User account configuration error. Please contact support.")
+                        // Use authentication provider IP for login - writable host will be fetched lazily when needed
+                        console.log(`[login] Using authentication provider IP: ${user.providerIp}`)
+
+                        if (!user.providerIp) {
+                            console.error("Login failed: No provider IP available for user", user)
+                            throw new Error("No server connection available. Please try again later.")
                         }
+
+                        // Store user data and create client with auth provider IP
+                        sessionStorage.setItem("user", JSON.stringify(user))
+                        user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
+                        this._user = user
+                        this.addFollowing(userId)
+                        console.log(`[login] Login flow completed successfully for ${username}`);
+                        useAlertStore().success("Login successful!")
+                        return user
                     } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)
                         console.error("Login failed:", failureReason)
@@ -1378,8 +1360,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
             
-            if (!parentAuthor.hostId) {
-                console.error("Parent tweet author's hostId is missing")
+            if (!parentAuthor.hostIds || !parentAuthor.hostIds[0]) {
+                console.error("Parent tweet author's hostIds[0] is missing")
                 return
             }
 
@@ -1390,7 +1372,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
                 tweetid: parentTweetId,         // ID of tweet containing the comment
                 commentid: commentId,            // ID of comment to delete
-                hostid: parentAuthor.hostId      // Node ID where the tweet is hosted
+                hostid: parentAuthor.hostIds[0]      // Node ID where the tweet is hosted
             })
 
             // After successful deletion, remove comment from local cache
@@ -1453,7 +1435,58 @@ export const useTweetStore = defineStore('tweetStore', {
                 downloadable: tweet.downloadable,
                 tweetId: tweetId
             });
-            
+
+            // Check if we need to get writable host IP
+            if (!this.loginUser?.writableHostIp && this.loginUser?.hostIds && this.loginUser.hostIds.length >= 2) {
+                console.log('[TWEET-STORE] No writable host IP cached, checking hostIds for writable host...');
+
+                let writableHostId: string;
+                if (this.loginUser.hostIds[0] === this.loginUser.hostIds[1]) {
+                    // hostIds[0] is the writable host
+                    writableHostId = this.loginUser.hostIds[0];
+                    console.log(`[TWEET-STORE] hostIds[0] === hostIds[1], using hostIds[0] as writable host: ${writableHostId}`);
+                } else if (this.loginUser.hostIds[1]) {
+                    // hostIds[0] !== hostIds[1], fallback to get IP of writable host (hostIds[1])
+                    writableHostId = this.loginUser.hostIds[1];
+                    console.log(`[TWEET-STORE] hostIds[0] !== hostIds[1], using hostIds[1] as writable host: ${writableHostId}`);
+                } else {
+                    // hostIds[1] doesn't exist, fall back to hostIds[0]
+                    writableHostId = this.loginUser.hostIds[0];
+                    console.log(`[TWEET-STORE] hostIds[1] not available, falling back to hostIds[0]: ${writableHostId}`);
+                }
+
+                try {
+                    // Create a temporary user object with the writable host ID
+                    const writableUser = { ...this.loginUser, hostId: writableHostId };
+
+                    // Try to get writable host IP with a short timeout
+                    const ipPromise = this.getNodeIp(writableUser, true)
+                    const timeoutPromise = new Promise<string | null>((resolve) => {
+                        setTimeout(() => resolve(null), 5000) // 5 second timeout for writable host discovery
+                    })
+                    const writableIp = await Promise.race([ipPromise, timeoutPromise])
+
+                    if (writableIp) {
+                        console.log(`[TWEET-STORE] Got writable host IP: ${writableIp}`)
+                        // Update user with writable host IP
+                        this.loginUser.writableHostIp = writableIp
+                        this.loginUser.providerIp = writableIp
+                        this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
+                        // Update stored user data
+                        sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+                        console.log('[TWEET-STORE] Switched to writable host IP for upload')
+                    } else {
+                        console.log('[TWEET-STORE] Writable host IP not available, using current provider IP')
+                    }
+                } catch (error) {
+                    console.warn('[TWEET-STORE] Failed to get writable host IP, using current provider IP:', error)
+                }
+            } else if (this.loginUser?.writableHostIp) {
+                console.log(`[TWEET-STORE] Using cached writable host IP: ${this.loginUser.writableHostIp}`)
+            } else if (!this.loginUser?.hostIds || this.loginUser.hostIds.length < 2) {
+                console.log('[TWEET-STORE] User does not have enough hostIds for writable host detection, using current provider IP')
+            }
+
             var ret: any
             const originalTimeout = this.loginUser?.client.timeout
             
@@ -1481,10 +1514,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         console.log('[TWEET-STORE] Calling add_comment API...');
                         // Fetch parent tweet to get its author's hostId
                         const parentTweet = await this.getTweet(tweetId);
-                        if (!parentTweet || !parentTweet.author?.hostId) {
-                            throw new Error('Failed to fetch parent tweet or parent tweet author hostId');
+                        if (!parentTweet || !parentTweet.author?.hostIds || !parentTweet.author?.hostIds[0]) {
+                            throw new Error('Failed to fetch parent tweet or parent tweet author hostIds[0]');
                         }
-                        const parentAuthorHostId = parentTweet.author.hostId;
+                        const parentAuthorHostId = parentTweet.author.hostIds[0];
                         console.log('[TWEET-STORE] Using parent tweet author hostId:', parentAuthorHostId);
                         return await this.loginUser?.client.RunMApp("add_comment",
                             {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: parentAuthorHostId}
@@ -1493,7 +1526,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         console.log('[TWEET-STORE] Calling add_tweet API...');
                         return await this.loginUser?.client.RunMApp("add_tweet",
                             {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
-                                hostid: this.loginUser?.hostId})
+                                hostid: this.loginUser?.hostIds?.[0]})
                     }
                 })()
                 
@@ -1625,7 +1658,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleFavorite(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_favorite", {
-                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostId
+                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
             })
             var tweet = this.tweets.find(e => e.mid == tweetId)
             tweet!.likeCount = ret["count"]
@@ -1639,7 +1672,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleBookmark(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
-                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostId
+                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
             })
             var tweet = this.tweets.find(e => e.mid == tweetId)
             tweet!.bookmarkCount = ret["count"]
@@ -1880,33 +1913,39 @@ export const useTweetStore = defineStore('tweetStore', {
             v4Only = false
         ): Promise<string | null> {
             try {
-                console.log(`[getNodeIp] Getting node IPs for nodeId ${user.hostId} (v4Only: ${v4Only})...`);
-                
+                const hostId = user.hostIds?.[0];
+                if (!hostId) {
+                    console.error("[getNodeIp] User has no hostIds[0]");
+                    return null;
+                }
+
+                console.log(`[getNodeIp] Getting node IPs for nodeId ${hostId} (v4Only: ${v4Only})...`);
+
                 // Call get_node_ips (plural) with version v2 to get list of IPs
                 const params: any = {
                     aid: this.lapi.appId,
                     ver: "last",
                     version: "v2",
-                    nodeid: user.hostId,
+                    nodeid: hostId,
                 };
-                
+
                 // Only add v4only parameter if true
                 if (v4Only) {
                     params.v4only = "true";
                 }
-                
+
                 const ipResponse = await user.client.RunMApp("get_node_ips", params);
-                
-                console.log(`[getNodeIp] Raw response from get_node_ips for nodeId ${user.hostId}:`, ipResponse);
-                
+
+                console.log(`[getNodeIp] Raw response from get_node_ips for nodeId ${hostId}:`, ipResponse);
+
                 if (!ipResponse) {
-                    console.error("[getNodeIp] No response from get_node_ips for nodeId", user.hostId);
+                    console.error("[getNodeIp] No response from get_node_ips for nodeId", hostId);
                     return null;
                 }
-                
+
                 // Handle the response - could be array or wrapped in data property
                 let ipList: string[] = [];
-                
+
                 if (Array.isArray(ipResponse)) {
                     ipList = ipResponse;
                 } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
@@ -1921,13 +1960,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error("[getNodeIp] Invalid response format from get_node_ips:", ipResponse);
                     return null;
                 }
-                
+
                 // Filter and trim IP addresses, optionally removing IPv6 addresses
                 const ipAddresses = ipList
                     .map(ip => ip.trim())
                     .filter(ip => {
                         if (ip.length === 0) return false;
-                        
+
                         // If v4Only is true, filter out IPv6 addresses
                         if (v4Only) {
                             // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
@@ -1936,22 +1975,23 @@ export const useTweetStore = defineStore('tweetStore', {
                             const colonCount = (ip.match(/:/g) || []).length;
                             if (colonCount > 1) return false;
                         }
-                        
+
                         return true;
                     });
-                
+
                 if (ipAddresses.length === 0) {
-                    console.error("[getNodeIp] No valid IPs returned for nodeId", user.hostId);
+                    console.error("[getNodeIp] No valid IPs returned for nodeId", hostId);
                     return null;
                 }
-                
+
                 // Return first IP address
                 const resultIp = ipAddresses[0];
-                console.log(`[getNodeIp] Returning IP address for nodeId ${user.hostId}:`, resultIp);
+                console.log(`[getNodeIp] Returning IP address for nodeId ${hostId}:`, resultIp);
                 return resultIp;
-                
+
             } catch (error) {
-                console.error("[getNodeIp] Error getting node IPs for nodeId", user.hostId, error);
+                const hostId = user.hostIds?.[0] || 'unknown';
+                console.error("[getNodeIp] Error getting node IPs for nodeId", hostId, error);
                 return null;
             }
         },
