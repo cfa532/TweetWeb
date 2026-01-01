@@ -17,13 +17,16 @@ export type ConnectionPoolInterface = Pick<ConnectionPoolManager, 'getConnection
  * @returns A proxy object that mimics an hprose client
  */
 export function createPooledClient(ip: string, connectionPool: ConnectionPoolInterface): any {
+  // Store custom timeout if set (default to 10 seconds)
+  let customTimeout = 10000;
+  
   // Create a proxy that intercepts all method calls
   const proxy = new Proxy({}, {
     get(target, prop, receiver) {
       // Special properties that should be handled directly
       if (prop === 'timeout') {
-        // Return a default timeout value (10 seconds)
-        return 10000;
+        // Return the stored timeout value
+        return customTimeout;
       }
       
       if (prop === 'ip') {
@@ -55,6 +58,12 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
           try {
             client = await connectionPool.getConnection(ip);
             
+            // CRITICAL: Apply custom timeout to the real client before calling method
+            if (customTimeout !== 10000) {
+              console.log(`[POOLED-CLIENT] Applying timeout ${customTimeout}ms to client for ${ip}`);
+              (client as any).timeout = customTimeout;
+            }
+            
             // Get the method from the actual client
             const method = (client as any)[prop];
             if (typeof method === 'function') {
@@ -76,8 +85,9 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
     set(target, prop, value, receiver) {
       // Allow setting timeout
       if (prop === 'timeout') {
-        // We don't actually set this on the proxy since each real client
-        // will have its own timeout, but we accept it to maintain compatibility
+        // Store the timeout to be applied to real clients
+        customTimeout = value;
+        console.log(`[POOLED-CLIENT] Timeout set to ${value}ms for ${ip}`);
         return true;
       }
       return false;

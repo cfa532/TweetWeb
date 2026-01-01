@@ -18,41 +18,27 @@ export async function compressImage(file: File): Promise<File> {
     const img = new Image();
     
     img.onload = () => {
-      // Calculate new dimensions to maintain aspect ratio
-      const maxSize = 2 * 1024 * 1024; // 2MB target
-      let { width, height } = img;
+      // Match iOS behavior: compress to JPEG at 80% quality
+      // This ensures consistent format and quality
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx?.drawImage(img, 0, 0, img.width, img.height);
       
-      // Start with original size and reduce quality until under 2MB
-      let quality = 0.9;
-      
-      const compressWithQuality = () => {
-        canvas.width = width;
-        canvas.height = height;
-        ctx?.drawImage(img, 0, 0, width, height);
-        
-        canvas.toBlob((blob) => {
-          if (blob) {
-            if (blob.size <= maxSize || quality <= 0.1) {
-              // Create a new File object with the compressed data
-              const compressedFile = new File([blob], file.name, {
-                type: file.type,
-                lastModified: file.lastModified
-              });
-              resolve(compressedFile);
-            } else {
-              // Reduce quality and try again
-              quality -= 0.1;
-              width = Math.floor(width * 0.9);
-              height = Math.floor(height * 0.9);
-              compressWithQuality();
-            }
-          } else {
-            reject(new Error('Failed to compress image'));
-          }
-        }, file.type, quality);
-      };
-      
-      compressWithQuality();
+      // Always use JPEG format with 80% quality (matches iOS)
+      canvas.toBlob((blob) => {
+        if (blob) {
+          // Change extension to .jpg if it was .png or other format
+          const newFileName = file.name.replace(/\.[^.]+$/, '.jpg');
+          const compressedFile = new File([blob], newFileName, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+          console.log(`[COMPRESS] ${file.name} (${(file.size / 1024).toFixed(1)}KB) -> ${newFileName} (${(blob.size / 1024).toFixed(1)}KB) at 80% quality`);
+          resolve(compressedFile);
+        } else {
+          reject(new Error('Failed to compress image'));
+        }
+      }, 'image/jpeg', 0.8);  // 80% quality, matches iOS
     };
     
     img.onerror = () => reject(new Error('Failed to load image'));

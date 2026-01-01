@@ -75,12 +75,9 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
       // Handle different file types
       if (isImageType(fileType)) {
-        // Compress image to under 2MB
-        processedFile = await compressImage(file);
-        uploadProgress[i] = 50; // Show progress for compression
-        
-        // Upload compressed image using new upload_ipfs API (matches iOS)
-        cid = await uploadFileToIPFS(await processedFile.arrayBuffer(), i, file.name);
+        // Upload original file without any compression (debug mode)
+        console.log(`[UPLOAD] Uploading image ${file.name} (${(file.size / 1024).toFixed(1)}KB) without compression`)
+        cid = await uploadFileFromFile(file, i);
         
       } else if (isVideoType(fileType)) {
         // Upload video through new endpoint or fallback to IPFS
@@ -176,7 +173,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
           }
           
           // Use the new upload_ipfs API (matches iOS)
-          cid = await uploadFileToIPFS(await file.arrayBuffer(), i, file.name);
+          cid = await uploadFileFromFile(file, i);
         }
         
         // Store HLS conversion status for later use
@@ -184,7 +181,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         
       } else {
         // Handle other file types with new upload_ipfs API (matches iOS)
-        cid = await uploadFileToIPFS(await processedFile.arrayBuffer(), i, file.name);
+        cid = await uploadFileFromFile(processedFile, i);
       }
 
       const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) : 
@@ -366,6 +363,31 @@ async function onSubmit() {
   }
 }
 
+// Upload file using upload_ipfs API - reads file directly using FileReader
+async function uploadFileFromFile(
+  file: File,
+  fileIndex: number
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const arrayBuffer = e.target?.result as ArrayBuffer
+        if (!arrayBuffer) {
+          reject(new Error('Failed to read file'))
+          return
+        }
+        const cid = await uploadFileToIPFS(arrayBuffer, fileIndex, file.name)
+        resolve(cid)
+      } catch (error) {
+        reject(error)
+      }
+    }
+    reader.onerror = () => reject(new Error('FileReader error'))
+    reader.readAsArrayBuffer(file)
+  })
+}
+
 // Upload file using upload_ipfs API (matches iOS implementation)
 async function uploadFileToIPFS(
   data: ArrayBuffer,
@@ -373,6 +395,7 @@ async function uploadFileToIPFS(
   fileName: string
 ): Promise<string> {
   console.log(`[UPLOAD] Starting upload for ${fileName} (${(data.byteLength / 1024 / 1024).toFixed(2)}MB)`)
+  console.log(`[UPLOAD] ArrayBuffer details: byteLength=${data.byteLength}, constructor=${data.constructor.name}`)
   
   const chunkSize = 1024 * 1024 // 1MB chunks to match iOS
   let offset = 0
@@ -395,7 +418,10 @@ async function uploadFileToIPFS(
     while (offset < data.byteLength) {
       const end = Math.min(offset + chunkSize, data.byteLength)
       const chunk = data.slice(offset, end)
+      const uint8Chunk = new Uint8Array(chunk)
       chunkNumber++
+      
+      console.log(`[UPLOAD] Chunk ${chunkNumber}: offset=${offset}, end=${end}, size=${chunk.byteLength}, uint8Length=${uint8Chunk.length}`)
       
       // Build request object (matches iOS structure)
       const request: any = {
@@ -409,15 +435,12 @@ async function uploadFileToIPFS(
         request.fsid = fsid
       }
       
-      // Mark as finished on last chunk
-      if (end === data.byteLength) {
-        request.finished = 'true'
-      }
+      // NOTE: Do NOT set finished='true' here - that's done in a separate finalization request (matches iOS)
       
       console.log(`[UPLOAD] Uploading chunk ${chunkNumber} for ${fileName}: ${((offset / data.byteLength) * 100).toFixed(1)}%`)
       
       // Call upload_ipfs API directly (matches iOS implementation)
-      const response = await uploadClient.RunMApp('upload_ipfs', request, [new Uint8Array(chunk)])
+      const response = await uploadClient.RunMApp('upload_ipfs', request, [uint8Chunk])
       
       // Update progress
       uploadProgress[fileIndex] = Math.floor((end / data.byteLength) * 100)
@@ -447,9 +470,38 @@ async function uploadFileToIPFS(
       throw new Error('No file ID returned from server')
     }
     
+    // Send finalization request (matches iOS - separate request with finished='true')
+    console.log(`[UPLOAD] Uploaded ${chunkNumber} chunks, finalizing...`)
+    const finalRequest: any = {
+      aid: tweetStore.appId,
+      ver: 'last',
+      version: 'v2',
+      offset: offset,
+      fsid: fsid,
+      finished: 'true'
+    }
+    
+    const finalResponse = await uploadClient.RunMApp('upload_ipfs', finalRequest)
+    
+    // Parse finalization response
+    let cid: string | null = null
+    if (finalResponse && typeof finalResponse === 'object') {
+      if (finalResponse.success === true && finalResponse.data) {
+        cid = finalResponse.data
+      } else if (finalResponse.cid) {
+        cid = finalResponse.cid
+      }
+    } else if (typeof finalResponse === 'string') {
+      cid = finalResponse
+    }
+    
+    if (!cid) {
+      throw new Error('No CID returned from finalization')
+    }
+    
     uploadProgress[fileIndex] = 100
-    console.log(`[UPLOAD] Upload completed for ${fileName}, CID: ${fsid}`)
-    return fsid
+    console.log(`[UPLOAD] Upload completed for ${fileName}, CID: ${cid}`)
+    return cid
     
   } catch (error) {
     console.error(`[UPLOAD] Error uploading ${fileName}:`, error)
