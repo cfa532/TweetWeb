@@ -747,47 +747,25 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
-            // Try to get user with retry mechanism
+            // Try to get user with up to 2 attempts total
             let providerIp: string | null = null
             let user: any = null
             let providerClient: any = null
-            
-            // First attempt
-            try {
-                providerIp = await this.getProviderIp(userId)
-                console.log("Get user provider IP (first attempt)", providerIp)
-                if (!providerIp) {
-                    console.warn("No provider found for user", userId)
-                    return
-                }
-                
-                providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-                
-                user = await providerClient.RunMApp("get_user", {
-                    aid: this.appId, 
-                    ver: "last", 
-                    version: "v3",
-                    userid: userId,
-                })
-                
-                console.log("get_user result (first attempt):", user)
-            } catch (error) {
-                console.error("First attempt to get user failed:", error)
-                user = null
+
+            // First check if there are any provider IPs available at all
+            const availableIps = await this.getProviderIps(userId)
+            if (availableIps.length === 0) {
+                console.warn(`No provider IPs available for user ${userId} - user may not exist or be unreachable`)
+                return undefined
             }
-            
-            // If first attempt failed (user is null or not valid), retry with refreshed providerIP
-            if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
-                console.log("First attempt failed, retrying with refreshed providerIP...")
 
+            for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
-                    // Refresh providerIP by calling getProviderIp again
                     providerIp = await this.getProviderIp(userId)
-                    console.log("Get user provider IP (retry attempt)", providerIp)
-
                     if (!providerIp) {
-                        console.warn("No provider found for user on retry", userId)
-                        return undefined
+                        console.warn(`No provider found for user ${userId}, attempt ${attempt}/2`)
+                        if (attempt === 2) return undefined
+                        continue
                     }
 
                     providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
@@ -799,16 +777,42 @@ export const useTweetStore = defineStore('tweetStore', {
                         userid: userId,
                     })
 
-                    console.log("get_user result (retry attempt):", user)
+                    // Handle wrapped JSON response
+                    if (user && typeof user === 'object' && 'success' in user) {
+                        if (user.success === true) {
+                            user = user.data;
+                        } else {
+                            // Check if it's "User not found" - if so, don't retry
+                            if (user.message === "User not found") {
+                                console.log(`User ${userId} not found on server, giving up`)
+                                return undefined
+                            } else {
+                                // Other server error, may retry
+                                console.log(`get_user server error for user ${userId}, attempt ${attempt}/2:`, user.message)
+                                user = null;
+                                if (attempt === 2) return undefined
+                                continue
+                            }
+                        }
+                    }
+
+                    console.log(`get_user result for user ${userId}, attempt ${attempt}/2:`, user)
+
+                    // If we got a valid user, break out of retry loop
+                    if (user && typeof user === 'object' && user.mid && user.hostIds) {
+                        break
+                    }
+
                 } catch (error) {
-                    console.error("Retry attempt to get user failed:", error)
-                    return undefined
+                    console.error(`get_user attempt ${attempt}/2 failed for user ${userId}:`, error)
+                    user = null
+                    if (attempt === 2) return undefined
                 }
             }
 
             // Validate user object
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
-                console.error("get_user returned invalid User object after retry:", user)
+                console.error(`get_user returned invalid User object for user ${userId} after 2 attempts:`, user)
                 return undefined
             }
             

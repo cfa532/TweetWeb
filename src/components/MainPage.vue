@@ -172,9 +172,27 @@ async function loadTweetsWithMinimum() {
                 continue;
             }
             
-            if (loadedPageSize) {
+            // Handle the loaded page size - 0 is a valid success case
+            if (loadedPageSize !== null && loadedPageSize !== undefined) {
                 tweetsLoaded += loadedPageSize;
                 round++;
+                consecutiveFailures = 0; // Reset on successful load
+                
+                // If 0 tweets loaded on first page, stop immediately (no tweets available)
+                if (round === 1 && loadedPageSize === 0) {
+                    console.log('First page loaded 0 tweets, no content available');
+                    break;
+                }
+                
+                // If fewer tweets than requested were loaded, there are no more tweets
+                if (loadedPageSize < pageSize) {
+                    console.log('No more tweets available from backend. Page number:', pageNumber.value);
+                    break;
+                } else {
+                    // Load next page
+                    pageNumber.value++;
+                    console.log('Loaded', tweetsLoaded, 'tweets so far. Loading next page:', pageNumber.value);
+                }
             } else {
                 console.warn("Init load failed. Cannot load tweets in round", round);
                 consecutiveFailures++;
@@ -189,16 +207,6 @@ async function loadTweetsWithMinimum() {
                 pageNumber.value++;
                 round++;
                 continue;
-            }
-            
-            // If fewer tweets than requested were loaded, there are no more tweets
-            if (loadedPageSize < pageSize) {
-                console.log('No more tweets available from backend. Page number:', pageNumber.value);
-                break;
-            } else {
-                // Load next page
-                pageNumber.value++;
-                console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
             }
         }
         
