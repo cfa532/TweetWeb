@@ -42,8 +42,8 @@ async function uploadFile(file: File, index: number = 0): Promise<string> {
     const uploadClient = await tweetStore.lapi.connectionPool.getConnection(providerIp)
     
     try {
-        // Set 15 minute timeout for large file uploads
-        uploadClient.timeout = 15 * 60 * 1000
+        // Set 10 minute timeout for large file uploads (matches EditorModal)
+        uploadClient.timeout = 10 * 60 * 1000
         
         // Upload using new upload_ipfs API
         const mid = await uploadFileWithNewAPI(file, index, uploadClient)
@@ -86,10 +86,7 @@ async function uploadFileWithNewAPI(
             request.fsid = fsid
         }
         
-        // Mark as finished on last chunk
-        if (end === data.byteLength) {
-            request.finished = 'true'
-        }
+        // NOTE: Do NOT set finished='true' here - that's done in a separate finalization request (matches iOS)
         
         console.log(`[UPLOAD-PACKAGE] Uploading chunk ${chunkNumber} for ${file.name}: ${((offset / data.byteLength) * 100).toFixed(1)}%`)
         
@@ -124,14 +121,43 @@ async function uploadFileWithNewAPI(
         throw new Error('No file ID returned from server')
     }
     
+    // Send finalization request (matches iOS - separate request with finished='true')
+    console.log(`[UPLOAD-PACKAGE] Uploaded ${chunkNumber} chunks, finalizing...`)
+    const finalRequest: any = {
+        aid: tweetStore.appId,
+        ver: 'last',
+        version: 'v2',
+        offset: offset,
+        fsid: fsid,
+        finished: 'true'
+    }
+    
+    const finalResponse = await uploadClient.RunMApp('upload_ipfs', finalRequest)
+    
+    // Parse finalization response
+    let cid: string | null = null
+    if (finalResponse && typeof finalResponse === 'object') {
+        if (finalResponse.success === true && finalResponse.data) {
+            cid = finalResponse.data
+        } else if (finalResponse.cid) {
+            cid = finalResponse.cid
+        }
+    } else if (typeof finalResponse === 'string') {
+        cid = finalResponse
+    }
+    
+    if (!cid) {
+        throw new Error('No CID returned from finalization')
+    }
+    
     uploadProgress[index] = 100
-    console.log(`[UPLOAD-PACKAGE] Upload completed for ${file.name}, CID: ${fsid}`)
+    console.log(`[UPLOAD-PACKAGE] Upload completed for ${file.name}, CID: ${cid}`)
     
     // Handle package upload (same as before)
     if (isAppPackage.value) {
-        return await tweetStore.uploadPackage(fsid, isMini.value)
+        return await tweetStore.uploadPackage(cid, isMini.value)
     } else {
-        return await tweetStore.uploadFile(fsid, file.name)
+        return await tweetStore.uploadFile(cid, file.name)
     }
 }
 
