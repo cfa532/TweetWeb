@@ -17,7 +17,7 @@ const uploadQueue = [];
 let isProcessingQueue = false;
 
 // Video quality constants
-const MIN_BITRATE = 300; // Minimum bitrate in kbps (reduced from 500k to avoid inflating low-bitrate videos)
+const MIN_BITRATE = 500; // Minimum bitrate in kbps for quality (matches Android implementation)
 
 // Track active temporary directories to prevent cleanup during processing
 const activeTempDirs = new Set();
@@ -1069,8 +1069,11 @@ async function processVideoUpload(req, res) {
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
     console.log(`[${requestId}] [INFO] Video resolution: ${videoResolution}p`);
     
+    // Get source video bitrate (in bps, convert to kbps)
+    const sourceBitrateK = videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : null;
+    
     // Determine normalization parameters based on resolution
-    let targetWidth, targetHeight, bitrate;
+    let targetWidth, targetHeight, calculatedBitrateK;
     
     if (videoResolution > 720) {
       // >720p: normalize to 720p with 1500k bitrate
@@ -1086,14 +1089,14 @@ async function processVideoUpload(req, res) {
       const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      bitrate = 1500;
+      calculatedBitrateK = 1500;
     } else if (videoResolution === 720) {
       // =720p: keep resolution, set bitrate to 1000k
       console.log(`[${requestId}] [NORMALIZE] Video resolution is 720p, keeping resolution with 1000k bitrate`);
       const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      bitrate = 1000;
+      calculatedBitrateK = 1000;
     } else {
       // <720p: keep resolution, set bitrate proportional to 720p at 1000k
       console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) < 720p, keeping resolution with proportional bitrate`);
@@ -1102,10 +1105,22 @@ async function processVideoUpload(req, res) {
       targetHeight = evenDims.height;
       // Proportional bitrate: (resolution / 720) * REFERENCE_720P_BITRATE (matches iOS algorithm)
       const REFERENCE_720P_BITRATE = 1000; // 1000 kbps
-      bitrate = Math.round((videoResolution / 720) * REFERENCE_720P_BITRATE);
+      calculatedBitrateK = Math.round((videoResolution / 720) * REFERENCE_720P_BITRATE);
     }
     
-    console.log(`[${requestId}] [INFO] Normalization target: ${targetWidth}x${targetHeight}, bitrate: ${bitrate}k`);
+    // Determine final target bitrate:
+    // If source bitrate is lower than calculated target but higher than minimum, keep source bitrate
+    let bitrate;
+    if (sourceBitrateK !== null && 
+        sourceBitrateK < calculatedBitrateK && 
+        sourceBitrateK >= MIN_BITRATE) {
+      console.log(`[${requestId}] [BITRATE] Using source bitrate ${sourceBitrateK}k (between min ${MIN_BITRATE}k and target ${calculatedBitrateK}k)`);
+      bitrate = sourceBitrateK;
+    } else {
+      bitrate = calculatedBitrateK;
+    }
+    
+    console.log(`[${requestId}] [INFO] Normalization target: ${targetWidth}x${targetHeight}, source bitrate: ${sourceBitrateK}k, calculated target: ${calculatedBitrateK}k, final bitrate: ${bitrate}k`);
     
     // Check if scaling is needed (target dimensions differ from original)
     const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
