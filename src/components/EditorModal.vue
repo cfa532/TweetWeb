@@ -50,6 +50,79 @@ const showCidModal = ref(false);
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 const SMALL_VIDEO_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50MB
 
+// Retry configuration for uploads
+const UPLOAD_RETRY_CONFIG = {
+  maxRetries: 3,
+  initialDelay: 1000, // 1 second
+  maxDelay: 10000, // 10 seconds
+  backoffMultiplier: 2
+}
+
+// Utility function to determine if an error is retryable
+function isRetryableError(error: any): boolean {
+  if (!error) return false;
+
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const retryablePatterns = [
+    'timeout',
+    'Connection request timeout',
+    'Network error',
+    'ECONNRESET',
+    'ENOTFOUND',
+    'ECONNREFUSED',
+    'fetch failed',
+    'Failed to fetch'
+  ];
+
+  return retryablePatterns.some(pattern =>
+    errorMessage.toLowerCase().includes(pattern.toLowerCase())
+  );
+}
+
+// Generic retry wrapper for upload functions
+async function retryUpload<T>(
+  uploadFn: () => Promise<T>,
+  fileName: string,
+  config = UPLOAD_RETRY_CONFIG
+): Promise<T> {
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`[UPLOAD-RETRY] Attempting retry ${attempt}/${config.maxRetries} for ${fileName}`);
+      }
+
+      const result = await uploadFn();
+      if (attempt > 0) {
+        console.log(`[UPLOAD-RETRY] Retry successful for ${fileName} on attempt ${attempt + 1}`);
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.error(`[UPLOAD-RETRY] Attempt ${attempt + 1} failed for ${fileName}:`, error);
+
+      // Don't retry if this is the last attempt or error is not retryable
+      if (attempt >= config.maxRetries || !isRetryableError(error)) {
+        break;
+      }
+
+      // Calculate delay with exponential backoff
+      const delay = Math.min(
+        config.initialDelay * Math.pow(config.backoffMultiplier, attempt),
+        config.maxDelay
+      );
+
+      console.log(`[UPLOAD-RETRY] Waiting ${delay}ms before retry ${attempt + 1} for ${fileName}`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // All retries failed
+  console.error(`[UPLOAD-RETRY] All ${config.maxRetries + 1} attempts failed for ${fileName}`);
+  throw lastError;
+}
+
 onMounted(() => {
   tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
   console.log('EditorModal mounted with author:', {
@@ -77,7 +150,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       if (isImageType(fileType)) {
         // Upload original file without any compression (debug mode)
         console.log(`[UPLOAD] Uploading image ${file.name} (${(file.size / 1024).toFixed(1)}KB) without compression`)
-        cid = await uploadFileFromFile(file, i);
+        cid = await retryUpload(
+          () => uploadFileFromFile(file, i),
+          file.name
+        );
         
       } else if (isVideoType(fileType)) {
         // Upload video through new endpoint or fallback to IPFS
@@ -137,16 +213,19 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
               
               // Service is available, use regular video upload
               console.log(`Starting video upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-              cid = await uploadVideo(
-                file, 
-                baseUrl, 
-                cloudDrivePort,
-                (progress) => {
-                  // Update progress based on job processing progress
-                  uploadProgress[i] = progress;
-                  console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
-                },
-                noResample.value
+              cid = await retryUpload(
+                () => uploadVideo(
+                  file,
+                  baseUrl,
+                  cloudDrivePort,
+                  (progress) => {
+                    // Update progress based on job processing progress
+                    uploadProgress[i] = progress;
+                    console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
+                  },
+                  noResample.value
+                ),
+                file.name
               );
               
               // Validate that we received a valid CID
@@ -173,7 +252,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
           }
           
           // Use the new upload_ipfs API (matches iOS)
-          cid = await uploadFileFromFile(file, i);
+          cid = await retryUpload(
+            () => uploadFileFromFile(file, i),
+            file.name
+          );
         }
         
         // Store HLS conversion status for later use
@@ -181,7 +263,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         
       } else {
         // Handle other file types with new upload_ipfs API (matches iOS)
-        cid = await uploadFileFromFile(processedFile, i);
+        cid = await retryUpload(
+          () => uploadFileFromFile(processedFile, i),
+          file.name
+        );
       }
 
       const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) : 

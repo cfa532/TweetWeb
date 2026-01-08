@@ -1,3 +1,6 @@
+// Global Constants
+export const v4Only = true;
+
 // Media Type Constants
 export const MEDIA_TYPES = {
     IMAGE: 'image',

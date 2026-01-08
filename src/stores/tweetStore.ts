@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
-import { normalizeMediaType } from '@/lib';
+import { normalizeMediaType, v4Only } from '@/lib';
 const GUEST_ID = "000000000000000000000000000"
 const TWEET_COUNT = 30
 
@@ -936,7 +936,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * Get provider IP for a user with health checking
          * Calls get_provider_ips API and tests IPs in pairs with 10-second timeout
          * @param mid User's member ID
-         * @param v4only If true, filter out IPv6 addresses. Default is true.
+         * @param v4only If true, filter out IPv6 addresses. Default is v4Only.
          * @returns A healthy provider IP address, or null if none found
          */
         /**
@@ -983,10 +983,10 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Get a single provider IP for a given mid (returns first available)
          * @param mid The mid to get provider IP for
-         * @param v4only Whether to filter out IPv6 addresses (default: false)
+         * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns A single IP address, or null if none found
          */
-        async getProviderIp(mid: string, v4only: boolean = false): Promise<string | null> {
+        async getProviderIp(mid: string, v4only: boolean = v4Only): Promise<string | null> {
             const ips = await this.getProviderIps(mid, v4only);
             return ips.length > 0 ? ips[0] : null;
         },
@@ -994,10 +994,10 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Get the first pair of provider IPs for a given mid without testing them
          * @param mid The mid to get provider IPs for
-         * @param v4only Whether to filter out IPv6 addresses (default: false)
+         * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns Array of IP addresses (up to 2), or empty array if none found
          */
-        async getProviderIps(mid: string, v4only: boolean = false): Promise<string[]> {
+        async getProviderIps(mid: string, v4only: boolean = v4Only): Promise<string[]> {
             try {
                 console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
                 
@@ -1909,12 +1909,12 @@ export const useTweetStore = defineStore('tweetStore', {
          * Gets the IP address list of a node, after removing local IPv4
          * Calls get_node_ips with version=v2 which returns a list of IPs
          * @param user The user object containing client and hostId
-         * @param v4Only Whether to filter out IPv6 addresses (default: false)
+         * @param v4Only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns The first non-local IP address found, or null if none available
          */
         async getNodeIp(
             user: User,
-            v4Only = false
+            v4Only = v4Only
         ): Promise<string | null> {
             try {
                 const hostId = user.hostIds?.[0];
