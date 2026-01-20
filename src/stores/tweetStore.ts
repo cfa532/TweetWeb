@@ -656,8 +656,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (providerIps.length === 0)
                         return null
                     
-                    // Race the API calls with multiple IPs
-                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                    // Race the API calls with multiple IPs (with 6-second timeout)
+                    const racePromise = this.raceProviderIps(providerIps, async (ip, client) => {
                         return await client.RunMApp("get_tweet", {
                             aid: this.lapi.appId,
                             ver: "last",
@@ -666,6 +666,11 @@ export const useTweetStore = defineStore('tweetStore', {
                             appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                         })
                     })
+
+                    const raceResult = await Promise.race([
+                        racePromise,
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000))
+                    ])
                     
                     if (!raceResult) {
                         console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
