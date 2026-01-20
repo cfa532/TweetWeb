@@ -716,20 +716,19 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            console.log('[fetchTweet TIMING] Fetching author data...', new Date().toISOString())
-            author = author ? author : await this.getUser(tweetData.authorId)
-            console.log('[fetchTweet TIMING] ✅ Author data received:', new Date().toISOString())
+            console.log('[fetchTweet TIMING] Constructing tweet without waiting for author...', new Date().toISOString())
 
-            // convert Tweet App's definition to this app's definition.
+            // convert Tweet App's definition to this app's definition (without waiting for author)
             let tweet: any = {
                 mid: tweetData.mid,
-                authorId: author!.mid,
+                authorId: tweetData.authorId,
                 timestamp: tweetData.timestamp,
-                author: author!,
+                author: null, // Will be loaded asynchronously
                 title: tweetData.title,
                 content: tweetData.content,
                 attachments: tweetData.attachments?.map((e: MimeiFileType) => {
-                    e.mid = this.getMediaUrl(e.mid, "http://" + author?.providerIp)
+                    // Use provider IP for media URLs initially, will be updated when author loads
+                    e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
                     e.downloadable = tweetData.downloadable
                     return e
                 }),
@@ -742,31 +741,71 @@ export const useTweetStore = defineStore('tweetStore', {
                 commentCount: tweetData.commentCount,
             }
 
-            // If we have originalTweetData, convert it too
+            // If we have originalTweetData, convert it too (without waiting for author)
             if (originalTweetData) {
-                const originalAuthor = await this.getUser(originalTweetData.authorId)
-                if (originalAuthor) {
-                    tweet.originalTweet = {
-                        mid: originalTweetData.mid,
-                        authorId: originalAuthor.mid,
-                        timestamp: originalTweetData.timestamp,
-                        author: originalAuthor,
-                        title: originalTweetData.title,
-                        content: originalTweetData.content,
-                        attachments: originalTweetData.attachments?.map((e: MimeiFileType) => {
-                            e.mid = this.getMediaUrl(e.mid, "http://" + originalAuthor?.providerIp)
-                            e.downloadable = originalTweetData.downloadable
-                            return e
-                        }),
-                        comments: [],
-                        originalTweetId: originalTweetData.originalTweetId,
-                        originalAuthorId: originalTweetData.originalAuthorId,
-                        provider: providerIp,
-                        likeCount: originalTweetData.likeCount,
-                        bookmarkCount: originalTweetData.bookmarkCount,
-                        commentCount: originalTweetData.commentCount,
+                tweet.originalTweet = {
+                    mid: originalTweetData.mid,
+                    authorId: originalTweetData.authorId,
+                    timestamp: originalTweetData.timestamp,
+                    author: null, // Will be loaded asynchronously
+                    title: originalTweetData.title,
+                    content: originalTweetData.content,
+                    attachments: originalTweetData.attachments?.map((e: MimeiFileType) => {
+                        e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
+                        e.downloadable = originalTweetData.downloadable
+                        return e
+                    }),
+                    comments: [],
+                    originalTweetId: originalTweetData.originalTweetId,
+                    originalAuthorId: originalTweetData.originalAuthorId,
+                    provider: providerIp,
+                    likeCount: originalTweetData.likeCount,
+                    bookmarkCount: originalTweetData.bookmarkCount,
+                    commentCount: originalTweetData.commentCount,
+                }
+            }
+
+            console.log('[fetchTweet TIMING] ✅ Tweet object constructed quickly:', new Date().toISOString())
+
+            // Load authors asynchronously (non-blocking) - expected timeouts are normal
+            let authorLoadSuccess = false
+            this.getUser(tweetData.authorId).then(author => {
+                if (author && tweet) {
+                    tweet.author = author
+                    authorLoadSuccess = true
+                    // Update media URLs with correct author provider IP
+                    if (tweet.attachments) {
+                        tweet.attachments.forEach((e: MimeiFileType) => {
+                            e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + author.providerIp)
+                        })
                     }
                 }
+            }).catch(error => {
+                // Only log non-timeout errors to reduce noise
+                if (!error.message?.includes('timeout')) {
+                    console.warn('[fetchTweet] Failed to load author asynchronously:', tweetData.authorId, error)
+                }
+            })
+
+            // Load original tweet author asynchronously if needed
+            if (originalTweetData && tweet.originalTweet) {
+                this.getUser(originalTweetData.authorId).then(originalAuthor => {
+                    if (originalAuthor && tweet.originalTweet) {
+                        tweet.originalTweet.author = originalAuthor
+                        // Update media URLs with correct author provider IP
+                        if (tweet.originalTweet.attachments) {
+                            tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
+                                e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + originalAuthor.providerIp)
+                            })
+                        }
+                        console.log('[fetchTweet] ✅ Original tweet author loaded asynchronously')
+                    }
+                }).catch(error => {
+                    // Only log non-timeout errors to reduce noise
+                    if (!error.message?.includes('timeout')) {
+                        console.warn('[fetchTweet] Failed to load original tweet author asynchronously:', originalTweetData.authorId, error)
+                    }
+                })
             }
 
             console.log('[fetchTweet TIMING] ✅ Complete tweet object constructed:', new Date().toISOString())
@@ -1141,36 +1180,58 @@ export const useTweetStore = defineStore('tweetStore', {
             
             // comment type is a different Tweet type from the definition in this app
             if (comments) {
-                for (const e of comments) {
+                // Create comment objects without authors first, then load authors asynchronously
+                const commentPromises = comments.map(async (e) => {
                     try {
                         // Skip null or invalid comments
                         if (!e || !e.mid || !e.authorId) {
                             console.warn("Skipping invalid comment:", e)
-                            continue
+                            return null
                         }
-                        
-                        let author = await this.getUser(e.authorId)
-                        if (author) {
-                            tweet.comments?.push({
-                                mid: e.mid,
-                                authorId: e.authorId,
-                                author: author,
-                                content: e.content,
-                                timestamp: e.timestamp,
-                                attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
-                                    .map((a: MimeiFileType) => {
-                                        // comments on the same node as the tweet.
-                                        if (a.mid && tweet.provider) {
-                                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
-                                        }
-                                        return a
-                                    }),
-                            })
+
+                        // Create comment object without author initially
+                        const comment: any = {
+                            mid: e.mid,
+                            authorId: e.authorId,
+                            author: null as User | null, // Will be loaded asynchronously
+                            content: e.content,
+                            timestamp: e.timestamp,
+                            attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
+                                .map((a: MimeiFileType) => {
+                                    // comments on the same node as the tweet.
+                                    if (a.mid && tweet.provider) {
+                                        a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
+                                    }
+                                    return a
+                                }),
                         }
+
+                        // Load author asynchronously
+                        this.getUser(e.authorId).then(author => {
+                            if (author && comment) {
+                                comment.author = author
+                            }
+                        }).catch(error => {
+                            // Only log errors for non-timeout cases to reduce noise
+                            if (!error.message?.includes('timeout')) {
+                                console.warn("Error loading comment author:", e.authorId, error)
+                            }
+                        })
+
+                        return comment
                     } catch (error) {
                         console.error("Error processing comment:", e?.mid || "unknown", error)
-                        continue
+                        return null
                     }
+                })
+
+                // Wait for all comment objects to be created (but not for authors to load)
+                const commentObjects = await Promise.all(commentPromises)
+                const validComments = commentObjects.filter((c): c is NonNullable<typeof c> => c !== null)
+
+                // Add all comments to the tweet
+                if (tweet.comments) {
+                    tweet.comments.push(...validComments)
                 }
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))

@@ -95,14 +95,16 @@ async function loadDetail(retryCount = 0) {
             tweet.value = JSON.parse(s)
             // Render tweet immediately without waiting for author
             await showTweet(timeoutId)
-            // Load author asynchronously
-            tweetStore.getUser(tweet.value.author.mid).then(user => {
-                if (user && tweet.value) {
-                    tweet.value.author = user
-                }
-            }).catch(error => {
-                console.warn('[TweetDetail] Failed to load author:', error)
-            })
+            // Load author asynchronously (only if not already loaded)
+            if (!tweet.value.author && tweet.value.authorId) {
+                tweetStore.getUser(tweet.value.authorId).then(user => {
+                    if (user && tweet.value) {
+                        tweet.value.author = user
+                    }
+                }).catch(error => {
+                    console.warn('[TweetDetail] Failed to load author:', error)
+                })
+            }
         }
         else {
             // Fetch tweet if it is not in session already.
@@ -674,11 +676,11 @@ function goBack() {
     <!-- Show comments of the original tweet if it is a retweet -->
     <div v-if="tweet">
         <div v-if="isRetweet">
-            <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
+            <TweetView v-for="comment in originTweet.comments.filter((c: any) => c.author)" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
         </div>
         <!-- Show comments of the tweet -->
         <div v-else>
-            <TweetView v-for="comment in tweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
+            <TweetView v-for="comment in tweet.comments.filter((c: any) => c.author)" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
         </div>
     </div>
 
