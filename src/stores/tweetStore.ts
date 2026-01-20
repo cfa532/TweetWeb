@@ -656,8 +656,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (providerIps.length === 0)
                         return null
                     
-                    // Race the API calls with multiple IPs (with 6-second timeout)
-                    const racePromise = this.raceProviderIps(providerIps, async (ip, client) => {
+                    // Race the API calls with multiple IPs
+                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
                         return await client.RunMApp("get_tweet", {
                             aid: this.lapi.appId,
                             ver: "last",
@@ -666,11 +666,6 @@ export const useTweetStore = defineStore('tweetStore', {
                             appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                         })
                     })
-
-                    const raceResult = await Promise.race([
-                        racePromise,
-                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000))
-                    ])
                     
                     if (!raceResult) {
                         console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
@@ -1001,23 +996,30 @@ export const useTweetStore = defineStore('tweetStore', {
 
             console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
 
-            // Create promises for each IP
+            // Create promises for each IP with individual timeouts
             const racePromises = ips.map(async (ip) => {
                 try {
                     console.log(`[raceProviderIps] Trying IP: ${ip}`);
                     const client = await this.lapi.getClient(ip);
-                    const result = await apiCall(ip, client);
+
+                    // Race the API call with a 6-second timeout
+                    const result = await Promise.race([
+                        apiCall(ip, client),
+                        new Promise<never>((_, reject) =>
+                            setTimeout(() => reject(new Error(`Timeout after 6000ms for ${ip}`)), 6000)
+                        )
+                    ]);
+
                     console.log(`[raceProviderIps] ✅ Success with IP: ${ip}`);
                     return { result, ip };
                 } catch (error) {
                     console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
-                    // Return a never-resolving promise so race continues with other IPs
-                    return new Promise<{ result: T, ip: string }>(() => {});
+                    throw error; // Re-throw so Promise.race can handle it
                 }
             });
 
             try {
-                // Race all promises, return first successful result
+                // Race all promises, first success wins
                 const winner = await Promise.race(racePromises);
                 return winner;
             } catch (error) {
