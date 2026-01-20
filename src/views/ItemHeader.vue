@@ -6,8 +6,8 @@ import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
 import { CornerMenu } from '@/views';
 
-const props = defineProps({ 
-    author: {type: Object as PropType<User>, required: true},
+const props = defineProps({
+    author: {type: Object as PropType<User | null>, required: false},
     timestamp: {type: Number, required: false },
     isRetweet: {type: Boolean, required: false, default: false},
     by: {type: String, required: false},
@@ -35,7 +35,7 @@ function openDetailView() {
 </script>
 
 <template>
-  <div class='tweet-header d-flex'>
+  <div v-if='author' class='tweet-header d-flex'>
     <!-- User Avatar -->
     <div class='avatar me-2'>
       <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
@@ -55,6 +55,21 @@ function openDetailView() {
         <span class='alias text-muted'>@{{ author.username }}</span>
         <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
           }}</span>
+      </div>
+    </div>
+  </div>
+  <!-- Loading placeholder when author is not yet loaded -->
+  <div v-else class='tweet-header d-flex'>
+    <div class='avatar me-2'>
+      <div class='rounded-circle loading-avatar'></div>
+    </div>
+    <div class='user-info flex-grow-1'>
+      <div class='username-alias-time'>
+        <span class='username fw-bold loading-text'>Loading...</span>
+      </div>
+      <div class='mt-1'>
+        <span class='alias text-muted loading-text'>@loading</span>
+        <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number) }}</span>
       </div>
     </div>
   </div>
@@ -106,6 +121,29 @@ function openDetailView() {
 .avatar {
   display: flex;
   align-items: center;
+}
+
+.loading-avatar {
+  width: 40px;
+  height: 40px;
+  background: #e9ecef;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.loading-text {
+  background: #e9ecef;
+  color: transparent;
+  border-radius: 4px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 .avatar img {
   object-fit: cover;

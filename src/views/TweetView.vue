@@ -50,12 +50,30 @@ const displayedTweet = computed(() => {
 function openDetailView() {
     sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
     const basePath = `/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`;
+
     if (props.isComment) {
         // Get parent tweet ID from the route if available
         const parentTweetId = route.params.tweetId as string;
-        const parentAuthorId = route.params.authorId as string;
-        router.push(`${basePath}?fromComment=true&parentTweetId=${parentTweetId}&parentAuthorId=${parentAuthorId}`);
+        const parentAuthorId = route.params.authorId as string | undefined;
+
+        // Store navigation metadata in sessionStorage as backup
+        const navigationMeta = {
+            fromComment: true,
+            parentTweetId: parentTweetId,
+            parentAuthorId: parentAuthorId
+        };
+        sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
+
+        // Navigate with query parameters for shareable URLs
+        const queryParams = new URLSearchParams({
+            fromComment: 'true',
+            parentTweetId: parentTweetId,
+            ...(parentAuthorId && { parentAuthorId })
+        });
+        router.push(`${basePath}?${queryParams.toString()}`);
     } else {
+        // Clear navigation metadata for regular tweet navigation
+        sessionStorage.removeItem('navigationMeta');
         router.push(basePath);
     }
 }

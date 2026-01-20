@@ -548,9 +548,64 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     }
 }
 
-const isFromComment = computed(() => !!route.query.fromComment);
-const parentTweetId = computed(() => route.query.parentTweetId as string | undefined);
-const parentAuthorId = computed(() => route.query.parentAuthorId as string | undefined);
+// Store navigation metadata in sessionStorage to persist across route changes
+const navigationMeta = ref<{
+    fromComment: boolean;
+    parentTweetId: string | undefined;
+    parentAuthorId: string | undefined;
+} | null>(null);
+
+const updateNavigationMeta = () => {
+    try {
+        console.log('[updateNavigationMeta] route.query:', route.query);
+
+        // First check if we have navigation metadata in the URL query params
+        const fromQuery = {
+            fromComment: route.query.fromComment === 'true',
+            parentTweetId: route.query.parentTweetId as string | undefined,
+            parentAuthorId: route.query.parentAuthorId as string | undefined
+        };
+
+        console.log('[updateNavigationMeta] fromQuery:', fromQuery);
+
+        // If we have valid navigation metadata from query params, store it in sessionStorage
+        if (fromQuery.fromComment && fromQuery.parentTweetId) {
+            console.log('[updateNavigationMeta] Using query params, storing in sessionStorage');
+            sessionStorage.setItem('navigationMeta', JSON.stringify(fromQuery));
+            navigationMeta.value = fromQuery;
+            return;
+        }
+
+        console.log('[updateNavigationMeta] No valid query params, checking sessionStorage');
+
+        // Otherwise, check sessionStorage for previously stored metadata
+        const stored = sessionStorage.getItem('navigationMeta');
+        if (stored) {
+            console.log('[updateNavigationMeta] Found in sessionStorage:', stored);
+            navigationMeta.value = JSON.parse(stored);
+            return;
+        }
+
+        console.log('[updateNavigationMeta] No navigation metadata found');
+        navigationMeta.value = null;
+    } catch (error) {
+        console.warn('[updateNavigationMeta] Error parsing navigation meta:', error);
+        navigationMeta.value = null;
+    }
+};
+
+// Initialize navigation metadata
+updateNavigationMeta();
+
+// Watch for route changes and update navigation metadata
+watch(() => route.query, () => {
+    console.log('[TweetDetail] Route query changed, updating navigation meta');
+    updateNavigationMeta();
+}, { immediate: true });
+
+const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
+const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
+const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
 function goBack() {
     if (parentTweetId.value && parentAuthorId.value) {
@@ -676,11 +731,11 @@ function goBack() {
     <!-- Show comments of the original tweet if it is a retweet -->
     <div v-if="tweet">
         <div v-if="isRetweet">
-            <TweetView v-for="comment in originTweet.comments.filter((c: any) => c.author)" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
+            <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
         </div>
         <!-- Show comments of the tweet -->
         <div v-else>
-            <TweetView v-for="comment in tweet.comments.filter((c: any) => c.author)" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
+            <TweetView v-for="comment in tweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
         </div>
     </div>
 

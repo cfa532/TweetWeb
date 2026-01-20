@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { reactive } from 'vue';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
@@ -1189,8 +1190,8 @@ export const useTweetStore = defineStore('tweetStore', {
                             return null
                         }
 
-                        // Create comment object without author initially
-                        const comment: any = {
+                        // Create reactive comment object without author initially
+                        const comment: any = reactive({
                             mid: e.mid,
                             authorId: e.authorId,
                             author: null as User | null, // Will be loaded asynchronously
@@ -1204,7 +1205,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                     }
                                     return a
                                 }),
-                        }
+                        })
 
                         // Load author asynchronously
                         this.getUser(e.authorId).then(author => {
