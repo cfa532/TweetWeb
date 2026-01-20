@@ -17,8 +17,6 @@ const isLoading = ref(false)
 const loadError = ref(false)
 const hasLoadAttempted = ref(false)
 const author = ref<User>();
-const DEFAULT_PREVIEW_IMAGE = `${window.location.origin}/ic_splash.png`
-const videoPreviewCache = new Map<string, string>()
 
 // Download prompt variables
 const showDownloadPrompt = ref(false)
@@ -42,13 +40,13 @@ function getBotVerificationMessage(): string {
 // Localization for loading retry message
 function getLoadingRetryMessage(): string {
     const language = navigator.language || 'en';
-    
+
     if (language.startsWith('zh')) {
-        return '正在加载推文，1秒后重试...';
+        return '正在加载推文，6秒后重试...';
     } else if (language.startsWith('ja')) {
-        return 'ツイートを読み込んでいます、1秒後に再試行...';
+        return 'ツイートを読み込んでいます、6秒後に再試行...';
     } else {
-        return 'Loading tweet, retrying in 1s...';
+        return 'Loading tweet, retrying in 6s...';
     }
 }
 
@@ -119,7 +117,7 @@ async function loadDetail() {
                 window.setTimeout(() => {
                     console.log('[TweetDetail] Retrying to load tweet...')
                     window.location.reload()
-                }, 1000)                        // wait 1s before reload
+                }, 2000)                        // wait 2s before reload
             } else {
                 loadError.value = false
                 await showTweet(timeoutId)
@@ -146,7 +144,7 @@ async function loadDetail() {
         window.setTimeout(() => {
             console.log('[TweetDetail] Retrying after error...')
             window.location.reload()
-        }, 1000)
+        }, 2000)
     }
 }
 async function showTweet(timeoutId?: number) {
@@ -158,34 +156,34 @@ async function showTweet(timeoutId?: number) {
         if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
 
-        // Load comments and additional data in parallel (non-blocking)
+        // Load comments and additional data in parallel (truly non-blocking)
         const loadPromises = []
 
         // Load original tweet if needed
         if (tweet.value.originalTweetId) {
             loadPromises.push((async () => {
-                originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
-                if (!tweet.value.content && !tweet.value.attachments) {
-                    isRetweet.value = true
-                    await tweetStore.loadComments(originTweet.value)
+                try {
+                    originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+                    if (!tweet.value.content && !tweet.value.attachments) {
+                        isRetweet.value = true
+                        await tweetStore.loadComments(originTweet.value)
+                    }
+                } catch (error) {
+                    console.warn('[TweetDetail] Failed to load original tweet:', error)
                 }
             })())
         } else {
-            loadPromises.push(tweetStore.loadComments(tweet.value))
+            loadPromises.push(tweetStore.loadComments(tweet.value).catch(error => {
+                console.warn('[TweetDetail] Failed to load comments:', error)
+            }))
         }
 
-        // Update following status (non-critical)
-        loadPromises.push((async () => {
-            tweetStore.addFollowing(tweet.value.author.mid)
-        })())
-
-        // Refresh share metadata asynchronously
-        loadPromises.push(refreshShareMetadata().catch(error => {
-            console.error('Error refreshing share metadata:', error)
-        }))
-
-        // Wait for all background operations to complete
-        await Promise.all(loadPromises)
+        // Fire and forget - let these run in background without blocking
+        Promise.allSettled(loadPromises).then(() => {
+            console.log('[TweetDetail] Background loading operations completed')
+        }).catch(error => {
+            console.warn('[TweetDetail] Some background operations failed:', error)
+        })
     } catch (error) {
         console.error('Error in showTweet:', error)
         if (timeoutId) clearTimeout(timeoutId)
@@ -245,195 +243,9 @@ function preferredSummarySource(): Tweet | undefined {
     return tweet.value
 }
 
-async function resolvePreviewImage(): Promise<string> {
-    const sourceTweet = preferredSummarySource()
-    if (!sourceTweet?.attachments?.length) {
-        return DEFAULT_PREVIEW_IMAGE
-    }
 
-    const firstImage = sourceTweet.attachments.find((attachment: MimeiFileType) =>
-        attachment.type?.toLowerCase().includes('image')
-    )
-    if (firstImage) {
-        const imageUrl = resolveAttachmentURL(firstImage, sourceTweet)
-        if (imageUrl) {
-            return imageUrl
-        }
-    }
 
-    const firstVideo = sourceTweet.attachments.find((attachment: MimeiFileType) =>
-        isVideoAttachment(attachment)
-    )
-    if (firstVideo) {
-        const cacheKey = firstVideo.mid
-        if (cacheKey && videoPreviewCache.has(cacheKey)) {
-            return videoPreviewCache.get(cacheKey)!
-        }
 
-        const videoUrl = resolveAttachmentURL(firstVideo, sourceTweet)
-        if (videoUrl) {
-            const posterUrl = await findExistingVideoPoster(videoUrl)
-            if (posterUrl) {
-                if (cacheKey) {
-                    videoPreviewCache.set(cacheKey, posterUrl)
-                }
-                return posterUrl
-            }
-            const generated = await captureVideoFrame(videoUrl)
-            if (generated) {
-                if (cacheKey) {
-                    videoPreviewCache.set(cacheKey, generated)
-                }
-                return generated
-            }
-        }
-    }
-
-    return DEFAULT_PREVIEW_IMAGE
-}
-
-async function refreshShareMetadata() {
-    if (!tweet.value) {
-        return
-    }
-    const title = formattedTitle.value || 'Tweet'
-    const summary = shareSummaryText()
-    const previewUrl = await resolvePreviewImage()
-    const currentUrl = window.location.href
-
-    updateMetaProperty('og:title', title)
-    updateMetaProperty('og:description', summary)
-    updateMetaProperty('og:image', previewUrl)
-    updateMetaProperty('og:url', currentUrl)
-    updateMetaProperty('og:type', 'article')
-
-    updateMetaName('description', summary)
-    updateMetaName('twitter:title', title)
-    updateMetaName('twitter:description', summary)
-    updateMetaName('twitter:image', previewUrl)
-    updateMetaName('twitter:card', 'summary_large_image')
-}
-
-function updateMetaProperty(property: string, content: string) {
-    if (!content) {
-        return
-    }
-    let meta = document.querySelector(`meta[property=\"${property}\"]`)
-    if (!meta) {
-        meta = document.createElement('meta')
-        meta.setAttribute('property', property)
-        document.head.appendChild(meta)
-    }
-    meta.setAttribute('content', content)
-}
-
-function updateMetaName(name: string, content: string) {
-    if (!content) {
-        return
-    }
-    let meta = document.querySelector(`meta[name="${name}"]`)
-    if (!meta) {
-        meta = document.createElement('meta')
-        meta.setAttribute('name', name)
-        document.head.appendChild(meta)
-    }
-    meta.setAttribute('content', content)
-}
-
-function isVideoAttachment(attachment: MimeiFileType): boolean {
-    const type = attachment.type?.toLowerCase() || ''
-    return type.includes('video') || type === 'hls_video'
-}
-
-async function findExistingVideoPoster(videoUrl: string): Promise<string | null> {
-    const candidates = buildPosterCandidates(videoUrl)
-    for (const candidate of candidates) {
-        try {
-            const response = await fetch(candidate, { method: 'HEAD', cache: 'force-cache' })
-            if (response.ok) {
-                return candidate
-            }
-        } catch (error) {
-            console.warn('[preview] Unable to probe video poster', candidate, error)
-        }
-    }
-    return null
-}
-
-function buildPosterCandidates(videoUrl: string): string[] {
-    const candidates = new Set<string>()
-    try {
-        const parsed = new URL(videoUrl, window.location.origin)
-        const path = parsed.pathname
-        const base = `${parsed.origin}${path}`
-        const directory = base.substring(0, base.lastIndexOf('/'))
-        const filename = base.substring(base.lastIndexOf('/') + 1)
-
-        if (filename.endsWith('master.m3u8') || filename.endsWith('playlist.m3u8')) {
-            candidates.add(`${directory}/poster.jpg`)
-            candidates.add(`${directory}/poster.png`)
-            candidates.add(`${directory}/thumbnail.jpg`)
-            candidates.add(`${directory}/preview.jpg`)
-            candidates.add(`${directory}/cover.jpg`)
-        }
-
-        const extensionMatch = filename.match(/\.(mp4|mov|m4v|webm|ts)$/i)
-        if (extensionMatch) {
-            candidates.add(base.replace(extensionMatch[0], '.jpg'))
-            candidates.add(base.replace(extensionMatch[0], '.png'))
-        }
-
-        candidates.add(`${base}.jpg`)
-        candidates.add(`${base}.png`)
-    } catch (error) {
-        console.warn('[preview] Failed to build poster candidates', error)
-    }
-    return Array.from(candidates)
-}
-
-async function captureVideoFrame(videoUrl: string): Promise<string | null> {
-    return new Promise((resolve) => {
-        const video = document.createElement('video')
-        const canvas = document.createElement('canvas')
-
-        const cleanup = () => {
-            video.pause()
-            video.removeAttribute('src')
-            video.load()
-        }
-
-        const fail = (error?: Event) => {
-            console.warn('[preview] Unable to capture frame', error)
-            cleanup()
-            resolve(null)
-        }
-
-        video.crossOrigin = 'anonymous'
-        video.muted = true
-        video.playsInline = true
-        video.preload = 'auto'
-        video.src = `${videoUrl}#t=1`
-
-        video.addEventListener('error', fail, { once: true })
-        video.addEventListener('loadeddata', () => {
-            try {
-                canvas.width = video.videoWidth || 640
-                canvas.height = video.videoHeight || 360
-                const ctx = canvas.getContext('2d')
-                if (!ctx) {
-                    fail()
-                    return
-                }
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-                const dataUrl = canvas.toDataURL('image/png')
-                cleanup()
-                resolve(dataUrl)
-            } catch (error) {
-                fail(error as unknown as Event)
-            }
-        }, { once: true })
-    })
-}
 
 function resolveAttachmentURL(attachment: MimeiFileType, tweetContext: Tweet): string | null {
     const mid = attachment.mid

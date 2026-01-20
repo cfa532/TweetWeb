@@ -17,8 +17,8 @@ export type ConnectionPoolInterface = Pick<ConnectionPoolManager, 'getConnection
  * @returns A proxy object that mimics an hprose client
  */
 export function createPooledClient(ip: string, connectionPool: ConnectionPoolInterface): any {
-  // Store custom timeout if set (default to 10 seconds)
-  let customTimeout = 10000;
+  // Store custom timeout if set (default to 6 seconds)
+  let customTimeout = 6000;
   
   // Create a proxy that intercepts all method calls
   const proxy = new Proxy({}, {

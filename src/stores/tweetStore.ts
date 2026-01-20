@@ -593,18 +593,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!tweet) return null
             }
 
-            if (tweet?.originalTweetId) {
-                // Original tweets don't use racing (loaded after main tweet)
-                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId, false)
-                if (!tweet.originalTweet) {
-                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, undefined, false)
-                    if (!tweet.originalTweet) { 
-                        console.info("Missing originalTweet", tweet)
-                        return null
-                    }
-                }
-            }
-            sessionStorage.setItem(tweetId, JSON.stringify(tweet))
+            // Note: originalTweet is now handled within fetchTweet for v3 API responses
             return tweet
         },
 
@@ -672,6 +661,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         return await client.RunMApp("get_tweet", {
                             aid: this.lapi.appId,
                             ver: "last",
+                            version: "v3",
                             tweetid: tweetId,
                             appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                         })
@@ -696,40 +686,91 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweetInDB = await providerClient.RunMApp("get_tweet", {
                         aid: this.lapi.appId,
                         ver: "last",
+                        version: "v3",
                         tweetid: tweetId,
                         appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                     })
                 }
             }
             console.log("Get tweet from db", tweetInDB, providerIp, author)
-            if (!tweetInDB)
+            if (!tweetInDB || !Array.isArray(tweetInDB) || tweetInDB.length === 0)
                 return null
+
+            // Extract tweet data from array response (v3 format)
+            const tweetData = tweetInDB[0]
+            let originalTweetData = null
+
+            // If tweet has originalTweetId, check for second element in array
+            if (tweetData.originalTweetId) {
+                if (tweetInDB.length > 1) {
+                    // Use the second element as originalTweet
+                    originalTweetData = tweetInDB[1]
+                    console.log('[fetchTweet] ✅ Original tweet found in array response')
+                } else {
+                    // Fallback: fetch original tweet separately
+                    console.log('[fetchTweet] ⚠️ Original tweet missing from array, fetching separately...')
+                    originalTweetData = await this.fetchTweet(tweetData.originalTweetId, tweetData.originalAuthorId, false)
+                    if (!originalTweetData) {
+                        console.warn('[fetchTweet] Failed to fetch original tweet as fallback')
+                    }
+                }
+            }
+
             console.log('[fetchTweet TIMING] Fetching author data...', new Date().toISOString())
-            author = author ? author : await this.getUser(tweetInDB.authorId)
+            author = author ? author : await this.getUser(tweetData.authorId)
             console.log('[fetchTweet TIMING] ✅ Author data received:', new Date().toISOString())
+
             // convert Tweet App's definition to this app's definition.
-            let tweet = {
-                mid: tweetInDB.mid,
+            let tweet: any = {
+                mid: tweetData.mid,
                 authorId: author!.mid,
-                timestamp: tweetInDB.timestamp,
+                timestamp: tweetData.timestamp,
                 author: author!,
-                title: tweetInDB.title,
-                content: tweetInDB.content,
-                attachments: tweetInDB.attachments?.map((e: MimeiFileType) => {
+                title: tweetData.title,
+                content: tweetData.content,
+                attachments: tweetData.attachments?.map((e: MimeiFileType) => {
                     e.mid = this.getMediaUrl(e.mid, "http://" + author?.providerIp)
-                    e.downloadable = tweetInDB.downloadable
+                    e.downloadable = tweetData.downloadable
                     return e
                 }),
                 comments: [],
-                originalTweetId: tweetInDB.originalTweetId,
-                originalAuthorId: tweetInDB.originalAuthorId,
+                originalTweetId: tweetData.originalTweetId,
+                originalAuthorId: tweetData.originalAuthorId,
                 provider: providerIp,
-                likeCount: tweetInDB.likeCount,
-                bookmarkCount: tweetInDB.bookmarkCount,
-                commentCount: tweetInDB.commentCount,
+                likeCount: tweetData.likeCount,
+                bookmarkCount: tweetData.bookmarkCount,
+                commentCount: tweetData.commentCount,
             }
+
+            // If we have originalTweetData, convert it too
+            if (originalTweetData) {
+                const originalAuthor = await this.getUser(originalTweetData.authorId)
+                if (originalAuthor) {
+                    tweet.originalTweet = {
+                        mid: originalTweetData.mid,
+                        authorId: originalAuthor.mid,
+                        timestamp: originalTweetData.timestamp,
+                        author: originalAuthor,
+                        title: originalTweetData.title,
+                        content: originalTweetData.content,
+                        attachments: originalTweetData.attachments?.map((e: MimeiFileType) => {
+                            e.mid = this.getMediaUrl(e.mid, "http://" + originalAuthor?.providerIp)
+                            e.downloadable = originalTweetData.downloadable
+                            return e
+                        }),
+                        comments: [],
+                        originalTweetId: originalTweetData.originalTweetId,
+                        originalAuthorId: originalTweetData.originalAuthorId,
+                        provider: providerIp,
+                        likeCount: originalTweetData.likeCount,
+                        bookmarkCount: originalTweetData.bookmarkCount,
+                        commentCount: originalTweetData.commentCount,
+                    }
+                }
+            }
+
             console.log('[fetchTweet TIMING] ✅ Complete tweet object constructed:', new Date().toISOString())
-            sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
+            sessionStorage.setItem(tweetData.mid, JSON.stringify(tweet))
             return tweet
         },
 
@@ -1081,7 +1122,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async loadComments(tweet: Tweet) {
             if (!tweet || !tweet.provider) return
-            let client = tweet.author.client
+            let client = await this.lapi.getClient(tweet.provider)
             let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -1914,7 +1955,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async getNodeIp(
             user: User,
-            v4Only = v4Only
+            v4only: boolean = v4Only
         ): Promise<string | null> {
             try {
                 const hostId = user.hostIds?.[0];

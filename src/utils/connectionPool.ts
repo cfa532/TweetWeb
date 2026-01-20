@@ -26,7 +26,7 @@ class ConnectionPoolManager {
   private readonly maxConnectionsPerIp: number = 8; // 8 connections per IP
   private readonly maxTotalConnections: number = 16; // Total 16 connections across all IPs
   private readonly connectionTimeout: number = 30000; // 30 seconds (increased to accommodate health checks and initial connections)
-  private readonly idleTimeout: number = 60000; // 1 minute idle before cleanup
+  private readonly idleTimeout: number = 1800000; // 30 minute idle before cleanup
   private readonly ayApi: string[];
   
   constructor(ayApi: string[]) {
