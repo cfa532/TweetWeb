@@ -113,7 +113,7 @@ async function loadDetail() {
                 clearTimeout(timeoutId)
                 isLoading.value = false
                 loadError.value = true
-                console.error('[TweetDetail] Failed to load tweet, retrying in 1 second...')
+                console.error('[TweetDetail] Failed to load tweet, retrying in 2 seconds...')
                 window.setTimeout(() => {
                     console.log('[TweetDetail] Retrying to load tweet...')
                     window.location.reload()
@@ -242,10 +242,6 @@ function preferredSummarySource(): Tweet | undefined {
     }
     return tweet.value
 }
-
-
-
-
 
 function resolveAttachmentURL(attachment: MimeiFileType, tweetContext: Tweet): string | null {
     const mid = attachment.mid
