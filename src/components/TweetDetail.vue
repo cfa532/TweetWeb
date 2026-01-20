@@ -75,11 +75,12 @@ onMounted(async () => {
         showDownloadPrompt.value = false
     }, 30000)
 });
-async function loadDetail() {
+async function loadDetail(retryCount = 0) {
+    const maxRetries = 3
     isLoading.value = true
     loadError.value = false
     hasLoadAttempted.value = true
-    
+
     // Safety timeout: hide spinner after 5 seconds regardless of loading state
     const timeoutId = window.setTimeout(() => {
         isLoading.value = false
@@ -87,7 +88,7 @@ async function loadDetail() {
             loadError.value = true
         }
     }, 5000)
-    
+
     try {
         let s = sessionStorage.getItem("tweetDetail")
         if (s) {
@@ -109,19 +110,13 @@ async function loadDetail() {
             console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
             tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
             console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
+
             if (!tweet.value) {
-                clearTimeout(timeoutId)
-                isLoading.value = false
-                loadError.value = true
-                console.error('[TweetDetail] Failed to load tweet, retrying in 2 seconds...')
-                window.setTimeout(() => {
-                    console.log('[TweetDetail] Retrying to load tweet...')
-                    window.location.reload()
-                }, 2000)                        // wait 2s before reload
-            } else {
-                loadError.value = false
-                await showTweet(timeoutId)
+                throw new Error('Tweet not found (null response)')
             }
+
+            loadError.value = false
+            await showTweet(timeoutId)
         }
         console.log(tweet.value)
 
@@ -136,15 +131,24 @@ async function loadDetail() {
                 }
         });
     } catch (error) {
-        console.error('Error loading tweet detail:', error);
-        clearTimeout(timeoutId)
-        isLoading.value = false
-        loadError.value = true
-        // Retry after error
-        window.setTimeout(() => {
-            console.log('[TweetDetail] Retrying after error...')
-            window.location.reload()
-        }, 2000)
+        console.error(`Error loading tweet detail (attempt ${retryCount + 1}/${maxRetries + 1}):`, error);
+
+        if (retryCount < maxRetries) {
+            console.log(`[TweetDetail] Retrying in 2 seconds... (${retryCount + 1}/${maxRetries})`)
+            // Show retry message to user
+            loadError.value = true
+            clearTimeout(timeoutId)
+            isLoading.value = false
+
+            setTimeout(() => {
+                loadDetail(retryCount + 1)
+            }, 2000)
+        } else {
+            console.error('[TweetDetail] Max retries reached, giving up')
+            clearTimeout(timeoutId)
+            isLoading.value = false
+            loadError.value = true
+        }
     }
 }
 async function showTweet(timeoutId?: number) {
@@ -316,41 +320,11 @@ const downloadingText = computed(() => {
 
 watch(tweetId, async (newValue, oldValue)=>{
     if (newValue && oldValue !== newValue) {
-        isLoading.value = true
-        loadError.value = false
-        hasLoadAttempted.value = true
-        
-        // Safety timeout: hide spinner after 5 seconds regardless of loading state
-        const timeoutId = window.setTimeout(() => {
-            isLoading.value = false
-            if (!tweet.value) {
-                loadError.value = true
-            }
-        }, 5000)
-        
-        try {
-            // Use racing for faster loading on TweetDetail page
-            let t = await tweetStore.getTweet(newValue, authorId.value, true)
-            if (t) {
-                console.log(t)
-                tweet.value = t
-                loadError.value = false
-                // Render tweet immediately, author will be updated asynchronously if needed
-                sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-                await showTweet(timeoutId)
-                // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
-            } else {
-                clearTimeout(timeoutId)
-                isLoading.value = false
-                loadError.value = true
-                console.error('[TweetDetail watch] Failed to load tweet')
-            }
-        } catch (error) {
-            console.error('Error in watch tweetId:', error)
-            clearTimeout(timeoutId)
-            isLoading.value = false
-            loadError.value = true
-        }
+        // Clear current tweet and use the same loadDetail function with retry logic
+        tweet.value = null
+        originTweet.value = null
+        isRetweet.value = false
+        await loadDetail(0)
     }
 });
 
@@ -623,7 +597,7 @@ function goBack() {
 
             <div v-if="mediaAttachments.length > 0" class="media-attachments">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="index" class="img-fluid"></MediaView>
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid"></MediaView>
             </div>
             <div v-if='documentAttachments.length > 0' class='document-attachments'>
                 <div 
@@ -659,7 +633,7 @@ function goBack() {
 
             <div v-if="mediaAttachments.length > 0" class="media-attachments">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="index" class="img-fluid">
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
                 </MediaView>
             </div>
             <div v-if='documentAttachments.length > 0' class='document-attachments'>
