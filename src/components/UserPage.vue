@@ -3,6 +3,7 @@ import { computed, onMounted, ref, onUnmounted, watch } from 'vue';
 import { useTweetStore } from '@/stores';
 import { useRoute } from 'vue-router';
 import { TweetView, AppHeader } from '@/views';
+import { isWeChatBrowser } from '@/lib';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
@@ -53,7 +54,7 @@ onUnmounted(() => {
 });
 
 async function initialLoadTweets(authorId: MimeiId) {
-    if (sessionStorage['isBot'] !== 'No') {
+    if (sessionStorage['isBot'] !== 'No' && isWeChatBrowser()) {
         if (confirm(getBotVerificationMessage())) {
             sessionStorage['isBot'] = 'No';
             await loadTweetsWithMinimum(authorId);
@@ -61,6 +62,10 @@ async function initialLoadTweets(authorId: MimeiId) {
             history.go(-1);
         }
     } else {
+        // For non-WeChat browsers, automatically pass verification
+        if (sessionStorage['isBot'] !== 'No') {
+            sessionStorage['isBot'] = 'No';
+        }
         await loadTweetsWithMinimum(authorId);
     }
 }

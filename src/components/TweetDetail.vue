@@ -3,7 +3,7 @@ import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, ItemHeader, TweetView, QRCoder } from "@/views";
-import { normalizeMediaType } from '@/lib';
+import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 
 const route = useRoute();
 const router = useRouter();
@@ -53,7 +53,7 @@ function getLoadingRetryMessage(): string {
 }
 
 onMounted(async () => {
-    if (sessionStorage["isBot"] != "No") {
+    if (sessionStorage["isBot"] != "No" && isWeChatBrowser()) {
         if (confirm(getBotVerificationMessage())) {
             sessionStorage["isBot"] = "No"
             loadDetail()
@@ -61,14 +61,18 @@ onMounted(async () => {
             history.go(-1)
         }
     } else {
+        // For non-WeChat browsers, automatically pass verification
+        if (sessionStorage["isBot"] != "No") {
+            sessionStorage["isBot"] = "No"
+        }
         loadDetail()
     }
-    
+
     // Show download prompt after 2 seconds
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
-    
+
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
@@ -90,8 +94,16 @@ async function loadDetail() {
         let s = sessionStorage.getItem("tweetDetail")
         if (s) {
             tweet.value = JSON.parse(s)
-            tweet.value.author = await tweetStore.getUser(tweet.value.author.mid)
+            // Render tweet immediately without waiting for author
             await showTweet(timeoutId)
+            // Load author asynchronously
+            tweetStore.getUser(tweet.value.author.mid).then(user => {
+                if (user && tweet.value) {
+                    tweet.value.author = user
+                }
+            }).catch(error => {
+                console.warn('[TweetDetail] Failed to load author:', error)
+            })
         }
         else {
             // Fetch tweet if it is not in session already.
@@ -515,6 +527,7 @@ watch(tweetId, async (newValue, oldValue)=>{
                 console.log(t)
                 tweet.value = t
                 loadError.value = false
+                // Render tweet immediately, author will be updated asynchronously if needed
                 sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
                 await showTweet(timeoutId)
                 // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
@@ -781,10 +794,10 @@ function goBack() {
     
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
-                :is-retweet="isRetweet" :by="tweet.author?.username">
+            <DetailHeader v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
+                :is-retweet="isRetweet" :by="tweet.author.username">
             </DetailHeader>
-            <DetailHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
+            <DetailHeader v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
         </div>
         
         <!-- App Download Prompt for All Users -->

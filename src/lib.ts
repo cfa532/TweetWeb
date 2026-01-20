@@ -81,4 +81,12 @@ function formatTimeDifference(t: number) {
     }
 }
 
+/**
+ * Checks if the user is using WeChat browser
+ * @returns True if the user agent indicates WeChat browser
+ */
+export function isWeChatBrowser(): boolean {
+    return /MicroMessenger/i.test(navigator.userAgent);
+}
+
 export { formatTimeDifference }
