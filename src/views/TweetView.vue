@@ -52,25 +52,42 @@ function openDetailView() {
     const basePath = `/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`;
 
     if (props.isComment) {
-        // Get parent tweet ID from the route if available
-        const parentTweetId = route.params.tweetId as string;
-        const parentAuthorId = route.params.authorId as string | undefined;
+        // Use props.parentTweet for correct parent information
+        const parentTweetId = props.parentTweet?.mid;
+        const parentAuthorId = props.parentTweet?.author?.mid;
 
-        // Store navigation metadata in sessionStorage as backup
-        const navigationMeta = {
-            fromComment: true,
-            parentTweetId: parentTweetId,
-            parentAuthorId: parentAuthorId
-        };
-        sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
-
-        // Navigate with query parameters for shareable URLs
-        const queryParams = new URLSearchParams({
-            fromComment: 'true',
-            parentTweetId: parentTweetId,
-            ...(parentAuthorId && { parentAuthorId })
-        });
-        router.push(`${basePath}?${queryParams.toString()}`);
+        if (!parentTweetId) {
+            // Fallback to route params if parentTweet is not available
+            const fallbackParentId = route.params.tweetId as string;
+            const fallbackAuthorId = route.params.authorId as string | undefined;
+            console.warn('[TweetView] Using fallback parent ID:', fallbackParentId);
+            const navigationMeta = {
+                fromComment: true,
+                parentTweetId: fallbackParentId,
+                parentAuthorId: fallbackAuthorId
+            };
+            sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
+            const queryParams = new URLSearchParams({
+                fromComment: 'true',
+                parentTweetId: fallbackParentId,
+                ...(fallbackAuthorId && { parentAuthorId: fallbackAuthorId })
+            });
+            router.push(`${basePath}?${queryParams.toString()}`);
+        } else {
+            // Use correct parent tweet information
+            const navigationMeta = {
+                fromComment: true,
+                parentTweetId: parentTweetId,
+                parentAuthorId: parentAuthorId
+            };
+            sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
+            const queryParams = new URLSearchParams({
+                fromComment: 'true',
+                parentTweetId: parentTweetId,
+                ...(parentAuthorId && { parentAuthorId })
+            });
+            router.push(`${basePath}?${queryParams.toString()}`);
+        }
     } else {
         // Clear navigation metadata for regular tweet navigation
         sessionStorage.removeItem('navigationMeta');

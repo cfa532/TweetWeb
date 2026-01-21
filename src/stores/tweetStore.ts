@@ -622,8 +622,14 @@ export const useTweetStore = defineStore('tweetStore', {
             if (sessionStorage.getItem(tweetId)) {
                 console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
-                t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)  // hprose client cannot be serielized.
-                return t
+                if (t.author && t.author.providerIp) {
+                    t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)  // hprose client cannot be serielized.
+                    return t
+                } else {
+                    console.log(`[fetchTweet] Cached tweet ${tweetId} missing author/providerIp, fetching fresh data`)
+                    // Remove invalid cache
+                    sessionStorage.removeItem(tweetId)
+                }
             }
 
             console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (useRacing: ${useRacing})`)

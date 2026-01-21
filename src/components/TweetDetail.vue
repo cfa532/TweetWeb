@@ -91,19 +91,43 @@ async function loadDetail(retryCount = 0) {
 
     try {
         let s = sessionStorage.getItem("tweetDetail")
+        console.log('[loadDetail] sessionStorage data exists:', !!s);
         if (s) {
-            tweet.value = JSON.parse(s)
-            // Render tweet immediately without waiting for author
-            await showTweet(timeoutId)
-            // Load author asynchronously (only if not already loaded)
-            if (!tweet.value.author && tweet.value.authorId) {
-                tweetStore.getUser(tweet.value.authorId).then(user => {
-                    if (user && tweet.value) {
-                        tweet.value.author = user
-                    }
-                }).catch(error => {
-                    console.warn('[TweetDetail] Failed to load author:', error)
-                })
+            const storedTweet = JSON.parse(s)
+            console.log('[loadDetail] storedTweet.mid:', storedTweet.mid, 'tweetId.value:', tweetId.value);
+            console.log('[loadDetail] storedTweet.author?.mid:', storedTweet.author?.mid, 'authorId.value:', authorId.value);
+            // Only use sessionStorage if the stored tweet matches the current route
+            if (storedTweet.mid === tweetId.value && (!authorId.value || storedTweet.author?.mid === authorId.value)) {
+                console.log('[loadDetail] Using cached tweet data');
+                tweet.value = storedTweet
+                // Render tweet immediately without waiting for author
+                await showTweet(timeoutId)
+                // Load author asynchronously (only if not already loaded)
+                if (!tweet.value.author && tweet.value.authorId) {
+                    tweetStore.getUser(tweet.value.authorId).then(user => {
+                        if (user && tweet.value) {
+                            tweet.value.author = user
+                        }
+                    }).catch(error => {
+                        console.warn('[TweetDetail] Failed to load author:', error)
+                    })
+                }
+            } else {
+                console.log('[loadDetail] Stored tweet doesn\'t match route, fetching new tweet');
+                // Stored tweet doesn't match current route, fetch new one
+                sessionStorage.removeItem("tweetDetail")
+                // Fetch tweet if it is not in session already.
+                // Use racing for faster loading on TweetDetail page
+                console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
+                tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+                console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
+
+                if (!tweet.value) {
+                    throw new Error('Tweet not found (null response)')
+                }
+
+                loadError.value = false
+                await showTweet(timeoutId)
             }
         }
         else {
@@ -321,12 +345,17 @@ const downloadingText = computed(() => {
 })
 
 watch(tweetId, async (newValue, oldValue)=>{
+    console.log('[tweetId watcher] tweetId changed from', oldValue, 'to', newValue);
     if (newValue && oldValue !== newValue) {
+        console.log('[tweetId watcher] Reloading tweet data for:', newValue);
         // Clear current tweet and use the same loadDetail function with retry logic
         tweet.value = null
         originTweet.value = null
         isRetweet.value = false
         await loadDetail(0)
+        console.log('[tweetId watcher] Finished reloading, tweet.value:', tweet.value);
+    } else {
+        console.log('[tweetId watcher] No change detected');
     }
 });
 
@@ -602,6 +631,15 @@ watch(() => route.query, () => {
     console.log('[TweetDetail] Route query changed, updating navigation meta');
     updateNavigationMeta();
 }, { immediate: true });
+
+// Clear invalid navigation metadata (when parentTweetId equals current tweetId)
+watch(tweetId, () => {
+    if (navigationMeta.value && navigationMeta.value.parentTweetId === tweetId.value) {
+        console.log('[TweetDetail] Clearing invalid navigation metadata (points to self)');
+        sessionStorage.removeItem('navigationMeta');
+        navigationMeta.value = null;
+    }
+});
 
 const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
 const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
