@@ -37,10 +37,6 @@ const openPlayStore = () => {
     window.open('https://play.google.com/store/apps/details?id=us.fireshare.tweet', '_blank')
 }
 
-const openDirectDownload = () => {
-    window.open('https://dtweet.app/download', '_blank')
-}
-
 const openInBrowser = (url: string) => {
     window.open(url, '_blank')
 }
@@ -152,14 +148,16 @@ watch(userId, async (nv, ov) => {
     /* Ensures space between elements */
     flex-wrap: nowrap;
     /* Prevents wrapping of the QR code */
-    min-height: 60px;
+    min-height: 56px;
     /* Added height to the parent */
 }
 
 .avatar img {
     object-fit: cover;
-    width: 60px;
-    height: 60px;
+    width: 56px !important;
+    height: 56px !important;
+    max-width: none !important;
+    max-height: none !important;
     cursor: pointer;
     transition: width 0.3s, height 0.3s;
     /* Smooth transition for size changes */
@@ -238,11 +236,6 @@ watch(userId, async (nv, ov) => {
         font-size: 0.7rem;
     }
 
-    .avatar img {
-        width: 50px;
-        height: 50px;
-    }
-
     .user-info {
         line-height: 1.2;
         flex-grow: 1;
@@ -267,18 +260,9 @@ watch(userId, async (nv, ov) => {
 }
 
 @media (min-width: 1200px) {
-    .avatar img {
-        width: 60px;
-        height: 60px;
-    }
-
     .user-info {
         margin-left: 1px;
         /* Increases margin for larger screens */
-    }
-
-    .d-flex {
-        min-height: 60px;
     }
 }
 

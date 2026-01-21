@@ -67,10 +67,13 @@ onMounted(async () => {
         loadDetail()
     }
 
-    // Show download prompt and modal after 2 seconds
+    // Show download prompt and modal after 2 seconds (modal only 1/3 of the time)
     setTimeout(() => {
         showDownloadPrompt.value = true
-        showDownloadModal.value = true
+        // Show modal only 50% of the time (random)
+        if (Math.random() < 0.5) {
+            showDownloadModal.value = true
+        }
     }, 2000)
 
     // Auto-hide download prompt after 30 seconds
