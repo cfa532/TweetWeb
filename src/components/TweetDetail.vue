@@ -167,14 +167,15 @@ async function loadDetail(retryCount = 0) {
         }
 
         if (retryCount < maxRetries) {
-            console.log(`[TweetDetail] Retrying in 2 seconds... (${retryCount + 1}/${maxRetries})`)
+            console.log(`[TweetDetail] Retrying by refreshing page... (${retryCount + 1}/${maxRetries})`)
             // Show retry message to user
             loadError.value = true
             clearTimeout(timeoutId)
             isLoading.value = false
 
+            // Refresh the page for each retry - more reliable than API calls
             setTimeout(() => {
-                loadDetail(retryCount + 1)
+                window.location.reload()
             }, 2000)
         } else {
             console.error('[TweetDetail] Max retries reached, giving up')
