@@ -939,106 +939,22 @@ function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
   if (video.value) {
-    // Reset video to beginning if it has ended
-    if (video.value.ended || video.value.currentTime >= video.value.duration) {
-      video.value.currentTime = 0;
-    }
-    
-    // Stop all other videos on the page
-    const allVideos = document.querySelectorAll('video');
-    allVideos.forEach(v => {
-      if (v !== video.value && !v.paused) {
-        v.pause();
-      }
-    });
-    
-    // Check if mobile browser
-    if (isMobileBrowser()) {
-      // Mobile: Play in fullscreen
-      video.value.muted = false;
-      
-      // For iOS Safari, use webkitEnterFullscreen
-      if ((video.value as any).webkitEnterFullscreen) {
-        try {
-          (video.value as any).webkitEnterFullscreen();
-          // Explicitly play after entering fullscreen
-          setTimeout(() => {
-            if (video.value && video.value.paused) {
-              video.value.play().then(() => {
-                isPlaying.value = true;
-                showPlayOverlay.value = false;
-              }).catch(() => {
-                video.value.muted = true;
-                video.value.play().then(() => {
-                  isPlaying.value = true;
-                  showPlayOverlay.value = false;
-                  setTimeout(() => {
-                    if (video.value) {
-                      video.value.muted = false;
-                    }
-                  }, 100);
-                }).catch(() => {});
-              });
-            }
-          }, 200);
-        } catch (e) {
-          console.log('webkitEnterFullscreen failed:', e);
-          video.value.play();
-          isPlaying.value = true;
-          showPlayOverlay.value = false;
-        }
-      } else {
-        // For Android Chrome and other mobile browsers
-        // Remove playsinline temporarily to allow fullscreen
-        const hadPlaysinline = video.value.hasAttribute('playsinline');
-        if (hadPlaysinline) {
-          video.value.removeAttribute('playsinline');
-        }
-        
-        // Try to enter fullscreen
-        const enterFullscreen = async () => {
-          try {
-            let fullscreenPromise: Promise<void> | null = null;
-            
-            if (video.value.requestFullscreen) {
-              fullscreenPromise = video.value.requestFullscreen() as Promise<void>;
-            } else if ((video.value as any).webkitRequestFullscreen) {
-              fullscreenPromise = (video.value as any).webkitRequestFullscreen();
-            } else if ((video.value as any).mozRequestFullScreen) {
-              fullscreenPromise = (video.value as any).mozRequestFullScreen();
-            } else if ((video.value as any).msRequestFullscreen) {
-              fullscreenPromise = (video.value as any).msRequestFullscreen();
-            }
-            
-            if (fullscreenPromise) {
-              await fullscreenPromise;
-            }
-            
-            // Play after fullscreen
-            await playAfterFullscreen();
-          } catch (fullscreenError) {
-            console.log('Fullscreen failed:', fullscreenError);
-            // Restore playsinline if fullscreen failed
-            if (hadPlaysinline && video.value) {
-              video.value.setAttribute('playsinline', '');
-            }
-            // Try to play anyway
-            if (video.value) {
-              video.value.play().then(() => {
-                isPlaying.value = true;
-                showPlayOverlay.value = false;
-              }).catch(() => {});
-            }
-          }
-        };
-        
-        enterFullscreen();
-      }
+    if (isPlaying.value) {
+      video.value.pause();
     } else {
-      // Desktop: Just play
-      video.value.play();
-      isPlaying.value = true;
-      showPlayOverlay.value = false;
+      // Stop all other videos on the page
+      const allVideos = document.querySelectorAll('video');
+      allVideos.forEach(v => {
+        if (v !== video.value && !v.paused) {
+          v.pause();
+        }
+      });
+
+      video.value.play().catch(() => {
+        // If autoplay fails, try muted
+        video.value.muted = true;
+        video.value.play().catch(() => {});
+      });
     }
   }
 }
@@ -1424,14 +1340,17 @@ function stopVideo() {
         </div>
       </div>
       
-      <!-- Play overlay for paused videos (mobile-friendly) -->
-      <div v-if="!isPlaying && showPlayOverlay && !autoplayBlocked" 
-           class="play-overlay" 
+      <!-- Play overlay for videos (mobile-friendly) -->
+      <div v-if="!isPlaying || isInTweetList"
+           class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
         <div class="play-overlay-button">
-          <svg viewBox="0 0 24 24" fill="white">
+          <svg v-if="!isPlaying" viewBox="0 0 24 24" fill="white">
             <path d="M8 5v14l11-7z"/>
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="white">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
           </svg>
         </div>
       </div>
