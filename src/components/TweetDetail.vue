@@ -253,50 +253,6 @@ const formattedTitle = computed(() => {
     return title
 })
 
-function shareSummaryText(): string {
-    const source = preferredSummarySource()
-    if (!source) {
-        return 'Open this tweet on Tweet.'
-    }
-    if (!tweetStore.isEmptyString(source.content)) {
-        const content = source.content!.trim()
-        return content.length > 80 ? `${content.substring(0, 80)}…` : content
-    }
-    if (!tweetStore.isEmptyString(source.title)) {
-        const title = source.title!.trim()
-        return title.length > 80 ? `${title.substring(0, 80)}…` : title
-    }
-    if (source.attachments?.length) {
-        return source.attachments.map((attachment: MimeiFileType) => `[${attachment.type}]`).join(' ')
-    }
-    return 'Open this tweet on Tweet.'
-}
-
-function preferredSummarySource(): Tweet | undefined {
-    if (isRetweet.value && originTweet.value) {
-        return originTweet.value
-    }
-    return tweet.value
-}
-
-function resolveAttachmentURL(attachment: MimeiFileType, tweetContext: Tweet): string | null {
-    const mid = attachment.mid
-    if (!mid) {
-        return null
-    }
-    if (mid.startsWith('http://') || mid.startsWith('https://')) {
-        return mid
-    }
-    const authorBase = tweetContext.author?.hostUrl
-    const fallback = authorBase ?? window.location.origin
-    try {
-        return tweetStore.getMediaUrl(mid, fallback)
-    } catch (error) {
-        console.warn('[preview] Failed to resolve attachment URL', error)
-        return null
-    }
-}
-
 // Download prompt computed properties
 const downloadText = computed(() => {
     const language = navigator.language || 'en'
@@ -307,18 +263,6 @@ const downloadText = computed(() => {
         return 'ネイティブアプリで最高の体験を'
     } else {
         return '下载APP获得最佳体验'
-    }
-})
-
-const directDownloadText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '直接下载安卓 APK'
-    } else if (language.startsWith('ja')) {
-        return '直接ダウンロード Android APK'
-    } else {
-        return 'Download Android APK'
     }
 })
 
