@@ -276,13 +276,25 @@ const downloadPageUrl = computed(() => {
 
 const downloadingText = computed(() => {
     const language = navigator.language || 'en'
-    
+
     if (language.startsWith('zh')) {
         return '下载中...'
     } else if (language.startsWith('ja')) {
         return 'ダウンロード中...'
     } else {
         return 'Downloading...'
+    }
+})
+
+const backToTweetText = computed(() => {
+    const language = navigator.language || 'en'
+
+    if (language.startsWith('zh')) {
+        return '返回推文'
+    } else if (language.startsWith('ja')) {
+        return 'ツイートに戻る'
+    } else {
+        return 'Back to Tweet'
     }
 })
 
@@ -599,7 +611,7 @@ function goBack() {
 <template>
 <PageLayout width="wide">
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
-        ← Back to Tweet
+        ← {{ backToTweetText }}
     </div>
     
     <!-- Loading retry message - only show after load attempt fails -->
