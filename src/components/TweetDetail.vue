@@ -83,6 +83,7 @@ async function loadDetail(retryCount = 0) {
 
     // Safety timeout: hide spinner after 5 seconds regardless of loading state
     const timeoutId = window.setTimeout(() => {
+        console.warn('[TweetDetail] Loading timeout reached - forcing loading to stop');
         isLoading.value = false
         if (!tweet.value) {
             loadError.value = true
@@ -158,6 +159,11 @@ async function loadDetail(retryCount = 0) {
         });
     } catch (error) {
         console.error(`Error loading tweet detail (attempt ${retryCount + 1}/${maxRetries + 1}):`, error);
+
+        // Log essential error details for debugging stuck loading states
+        if (error && typeof error === 'object' && 'message' in error) {
+            console.error(`Error details: ${error.message}`);
+        }
 
         if (retryCount < maxRetries) {
             console.log(`[TweetDetail] Retrying in 2 seconds... (${retryCount + 1}/${maxRetries})`)

@@ -20,8 +20,10 @@ const router = useRouter()
 const tweetStore = useTweetStore()
 
 function openUserPage(userId: string) {
-  tweetStore.addFollowing(userId)
+  if (author) {
+    tweetStore.addFollowing(userId)
     router.push(`/author/${userId}`)
+  }
 }
 function openDetailView() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
@@ -35,10 +37,11 @@ function openDetailView() {
 </script>
 
 <template>
-  <div v-if='author' class='tweet-header d-flex'>
+  <div class='tweet-header d-flex'>
     <!-- User Avatar -->
     <div class='avatar me-2'>
-      <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
+      <img v-if='author' :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
+      <div v-else class='rounded-circle loading-avatar'></div>
     </div>
     <!-- User Info -->
     <div class='user-info flex-grow-1' @click.prevent='openDetailView'>
@@ -48,28 +51,13 @@ function openDetailView() {
       </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>
-        <span class='username fw-bold'>{{ author.name }}</span>
+        <span class='username fw-bold' :class='{ "loading-text": !author }'>{{ author?.name || 'Loading...' }}</span>
       </div>
       <!-- Followers and Friends Links -->
       <div class='mt-1'>
-        <span class='alias text-muted'>@{{ author.username }}</span>
+        <span class='alias text-muted' :class='{ "loading-text": !author }'>@{{ author?.username || 'loading' }}</span>
         <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
           }}</span>
-      </div>
-    </div>
-  </div>
-  <!-- Loading placeholder when author is not yet loaded -->
-  <div v-else class='tweet-header d-flex'>
-    <div class='avatar me-2'>
-      <div class='rounded-circle loading-avatar'></div>
-    </div>
-    <div class='user-info flex-grow-1'>
-      <div class='username-alias-time'>
-        <span class='username fw-bold loading-text'>Loading...</span>
-      </div>
-      <div class='mt-1'>
-        <span class='alias text-muted loading-text'>@loading</span>
-        <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number) }}</span>
       </div>
     </div>
   </div>
