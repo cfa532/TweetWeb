@@ -46,11 +46,9 @@ const handleClick = () => {
     width: 100%;
     background: #1a1a1a;
     color: #ffffff;
-    padding: 0 15px;
+    padding: 0 15px 0 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-top: 10px;
-    margin-left: 4px;
-    border-radius: 8px;
     cursor: pointer;
     transition: transform 0.2s ease;
     animation: rotateToVertical 0.6s ease-out;
@@ -74,6 +72,7 @@ const handleClick = () => {
 
 .prompt-text p {
     margin: 0;
+    padding: 4px 0;
     font-size: 1.0rem;
     font-weight: 500;
     opacity: 0.9;
