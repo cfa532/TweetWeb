@@ -320,7 +320,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div class='card ms-1 tweet-container'>
+  <div class='card tweet-container'>
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -528,6 +528,24 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .tweet-container {
   overflow: hidden;
   max-height: 80vh;
+}
+
+/* Remove card styling on mobile for flush layout */
+@media (max-width: 575px) {
+  .tweet-container.card {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+  }
+
+  .tweet-container .card-body {
+    padding: 0;
+  }
+
+  .tweet-container .card-header {
+    padding: 0;
+    padding-left: 8px; /* Add left padding for item header breathing room */
+  }
 }
 
 .single-attachment {

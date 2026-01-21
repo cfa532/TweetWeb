@@ -720,6 +720,24 @@ function goBack() {
     background-color: transparent;
 }
 
+/* Remove card styling on mobile for flush layout */
+@media (max-width: 575px) {
+  .card {
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .card-body {
+    padding: 0 !important;
+  }
+
+  .card-header {
+    padding: 0 !important;
+    padding-left: 8px !important; /* Add left padding for item header breathing room */
+  }
+}
+
 .loading-retry-message p {
     font-size: 1rem;
     color: #6c757d;

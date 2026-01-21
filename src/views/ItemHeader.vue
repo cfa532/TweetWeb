@@ -39,7 +39,7 @@ function openDetailView() {
 <template>
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
-    <div class='avatar me-2'>
+    <div class='avatar me-2 author-avatar'>
       <img v-if='props.author' :src='props.author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(props.author.mid)'>
       <div v-else class='rounded-circle loading-avatar'></div>
     </div>
@@ -111,9 +111,11 @@ function openDetailView() {
   align-items: center;
 }
 
-.loading-avatar {
-  width: 40px;
-  height: 40px;
+.loading-avatar, .author-avatar .loading-avatar {
+  width: 44px !important;
+  height: 44px !important;
+  max-width: none !important;
+  max-height: none !important;
   background: #e9ecef;
   animation: pulse 1.5s ease-in-out infinite;
 }
@@ -133,10 +135,12 @@ function openDetailView() {
     opacity: 0.5;
   }
 }
-.avatar img {
+.avatar img, .author-avatar img {
   object-fit: cover;
-  width: 40px;
-  height: 40px;
+  width: 44px !important;
+  height: 44px !important;
+  max-width: none !important;
+  max-height: none !important;
   cursor: pointer;
 }
 .user-info {
