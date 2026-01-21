@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import { AppHeader, UserRow } from "@/views";
+import { LoadingSpinner, PageLayout } from "@/components";
 
 const route = useRoute();
 const userId = route.params.userId as MimeiId
@@ -105,9 +106,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <AppHeader :userId="userId"/>
-    
-    <div ref="containerRef" class="users-container">
+    <PageLayout width="normal">
+        <AppHeader :userId="userId"/>
+
+        <div ref="containerRef" class="users-container">
         <UserRow 
             v-for="userId in visibleUserIds" 
             :userId="userId" 
@@ -117,16 +119,12 @@ onUnmounted(() => {
         
         <!-- Loading spinner for initial load -->
         <div v-if="isLoading" class="d-flex justify-content-center my-3">
-            <div class="spinner-border" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
+            <LoadingSpinner />
         </div>
-        
+
         <!-- Loading spinner for more users -->
         <div v-if="isLoadingMore && !isLoading" class="d-flex justify-content-center my-3">
-            <div class="spinner-border spinner-border-sm" role="status">
-                <span class="visually-hidden">Loading more...</span>
-            </div>
+            <LoadingSpinner size="sm" />
         </div>
         
         <!-- End of list indicator -->
@@ -139,6 +137,7 @@ onUnmounted(() => {
             <small>No users found</small>
         </div>
     </div>
+    </PageLayout>
 </template>
 
 <style scoped>

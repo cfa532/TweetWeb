@@ -3,6 +3,7 @@ import { ref, computed, onMounted, reactive } from 'vue';
 import { useRoute } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
+import { EmptyState } from '@/components';
 
 // Constants
 const FILE_SIZE_THRESHOLD = 50 * 1024 * 1024; // 50MB - use arrayBuffer for files smaller than this
@@ -518,7 +519,7 @@ onMounted(() => {
 
     <!-- No files message -->
     <div v-if='!loading && !error && filteredDirectoryContents.length === 0' class='no-files'>
-      This directory is empty.
+      <EmptyState message="This directory is empty" icon="📁" />
     </div>
   </div>
 </template>

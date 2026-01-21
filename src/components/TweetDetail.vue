@@ -2,7 +2,8 @@
 import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
-import { MediaView, DetailHeader, ItemHeader, TweetView, QRCoder } from "@/views";
+import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
+import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 
 const route = useRoute();
@@ -253,30 +254,6 @@ const formattedTitle = computed(() => {
     return title
 })
 
-// Download prompt computed properties
-const downloadText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '下载APP获得最佳体验'
-    } else if (language.startsWith('ja')) {
-        return 'ネイティブアプリで最高の体験を'
-    } else {
-        return '下载APP获得最佳体验'
-    }
-})
-
-const apkText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '在浏览器中打开链接'
-    } else if (language.startsWith('ja')) {
-        return 'ブラウザでリンクを開く'
-    } else {
-        return 'Open the link in browser'
-    }
-})
 
 const downloadPageUrl = computed(() => {
     return `${window.location.origin}/apk`
@@ -605,8 +582,7 @@ function goBack() {
 </script>
 
 <template>
-<div class="row justify-content-start align-items-start">
-<div class="col-sm-12 col-md-10 col-lg-8" style="background-color:aliceblue;">
+<PageLayout width="wide">
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
         ← Back to Tweet
     </div>
@@ -619,21 +595,14 @@ function goBack() {
         <p class="mb-0">{{ getLoadingRetryMessage() }}</p>
     </div>
     
+    <DownloadPrompt :show="showDownloadPrompt" @click="openDownloadModal" />
+
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
             <DetailHeader v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
                 :is-retweet="isRetweet" :by="tweet.author.username">
             </DetailHeader>
             <DetailHeader v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
-        </div>
-        
-        <!-- App Download Prompt for All Users -->
-        <div v-if="showDownloadPrompt" class="download-prompt" @click="openDownloadModal">
-            <div class="prompt-content">
-                <div class="prompt-text">
-                    <p>{{ downloadText }} ⬇️</p>
-                </div>
-            </div>
         </div>
         
         <div v-if="isRetweet" class="card-body" id="content">
@@ -728,55 +697,19 @@ function goBack() {
     </div>
 
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
-        <div class="spinner-border" role="status">
-            <span class="visually-hidden">Loading...</span>
-        </div>
+        <LoadingSpinner />
     </div>
     
-    <!-- Download Modal Popup -->
-    <div v-if="showDownloadModal" class="modal-overlay" @click="closeDownloadModal">
-        <div class="modal-content" @click.stop>
-            <div class="modal-body">
-                <div class="platform-options">
-                    <!-- Direct Download -->
-                    <div class="platform-option">
-                        <div class="platform-qr" @click="startDirectDownload">
-                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
-                        </div>
-                        <div class="platform-info">
-                            <p v-if="isDownloading">{{ downloadingText }}</p>
-                            <a v-else href="#" @click.prevent="openInBrowser" class="browser-link">{{ apkText }}</a>
-                        </div>
-                        <div v-if="isDownloading" class="download-spinner">
-                            <span class="spinner-border spinner-border-sm" role="status"></span>
-                        </div>
-                    </div>
-                    
-                    <!-- iOS/App Store -->
-                    <div class="platform-option">
-                        <div class="platform-icon">
-                            <img src="/src/apple.png" alt="Apple" height="48" width="48" />
-                        </div>
-                        <div class="platform-qr" @click="openAppStore">
-                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
-                        </div>
-                    </div>
-                    
-                    <!-- Android/Google Play -->
-                    <div class="platform-option">
-                        <div class="platform-icon">
-                            <img src="/src/android.png" alt="Android" height="48" width="48" />
-                        </div>
-                        <div class="platform-qr" @click="openPlayStore">
-                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-</div>
+    <DownloadModal
+        :show="showDownloadModal"
+        :isDownloading="isDownloading"
+        @close="closeDownloadModal"
+        @startDownload="startDirectDownload"
+        @openAppStore="openAppStore"
+        @openPlayStore="openPlayStore"
+        @openBrowser="openInBrowser"
+    />
+</PageLayout>
 </template>
 
 <style scoped>
@@ -914,46 +847,6 @@ function goBack() {
 }
 
 /* App Download Prompt Styles */
-.download-prompt {
-    position: relative;
-    width: 100%;
-    background: #1a1a1a;
-    color: #ffffff;
-    padding: 0 15px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    cursor: pointer;
-    transition: transform 0.2s ease;
-    animation: rotateToVertical 0.6s ease-out;
-    transform-style: preserve-3d;
-    perspective: 1000px;
-}
-
-.download-prompt:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.prompt-content {
-    display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    max-width: 100%;
-    margin: 0;
-    gap: 8px;
-}
-
-.prompt-text p {
-    margin: 0;
-    font-size: 1.0rem;
-    font-weight: 500;
-    opacity: 0.9;
-    line-height: 1.4;
-}
-
-.prompt-icon {
-    font-size: 1rem;
-    flex-shrink: 0;
-}
 
 /* Modal Styles */
 .modal-overlay {
@@ -973,7 +866,7 @@ function goBack() {
 .modal-content {
     background: white;
     border-radius: 12px;
-    max-width: 600px;
+    max-width: 400px;
     width: 100%;
     max-height: 90vh;
     overflow-y: auto;
@@ -1082,16 +975,6 @@ function goBack() {
     }
 }
 
-@keyframes rotateToVertical {
-    from {
-        transform: rotateX(90deg);
-        opacity: 0;
-    }
-    to {
-        transform: rotateX(0deg);
-        opacity: 1;
-    }
-}
 
 .back-button {
     padding: 8px 16px;
@@ -1153,4 +1036,5 @@ function goBack() {
     white-space: nowrap;
     flex-shrink: 0;
 }
+
 </style>

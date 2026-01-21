@@ -4,6 +4,7 @@ import { useTweetStore } from '@/stores';
 import { useRoute } from 'vue-router';
 import { TweetView, AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
+import { LoadingSpinner, PageLayout } from '@/components';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
@@ -284,21 +285,17 @@ const handleScroll = debounce(async () => {
 </script>
 
 <template>
-    <div class='row justify-content-start align-items-start'>
-        <div class='col-sm-12 col-md-8 col-lg-6' style='background-color:aliceblue;'>
-            <AppHeader :userId='authorId' />
-            <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Pinned</b>
-            <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
-            <hr v-if='pinnedTweets?.length!>0' />
-            <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Tweets</b>
-            <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid'/>
-            <div v-if='isLoading' class='d-flex justify-content-center my-3'>
-                <div class='spinner-border' role='status'>
-                    <span class='visually-hidden'>Loading...</span>
-                </div>
-            </div>
+    <PageLayout width="normal">
+        <AppHeader :userId='authorId' />
+        <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Pinned</b>
+        <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
+        <hr v-if='pinnedTweets?.length!>0' />
+        <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Tweets</b>
+        <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid'/>
+        <div v-if='isLoading' class='d-flex justify-content-center my-3'>
+            <LoadingSpinner />
         </div>
-    </div>
+    </PageLayout>
 </template>
 
 <style scoped>

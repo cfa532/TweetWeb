@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, onUnmounted } from 'vue';
 import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
+import { LoadingSpinner, PageLayout } from '@/components';
 import { isWeChatBrowser } from '@/lib';
 
 const tweetStore = useTweetStore();
@@ -257,17 +258,13 @@ const tweetFeed = computed(() => {
 </script>
 
 <template>
-    <div class='row justify-content-start align-items-start'>
-        <div class='col-sm-12 col-md-8 col-lg-6' style='background-color:aliceblue;'>
-            <AppHeader />
-            <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid' />
-            <div v-if='isLoading' class='d-flex justify-content-center my-3'>
-                <div class='spinner-border' role='status'>
-                    <span class='visually-hidden'>Loading...</span>
-                </div>
-            </div>
+    <PageLayout width="normal">
+        <AppHeader />
+        <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid' />
+        <div v-if='isLoading' class='d-flex justify-content-center my-3'>
+            <LoadingSpinner />
         </div>
-    </div>
+    </PageLayout>
 </template>
 
 <style scoped>
