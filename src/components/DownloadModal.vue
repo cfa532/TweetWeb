@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { QRCoder } from '@/views';
 
 // Props
@@ -14,10 +14,38 @@ const emit = defineEmits<{
     startDownload: []
     openAppStore: []
     openPlayStore: []
-    openBrowser: []
+    openBrowser: [url: string]
 }>()
 
 const qrSize = 100
+const countdown = ref(9)
+let countdownInterval: number | null = null
+
+// Auto-close countdown when modal is shown
+watch(() => props.show, (newShow) => {
+    if (newShow) {
+        countdown.value = 9
+        if (countdownInterval) clearInterval(countdownInterval)
+        countdownInterval = window.setInterval(() => {
+            countdown.value--
+            if (countdown.value <= 0) {
+                if (countdownInterval) clearInterval(countdownInterval)
+                emit('close')
+            }
+        }, 1000)
+    } else {
+        if (countdownInterval) {
+            clearInterval(countdownInterval)
+            countdownInterval = null
+        }
+    }
+})
+
+onUnmounted(() => {
+    if (countdownInterval) {
+        clearInterval(countdownInterval)
+    }
+})
 
 // Localization
 const downloadingText = computed(() => {
@@ -36,11 +64,23 @@ const apkText = computed(() => {
     const language = navigator.language || 'en'
 
     if (language.startsWith('zh')) {
-        return '在浏览器中打开链接'
+        return '用浏览器下载安卓版apk'
     } else if (language.startsWith('ja')) {
-        return 'ブラウザでリンクを開く'
+        return 'ブラウザでAndroid APKをダウンロード'
     } else {
-        return 'Open the link in browser'
+        return 'Download Android APK with browser'
+    }
+})
+
+const downloadMessage = computed(() => {
+    const language = navigator.language || 'en'
+
+    if (language.startsWith('zh')) {
+        return '下载APP以获得更好的体验'
+    } else if (language.startsWith('ja')) {
+        return 'より良い体験のためにアプリをダウンロード'
+    } else {
+        return 'Download app for better experience'
     }
 })
 
@@ -53,6 +93,15 @@ const downloadPageUrl = computed(() => {
     <!-- Download Modal Popup -->
     <div v-if="show" class="modal-overlay" @click="emit('close')">
         <div class="modal-content" @click.stop>
+            <div class="modal-header">
+                <button type="button" class="btn-close" @click="emit('close')" aria-label="Close"></button>
+            </div>
+            <div class="modal-title-section">
+                <div class="countdown-circle">
+                    {{ countdown }}
+                </div>
+                <h5 class="modal-title">{{ downloadMessage }}</h5>
+            </div>
             <div class="modal-body">
                 <div class="platform-options">
                     <!-- Direct Download -->
@@ -62,7 +111,7 @@ const downloadPageUrl = computed(() => {
                         </div>
                         <div class="platform-info">
                             <p v-if="isDownloading">{{ downloadingText }}</p>
-                            <a v-else href="#" @click.prevent="emit('openBrowser')" class="browser-link">{{ apkText }}</a>
+                            <a v-else href="#" @click.prevent="emit('openBrowser', downloadPageUrl)" class="browser-link">{{ apkText }}</a>
                         </div>
                         <div v-if="isDownloading" class="download-spinner">
                             <span class="spinner-border spinner-border-sm" role="status"></span>
@@ -120,9 +169,68 @@ const downloadPageUrl = computed(() => {
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
 }
 
+.modal-header {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    padding: 16px 24px 0 24px;
+    position: relative;
+}
+
+.countdown-circle {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #667eea;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    font-weight: 700;
+    position: absolute;
+    top: 50%;
+    right: 24px;
+    transform: translateY(-50%);
+    z-index: 5;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.btn-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #999;
+    padding: 4px;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+    z-index: 11;
+}
+
+.btn-close:hover {
+    background: #f0f0f0;
+    color: #666;
+}
+
+.modal-title-section {
+    padding: 8px 80px 16px 24px;
+    text-align: center;
+    position: relative;
+}
+
+.modal-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+    line-height: 1.4;
+    position: relative;
+    z-index: 10;
+}
+
 .modal-body {
-    padding: 24px;
-    padding-top: 24px;
+    padding: 0 24px 24px 24px;
 }
 
 .platform-options {

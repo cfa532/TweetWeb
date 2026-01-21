@@ -67,11 +67,13 @@ onMounted(async () => {
         loadDetail()
     }
 
-    // Show download prompt after 2 seconds
+    // Show download prompt and modal after 2 seconds
     setTimeout(() => {
         showDownloadPrompt.value = true
+        showDownloadModal.value = true
     }, 2000)
 
+    // Auto-hide download prompt after 30 seconds
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
@@ -270,10 +272,6 @@ const formattedTitle = computed(() => {
 })
 
 
-const downloadPageUrl = computed(() => {
-    return `${window.location.origin}/apk`
-})
-
 const downloadingText = computed(() => {
     const language = navigator.language || 'en'
 
@@ -373,8 +371,8 @@ async function startDirectDownload() {
     }
 }
 
-function openInBrowser() {
-    window.open(downloadPageUrl.value, '_blank')
+function openInBrowser(url: string) {
+    window.open(url, '_blank')
 }
 
 function isVideoMedia(media?: MimeiFileType) {
@@ -621,7 +619,7 @@ function goBack() {
         </div>
         <p class="mb-0">{{ getLoadingRetryMessage() }}</p>
     </div>
-    
+
     <DownloadPrompt :show="showDownloadPrompt" @click="openDownloadModal" />
 
     <div v-if="tweet" class="card mb-1">
@@ -726,7 +724,7 @@ function goBack() {
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
         <LoadingSpinner />
     </div>
-    
+
     <DownloadModal
         :show="showDownloadModal"
         :isDownloading="isDownloading"

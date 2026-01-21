@@ -41,8 +41,8 @@ const openDirectDownload = () => {
     window.open('https://dtweet.app/download', '_blank')
 }
 
-const openInBrowser = () => {
-    window.open(downloadPageUrl.value, '_blank')
+const openInBrowser = (url: string) => {
+    window.open(url, '_blank')
 }
 
 const startDirectDownload = async () => {
