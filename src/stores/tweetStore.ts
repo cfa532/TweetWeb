@@ -634,7 +634,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
             console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (useRacing: ${useRacing})`)
             // Get IP address of the provider of this tweet
-            let author, providerClient, providerIp, tweetInDB
+            let author: any, providerClient: any, providerIp: any, tweetInDB: any
             if (authorId && !useRacing) {
                 // Use authorId only when NOT racing (for faster racing, skip this branch)
                 author = await this.getUser(authorId)
@@ -653,36 +653,71 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             } else {
                 if (useRacing) {
-                    // TweetDetail page: Get multiple provider IPs and race them for faster loading
-                    // Using only tweetId (ignoring authorId) is faster because:
-                    // 1. No need to fetch user first (blocks racing)
-                    // 2. Can start racing immediately
-                    // 3. User is fetched after race completes
-                    console.log('[fetchTweet TIMING] Starting race for tweet:', tweetId, new Date().toISOString())
-                    const providerIps = await this.getProviderIps(tweetId)
-                    if (providerIps.length === 0)
-                        return null
-                    
-                    // Race the API calls with multiple IPs
-                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
-                        return await client.RunMApp("get_tweet", {
-                            aid: this.lapi.appId,
-                            ver: "last",
-                            version: "v3",
-                            tweetid: tweetId,
-                            appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
-                        })
-                    })
-                    
-                    if (!raceResult) {
-                        console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
-                        return null;
+                    // TweetDetail page: Try author-based approach first (more reliable), then race
+                    if (authorId) {
+                        console.log('[fetchTweet] Trying author-based approach first for tweet:', tweetId)
+                        author = await this.getUser(authorId)
+                        if (author && author.providerIp) {
+                            providerIp = author.providerIp
+                            providerClient = author.client
+
+                            console.log('[fetchTweet TIMING] Trying author node:', providerIp, new Date().toISOString())
+                            try {
+                                tweetInDB = await providerClient.RunMApp("get_tweet", {
+                                    aid: this.lapi.appId,
+                                    ver: "last",
+                                    version: "v3",
+                                    tweetid: tweetId,
+                                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                                })
+
+                                if (tweetInDB) {
+                                    console.log('[fetchTweet TIMING] ✅ Author-based approach succeeded:', new Date().toISOString())
+                                } else {
+                                    console.log('[fetchTweet] Author-based approach returned null, falling back to racing')
+                                    // Reset for racing fallback
+                                    author = null
+                                    providerIp = null
+                                    providerClient = null
+                                }
+                            } catch (error) {
+                                console.warn('[fetchTweet] Author-based approach failed, falling back to racing:', error)
+                                // Reset for racing fallback
+                                author = null
+                                providerIp = null
+                                providerClient = null
+                            }
+                        }
                     }
-                    
-                    tweetInDB = raceResult.result;
-                    providerIp = raceResult.ip;
-                    providerClient = await this.lapi.getClient(providerIp);
-                    console.log('[fetchTweet TIMING] ✅ Tweet data received from race:', new Date().toISOString());
+
+                    // If author-based approach didn't work, use racing
+                    if (!tweetInDB) {
+                        console.log('[fetchTweet TIMING] Starting race for tweet:', tweetId, new Date().toISOString())
+                        const providerIps = await this.getProviderIps(tweetId)
+                        if (providerIps.length === 0)
+                            return null
+
+                        // Race the API calls with multiple IPs
+                        const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                            return await client.RunMApp("get_tweet", {
+                                aid: this.lapi.appId,
+                                ver: "last",
+                                version: "v3",
+                                tweetid: tweetId,
+                                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                            })
+                        })
+
+                        if (!raceResult) {
+                            console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
+                            return null;
+                        }
+
+                        tweetInDB = raceResult.result;
+                        providerIp = raceResult.ip;
+                        providerClient = await this.lapi.getClient(providerIp);
+                        console.log('[fetchTweet TIMING] ✅ Tweet data received from race:', new Date().toISOString());
+                    }
                 } else {
                     // Normal flow: Get single provider IP (old behavior)
                     providerIp = await this.getProviderIp(tweetId)

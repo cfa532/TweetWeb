@@ -16,6 +16,7 @@ const originTweet = ref()
 const isRetweet = ref(false)
 const isLoading = ref(false)
 const loadError = ref(false)
+const tweetNotFound = ref(false)
 const hasLoadAttempted = ref(false)
 const author = ref<User>();
 
@@ -82,26 +83,28 @@ onMounted(async () => {
     }, 30000)
 });
 async function loadDetail(retryCount = 0) {
-    const maxRetries = 5
+    const maxRetries = 3
     isLoading.value = true
     loadError.value = false
+    tweetNotFound.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: refresh page after 6 seconds if still loading (max 5 refreshes)
+    // Safety timeout: refresh page after 15 seconds if still loading (max 3 refreshes)
     const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
     let timeoutId: number | null = null;
 
-    if (refreshCount < 5) {
+    if (refreshCount < 3) {
         timeoutId = window.setTimeout(() => {
-            console.warn(`[TweetDetail] Loading timeout after 6 seconds - refreshing page (${refreshCount + 1}/5)`);
+            console.warn(`[TweetDetail] Loading timeout after 15 seconds - refreshing page (${refreshCount + 1}/3)`);
             sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
             isLoading.value = false;
             window.location.reload();
-        }, 6000);
+        }, 15000); // 15 seconds
     } else {
-        console.warn('[TweetDetail] Max refresh attempts (5) reached, stopping');
+        console.warn('[TweetDetail] Max refresh attempts (3) reached, stopping');
         isLoading.value = false;
         sessionStorage.removeItem('tweetDetailRefreshCount');
+        loadError.value = true;
         return; // Exit early if max retries reached
     }
 
@@ -180,16 +183,27 @@ async function loadDetail(retryCount = 0) {
             console.error(`Error details: ${error.message}`);
         }
 
-        if (retryCount < maxRetries) {
+        // Check if this is a "tweet not found" error
+        const isTweetNotFound = error && typeof error === 'object' && 'message' in error &&
+                               error.message === 'Tweet not found (null response)';
+
+        if (isTweetNotFound) {
+            console.error('[TweetDetail] Tweet not found - showing specific error message')
+            isLoading.value = false
+            tweetNotFound.value = true
+        } else if (retryCount < maxRetries) {
             console.log(`[TweetDetail] Retrying by refreshing page... (${retryCount + 1}/${maxRetries})`)
+            // Add 2s delay before retry
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
             // Refresh immediately on error (within max retries limit)
             const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
-            if (refreshCount < 5) {
+            if (refreshCount < 3) {
                 sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
                 clearTimeout(timeoutId);
                 window.location.reload();
             } else {
-                console.warn('[TweetDetail] Max refresh attempts (5) reached in retry logic, giving up');
+                console.warn('[TweetDetail] Max refresh attempts (3) reached in retry logic, giving up');
                 clearTimeout(timeoutId);
                 isLoading.value = false;
                 loadError.value = true;
@@ -607,6 +621,12 @@ function goBack() {
         router.back();
     }
 }
+
+function retryLoad() {
+    console.log('[TweetDetail] User initiated retry');
+    tweetNotFound.value = false;
+    loadDetail(0);
+}
 </script>
 
 <template>
@@ -615,12 +635,28 @@ function goBack() {
         ← {{ backToTweetText }}
     </div>
     
-    <!-- Loading retry message - only show after load attempt fails -->
-    <div v-if="loadError && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
-        <div class="spinner-border text-primary mb-2" role="status">
-            <span class="visually-hidden">Loading...</span>
+    <!-- Tweet not found error - specific message for non-existent tweets -->
+    <div v-if="tweetNotFound && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
+        <div class="alert alert-warning" role="alert">
+            <h5 class="alert-heading">Tweet Not Found</h5>
+            <p class="mb-3">This tweet doesn't exist or may have been deleted.</p>
+            <button @click="goBack" class="btn btn-secondary">
+                Go Back
+            </button>
         </div>
-        <p class="mb-0">{{ getLoadingRetryMessage() }}</p>
+    </div>
+
+    <!-- General error message with retry button - for network/other errors -->
+    <div v-if="loadError && !isLoading && hasLoadAttempted && !tweet && !tweetNotFound" class="loading-retry-message text-center my-4">
+        <div class="alert alert-danger" role="alert">
+            <h5 class="alert-heading">Unable to Load Tweet</h5>
+            <p class="mb-2">There was an error loading this tweet.</p>
+            <p class="mb-3 text-muted small">Check browser console for detailed error information.</p>
+            <button @click="retryLoad" class="btn btn-primary">
+                <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                Retry
+            </button>
+        </div>
     </div>
 
     <DownloadPrompt :show="showDownloadPrompt" @click="openDownloadModal" />
