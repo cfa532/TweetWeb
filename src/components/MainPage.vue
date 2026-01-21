@@ -7,6 +7,7 @@ import { isWeChatBrowser } from '@/lib';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
+const retryMessage = ref('');
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
 const pageNumber = ref(0);
@@ -150,32 +151,49 @@ async function loadTweetsWithMinimum() {
         let round = 0;
         let consecutiveFailures = 0;
         const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
-        
+        let retryCount = 0;
+        const maxRetries = 5;
+
         while (isLoading.value && round < pagesToLoad) {
-            // Add timeout to each page load - increased to 20 seconds to accommodate getProviderIp health checks
-            const loadPromise = tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
-            const timeoutPromise = new Promise<never>((_, reject) => 
-                setTimeout(() => reject(new Error('Page load timeout')), 20000)
+            // Add timeout to each page load - 6 seconds timeout, refresh immediately on timeout (max 5 refreshes)
+            const refreshCount = parseInt(sessionStorage.getItem('mainPageRefreshCount') || '0');
+
+            let timeoutId: number | null = null;
+            let hasTimedOut = false;
+            const loadPromise = tweetStore.loadTweets(undefined, pageNumber.value, pageSize).then(result => {
+                // Clear timeout immediately when load succeeds
+                if (timeoutId && !hasTimedOut) {
+                    clearTimeout(timeoutId);
+                }
+                return result;
+            });
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                timeoutId = window.setTimeout(() => {
+                    hasTimedOut = true;
+                    if (refreshCount < 5) {
+                        console.warn(`Load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`);
+                        sessionStorage.setItem('mainPageRefreshCount', (refreshCount + 1).toString());
+                        window.location.reload();
+                    } else {
+                        console.warn('Max refresh attempts (5) reached for MainPage, stopping');
+                        isLoading.value = false;
+                        sessionStorage.removeItem('mainPageRefreshCount');
+                    }
+                    reject(new Error('Page load timeout'));
+                }, 6000)
             );
             
             let loadedPageSize: number;
             try {
                 loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
                 consecutiveFailures = 0; // Reset on success
+                retryCount = 0; // Reset retry count on success
+                sessionStorage.removeItem('mainPageRefreshCount'); // Clear refresh count on success
             } catch (error) {
-                console.warn("Init load failed in round", round, error);
-                consecutiveFailures++;
-                
-                // Continue to next page if we haven't exceeded max failures
-                if (consecutiveFailures >= maxConsecutiveFailures) {
-                    console.warn("Too many consecutive failures, stopping initial load");
-                    break;
-                }
-                
-                // Still increment page number and round to try next page
-                pageNumber.value++;
-                round++;
-                continue;
+                // Timeout already handled the refresh, this catch is for any other errors
+                // which should be extremely rare since timeout handles the refresh
+                console.error('Unexpected error during load:', error);
+                break;
             }
             
             // Handle the loaded page size - 0 is a valid success case
@@ -261,8 +279,11 @@ const tweetFeed = computed(() => {
     <PageLayout width="normal">
         <AppHeader />
         <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid' />
-        <div v-if='isLoading' class='d-flex justify-content-center my-3'>
+        <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
             <LoadingSpinner />
+            <div v-if='retryMessage' class='text-muted mt-2 small'>
+                {{ retryMessage }}
+            </div>
         </div>
     </PageLayout>
 </template>

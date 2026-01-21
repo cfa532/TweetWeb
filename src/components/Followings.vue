@@ -52,20 +52,47 @@ const handleScroll = () => {
 
 onMounted(async () => {
     isLoading.value = true
-    
-    // Load all following IDs first (this is fast)
-    followingIds.value = await tweetStore.getFollowings(userId)
-    
-    isLoading.value = false
-    
-    // Load the first batch of users
-    if (followingIds.value.length > 0) {
-        await loadNextBatch()
-    }
-    
-    // Add scroll listener
-    if (containerRef.value) {
-        containerRef.value.addEventListener('scroll', handleScroll)
+
+    try {
+        // Load all following IDs with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
+        const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
+
+        let timeoutId: number | null = null;
+        const loadPromise = tweetStore.getFollowings(userId)
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            timeoutId = window.setTimeout(() => {
+                if (refreshCount < 5) {
+                    console.warn(`Followings load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`)
+                    sessionStorage.setItem('followingsRefreshCount', (refreshCount + 1).toString())
+                    isLoading.value = false
+                    window.location.reload()
+                } else {
+                    console.warn('Max refresh attempts (5) reached for Followings, stopping')
+                    isLoading.value = false
+                    sessionStorage.removeItem('followingsRefreshCount')
+                }
+                reject(new Error('Followings load timeout'))
+            }, 6000)
+        )
+
+        followingIds.value = await Promise.race([loadPromise, timeoutPromise])
+        // Success - clear the timeout
+        if (timeoutId) clearTimeout(timeoutId)
+        isLoading.value = false
+        sessionStorage.removeItem('followingsRefreshCount') // Clear on success
+
+        // Load the first batch of users
+        if (followingIds.value.length > 0) {
+            await loadNextBatch()
+        }
+
+        // Add scroll listener
+        if (containerRef.value) {
+            containerRef.value.addEventListener('scroll', handleScroll)
+        }
+    } catch (error) {
+        // Timeout already handled the refresh
+        console.error('Unexpected error loading followings:', error)
     }
 })
 
@@ -83,17 +110,46 @@ watch(() => route.params.userId, async (newUserId) => {
         followingIds.value = []
         currentIndex.value = 0
         isLoading.value = true
-        
-        const newIds = await tweetStore.getFollowings(newUserId as MimeiId)
-        followingIds.value = newIds
-        isLoading.value = false
-        
-        if (newIds.length > 0) {
-            await loadNextBatch()
-        }
-        
-        if (containerRef.value) {
-            containerRef.value.addEventListener('scroll', handleScroll)
+
+        try {
+            // Load followings with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
+            const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
+
+            let timeoutId: number | null = null;
+            const loadPromise = tweetStore.getFollowings(newUserId as MimeiId)
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                timeoutId = window.setTimeout(() => {
+                    if (refreshCount < 5) {
+                        console.warn(`Followings load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`)
+                        sessionStorage.setItem('followingsRefreshCount', (refreshCount + 1).toString())
+                        isLoading.value = false
+                        window.location.reload()
+                    } else {
+                        console.warn('Max refresh attempts (5) reached for Followings, stopping')
+                        isLoading.value = false
+                        sessionStorage.removeItem('followingsRefreshCount')
+                    }
+                    reject(new Error('Followings load timeout'))
+                }, 6000)
+            )
+
+            const newIds = await Promise.race([loadPromise, timeoutPromise])
+            // Success - clear the timeout
+            if (timeoutId) clearTimeout(timeoutId)
+            followingIds.value = newIds
+            isLoading.value = false
+            sessionStorage.removeItem('followingsRefreshCount') // Clear on success
+
+            if (newIds.length > 0) {
+                await loadNextBatch()
+            }
+
+            if (containerRef.value) {
+                containerRef.value.addEventListener('scroll', handleScroll)
+            }
+        } catch (error) {
+            // Timeout already handled the refresh
+            console.error('Unexpected error loading followings on route change:', error)
         }
     }
 })

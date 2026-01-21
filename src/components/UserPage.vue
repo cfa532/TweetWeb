@@ -8,6 +8,7 @@ import { LoadingSpinner, PageLayout } from '@/components';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
+const retryMessage = ref('');
 const pageNumber = ref(0);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
@@ -77,16 +78,9 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     isLoading.value = true;
     pageNumber.value = 0; // Reset page number for initial load
     hasMoreTweets.value = true; // Reset the flag for initial load
-    
-    // Set timeout to hide spinner after 15 seconds (matching MainPage)
-    const timeoutId = setTimeout(() => {
-        if (isLoading.value) {
-            console.warn('Initial load timeout after 15 seconds, hiding spinner');
-            isLoading.value = false;
-            initialLoad.value = false;
-        }
-    }, 15000);
-    
+
+    let currentTimeoutId: number | null = null;
+
     try {
         // Keep loading more pages until we have at least 6 tweets or no more tweets
         const minTweets = 6;
@@ -94,32 +88,46 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         let round = 0;
         let consecutiveFailures = 0;
         const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
-        
         while (isLoading.value && round < 10) {
-            // Add timeout to each page load (20 seconds to accommodate getProviderIp health checks)
-            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
-            const timeoutPromise = new Promise<never>((_, reject) => 
-                setTimeout(() => reject(new Error('Page load timeout')), 20000)
-            );
-            
+            // Add timeout to each page load - 6 seconds timeout, refresh immediately on timeout (max 5 refreshes)
+            const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
+
+            let hasTimedOut = false;
+            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize).then(result => {
+                // Clear timeout immediately when load succeeds
+                if (currentTimeoutId && !hasTimedOut) {
+                    clearTimeout(currentTimeoutId);
+                }
+                return result;
+            });
+
+            // Set timeout to refresh on failure
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                currentTimeoutId = window.setTimeout(() => {
+                    hasTimedOut = true;
+                    if (refreshCount < 5) {
+                        console.warn(`Load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`);
+                        sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
+                        window.location.reload();
+                    } else {
+                        console.warn('Max refresh attempts (5) reached for UserPage, stopping');
+                        isLoading.value = false;
+                        sessionStorage.removeItem('userPageRefreshCount');
+                    }
+                    reject(new Error('Page load timeout'));
+                }, 6000);
+            });
+
             let loadedPageSize: number;
             try {
                 loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
                 consecutiveFailures = 0; // Reset on success
+                sessionStorage.removeItem('userPageRefreshCount'); // Clear refresh count on success
             } catch (error) {
-                console.warn("Init load failed in round", round, error);
-                consecutiveFailures++;
-                
-                // Continue to next page if we haven't exceeded max failures
-                if (consecutiveFailures >= maxConsecutiveFailures) {
-                    console.warn("Too many consecutive failures, stopping initial load");
-                    break;
-                }
-                
-                // Still increment page number and round to try next page
-                pageNumber.value++;
-                round++;
-                continue;
+                // Timeout already handled the refresh, this catch is for any other errors
+                // which should be extremely rare since timeout handles the refresh
+                console.error('Unexpected error during load:', error);
+                break;
             }
             
             if (loadedPageSize) {
@@ -163,22 +171,48 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             console.warn('Initial load completed with no tweets loaded');
         }
         
-        // Load pinned tweets (with timeout protection)
+        // Load pinned tweets (with 6-second timeout, refresh on failure - max 5 refreshes)
         try {
-            const pinnedPromise = tweetStore.loadPinnedTweets(authorId);
-            const pinnedTimeout = new Promise<Tweet[]>((_, reject) => 
-                setTimeout(() => reject(new Error('Pinned tweets timeout')), 15000)
-            );
+            const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
+            let pinnedHasTimedOut = false;
+            const pinnedPromise = tweetStore.loadPinnedTweets(authorId).then(result => {
+                // Clear timeout immediately when load succeeds
+                if (currentTimeoutId && !pinnedHasTimedOut) {
+                    clearTimeout(currentTimeoutId);
+                }
+                return result;
+            });
+
+            const pinnedTimeout = new Promise<Tweet[]>((_, reject) => {
+                currentTimeoutId = window.setTimeout(() => {
+                    pinnedHasTimedOut = true;
+                    if (refreshCount < 5) {
+                        console.warn(`Pinned tweets timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`);
+                        sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
+                        window.location.reload();
+                    } else {
+                        console.warn('Max refresh attempts (5) reached for UserPage pinned tweets, stopping');
+                        isLoading.value = false;
+                        sessionStorage.removeItem('userPageRefreshCount');
+                    }
+                    reject(new Error('Pinned tweets timeout'));
+                }, 6000);
+            });
+
             pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);
             pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+            sessionStorage.removeItem('userPageRefreshCount'); // Clear on success
         } catch (error) {
-            console.warn('Error loading pinned tweets:', error);
+            // Timeout already handled the refresh
+            console.error('Unexpected error loading pinned tweets:', error);
             pinnedTweets.value = [];
         }
     } catch (error) {
         console.error('Error in loadTweetsWithMinimum:', error);
     } finally {
-        clearTimeout(timeoutId);
+        if (currentTimeoutId) {
+            clearTimeout(currentTimeoutId);
+        }
         isLoading.value = false;
         initialLoad.value = false;
     }
@@ -292,8 +326,11 @@ const handleScroll = debounce(async () => {
         <hr v-if='pinnedTweets?.length!>0' />
         <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Tweets</b>
         <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid'/>
-        <div v-if='isLoading' class='d-flex justify-content-center my-3'>
+        <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
             <LoadingSpinner />
+            <div v-if='retryMessage' class='text-muted mt-2 small'>
+                {{ retryMessage }}
+            </div>
         </div>
     </PageLayout>
 </template>

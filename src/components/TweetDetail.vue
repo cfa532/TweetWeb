@@ -77,19 +77,28 @@ onMounted(async () => {
     }, 30000)
 });
 async function loadDetail(retryCount = 0) {
-    const maxRetries = 3
+    const maxRetries = 5
     isLoading.value = true
     loadError.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: hide spinner after 5 seconds regardless of loading state
-    const timeoutId = window.setTimeout(() => {
-        console.warn('[TweetDetail] Loading timeout reached - forcing loading to stop');
-        isLoading.value = false
-        if (!tweet.value) {
-            loadError.value = true
-        }
-    }, 5000)
+    // Safety timeout: refresh page after 6 seconds if still loading (max 5 refreshes)
+    const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
+    let timeoutId: number | null = null;
+
+    if (refreshCount < 5) {
+        timeoutId = window.setTimeout(() => {
+            console.warn(`[TweetDetail] Loading timeout after 6 seconds - refreshing page (${refreshCount + 1}/5)`);
+            sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
+            isLoading.value = false;
+            window.location.reload();
+        }, 6000);
+    } else {
+        console.warn('[TweetDetail] Max refresh attempts (5) reached, stopping');
+        isLoading.value = false;
+        sessionStorage.removeItem('tweetDetailRefreshCount');
+        return; // Exit early if max retries reached
+    }
 
     try {
         let s = sessionStorage.getItem("tweetDetail")
@@ -168,15 +177,19 @@ async function loadDetail(retryCount = 0) {
 
         if (retryCount < maxRetries) {
             console.log(`[TweetDetail] Retrying by refreshing page... (${retryCount + 1}/${maxRetries})`)
-            // Show retry message to user
-            loadError.value = true
-            clearTimeout(timeoutId)
-            isLoading.value = false
-
-            // Refresh the page for each retry - more reliable than API calls
-            setTimeout(() => {
-                window.location.reload()
-            }, 2000)
+            // Refresh immediately on error (within max retries limit)
+            const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
+            if (refreshCount < 5) {
+                sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
+                clearTimeout(timeoutId);
+                window.location.reload();
+            } else {
+                console.warn('[TweetDetail] Max refresh attempts (5) reached in retry logic, giving up');
+                clearTimeout(timeoutId);
+                isLoading.value = false;
+                loadError.value = true;
+                sessionStorage.removeItem('tweetDetailRefreshCount');
+            }
         } else {
             console.error('[TweetDetail] Max retries reached, giving up')
             clearTimeout(timeoutId)
@@ -193,6 +206,7 @@ async function showTweet(timeoutId?: number) {
         document.title = formattedTitle.value
         if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
+        sessionStorage.removeItem('tweetDetailRefreshCount') // Clear refresh count on success
 
         // Load comments and additional data in parallel (truly non-blocking)
         const loadPromises = []
