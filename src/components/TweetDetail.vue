@@ -5,6 +5,7 @@ import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
 import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
 
 const route = useRoute();
 const router = useRouter();
@@ -83,25 +84,25 @@ onMounted(async () => {
     }, 30000)
 });
 async function loadDetail(retryCount = 0) {
-    const maxRetries = 3
+    const maxRetries = MAX_REFRESH_ATTEMPTS
     isLoading.value = true
     loadError.value = false
     tweetNotFound.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: refresh page after 15 seconds if still loading (max 3 refreshes)
+    // Safety timeout: refresh page after timeout if still loading (max attempts)
     const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
     let timeoutId: number | null = null;
 
-    if (refreshCount < 3) {
+    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
         timeoutId = window.setTimeout(() => {
-            console.warn(`[TweetDetail] Loading timeout after 15 seconds - refreshing page (${refreshCount + 1}/3)`);
+            console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms - refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
             sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
             isLoading.value = false;
             window.location.reload();
-        }, 15000); // 15 seconds
+        }, LOAD_TIMEOUT_MS);
     } else {
-        console.warn('[TweetDetail] Max refresh attempts (3) reached, stopping');
+        console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached, stopping`);
         isLoading.value = false;
         sessionStorage.removeItem('tweetDetailRefreshCount');
         loadError.value = true;
@@ -193,17 +194,17 @@ async function loadDetail(retryCount = 0) {
             tweetNotFound.value = true
         } else if (retryCount < maxRetries) {
             console.log(`[TweetDetail] Retrying by refreshing page... (${retryCount + 1}/${maxRetries})`)
-            // Add 2s delay before retry
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Add delay before retry
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
 
             // Refresh immediately on error (within max retries limit)
             const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
-            if (refreshCount < 3) {
+            if (refreshCount < MAX_REFRESH_ATTEMPTS) {
                 sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
                 clearTimeout(timeoutId);
                 window.location.reload();
             } else {
-                console.warn('[TweetDetail] Max refresh attempts (3) reached in retry logic, giving up');
+                console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached in retry logic, giving up`);
                 clearTimeout(timeoutId);
                 isLoading.value = false;
                 loadError.value = true;

@@ -4,6 +4,7 @@ import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout } from '@/components';
 import { isWeChatBrowser } from '@/lib';
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
@@ -155,7 +156,7 @@ async function loadTweetsWithMinimum() {
         const maxRetries = 5;
 
         while (isLoading.value && round < pagesToLoad) {
-            // Add timeout to each page load - 6 seconds timeout, refresh immediately on timeout (max 5 refreshes)
+            // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
             const refreshCount = parseInt(sessionStorage.getItem('mainPageRefreshCount') || '0');
 
             let timeoutId: number | null = null;
@@ -170,17 +171,17 @@ async function loadTweetsWithMinimum() {
             const timeoutPromise = new Promise<never>((_, reject) =>
                 timeoutId = window.setTimeout(() => {
                     hasTimedOut = true;
-                    if (refreshCount < 5) {
-                        console.warn(`Load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`);
+                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                        console.warn(`Load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
                         sessionStorage.setItem('mainPageRefreshCount', (refreshCount + 1).toString());
                         window.location.reload();
                     } else {
-                        console.warn('Max refresh attempts (5) reached for MainPage, stopping');
+                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for MainPage, stopping`);
                         isLoading.value = false;
                         sessionStorage.removeItem('mainPageRefreshCount');
                     }
                     reject(new Error('Page load timeout'));
-                }, 6000)
+                }, LOAD_TIMEOUT_MS)
             );
             
             let loadedPageSize: number;

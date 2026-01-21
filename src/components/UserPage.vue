@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, onUnmounted, watch } from 'vue';
 import { useTweetStore } from '@/stores';
 import { useRoute } from 'vue-router';
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 import { TweetView, AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout } from '@/components';
@@ -89,7 +90,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         let consecutiveFailures = 0;
         const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
         while (isLoading.value && round < 10) {
-            // Add timeout to each page load - 6 seconds timeout, refresh immediately on timeout (max 5 refreshes)
+            // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
             const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
 
             let hasTimedOut = false;
@@ -105,17 +106,17 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             const timeoutPromise = new Promise<never>((_, reject) => {
                 currentTimeoutId = window.setTimeout(() => {
                     hasTimedOut = true;
-                    if (refreshCount < 5) {
-                        console.warn(`Load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`);
+                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                        console.warn(`Load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
                         sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
                         window.location.reload();
                     } else {
-                        console.warn('Max refresh attempts (5) reached for UserPage, stopping');
+                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage, stopping`);
                         isLoading.value = false;
                         sessionStorage.removeItem('userPageRefreshCount');
                     }
                     reject(new Error('Page load timeout'));
-                }, 6000);
+                }, LOAD_TIMEOUT_MS);
             });
 
             let loadedPageSize: number;
@@ -186,17 +187,17 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             const pinnedTimeout = new Promise<Tweet[]>((_, reject) => {
                 currentTimeoutId = window.setTimeout(() => {
                     pinnedHasTimedOut = true;
-                    if (refreshCount < 5) {
-                        console.warn(`Pinned tweets timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`);
+                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                        console.warn(`Pinned tweets timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
                         sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
                         window.location.reload();
                     } else {
-                        console.warn('Max refresh attempts (5) reached for UserPage pinned tweets, stopping');
+                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage pinned tweets, stopping`);
                         isLoading.value = false;
                         sessionStorage.removeItem('userPageRefreshCount');
                     }
                     reject(new Error('Pinned tweets timeout'));
-                }, 6000);
+                }, LOAD_TIMEOUT_MS);
             });
 
             pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);

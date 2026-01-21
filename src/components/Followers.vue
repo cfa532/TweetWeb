@@ -54,25 +54,25 @@ onMounted(async () => {
     isLoading.value = true
 
     try {
-        // Load all follower IDs with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
+        // Load all follower IDs with 15-second timeout, refresh immediately on timeout (max 3 refreshes)
         const refreshCount = parseInt(sessionStorage.getItem('followersRefreshCount') || '0')
 
         let timeoutId: number | null = null;
         const loadPromise = tweetStore.getFollowers(userId)
         const timeoutPromise = new Promise<never>((_, reject) =>
             timeoutId = window.setTimeout(() => {
-                if (refreshCount < 5) {
-                    console.warn(`Followers load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`)
+                if (refreshCount < 3) {
+                    console.warn(`Followers load timeout after 15 seconds, refreshing page (${refreshCount + 1}/3)`)
                     sessionStorage.setItem('followersRefreshCount', (refreshCount + 1).toString())
                     isLoading.value = false
                     window.location.reload()
                 } else {
-                    console.warn('Max refresh attempts (5) reached for Followers, stopping')
+                    console.warn('Max refresh attempts (3) reached for Followers, stopping')
                     isLoading.value = false
                     sessionStorage.removeItem('followersRefreshCount')
                 }
                 reject(new Error('Followers load timeout'))
-            }, 6000)
+            }, 15000) // 15 seconds
         )
 
         followerIds.value = await Promise.race([loadPromise, timeoutPromise])
@@ -119,18 +119,18 @@ watch(() => route.params.userId, async (newUserId) => {
             const loadPromise = tweetStore.getFollowers(newUserId as MimeiId)
             const timeoutPromise = new Promise<never>((_, reject) =>
                 timeoutId = window.setTimeout(() => {
-                    if (refreshCount < 5) {
-                        console.warn(`Followers load timeout after 6 seconds, refreshing page (${refreshCount + 1}/5)`)
+                    if (refreshCount < 3) {
+                        console.warn(`Followers load timeout after 15 seconds, refreshing page (${refreshCount + 1}/3)`)
                         sessionStorage.setItem('followersRefreshCount', (refreshCount + 1).toString())
                         isLoading.value = false
                         window.location.reload()
                     } else {
-                        console.warn('Max refresh attempts (5) reached for Followers, stopping')
+                        console.warn('Max refresh attempts (3) reached for Followers, stopping')
                         isLoading.value = false
                         sessionStorage.removeItem('followersRefreshCount')
                     }
                     reject(new Error('Followers load timeout'))
-                }, 6000)
+                }, 15000) // 15 seconds
             )
 
             const newIds = await Promise.race([loadPromise, timeoutPromise])
