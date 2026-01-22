@@ -578,7 +578,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-item {
   width: 100%;
   height: 100%;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   position: relative;
   background-color: #000;
@@ -596,7 +598,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-item .container {
   width: 100% !important;
   height: 100% !important;
-  display: block !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   overflow: hidden;
   background-color: #000;
   margin: 0 !important;
@@ -629,20 +633,15 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .media-attachments .grid-item .container img,
 .media-attachments .grid-item .container > img,
 .media-attachments .grid-item img {
-  position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: cover !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
   object-position: center !important;
   display: block !important;
   margin: 0 !important;
   padding: 0 !important;
-  max-width: none !important;
-  max-height: none !important;
   min-width: 0 !important;
   min-height: 0 !important;
   vertical-align: middle !important;
@@ -652,9 +651,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 /* Force videos to fill grid containers - highest specificity */
 .media-attachments .grid-item .video-container,
 .grid-item .video-container {
-  width: 100% !important;
-  height: 100% !important;
-  display: block !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: auto !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   position: relative !important;
   overflow: hidden !important;
   background-color: #000 !important;
@@ -665,14 +668,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 
 .media-attachments .grid-item .video-wrapper,
 .grid-item .video-wrapper {
-  position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  display: block !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: auto !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   overflow: hidden !important;
   background-color: #000 !important;
   margin: 0 !important;

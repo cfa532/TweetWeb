@@ -35,8 +35,8 @@ const isScrolling = ref(false);
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'video';
   });
-// Controls are shown in tweet list view, hidden in detail view
-const showControls = computed(() => isInTweetList.value)
+// Hide native controls, use custom controls only
+const showControls = computed(() => false)
 
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
@@ -816,10 +816,12 @@ function handleVideoTap(event: Event) {
   
   // On mobile, check if touch is on video controls
   if (isMobileBrowser()) {
+    console.log('VideoJS: Mobile browser detected, processing tap');
+
     // Get touch position
     let clickY = 0;
     const videoHeight = video.value.offsetHeight || video.value.clientHeight;
-    
+
     if (mouseEvent instanceof TouchEvent) {
       if (mouseEvent.changedTouches && mouseEvent.changedTouches.length > 0) {
         const touch = mouseEvent.changedTouches[0];
@@ -830,10 +832,13 @@ function handleVideoTap(event: Event) {
       const rect = video.value.getBoundingClientRect();
       clickY = mouseEvent.clientY - rect.top;
     }
-    
+
     // Check if touch is on controls area (bottom 20% for mobile - controls are larger)
     const isOnControls = clickY > videoHeight * 0.8;
-    
+
+    // Check if controls are visible (video is playing or has been interacted with)
+    const controlsVisible = !video.value.paused || video.value.currentTime > 0;
+
     // If touch is directly on video element (not wrapper), it might be on controls
     if (target === video.value || target.closest('video') === video.value) {
       // Check if it's in the controls area
@@ -842,12 +847,27 @@ function handleVideoTap(event: Event) {
         return; // Let native controls handle it
       }
     }
-    
-    console.log('VideoJS: Mobile browser - opening media viewer');
-    event.preventDefault();
-    event.stopPropagation();
-    openMediaViewer();
-    return;
+
+    // Request fullscreen when controls are not visible, or when tapping on empty space
+    if (!controlsVisible) {
+      console.log('VideoJS: Mobile browser - controls not visible, requesting fullscreen');
+      event.preventDefault();
+      event.stopPropagation();
+      requestFullscreen();
+      return;
+    } else {
+      // Controls are visible
+      if (isOnControls) {
+        console.log('VideoJS: Mobile browser - tapping on controls, letting native handle');
+        return; // Let native controls handle it
+      } else {
+        console.log('VideoJS: Mobile browser - tapping on empty space with controls visible, requesting fullscreen');
+        event.preventDefault();
+        event.stopPropagation();
+        requestFullscreen();
+        return;
+      }
+    }
   }
   
   // Desktop behavior - get click position
@@ -862,15 +882,15 @@ function handleVideoTap(event: Event) {
   
   // Check if controls are visible (video is playing or has been interacted with)
   const controlsVisible = !video.value.paused || video.value.currentTime > 0;
-  
+
   if (!controlsVisible) {
     // Controls not visible - show them and play
     event.preventDefault();
     event.stopPropagation();
-    
+
     // Focus video to show controls
     video.value.focus();
-    
+
     // Play the video
     if (video.value.paused) {
       video.value.play().catch(() => {
@@ -879,7 +899,7 @@ function handleVideoTap(event: Event) {
         video.value.play().catch(() => {});
       });
     }
-    
+
     // Stop all other videos on the page
     const allVideos = document.querySelectorAll('video');
     allVideos.forEach(v => {
@@ -887,18 +907,20 @@ function handleVideoTap(event: Event) {
         v.pause();
       }
     });
-    
+
     return;
   } else {
     // Controls are visible
     if (isOnControls) {
       // Click is on controls - let native controls handle it
+      console.log('VideoJS: Tapping on controls, letting native handle');
       return;
     } else {
-      // Click is on video area (not controls) - open media viewer
+      // Click is on video area (not controls) - request fullscreen
+      console.log('VideoJS: Tapping on video area with controls visible, requesting fullscreen');
       event.preventDefault();
       event.stopPropagation();
-      openMediaViewer();
+      requestFullscreen();
       return;
     }
   }
@@ -988,6 +1010,73 @@ function handleVisibilityChange() {
   }
 }
 
+// Request fullscreen for video
+async function requestFullscreen() {
+  if (!video.value) return;
+
+  console.log('VideoJS: Requesting fullscreen for video element');
+
+  // For mobile browsers, try multiple approaches
+  if (isMobileBrowser()) {
+    console.log('VideoJS: Mobile browser detected, trying mobile-specific fullscreen');
+
+    try {
+      // Try iOS-specific fullscreen first
+      if ((video.value as any).webkitEnterFullscreen) {
+        console.log('VideoJS: Using iOS webkitEnterFullscreen()');
+        (video.value as any).webkitEnterFullscreen();
+        return;
+      }
+
+      // Try standard fullscreen API
+      if (video.value.requestFullscreen) {
+        console.log('VideoJS: Using requestFullscreen()');
+        await video.value.requestFullscreen();
+        return;
+      }
+
+      // Try webkit fullscreen
+      if ((video.value as any).webkitRequestFullscreen) {
+        console.log('VideoJS: Using webkitRequestFullscreen()');
+        (video.value as any).webkitRequestFullscreen();
+        return;
+      }
+
+      console.log('VideoJS: No mobile fullscreen API available, ensuring video plays');
+      // If fullscreen isn't available, at least make sure video plays
+      if (video.value.paused) {
+        video.value.play().catch((e: any) => console.log('VideoJS: Play failed:', e));
+      }
+
+    } catch (error) {
+      console.log('VideoJS: Mobile fullscreen failed:', error);
+      // Fallback: just play the video
+      try {
+        if (video.value.paused) {
+          video.value.play().catch((e: any) => console.log('VideoJS: Fallback play failed:', e));
+        }
+      } catch (playError) {
+        console.log('VideoJS: All mobile fullscreen attempts failed');
+      }
+    }
+  } else {
+    // Desktop fullscreen
+    try {
+      if (video.value.requestFullscreen) {
+        await video.value.requestFullscreen();
+      } else if ((video.value as any).webkitRequestFullscreen) {
+        await (video.value as any).webkitRequestFullscreen();
+      } else if ((video.value as any).mozRequestFullScreen) {
+        await (video.value as any).mozRequestFullScreen();
+      } else if ((video.value as any).msRequestFullscreen) {
+        await (video.value as any).msRequestFullscreen();
+      }
+    } catch (error) {
+      console.log('VideoJS: Desktop fullscreen failed:', error);
+    }
+  }
+}
+
 // Handle fullscreen change
 function handleFullscreenChange() {
   const isFullscreen = !!(
@@ -996,13 +1085,21 @@ function handleFullscreenChange() {
     (document as any).mozFullScreenElement ||
     (document as any).msFullscreenElement
   );
-  
+
   if (!isFullscreen && video.value) {
     // Exited fullscreen - stop the video and hide controls
     video.value.pause();
     // Controls remain enabled
     video.value.muted = false; // Restore unmuted state
     isPlaying.value = false;
+  } else if (isFullscreen && video.value) {
+    // Entered fullscreen - ensure video is playing
+    if (video.value.paused) {
+      video.value.play().catch(() => {
+        video.value!.muted = true;
+        video.value!.play().catch(() => {});
+      });
+    }
   }
 }
 
@@ -1349,8 +1446,7 @@ function stopVideo() {
       </div>
       
       <!-- Play overlay for videos (mobile-friendly) -->
-      <div v-if="!isPlaying || isInTweetList"
-           class="play-overlay"
+      <div class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
         <div class="play-overlay-button">
