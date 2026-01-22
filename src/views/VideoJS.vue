@@ -35,8 +35,8 @@ const isScrolling = ref(false);
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'video';
   });
-// Hide native controls, use custom controls only
-const showControls = computed(() => false)
+// Show native controls on desktop in detail view, hide elsewhere
+const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value)
 
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
@@ -916,12 +916,31 @@ function handleVideoTap(event: Event) {
       console.log('VideoJS: Tapping on controls, letting native handle');
       return;
     } else {
-      // Click is on video area (not controls) - request fullscreen
-      console.log('VideoJS: Tapping on video area with controls visible, requesting fullscreen');
-      event.preventDefault();
-      event.stopPropagation();
-      requestFullscreen();
-      return;
+      // Click is on video area (not controls)
+      if (showControls) {
+        // Desktop in detail view: toggle play/pause
+        console.log('VideoJS: Desktop detail view - toggling play/pause');
+        event.preventDefault();
+        event.stopPropagation();
+        if (video.value) {
+          if (video.value.paused) {
+            video.value.play().catch(() => {
+              video.value!.muted = true;
+              video.value!.play().catch(() => {});
+            });
+          } else {
+            video.value.pause();
+          }
+        }
+        return;
+      } else {
+        // Other contexts: request fullscreen
+        console.log('VideoJS: Tapping on video area, requesting fullscreen');
+        event.preventDefault();
+        event.stopPropagation();
+        requestFullscreen();
+        return;
+      }
     }
   }
 }
@@ -1446,7 +1465,8 @@ function stopVideo() {
       </div>
       
       <!-- Play overlay for videos (mobile-friendly) -->
-      <div class="play-overlay"
+      <div v-if="!showControls"
+           class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
         <div class="play-overlay-button">
