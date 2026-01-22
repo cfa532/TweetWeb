@@ -35,6 +35,9 @@ const isScrolling = ref(false);
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'video';
   });
+// Controls are shown in tweet list view, hidden in detail view
+const showControls = computed(() => isInTweetList.value)
+
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
@@ -1372,8 +1375,8 @@ function stopVideo() {
           class="video"
           :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
           :autoplay=props.autoplay
-          controls
-          :controlslist=controls
+          :controls="showControls"
+          :controlslist="showControls ? controls : undefined"
           preload="auto"
           playsinline
           webkit-playsinline
