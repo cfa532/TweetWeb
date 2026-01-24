@@ -1595,24 +1595,9 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!this.loginUser?.writableHostIp && this.loginUser?.hostIds && this.loginUser.hostIds.length >= 2) {
                 console.log('[TWEET-STORE] No writable host IP cached, checking hostIds for writable host...');
 
-                let writableHostId: string;
-                if (this.loginUser.hostIds[0] === this.loginUser.hostIds[1]) {
-                    // hostIds[0] is the writable host
-                    writableHostId = this.loginUser.hostIds[0];
-                    console.log(`[TWEET-STORE] hostIds[0] === hostIds[1], using hostIds[0] as writable host: ${writableHostId}`);
-                } else if (this.loginUser.hostIds[1]) {
-                    // hostIds[0] !== hostIds[1], fallback to get IP of writable host (hostIds[1])
-                    writableHostId = this.loginUser.hostIds[1];
-                    console.log(`[TWEET-STORE] hostIds[0] !== hostIds[1], using hostIds[1] as writable host: ${writableHostId}`);
-                } else {
-                    // hostIds[1] doesn't exist, fall back to hostIds[0]
-                    writableHostId = this.loginUser.hostIds[0];
-                    console.log(`[TWEET-STORE] hostIds[1] not available, falling back to hostIds[0]: ${writableHostId}`);
-                }
-
                 try {
                     // Create a temporary user object with the writable host ID
-                    const writableUser = { ...this.loginUser, hostId: writableHostId };
+                    const writableUser = { ...this.loginUser, hostId: this.loginUser.hostIds[0] };
 
                     // Try to get writable host IP with a short timeout
                     const ipPromise = this.getNodeIp(writableUser, true)
