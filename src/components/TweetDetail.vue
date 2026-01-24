@@ -19,13 +19,11 @@ const isLoading = ref(false)
 const loadError = ref(false)
 const tweetNotFound = ref(false)
 const hasLoadAttempted = ref(false)
-const author = ref<User>();
 
 // Download prompt variables
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
-const qrSize = 100
 
 // Localization for bot verification
 function getBotVerificationMessage(): string {
@@ -77,7 +75,7 @@ onMounted(async () => {
     // Show download modal after 6 seconds (modal only 1/3 of the time)
     setTimeout(() => {
         // Show modal only 50% of the time (random)
-        if (Math.random() < 0.5) {
+        if (Math.random() < 0.3) {
             showDownloadModal.value = true
         }
     }, 6000)

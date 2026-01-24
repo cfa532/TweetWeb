@@ -691,7 +691,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
   object-position: center !important;
   min-height: 0 !important;
   aspect-ratio: unset !important;

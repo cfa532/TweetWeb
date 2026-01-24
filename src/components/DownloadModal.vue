@@ -18,13 +18,13 @@ const emit = defineEmits<{
 }>()
 
 const qrSize = 100
-const countdown = ref(9)
+const countdown = ref(6)
 let countdownInterval: number | null = null
 
 // Auto-close countdown when modal is shown
 watch(() => props.show, (newShow) => {
     if (newShow) {
-        countdown.value = 9
+        countdown.value = 6
         if (countdownInterval) clearInterval(countdownInterval)
         countdownInterval = window.setInterval(() => {
             countdown.value--

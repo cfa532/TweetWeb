@@ -1610,7 +1610,7 @@ function stopVideo() {
   bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
   object-position: center !important;
   max-width: none !important;
   max-height: none !important;
