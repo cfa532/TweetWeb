@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
+import { reactive } from 'vue';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
+import { createPooledClient } from '@/utils/clientProxy';
+import { normalizeMediaType, v4Only } from '@/lib';
 const GUEST_ID = "000000000000000000000000000"
 const TWEET_COUNT = 30
 
@@ -13,7 +16,9 @@ export const useTweetStore = defineStore('tweetStore', {
         lapi: useLeitherStore(),
         appId: import.meta.env.VITE_MIMEI_APPID,
         installApk: import.meta.env.VITE_APP_PKG,
-        _user: null as User | null      // login user data
+        _user: null as User | null,      // login user data
+        healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(), // Cache health check results
+        healthCheckInProgress: new Map<string, Promise<boolean>>() // Track ongoing health checks
     }),
     getters: {
         /**
@@ -26,7 +31,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             if (sessionStorage.getItem("user")) {
                 let usr = JSON.parse(sessionStorage.getItem("user")!)
-                usr.client = state.lapi.getClient(usr.providerIp)
+                usr.client = createPooledClient(usr.providerIp, state.lapi.connectionPool)
                 state._user = usr
                 return usr
             }
@@ -124,6 +129,9 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
                         
+                        // Normalize media type to lowercase for consistent comparison
+                        mediaType = normalizeMediaType(mediaType);
+                        
                         return {
                             mid: this.getMediaUrl(e.mid, "http://" + author.providerIp),
                             type: mediaType,
@@ -142,18 +150,38 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (originalTweet) {
                             tweet.originalTweet = originalTweet
                         } else {
+                            // Try fetching with authorId first
+                            console.log(`[addTweetToStore] ⚠️ Original tweet not in cache, attempting to fetch: ${tweet.originalTweetId} (authorId: ${tweet.originalAuthorId})`)
                             tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
+                            
+                            // If that fails, retry without authorId (like getTweet does)
+                            if (!tweet.originalTweet) {
+                                console.log(`[addTweetToStore] First fetch attempt failed, retrying without authorId for ${tweet.originalTweetId}`)
+                                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, undefined)
+                            }
                         }
                         
                         // If originalTweetId exists but originalTweet is null, skip this tweet
                         if (!tweet.originalTweet) {
-                            console.warn("Skipping tweet with missing original tweet:", tweet.mid, "originalTweetId:", tweet.originalTweetId)
+                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
+  Retweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}
+  Original Author ID: ${tweet.originalAuthorId}
+  Possible causes: 
+    - Original tweet was deleted
+    - Original tweet is private/restricted
+    - Backend failed to include original tweet in response
+    - Network/provider node is unreachable
+  Note: This reduces visible tweet count and may affect pagination`)
                             return
                         }
                     } catch (error) {
-                        console.error("Error fetching original tweet:", tweet.originalTweetId, error)
+                        console.error(`[addTweetToStore] ❌ ERROR fetching original tweet:
+  Retweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}
+  Error:`, error)
                         // Skip this tweet if original tweet cannot be fetched
-                        console.warn("Skipping tweet due to original tweet fetch error:", tweet.mid)
+                        console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
                         return
                     }
                 }
@@ -214,6 +242,22 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Extract tweets and originalTweets from the new response format
                 const tweetsData = response.tweets
                 const originalTweetsData = response.originalTweets
+
+                // Check for potential backend issue: retweets without original tweets
+                if (tweetsData && tweetsData.length > 0) {
+                    const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
+                    const originalTweetsCount = originalTweetsData?.length || 0
+                    if (retweetCount > 0 && originalTweetsCount === 0) {
+                        console.warn(`[loadTweetsByUser] ⚠️ BACKEND ISSUE DETECTED:
+  Backend returned ${retweetCount} retweet(s) but 0 original tweets
+  This will cause retweets to be skipped if originals cannot be fetched individually
+  User: ${user.mid}, Page: ${pageNumber}`)
+                    } else if (retweetCount > originalTweetsCount) {
+                        console.warn(`[loadTweetsByUser] ⚠️ Potential backend issue:
+  Backend returned ${retweetCount} retweet(s) but only ${originalTweetsCount} original tweet(s)
+  Some retweets may be skipped if their originals are missing`)
+                    }
+                }
 
                 // Cache original tweets first (same as getTweetFeed)
                 if (originalTweetsData) {
@@ -384,12 +428,30 @@ export const useTweetStore = defineStore('tweetStore', {
                     return null
                 }
 
+                // Extract tweets from the new response format
+                const tweetsData = response.tweets
+                const originalTweetsData = response.originalTweets
+
+                // Check for potential backend issue: retweets without original tweets
+                if (tweetsData && tweetsData.length > 0) {
+                    const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
+                    const originalTweetsCount = originalTweetsData?.length || 0
+                    if (retweetCount > 0 && originalTweetsCount === 0) {
+                        console.warn(`[getTweetFeed] ⚠️ BACKEND ISSUE DETECTED:
+  Backend returned ${retweetCount} retweet(s) but 0 original tweets
+  This will cause retweets to be skipped if originals cannot be fetched individually
+  Page: ${pageNumber}`)
+                    } else if (retweetCount > originalTweetsCount) {
+                        console.warn(`[getTweetFeed] ⚠️ Potential backend issue:
+  Backend returned ${retweetCount} retweet(s) but only ${originalTweetsCount} original tweet(s)
+  Some retweets may be skipped if their originals are missing`)
+                    }
+                }
+
                 // Cache original tweets first
                 if (response.originalTweets) {
                     await this.updateOriginalTweets(response.originalTweets)
                 }
-                // Extract tweets from the new response format
-                const tweetsData = response.tweets
 
                 // Process main tweets
                 if (tweetsData) {
@@ -454,7 +516,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     aid: this.appId,
                     ver: "last",
                     appuserid: this.loginUser.mid,
-                    hostid: this.loginUser.hostId
+                    hostid: this.loginUser.hostIds?.[0]
                 }
 
                 console.log("Calling update_following_tweets with params:", params)
@@ -521,27 +583,18 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async getTweet(
             tweetId: MimeiId,
-            authorId: MimeiId | undefined = undefined
+            authorId: MimeiId | undefined = undefined,
+            useRacing: boolean = false
         ): Promise<Tweet | null> {
-            let tweet = await this.fetchTweet(tweetId, authorId)
+            let tweet = await this.fetchTweet(tweetId, authorId, useRacing)
             console.log("Get tweet", tweet)
             if (!tweet ) {
                 // Author node has not data, try to load the tweet by id alone from some other provider.
-                tweet = await this.fetchTweet(tweetId)
+                tweet = await this.fetchTweet(tweetId, undefined, useRacing)
                 if (!tweet) return null
             }
 
-            if (tweet?.originalTweetId) {
-                tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, tweet.originalAuthorId)
-                if (!tweet.originalTweet) {
-                    tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId)
-                    if (!tweet.originalTweet) { 
-                        console.info("Missing originalTweet", tweet)
-                        return null
-                    }
-                }
-            }
-            sessionStorage.setItem(tweetId, JSON.stringify(tweet))
+            // Note: originalTweet is now handled within fetchTweet for v3 API responses
             return tweet
         },
 
@@ -551,25 +604,39 @@ export const useTweetStore = defineStore('tweetStore', {
          * author data is also available on the provider. Get author data too.
          * @param tweetId The ID of the tweet to fetch
          * @param authorId Optional author ID to help locate the tweet
+         * @param useRacing If true, race multiple provider IPs for faster loading (TweetDetail page only)
          * @returns The tweet object or undefined if not found
          */
         async fetchTweet(
             tweetId: MimeiId,
-            authorId: MimeiId | undefined = undefined
+            authorId: MimeiId | undefined = undefined,
+            useRacing: boolean = false
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweets.find(e => e.mid == tweetId)
-            if (cachedTweet)
+            if (cachedTweet) {
+                console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
+            }
 
             if (sessionStorage.getItem(tweetId)) {
+                console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
-                t.author.client = this.lapi.getClient(t.author.providerIp)  // hprose client cannot be serielized.
-                return t
+                if (t.author && t.author.providerIp) {
+                    t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)  // hprose client cannot be serielized.
+                    return t
+                } else {
+                    console.log(`[fetchTweet] Cached tweet ${tweetId} missing author/providerIp, fetching fresh data`)
+                    // Remove invalid cache
+                    sessionStorage.removeItem(tweetId)
+                }
             }
+
+            console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (useRacing: ${useRacing})`)
             // Get IP address of the provider of this tweet
-            let author, providerClient, providerIp, tweetInDB
-            if (authorId) {
+            let author: any, providerClient: any, providerIp: any, tweetInDB: any
+            if (authorId && !useRacing) {
+                // Use authorId only when NOT racing (for faster racing, skip this branch)
                 author = await this.getUser(authorId)
                 if (!author)
                     return null
@@ -582,132 +649,297 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweetid: tweetId,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                     userid: authorId,     // author of the tweet
-                    hostid: author?.hostId,
+                    hostid: author?.hostIds?.[0],
                 })
             } else {
-                providerIp = await this.getProviderIp(tweetId)
-                if (!providerIp)
-                    return null
-                providerClient = this.lapi.getClient(providerIp)
-                // Get tweet data from Tweet App Mimei. Its definition is different from this app.
-                tweetInDB = await providerClient.RunMApp("get_tweet", {
-                    aid: this.lapi.appId,
-                    ver: "last",
-                    tweetid: tweetId,
-                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
-                })
+                if (useRacing) {
+                    // TweetDetail page: Try author-based approach first (more reliable), then race
+                    if (authorId) {
+                        console.log('[fetchTweet] Trying author-based approach first for tweet:', tweetId)
+                        author = await this.getUser(authorId)
+                        if (author && author.providerIp) {
+                            providerIp = author.providerIp
+                            providerClient = author.client
+
+                            console.log('[fetchTweet TIMING] Trying author node:', providerIp, new Date().toISOString())
+                            try {
+                                tweetInDB = await providerClient.RunMApp("get_tweet", {
+                                    aid: this.lapi.appId,
+                                    ver: "last",
+                                    version: "v3",
+                                    tweetid: tweetId,
+                                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                                })
+
+                                if (tweetInDB) {
+                                    console.log('[fetchTweet TIMING] ✅ Author-based approach succeeded:', new Date().toISOString())
+                                } else {
+                                    console.log('[fetchTweet] Author-based approach returned null, falling back to racing')
+                                    // Reset for racing fallback
+                                    author = null
+                                    providerIp = null
+                                    providerClient = null
+                                }
+                            } catch (error) {
+                                console.warn('[fetchTweet] Author-based approach failed, falling back to racing:', error)
+                                // Reset for racing fallback
+                                author = null
+                                providerIp = null
+                                providerClient = null
+                            }
+                        }
+                    }
+
+                    // If author-based approach didn't work, use racing
+                    if (!tweetInDB) {
+                        console.log('[fetchTweet TIMING] Starting race for tweet:', tweetId, new Date().toISOString())
+                        const providerIps = await this.getProviderIps(tweetId)
+                        if (providerIps.length === 0)
+                            return null
+
+                        // Race the API calls with multiple IPs
+                        const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                            return await client.RunMApp("get_tweet", {
+                                aid: this.lapi.appId,
+                                ver: "last",
+                                version: "v3",
+                                tweetid: tweetId,
+                                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                            })
+                        })
+
+                        if (!raceResult) {
+                            console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
+                            return null;
+                        }
+
+                        tweetInDB = raceResult.result;
+                        providerIp = raceResult.ip;
+                        providerClient = await this.lapi.getClient(providerIp);
+                        console.log('[fetchTweet TIMING] ✅ Tweet data received from race:', new Date().toISOString());
+                    }
+                } else {
+                    // Normal flow: Get single provider IP (old behavior)
+                    providerIp = await this.getProviderIp(tweetId)
+                    if (!providerIp)
+                        return null
+                    providerClient = await this.lapi.getClient(providerIp)
+                    // Get tweet data from Tweet App Mimei. Its definition is different from this app.
+                    tweetInDB = await providerClient.RunMApp("get_tweet", {
+                        aid: this.lapi.appId,
+                        ver: "last",
+                        version: "v3",
+                        tweetid: tweetId,
+                        appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
+                    })
+                }
             }
             console.log("Get tweet from db", tweetInDB, providerIp, author)
-            if (!tweetInDB)
+            if (!tweetInDB || !Array.isArray(tweetInDB) || tweetInDB.length === 0)
                 return null
-            author = author ? author : await this.getUser(tweetInDB.authorId)
-            // convert Tweet App's definition to this app's definition.
-            let tweet = {
-                mid: tweetInDB.mid,
-                authorId: author!.mid,
-                timestamp: tweetInDB.timestamp,
-                author: author!,
-                title: tweetInDB.title,
-                content: tweetInDB.content,
-                attachments: tweetInDB.attachments?.map((e: MimeiFileType) => {
-                    e.mid = this.getMediaUrl(e.mid, "http://" + author?.providerIp)
-                    e.downloadable = tweetInDB.downloadable
+
+            // Extract tweet data from array response (v3 format)
+            const tweetData = tweetInDB[0]
+            let originalTweetData = null
+
+            // If tweet has originalTweetId, check for second element in array
+            if (tweetData.originalTweetId) {
+                if (tweetInDB.length > 1) {
+                    // Use the second element as originalTweet
+                    originalTweetData = tweetInDB[1]
+                    console.log('[fetchTweet] ✅ Original tweet found in array response')
+                } else {
+                    // Fallback: fetch original tweet separately
+                    console.log('[fetchTweet] ⚠️ Original tweet missing from array, fetching separately...')
+                    originalTweetData = await this.fetchTweet(tweetData.originalTweetId, tweetData.originalAuthorId, false)
+                    if (!originalTweetData) {
+                        console.warn('[fetchTweet] Failed to fetch original tweet as fallback')
+                    }
+                }
+            }
+
+            console.log('[fetchTweet TIMING] Constructing tweet without waiting for author...', new Date().toISOString())
+
+            // convert Tweet App's definition to this app's definition (without waiting for author)
+            let tweet: any = {
+                mid: tweetData.mid,
+                authorId: tweetData.authorId,
+                timestamp: tweetData.timestamp,
+                author: null, // Will be loaded asynchronously
+                title: tweetData.title,
+                content: tweetData.content,
+                attachments: tweetData.attachments?.map((e: MimeiFileType) => {
+                    // Use provider IP for media URLs initially, will be updated when author loads
+                    e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
+                    e.downloadable = tweetData.downloadable
                     return e
                 }),
                 comments: [],
-                originalTweetId: tweetInDB.originalTweetId,
-                originalAuthorId: tweetInDB.originalAuthorId,
+                originalTweetId: tweetData.originalTweetId,
+                originalAuthorId: tweetData.originalAuthorId,
                 provider: providerIp,
-                likeCount: tweetInDB.likeCount,
-                bookmarkCount: tweetInDB.bookmarkCount,
-                commentCount: tweetInDB.commentCount,
+                likeCount: tweetData.likeCount,
+                bookmarkCount: tweetData.bookmarkCount,
+                commentCount: tweetData.commentCount,
             }
-            sessionStorage.setItem(tweetInDB.mid, JSON.stringify(tweet))
+
+            // If we have originalTweetData, convert it too (without waiting for author)
+            if (originalTweetData) {
+                tweet.originalTweet = {
+                    mid: originalTweetData.mid,
+                    authorId: originalTweetData.authorId,
+                    timestamp: originalTweetData.timestamp,
+                    author: null, // Will be loaded asynchronously
+                    title: originalTweetData.title,
+                    content: originalTweetData.content,
+                    attachments: originalTweetData.attachments?.map((e: MimeiFileType) => {
+                        e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
+                        e.downloadable = originalTweetData.downloadable
+                        return e
+                    }),
+                    comments: [],
+                    originalTweetId: originalTweetData.originalTweetId,
+                    originalAuthorId: originalTweetData.originalAuthorId,
+                    provider: providerIp,
+                    likeCount: originalTweetData.likeCount,
+                    bookmarkCount: originalTweetData.bookmarkCount,
+                    commentCount: originalTweetData.commentCount,
+                }
+            }
+
+            console.log('[fetchTweet TIMING] ✅ Tweet object constructed quickly:', new Date().toISOString())
+
+            // Load authors asynchronously (non-blocking) - expected timeouts are normal
+            let authorLoadSuccess = false
+            this.getUser(tweetData.authorId).then(author => {
+                if (author && tweet) {
+                    tweet.author = author
+                    authorLoadSuccess = true
+                    // Update media URLs with correct author provider IP
+                    if (tweet.attachments) {
+                        tweet.attachments.forEach((e: MimeiFileType) => {
+                            e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + author.providerIp)
+                        })
+                    }
+                }
+            }).catch(error => {
+                // Only log non-timeout errors to reduce noise
+                if (!error.message?.includes('timeout')) {
+                    console.warn('[fetchTweet] Failed to load author asynchronously:', tweetData.authorId, error)
+                }
+            })
+
+            // Load original tweet author asynchronously if needed
+            if (originalTweetData && tweet.originalTweet) {
+                this.getUser(originalTweetData.authorId).then(originalAuthor => {
+                    if (originalAuthor && tweet.originalTweet) {
+                        tweet.originalTweet.author = originalAuthor
+                        // Update media URLs with correct author provider IP
+                        if (tweet.originalTweet.attachments) {
+                            tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
+                                e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + originalAuthor.providerIp)
+                            })
+                        }
+                        console.log('[fetchTweet] ✅ Original tweet author loaded asynchronously')
+                    }
+                }).catch(error => {
+                    // Only log non-timeout errors to reduce noise
+                    if (!error.message?.includes('timeout')) {
+                        console.warn('[fetchTweet] Failed to load original tweet author asynchronously:', originalTweetData.authorId, error)
+                    }
+                })
+            }
+
+            console.log('[fetchTweet TIMING] ✅ Complete tweet object constructed:', new Date().toISOString())
+            sessionStorage.setItem(tweetData.mid, JSON.stringify(tweet))
             return tweet
         },
 
         /**
          * Retrieves user data by user ID, caching the result
+         * Implements retry mechanism: if first attempt fails, retry once with refreshed providerIP
          * @param userId The user ID to retrieve data for
+         * @param forceRefresh If true, bypass cache and fetch fresh data from server (used during login)
          * @returns The user object or undefined if not found
          */
-        async getUser(userId: MimeiId): Promise<User | undefined> {
-            // check if the user has been cached.
-            if (this.loginUser && this.loginUser.mid == userId)
+        async getUser(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
+            // check if the user has been cached (unless forcing refresh)
+            if (!forceRefresh && this.loginUser && this.loginUser.mid == userId)
                 return this.loginUser
-            if (this.users.get(userId))
+            if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
-            let providerIp = await this.getProviderIp(userId)
-            console.log("Get user provider IP", providerIp)
-            if (!providerIp) {
-                console.warn("No provider found for user", userId)
-                return
-            }
-            
-            // Store original provider IP to detect loops
-            const originalProviderIp = providerIp
-            let providerClient = this.lapi.getClient(providerIp)
+            // Try to get user with up to 2 attempts total
+            let providerIp: string | null = null
+            let user: any = null
+            let providerClient: any = null
 
-            let user = await providerClient.RunMApp("get_user", {
-                aid: this.appId, ver: "last", userid: userId,
-            })
-            
-            // Print the result of get_user for debugging
-            console.log("get_user result:", user)
-            
-            // Check if user is a string - if it's an IP address, retry with that IP
-            if (typeof user === 'string') {
-                // Check if the string looks like an IP address (with optional port)
-                // Format: "ip:port" or just "ip" (e.g., "115.196.201.208:8081" or "127.0.0.1:4800")
-                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/
-                if (ipPattern.test(user)) {
-                    // Check if returned IP is the same as the one used for the call
-                    // This indicates the user should be on this server but something is wrong
-                    if (user === originalProviderIp) {
-                        const errorMsg = `get_user returned the same IP as the provider IP (${originalProviderIp}). User should be on this server but get_user failed. This indicates a server-side error. User object should be on server: ${user}`
-                        console.error(errorMsg)
-                        throw new Error(errorMsg)
+            // First check if there are any provider IPs available at all
+            const availableIps = await this.getProviderIps(userId)
+            if (availableIps.length === 0) {
+                console.warn(`No provider IPs available for user ${userId} - user may not exist or be unreachable`)
+                return undefined
+            }
+
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    providerIp = await this.getProviderIp(userId)
+                    if (!providerIp) {
+                        console.warn(`No provider found for user ${userId}, attempt ${attempt}/2`)
+                        if (attempt === 2) return undefined
+                        continue
                     }
-                    
-                    console.log(`User not found on node ${providerIp}, redirecting to correct node: ${user}`)
-                    // Retry with the correct provider IP
-                    providerIp = user
-                    providerClient = this.lapi.getClient(providerIp)
+
+                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
+
                     user = await providerClient.RunMApp("get_user", {
-                        aid: this.appId, ver: "last", userid: userId,
+                        aid: this.appId,
+                        ver: "last",
+                        version: "v3",
+                        userid: userId,
                     })
-                    
-                    // Print the result after retry
-                    console.log("get_user result after retry:", user)
-                    
-                    // If it's still a string after retry, it's an error
-                    if (typeof user === 'string') {
-                        // Check again if it's the same as the retry IP
-                        if (user === providerIp) {
-                            const errorMsg = `get_user returned the same IP even after retry (${providerIp}). User should be on this server but get_user failed. User object should be on server: ${user}`
-                            console.error(errorMsg)
-                            throw new Error(errorMsg)
+
+                    // Handle wrapped JSON response
+                    if (user && typeof user === 'object' && 'success' in user) {
+                        if (user.success === true) {
+                            user = user.data;
+                        } else {
+                            // Check if it's "User not found" - if so, don't retry
+                            if (user.message === "User not found") {
+                                console.log(`User ${userId} not found on server, giving up`)
+                                return undefined
+                            } else {
+                                // Other server error, may retry
+                                console.log(`get_user server error for user ${userId}, attempt ${attempt}/2:`, user.message)
+                                user = null;
+                                if (attempt === 2) return undefined
+                                continue
+                            }
                         }
-                        console.error("get_user returned string even after retry with correct IP:", user)
-                        return undefined
                     }
-                } else {
-                    // Not an IP address, it's an error message
-                    console.error("get_user returned error string:", user)
-                    return undefined
+
+                    console.log(`get_user result for user ${userId}, attempt ${attempt}/2:`, user)
+
+                    // If we got a valid user, break out of retry loop
+                    if (user && typeof user === 'object' && user.mid && user.hostIds) {
+                        break
+                    }
+
+                } catch (error) {
+                    console.error(`get_user attempt ${attempt}/2 failed for user ${userId}:`, error)
+                    user = null
+                    if (attempt === 2) return undefined
                 }
             }
-            
-            // Ensure user has required properties for a User object
+
+            // Validate user object
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
-                console.error("get_user returned invalid User object:", user)
+                console.error(`get_user returned invalid User object for user ${userId} after 2 attempts:`, user)
                 return undefined
             }
             
             // cache the user data
             user.providerIp = providerIp
-            user.hostId = user.hostIds[0]
             // Use server's cloudDrivePort if available
             // IMPORTANT: Use nullish coalescing (??) to allow 0 as a valid value (meaning no service)
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
@@ -717,6 +949,10 @@ export const useTweetStore = defineStore('tweetStore', {
             user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
             delete user.baseUrl
             delete user.writableUrl
+            // Initialize writableHostIp if not already set
+            if (user.writableHostIp === undefined) {
+                user.writableHostIp = null
+            }
             this.users.set(userId, user)
             
             return user
@@ -736,17 +972,236 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param mid The Mimei ID to find provider for
          * @returns The IP address of the best provider or null if not found
          */
-        async getProviderIp(mid: string): Promise<string | null> {
-            let ip = await this.lapi.client.RunMApp("get_provider_ip", {
-                aid: this.lapi.appId,
-                ver: "last",
-                mid: mid,
-            })
-            if (!ip) {
-                console.error("No provider found for", mid)
-                return null
+        /**
+         * Check if a server is alive by making a simple HTTP HEAD request
+         * Uses caching to avoid redundant checks
+         * @param ip The IP address (with optional port) to check
+         * @returns True if server responds, false otherwise
+         */
+        async isServerHealthy(ip: string): Promise<boolean> {
+            const now = Date.now();
+            const cacheTTL = 30 * 60 * 1000; // 30 minutes cache
+            
+            // Check if we have a recent cached result
+            const cached = this.healthCheckCache.get(ip);
+            if (cached && (now - cached.timestamp) < cacheTTL) {
+                console.log(`[isServerHealthy] Using cached result for ${ip}: ${cached.isHealthy ? 'healthy' : 'unhealthy'}`);
+                return cached.isHealthy;
             }
-            return ip
+            
+            // Check if a health check is already in progress for this IP
+            const inProgress = this.healthCheckInProgress.get(ip);
+            if (inProgress) {
+                console.log(`[isServerHealthy] Health check already in progress for ${ip}, waiting...`);
+                return await inProgress;
+            }
+            
+            // Start a new health check
+            const healthCheckPromise = (async () => {
+                try {
+                    const baseUrl = `http://${ip}`;
+                    
+                    // Make a simple HEAD request to check if server is alive
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout for HEAD request
+                    
+                    const response = await fetch(baseUrl, {
+                        method: 'HEAD',
+                        signal: controller.signal,
+                        mode: 'no-cors', // Allow cross-origin requests
+                    }).catch(() => null);
+                    
+                    clearTimeout(timeoutId);
+                    
+                    // For no-cors mode, we just check if the request completed without error
+                    // If we get here without exception, the server is reachable
+                    const isHealthy = response !== null;
+                    
+                    // Cache the result
+                    this.healthCheckCache.set(ip, { isHealthy, timestamp: Date.now() });
+                    
+                    console.log(`[isServerHealthy] Server ${ip} is ${isHealthy ? 'reachable' : 'not reachable'}`);
+                    return isHealthy;
+                } catch (error) {
+                    console.error(`[isServerHealthy] Health check error for ${ip}:`, error);
+                    // Cache negative result
+                    this.healthCheckCache.set(ip, { isHealthy: false, timestamp: Date.now() });
+                    return false;
+                } finally {
+                    // Remove from in-progress map
+                    this.healthCheckInProgress.delete(ip);
+                }
+            })();
+            
+            // Store the promise so other callers can wait for it
+            this.healthCheckInProgress.set(ip, healthCheckPromise);
+            
+            return await healthCheckPromise;
+        },
+
+        /**
+         * Check if a server is healthy with a timeout
+         * @param ip The IP address (with optional port) to check
+         * @param timeout Timeout in milliseconds (default: 10000ms = 10s)
+         * @returns True if server is healthy within timeout, false otherwise
+         */
+        async isServerHealthyWithTimeout(ip: string, timeout: number = 10000): Promise<boolean> {
+            return Promise.race([
+                this.isServerHealthy(ip),
+                new Promise<boolean>((resolve) => {
+                    setTimeout(() => resolve(false), timeout);
+                })
+            ]);
+        },
+
+        /**
+         * Get provider IP for a user with health checking
+         * Calls get_provider_ips API and tests IPs in pairs with 10-second timeout
+         * @param mid User's member ID
+         * @param v4only If true, filter out IPv6 addresses. Default is v4Only.
+         * @returns A healthy provider IP address, or null if none found
+         */
+        /**
+         * Race multiple API calls with different provider IPs, return result from first successful call
+         * @param ips Array of IP addresses to try
+         * @param apiCall Function that takes an IP and client, returns a promise of the API call
+         * @returns Result from the first successful API call, or null if all fail
+         */
+        async raceProviderIps<T>(
+            ips: string[],
+            apiCall: (ip: string, client: any) => Promise<T>
+        ): Promise<{ result: T, ip: string } | null> {
+            if (ips.length === 0) {
+                return null;
+            }
+
+            console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
+
+            // Create promises for each IP with individual timeouts
+            const racePromises = ips.map(async (ip) => {
+                try {
+                    console.log(`[raceProviderIps] Trying IP: ${ip}`);
+                    const client = await this.lapi.getClient(ip);
+
+                    // Race the API call with a 6-second timeout
+                    const result = await Promise.race([
+                        apiCall(ip, client),
+                        new Promise<never>((_, reject) =>
+                            setTimeout(() => reject(new Error(`Timeout after 6000ms for ${ip}`)), 6000)
+                        )
+                    ]);
+
+                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}`);
+                    return { result, ip };
+                } catch (error) {
+                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
+                    throw error; // Re-throw so Promise.race can handle it
+                }
+            });
+
+            try {
+                // Race all promises, first success wins
+                const winner = await Promise.race(racePromises);
+                return winner;
+            } catch (error) {
+                console.error(`[raceProviderIps] All IPs failed:`, error);
+                return null;
+            }
+        },
+
+        /**
+         * Get a single provider IP for a given mid (returns first available)
+         * @param mid The mid to get provider IP for
+         * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
+         * @returns A single IP address, or null if none found
+         */
+        async getProviderIp(mid: string, v4only: boolean = v4Only): Promise<string | null> {
+            const ips = await this.getProviderIps(mid, v4only);
+            return ips.length > 0 ? ips[0] : null;
+        },
+
+        /**
+         * Get the first pair of provider IPs for a given mid without testing them
+         * @param mid The mid to get provider IPs for
+         * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
+         * @returns Array of IP addresses (up to 2), or empty array if none found
+         */
+        async getProviderIps(mid: string, v4only: boolean = v4Only): Promise<string[]> {
+            try {
+                console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
+                
+                // Call get_provider_ips (plural) to get list of IPs
+                const params: any = {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    version: "v2",
+                    mid: mid,
+                };
+                
+                // Only add v4only parameter if true
+                if (v4only) {
+                    params.v4only = "true";
+                }
+                
+                const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
+                
+                console.log(`[getProviderIps] Raw response from get_provider_ips for ${mid}:`, ipResponse);
+                
+                if (!ipResponse) {
+                    console.error("[getProviderIps] No response from get_provider_ips for", mid);
+                    return [];
+                }
+                
+                // Handle the response - could be array or wrapped in data property
+                let ipList: string[] = [];
+                
+                if (Array.isArray(ipResponse)) {
+                    ipList = ipResponse;
+                } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
+                    ipList = ipResponse.data;
+                } else if (typeof ipResponse === 'string') {
+                    // Single IP as string
+                    ipList = [ipResponse];
+                } else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') {
+                    // Single IP wrapped in data
+                    ipList = [ipResponse.data];
+                } else {
+                    console.error("[getProviderIps] Invalid response format from get_provider_ips:", ipResponse);
+                    return [];
+                }
+                
+                // Filter and trim IP addresses, optionally removing IPv6 addresses
+                const ipAddresses = ipList
+                    .map(ip => ip.trim())
+                    .filter(ip => {
+                        if (ip.length === 0) return false;
+                        
+                        // If v4only is true, filter out IPv6 addresses
+                        if (v4only) {
+                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
+                            if (ip.includes('[') || ip.includes(']')) return false;
+                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                            const colonCount = (ip.match(/:/g) || []).length;
+                            if (colonCount > 1) return false;
+                        }
+                        
+                        return true;
+                    });
+                
+                if (ipAddresses.length === 0) {
+                    console.error("[getProviderIps] No valid IPs returned for", mid);
+                    return [];
+                }
+                
+                // Return first 2 IPs without testing them
+                const resultIps = ipAddresses.slice(0, 2);
+                console.log(`[getProviderIps] Returning ${resultIps.length} IP address(es) for ${mid}:`, resultIps);
+                return resultIps;
+                
+            } catch (error) {
+                console.error("[getProviderIps] Error getting provider IPs for", mid, error);
+                return [];
+            }
         },
         /**
          * Load comments of a tweet into its comments attribute. 
@@ -755,7 +1210,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async loadComments(tweet: Tweet) {
             if (!tweet || !tweet.provider) return
-            let client = tweet.author.client
+            let client = await this.lapi.getClient(tweet.provider)
             let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -767,36 +1222,58 @@ export const useTweetStore = defineStore('tweetStore', {
             
             // comment type is a different Tweet type from the definition in this app
             if (comments) {
-                for (const e of comments) {
+                // Create comment objects without authors first, then load authors asynchronously
+                const commentPromises = comments.map(async (e) => {
                     try {
                         // Skip null or invalid comments
                         if (!e || !e.mid || !e.authorId) {
                             console.warn("Skipping invalid comment:", e)
-                            continue
+                            return null
                         }
-                        
-                        let author = await this.getUser(e.authorId)
-                        if (author) {
-                            tweet.comments?.push({
-                                mid: e.mid,
-                                authorId: e.authorId,
-                                author: author,
-                                content: e.content,
-                                timestamp: e.timestamp,
-                                attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
-                                    .map((a: MimeiFileType) => {
-                                        // comments on the same node as the tweet.
-                                        if (a.mid && tweet.provider) {
-                                            a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
-                                        }
-                                        return a
-                                    }),
-                            })
-                        }
+
+                        // Create reactive comment object without author initially
+                        const comment: any = reactive({
+                            mid: e.mid,
+                            authorId: e.authorId,
+                            author: null as User | null, // Will be loaded asynchronously
+                            content: e.content,
+                            timestamp: e.timestamp,
+                            attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
+                                .map((a: MimeiFileType) => {
+                                    // comments on the same node as the tweet.
+                                    if (a.mid && tweet.provider) {
+                                        a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
+                                    }
+                                    return a
+                                }),
+                        })
+
+                        // Load author asynchronously
+                        this.getUser(e.authorId).then(author => {
+                            if (author && comment) {
+                                comment.author = author
+                            }
+                        }).catch(error => {
+                            // Only log errors for non-timeout cases to reduce noise
+                            if (!error.message?.includes('timeout')) {
+                                console.warn("Error loading comment author:", e.authorId, error)
+                            }
+                        })
+
+                        return comment
                     } catch (error) {
                         console.error("Error processing comment:", e?.mid || "unknown", error)
-                        continue
+                        return null
                     }
+                })
+
+                // Wait for all comment objects to be created (but not for authors to load)
+                const commentObjects = await Promise.all(commentPromises)
+                const validComments = commentObjects.filter((c): c is NonNullable<typeof c> => c !== null)
+
+                // Add all comments to the tweet
+                if (tweet.comments) {
+                    tweet.comments.push(...validComments)
                 }
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
@@ -827,21 +1304,32 @@ export const useTweetStore = defineStore('tweetStore', {
             const maxRetries = 2;
             let lastError: any = null;
 
+            console.log(`[login] Starting login for username: ${username}`);
+
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
+                    console.log(`[login] Attempt ${attempt + 1}/${maxRetries + 1}`);
+                    
                     // given username, get UserId
+                    console.log(`[login] Calling get_userid for username: ${username}`);
                     let userId = await this.lapi.client.RunMApp("get_userid", {
                         aid: this.appId, ver: "last", username: username
                     })
-                    console.log("Login user ID", userId)
+                    console.log(`[login] Got userId: ${userId}`)
                     if (!userId) {
-                        console.error("Login failed: User not found", username)
-                        useAlertStore().error("User not found. Please check your username.")
-                        return
+                        console.error(`[login] getUserId returned null for username: ${username}`)
+                        throw new Error("User not found. Please check your username.")
                     }
                     
-                    let user = await this.getUser(userId)
-                    console.log("Login user", user)
+                    console.log(`[login] Calling getUser for userId: ${userId} with forceRefresh=true`);
+                    // Force refresh to bypass cache and get fresh IP (like iOS does)
+                    // Clear any cached user data before retry to force fresh IP resolution
+                    if (attempt > 0) {
+                        this.removeUser(userId)
+                        sessionStorage.removeItem(userId)
+                    }
+                    let user = await this.getUser(userId, true)
+                    console.log(`[login] getUser returned:`, user ? `user with providerIp: ${user.providerIp}` : 'null')
                     if (!user) {
                         // Retry on user fetch failure (could be network issue)
                         if (attempt < maxRetries) {
@@ -851,13 +1339,27 @@ export const useTweetStore = defineStore('tweetStore', {
                             continue
                         }
                         console.error("Login failed: Could not fetch user data", userId)
-                        useAlertStore().error("Could not fetch user data. Please try again.")
-                        return
+                        throw new Error("Could not fetch user data. Please try again.")
                     }
                     
-                    let ret = await user.client.RunMApp("login", {
-                        aid: this.appId, ver: "last", username: username, password: password
-                    })
+                    console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
+                    // Set timeout for login API call (15 seconds for faster failure detection)
+                    const originalTimeout = user.client.timeout
+                    user.client.timeout = 15000  // 15 seconds
+                    let ret
+                    try {
+                        ret = await user.client.RunMApp("login", {
+                            aid: this.appId, 
+                            ver: "last", 
+                            version: "v2",  // Request v2 format response
+                            username: username, 
+                            password: password
+                        })
+                    } finally {
+                        // Restore original timeout
+                        user.client.timeout = originalTimeout
+                    }
+                    console.log(`[login] Login API returned:`, ret);
                     if (!ret) {
                         // Retry on authentication failure (could be network issue)
                         if (attempt < maxRetries) {
@@ -867,46 +1369,53 @@ export const useTweetStore = defineStore('tweetStore', {
                             continue
                         }
                         console.error("Login failed: Authentication failed", userId)
-                        useAlertStore().error("Authentication failed. Please check your credentials.")
-                        return
+                        throw new Error("Authentication failed. Please check your credentials.")
                     }
                     
-                    if (ret["status"] === 'success') {
-                        /**
-                         * Now find the IP of a host where user has write permission
-                         */
-                        if (user.hostId) {
-                            const ip = await this.getNodeIp(user, true)
-                            console.log("Host IP", ip)
-                            if (!ip) {
-                                // Retry on IP fetch failure (could be network issue)
-                                if (attempt < maxRetries) {
-                                    console.warn(`Login attempt ${attempt + 1} failed: No writable host found. Retrying...`)
-                                    lastError = new Error("No writable host found")
-                                    await this.delay(1000 * (attempt + 1)) // Exponential backoff: 1s, 2s
-                                    continue
-                                }
-                                console.error("No writable host found for user", ip, user)
-                                useAlertStore().error("No writable host found for user. Please contact support.")
-                                return
-                            }
-                            user.providerIp = ip
-                            sessionStorage.setItem("user", JSON.stringify(user))
-                            user.client = this.lapi.getClient(ip)
-                            this._user = user
-                            this.addFollowing(userId)
-                            useAlertStore().success("Login successful!")
-                            return user
-                        } else {
-                            console.error("Login failed: User has no host ID", user)
-                            useAlertStore().error("User account configuration error. Please contact support.")
-                            return
+                    // Handle v2 format: check success field first, then status field for backward compatibility
+                    let loginSuccess = false
+                    let failureReason = ""
+                    
+                    if (ret["success"] !== undefined) {
+                        // v2 format response
+                        loginSuccess = ret["success"] === true
+                        if (!loginSuccess) {
+                            failureReason = ret["message"] || "Login failed"
+                        }
+                    } else if (ret["status"] !== undefined) {
+                        // Legacy format response
+                        loginSuccess = ret["status"] === 'success'
+                        if (!loginSuccess) {
+                            failureReason = ret["reason"] || "Login failed"
                         }
                     } else {
+                        // Invalid response format
+                        console.error("Invalid login response format", ret)
+                        failureReason = "Invalid server response"
+                    }
+                    
+                    if (loginSuccess) {
+                        console.log(`[login] Login successful for ${username}`);
+                        // Use authentication provider IP for login - writable host will be fetched lazily when needed
+                        console.log(`[login] Using authentication provider IP: ${user.providerIp}`)
+
+                        if (!user.providerIp) {
+                            console.error("Login failed: No provider IP available for user", user)
+                            throw new Error("No server connection available. Please try again later.")
+                        }
+
+                        // Store user data and create client with auth provider IP
+                        sessionStorage.setItem("user", JSON.stringify(user))
+                        user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
+                        this._user = user
+                        this.addFollowing(userId)
+                        console.log(`[login] Login flow completed successfully for ${username}`);
+                        useAlertStore().success("Login successful!")
+                        return user
+                    } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)
-                        console.error("Login failed", ret["reason"])
-                        useAlertStore().error(ret["reason"] || "Login failed. Please check your credentials.")
-                        return
+                        console.error("Login failed:", failureReason)
+                        throw new Error(failureReason || "Login failed. Please check your credentials.")
                     }
                 } catch (error) {
                     lastError = error
@@ -917,17 +1426,16 @@ export const useTweetStore = defineStore('tweetStore', {
                         continue
                     }
                     console.error("Login error:", error)
-                    useAlertStore().error("Login failed due to network error. Please try again.")
-                    return
+                    // Re-throw to let UserLogin.vue handle the error display
+                    throw error
                 }
             }
 
             // If we exhausted all retries
             if (lastError) {
                 console.error("Login failed after all retries:", lastError)
-                useAlertStore().error("Login failed after multiple attempts. Please try again later.")
+                throw new Error("Login failed after multiple attempts. Please try again later.")
             }
-            return
         },
 
         /**
@@ -1007,8 +1515,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
             
-            if (!parentAuthor.hostId) {
-                console.error("Parent tweet author's hostId is missing")
+            if (!parentAuthor.hostIds || !parentAuthor.hostIds[0]) {
+                console.error("Parent tweet author's hostIds[0] is missing")
                 return
             }
 
@@ -1019,7 +1527,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
                 tweetid: parentTweetId,         // ID of tweet containing the comment
                 commentid: commentId,            // ID of comment to delete
-                hostid: parentAuthor.hostId      // Node ID where the tweet is hosted
+                hostid: parentAuthor.hostIds[0]      // Node ID where the tweet is hosted
             })
 
             // After successful deletion, remove comment from local cache
@@ -1082,7 +1590,58 @@ export const useTweetStore = defineStore('tweetStore', {
                 downloadable: tweet.downloadable,
                 tweetId: tweetId
             });
-            
+
+            // Check if we need to get writable host IP
+            if (!this.loginUser?.writableHostIp && this.loginUser?.hostIds && this.loginUser.hostIds.length >= 2) {
+                console.log('[TWEET-STORE] No writable host IP cached, checking hostIds for writable host...');
+
+                let writableHostId: string;
+                if (this.loginUser.hostIds[0] === this.loginUser.hostIds[1]) {
+                    // hostIds[0] is the writable host
+                    writableHostId = this.loginUser.hostIds[0];
+                    console.log(`[TWEET-STORE] hostIds[0] === hostIds[1], using hostIds[0] as writable host: ${writableHostId}`);
+                } else if (this.loginUser.hostIds[1]) {
+                    // hostIds[0] !== hostIds[1], fallback to get IP of writable host (hostIds[1])
+                    writableHostId = this.loginUser.hostIds[1];
+                    console.log(`[TWEET-STORE] hostIds[0] !== hostIds[1], using hostIds[1] as writable host: ${writableHostId}`);
+                } else {
+                    // hostIds[1] doesn't exist, fall back to hostIds[0]
+                    writableHostId = this.loginUser.hostIds[0];
+                    console.log(`[TWEET-STORE] hostIds[1] not available, falling back to hostIds[0]: ${writableHostId}`);
+                }
+
+                try {
+                    // Create a temporary user object with the writable host ID
+                    const writableUser = { ...this.loginUser, hostId: writableHostId };
+
+                    // Try to get writable host IP with a short timeout
+                    const ipPromise = this.getNodeIp(writableUser, true)
+                    const timeoutPromise = new Promise<string | null>((resolve) => {
+                        setTimeout(() => resolve(null), 5000) // 5 second timeout for writable host discovery
+                    })
+                    const writableIp = await Promise.race([ipPromise, timeoutPromise])
+
+                    if (writableIp) {
+                        console.log(`[TWEET-STORE] Got writable host IP: ${writableIp}`)
+                        // Update user with writable host IP
+                        this.loginUser.writableHostIp = writableIp
+                        this.loginUser.providerIp = writableIp
+                        this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
+                        // Update stored user data
+                        sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+                        console.log('[TWEET-STORE] Switched to writable host IP for upload')
+                    } else {
+                        console.log('[TWEET-STORE] Writable host IP not available, using current provider IP')
+                    }
+                } catch (error) {
+                    console.warn('[TWEET-STORE] Failed to get writable host IP, using current provider IP:', error)
+                }
+            } else if (this.loginUser?.writableHostIp) {
+                console.log(`[TWEET-STORE] Using cached writable host IP: ${this.loginUser.writableHostIp}`)
+            } else if (!this.loginUser?.hostIds || this.loginUser.hostIds.length < 2) {
+                console.log('[TWEET-STORE] User does not have enough hostIds for writable host detection, using current provider IP')
+            }
+
             var ret: any
             const originalTimeout = this.loginUser?.client.timeout
             
@@ -1110,10 +1669,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         console.log('[TWEET-STORE] Calling add_comment API...');
                         // Fetch parent tweet to get its author's hostId
                         const parentTweet = await this.getTweet(tweetId);
-                        if (!parentTweet || !parentTweet.author?.hostId) {
-                            throw new Error('Failed to fetch parent tweet or parent tweet author hostId');
+                        if (!parentTweet || !parentTweet.author?.hostIds || !parentTweet.author?.hostIds[0]) {
+                            throw new Error('Failed to fetch parent tweet or parent tweet author hostIds[0]');
                         }
-                        const parentAuthorHostId = parentTweet.author.hostId;
+                        const parentAuthorHostId = parentTweet.author.hostIds[0];
                         console.log('[TWEET-STORE] Using parent tweet author hostId:', parentAuthorHostId);
                         return await this.loginUser?.client.RunMApp("add_comment",
                             {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: parentAuthorHostId}
@@ -1122,7 +1681,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         console.log('[TWEET-STORE] Calling add_tweet API...');
                         return await this.loginUser?.client.RunMApp("add_tweet",
                             {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
-                                hostid: this.loginUser?.hostId})
+                                hostid: this.loginUser?.hostIds?.[0]})
                     }
                 })()
                 
@@ -1157,14 +1716,24 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns MimeiId of the install package
          */
         async uploadPackage(cid: string, mini: boolean = false) {
-            const params: any = {
-                aid: this.lapi.appId, ver: "last", cid: cid
+            const originalTimeout = this.loginUser?.client.timeout
+            
+            try {
+                // Use longer timeout for package upload (10 minutes)
+                this.loginUser!.client.timeout = 10 * 60 * 1000
+                
+                const params: any = {
+                    aid: this.lapi.appId, ver: "last", cid: cid
+                }
+                if (mini) {
+                    params.mini = "mini"
+                }
+                let mid = await this.loginUser?.client.RunMApp("upload_package", params)
+                return mid
+            } finally {
+                // Restore original timeout
+                this.loginUser!.client.timeout = originalTimeout
             }
-            if (mini) {
-                params.mini = "mini"
-            }
-            let mid = await this.loginUser?.client.RunMApp("upload_package", params)
-            return mid
         },
         /**
          * Upload a file to mm database, and add referrence to userId.
@@ -1172,13 +1741,23 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns mid of uploaded file
          */
         async uploadFile(cid: string, filename: string) {
-            let mid = await this.loginUser?.client.RunMApp("upload_file", {
-                aid: this.lapi.appId,
-                ver: "last", 
-                cid: cid,
-                userid: this.loginUser?.mid
-            })
-            return mid
+            const originalTimeout = this.loginUser?.client.timeout
+            
+            try {
+                // Use longer timeout for file upload (10 minutes)
+                this.loginUser!.client.timeout = 10 * 60 * 1000
+                
+                let mid = await this.loginUser?.client.RunMApp("upload_file", {
+                    aid: this.lapi.appId,
+                    ver: "last", 
+                    cid: cid,
+                    userid: this.loginUser?.mid
+                })
+                return mid
+            } finally {
+                // Restore original timeout
+                this.loginUser!.client.timeout = originalTimeout
+            }
         },
         /**
          * Shares a file with other users
@@ -1213,7 +1792,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
 
-            const hproseClient = this.lapi.getClient(ip)
+            const hproseClient = await this.lapi.getClient(ip)
             let file = await hproseClient.RunMApp("get_shared_file", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -1234,7 +1813,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleFavorite(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_favorite", {
-                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostId
+                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
             })
             var tweet = this.tweets.find(e => e.mid == tweetId)
             tweet!.likeCount = ret["count"]
@@ -1248,7 +1827,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleBookmark(tweetId: MimeiId) {
             var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
-                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostId
+                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
             })
             var tweet = this.tweets.find(e => e.mid == tweetId)
             tweet!.bookmarkCount = ret["count"]
@@ -1479,19 +2058,97 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * Gets the IP address list of a node, after removing local IPv4
-         * @param nodeId The node ID to get IPs for
-         * @returns The first non-local IP address found
+         * Calls get_node_ips with version=v2 which returns a list of IPs
+         * @param user The user object containing client and hostId
+         * @param v4Only Whether to filter out IPv6 addresses (default: v4Only)
+         * @returns The first non-local IP address found, or null if none available
          */
         async getNodeIp(
             user: User,
-            v4Only = false
+            v4only: boolean = v4Only
         ): Promise<string | null> {
-            return await user.client.RunMApp("get_node_ip", {
-                aid: this.lapi.appId,
-                ver: "last",
-                nodeid: user.hostId,
-                v4only: v4Only ? "true" : "false"
-            })
+            try {
+                const hostId = user.hostIds?.[0];
+                if (!hostId) {
+                    console.error("[getNodeIp] User has no hostIds[0]");
+                    return null;
+                }
+
+                console.log(`[getNodeIp] Getting node IPs for nodeId ${hostId} (v4Only: ${v4Only})...`);
+
+                // Call get_node_ips (plural) with version v2 to get list of IPs
+                const params: any = {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    version: "v2",
+                    nodeid: hostId,
+                };
+
+                // Only add v4only parameter if true
+                if (v4Only) {
+                    params.v4only = "true";
+                }
+
+                const ipResponse = await user.client.RunMApp("get_node_ips", params);
+
+                console.log(`[getNodeIp] Raw response from get_node_ips for nodeId ${hostId}:`, ipResponse);
+
+                if (!ipResponse) {
+                    console.error("[getNodeIp] No response from get_node_ips for nodeId", hostId);
+                    return null;
+                }
+
+                // Handle the response - could be array or wrapped in data property
+                let ipList: string[] = [];
+
+                if (Array.isArray(ipResponse)) {
+                    ipList = ipResponse;
+                } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
+                    ipList = ipResponse.data;
+                } else if (typeof ipResponse === 'string') {
+                    // Single IP as string
+                    ipList = [ipResponse];
+                } else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') {
+                    // Single IP wrapped in data
+                    ipList = [ipResponse.data];
+                } else {
+                    console.error("[getNodeIp] Invalid response format from get_node_ips:", ipResponse);
+                    return null;
+                }
+
+                // Filter and trim IP addresses, optionally removing IPv6 addresses
+                const ipAddresses = ipList
+                    .map(ip => ip.trim())
+                    .filter(ip => {
+                        if (ip.length === 0) return false;
+
+                        // If v4Only is true, filter out IPv6 addresses
+                        if (v4Only) {
+                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
+                            if (ip.includes('[') || ip.includes(']')) return false;
+                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                            const colonCount = (ip.match(/:/g) || []).length;
+                            if (colonCount > 1) return false;
+                        }
+
+                        return true;
+                    });
+
+                if (ipAddresses.length === 0) {
+                    console.error("[getNodeIp] No valid IPs returned for nodeId", hostId);
+                    return null;
+                }
+
+                // Return first IP address
+                const resultIp = ipAddresses[0];
+                console.log(`[getNodeIp] Returning IP address for nodeId ${hostId}:`, resultIp);
+                return resultIp;
+
+            } catch (error) {
+                const hostId = user.hostIds?.[0] || 'unknown';
+                console.error("[getNodeIp] Error getting node IPs for nodeId", hostId, error);
+                return null;
+            }
         },
 
         /**

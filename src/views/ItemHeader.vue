@@ -6,12 +6,13 @@ import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
 import { CornerMenu } from '@/views';
 
-const props = defineProps({ 
-    author: {type: Object as PropType<User>, required: true},
+const props = defineProps({
+    author: {type: Object as PropType<User | null>, required: false},
     timestamp: {type: Number, required: false },
     isRetweet: {type: Boolean, required: false, default: false},
     by: {type: String, required: false},
     tweet: {type: Object as PropType<Tweet>, required: false},
+    actualTweet: {type: Object as PropType<Tweet>, required: false}, // The actual tweet to delete (for retweets, this is the retweet wrapper)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false}
 })
@@ -19,8 +20,10 @@ const router = useRouter()
 const tweetStore = useTweetStore()
 
 function openUserPage(userId: string) {
-  tweetStore.addFollowing(userId)
+  if (props.author) {
+    tweetStore.addFollowing(userId)
     router.push(`/author/${userId}`)
+  }
 }
 function openDetailView() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
@@ -36,8 +39,9 @@ function openDetailView() {
 <template>
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
-    <div class='avatar me-2'>
-      <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
+    <div class='avatar me-2 author-avatar'>
+      <img v-if='props.author' :src='props.author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(props.author.mid)'>
+      <div v-else class='rounded-circle loading-avatar'></div>
     </div>
     <!-- User Info -->
     <div class='user-info flex-grow-1' @click.prevent='openDetailView'>
@@ -47,11 +51,11 @@ function openDetailView() {
       </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>
-        <span class='username fw-bold'>{{ author.name }}</span>
+        <span class='username fw-bold' :class='{ "loading-text": !props.author }'>{{ props.author?.name || 'Loading...' }}</span>
       </div>
       <!-- Followers and Friends Links -->
       <div class='mt-1'>
-        <span class='alias text-muted'>@{{ author.username }}</span>
+        <span class='alias text-muted' :class='{ "loading-text": !props.author }'>@{{ props.author?.username || 'loading' }}</span>
         <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
           }}</span>
       </div>
@@ -63,7 +67,7 @@ function openDetailView() {
     </div>
   </div>
   <div class='corner-menu-container'>
-    <CornerMenu :tweet="tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
+    <CornerMenu :tweet="actualTweet || tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
   </div>
 </template>
 
@@ -106,10 +110,37 @@ function openDetailView() {
   display: flex;
   align-items: center;
 }
-.avatar img {
+
+.loading-avatar, .author-avatar .loading-avatar {
+  width: 44px !important;
+  height: 44px !important;
+  max-width: none !important;
+  max-height: none !important;
+  background: #e9ecef;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.loading-text {
+  background: #e9ecef;
+  color: transparent;
+  border-radius: 4px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.avatar img, .author-avatar img {
   object-fit: cover;
-  width: 40px;
-  height: 40px;
+  width: 44px !important;
+  height: 44px !important;
+  max-width: none !important;
+  max-height: none !important;
   cursor: pointer;
 }
 .user-info {

@@ -3,6 +3,8 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import { AppHeader, UserRow } from "@/views";
+import { LoadingSpinner, PageLayout } from "@/components";
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 
 const route = useRoute();
 const userId = route.params.userId as MimeiId
@@ -51,20 +53,47 @@ const handleScroll = () => {
 
 onMounted(async () => {
     isLoading.value = true
-    
-    // Load all following IDs first (this is fast)
-    followingIds.value = await tweetStore.getFollowings(userId)
-    
-    isLoading.value = false
-    
-    // Load the first batch of users
-    if (followingIds.value.length > 0) {
-        await loadNextBatch()
-    }
-    
-    // Add scroll listener
-    if (containerRef.value) {
-        containerRef.value.addEventListener('scroll', handleScroll)
+
+    try {
+        // Load all following IDs with timeout, refresh immediately on timeout (max attempts)
+        const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
+
+        let timeoutId: number | null = null;
+        const loadPromise = tweetStore.getFollowings(userId)
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            timeoutId = window.setTimeout(() => {
+                if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                    console.warn(`Followings load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`)
+                    sessionStorage.setItem('followingsRefreshCount', (refreshCount + 1).toString())
+                    isLoading.value = false
+                    window.location.reload()
+                } else {
+                    console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for Followings, stopping`)
+                    isLoading.value = false
+                    sessionStorage.removeItem('followingsRefreshCount')
+                }
+                reject(new Error('Followings load timeout'))
+            }, LOAD_TIMEOUT_MS)
+        )
+
+        followingIds.value = await Promise.race([loadPromise, timeoutPromise])
+        // Success - clear the timeout
+        if (timeoutId) clearTimeout(timeoutId)
+        isLoading.value = false
+        sessionStorage.removeItem('followingsRefreshCount') // Clear on success
+
+        // Load the first batch of users
+        if (followingIds.value.length > 0) {
+            await loadNextBatch()
+        }
+
+        // Add scroll listener
+        if (containerRef.value) {
+            containerRef.value.addEventListener('scroll', handleScroll)
+        }
+    } catch (error) {
+        // Timeout already handled the refresh
+        console.error('Unexpected error loading followings:', error)
     }
 })
 
@@ -82,17 +111,46 @@ watch(() => route.params.userId, async (newUserId) => {
         followingIds.value = []
         currentIndex.value = 0
         isLoading.value = true
-        
-        const newIds = await tweetStore.getFollowings(newUserId as MimeiId)
-        followingIds.value = newIds
-        isLoading.value = false
-        
-        if (newIds.length > 0) {
-            await loadNextBatch()
-        }
-        
-        if (containerRef.value) {
-            containerRef.value.addEventListener('scroll', handleScroll)
+
+        try {
+            // Load followings with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
+            const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
+
+            let timeoutId: number | null = null;
+            const loadPromise = tweetStore.getFollowings(newUserId as MimeiId)
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                timeoutId = window.setTimeout(() => {
+                    if (refreshCount < 3) {
+                        console.warn(`Followings load timeout after 15 seconds, refreshing page (${refreshCount + 1}/3)`)
+                        sessionStorage.setItem('followingsRefreshCount', (refreshCount + 1).toString())
+                        isLoading.value = false
+                        window.location.reload()
+                    } else {
+                        console.warn('Max refresh attempts (3) reached for Followings, stopping')
+                        isLoading.value = false
+                        sessionStorage.removeItem('followingsRefreshCount')
+                    }
+                    reject(new Error('Followings load timeout'))
+                }, 15000) // 15 seconds
+            )
+
+            const newIds = await Promise.race([loadPromise, timeoutPromise])
+            // Success - clear the timeout
+            if (timeoutId) clearTimeout(timeoutId)
+            followingIds.value = newIds
+            isLoading.value = false
+            sessionStorage.removeItem('followingsRefreshCount') // Clear on success
+
+            if (newIds.length > 0) {
+                await loadNextBatch()
+            }
+
+            if (containerRef.value) {
+                containerRef.value.addEventListener('scroll', handleScroll)
+            }
+        } catch (error) {
+            // Timeout already handled the refresh
+            console.error('Unexpected error loading followings on route change:', error)
         }
     }
 })
@@ -105,9 +163,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <AppHeader :userId="userId"/>
-    
-    <div ref="containerRef" class="users-container">
+    <PageLayout width="normal">
+        <AppHeader :userId="userId"/>
+
+        <div ref="containerRef" class="users-container">
         <UserRow 
             v-for="userId in visibleUserIds" 
             :userId="userId" 
@@ -117,16 +176,12 @@ onUnmounted(() => {
         
         <!-- Loading spinner for initial load -->
         <div v-if="isLoading" class="d-flex justify-content-center my-3">
-            <div class="spinner-border" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
+            <LoadingSpinner />
         </div>
-        
+
         <!-- Loading spinner for more users -->
         <div v-if="isLoadingMore && !isLoading" class="d-flex justify-content-center my-3">
-            <div class="spinner-border spinner-border-sm" role="status">
-                <span class="visually-hidden">Loading more...</span>
-            </div>
+            <LoadingSpinner size="sm" />
         </div>
         
         <!-- End of list indicator -->
@@ -139,6 +194,7 @@ onUnmounted(() => {
             <small>No users found</small>
         </div>
     </div>
+    </PageLayout>
 </template>
 
 <style scoped>

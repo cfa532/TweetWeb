@@ -2,7 +2,10 @@
 import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
-import { MediaView, DetailHeader, ItemHeader, TweetView, QRCoder } from "@/views";
+import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
+import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
+import { normalizeMediaType, isWeChatBrowser } from '@/lib';
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
 
 const route = useRoute();
 const router = useRouter();
@@ -13,15 +16,14 @@ const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
 const isLoading = ref(false)
-const author = ref<User>();
-const DEFAULT_PREVIEW_IMAGE = `${window.location.origin}/ic_splash.png`
-const videoPreviewCache = new Map<string, string>()
+const loadError = ref(false)
+const tweetNotFound = ref(false)
+const hasLoadAttempted = ref(false)
 
 // Download prompt variables
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
-const qrSize = 100
 
 // Localization for bot verification
 function getBotVerificationMessage(): string {
@@ -36,8 +38,21 @@ function getBotVerificationMessage(): string {
     }
 }
 
+// Localization for loading retry message
+function getLoadingRetryMessage(): string {
+    const language = navigator.language || 'en';
+
+    if (language.startsWith('zh')) {
+        return '正在加载推文，6秒后重试...';
+    } else if (language.startsWith('ja')) {
+        return 'ツイートを読み込んでいます、6秒後に再試行...';
+    } else {
+        return 'Loading tweet, retrying in 6s...';
+    }
+}
+
 onMounted(async () => {
-    if (sessionStorage["isBot"] != "No") {
+    if (sessionStorage["isBot"] != "No" && isWeChatBrowser()) {
         if (confirm(getBotVerificationMessage())) {
             sessionStorage["isBot"] = "No"
             loadDetail()
@@ -45,71 +60,209 @@ onMounted(async () => {
             history.go(-1)
         }
     } else {
+        // For non-WeChat browsers, automatically pass verification
+        if (sessionStorage["isBot"] != "No") {
+            sessionStorage["isBot"] = "No"
+        }
         loadDetail()
     }
-    
-    // Show download prompt after 2 seconds
+
+    // Show download prompt after 2 seconds (modal only 1/3 of the time)
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
-    
+
+    // Show download modal after 6 seconds (modal only 1/3 of the time)
+    setTimeout(() => {
+        // Show modal only 50% of the time (random)
+        if (Math.random() < 0.3) {
+            showDownloadModal.value = true
+        }
+    }, 6000)
+
+    // Auto-hide download prompt after 30 seconds
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
 });
-async function loadDetail() {
+async function loadDetail(retryCount = 0) {
+    const maxRetries = MAX_REFRESH_ATTEMPTS
     isLoading.value = true
-    let s = sessionStorage.getItem("tweetDetail")
-    if (s) {
-        tweet.value = JSON.parse(s)
-        tweet.value.author = await tweetStore.getUser(tweet.value.author.mid)
-        showTweet()
-    }
-    else {
-        // Fetch tweet if it is not in session already.
-        tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value) as Tweet
-        if (!tweet.value) {
-            window.setTimeout(() => {
-                window.location.reload()
-            }, 5000)                        // wait 5s before reload
-        } else {
-            showTweet()
-        }
-    }
-    console.log(tweet.value)
+    loadError.value = false
+    tweetNotFound.value = false
+    hasLoadAttempted.value = true
 
-    // display url as link
-    document.addEventListener("DOMContentLoaded", function () {
-        const contentElement = document.getElementById('content');
-        const paragraphs = contentElement?.getElementsByClassName('card-text');
-        if (paragraphs)
-            for (let i = 0; i < paragraphs.length; i++) {
-                const paragraph = paragraphs[i];
-                paragraph.innerHTML = linkify(paragraph.innerHTML);
-            }
-    });
-}
-async function showTweet() {
-    sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-    if (authorId.value) {
-        author.value = await tweetStore.getUser(authorId.value);
-    } else if (tweet) {
-        author.value = await tweetStore.getUser(tweet.value.author.mid);
-    }
-    // load orginalTweet
-    if (tweet.value.originalTweetId) {
-        originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
-        if (!tweet.value.content && !tweet.value.attachments) {
-            isRetweet.value = true
-            await tweetStore.loadComments(originTweet.value)
-        }
+    // Safety timeout: refresh page after timeout if still loading (max attempts)
+    const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
+    let timeoutId: number | null = null;
+
+    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+        timeoutId = window.setTimeout(() => {
+            console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms - refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
+            sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
+            isLoading.value = false;
+            window.location.reload();
+        }, LOAD_TIMEOUT_MS);
     } else {
-        await tweetStore.loadComments(tweet.value)
+        console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached, stopping`);
+        isLoading.value = false;
+        sessionStorage.removeItem('tweetDetailRefreshCount');
+        loadError.value = true;
+        return; // Exit early if max retries reached
     }
-    document.title = formattedTitle.value
-    tweetStore.addFollowing(tweet.value.author.mid)
-    isLoading.value = false
-    await refreshShareMetadata()
+
+    try {
+        let s = sessionStorage.getItem("tweetDetail")
+        console.log('[loadDetail] sessionStorage data exists:', !!s);
+        if (s) {
+            const storedTweet = JSON.parse(s)
+            console.log('[loadDetail] storedTweet.mid:', storedTweet.mid, 'tweetId.value:', tweetId.value);
+            console.log('[loadDetail] storedTweet.author?.mid:', storedTweet.author?.mid, 'authorId.value:', authorId.value);
+            // Only use sessionStorage if the stored tweet matches the current route
+            if (storedTweet.mid === tweetId.value && (!authorId.value || storedTweet.author?.mid === authorId.value)) {
+                console.log('[loadDetail] Using cached tweet data');
+                tweet.value = storedTweet
+                // Render tweet immediately without waiting for author
+                await showTweet(timeoutId)
+                // Load author asynchronously (only if not already loaded)
+                if (!tweet.value.author && tweet.value.authorId) {
+                    tweetStore.getUser(tweet.value.authorId).then(user => {
+                        if (user && tweet.value) {
+                            tweet.value.author = user
+                        }
+                    }).catch(error => {
+                        console.warn('[TweetDetail] Failed to load author:', error)
+                    })
+                }
+            } else {
+                console.log('[loadDetail] Stored tweet doesn\'t match route, fetching new tweet');
+                // Stored tweet doesn't match current route, fetch new one
+                sessionStorage.removeItem("tweetDetail")
+                // Fetch tweet if it is not in session already.
+                // Use racing for faster loading on TweetDetail page
+                console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
+                tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+                console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
+
+                if (!tweet.value) {
+                    throw new Error('Tweet not found (null response)')
+                }
+
+                loadError.value = false
+                await showTweet(timeoutId)
+            }
+        }
+        else {
+            // Fetch tweet if it is not in session already.
+            // Use racing for faster loading on TweetDetail page
+            console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
+            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+            console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
+
+            if (!tweet.value) {
+                throw new Error('Tweet not found (null response)')
+            }
+
+            loadError.value = false
+            await showTweet(timeoutId)
+        }
+        console.log(tweet.value)
+
+        // display url as link
+        document.addEventListener("DOMContentLoaded", function () {
+            const contentElement = document.getElementById('content');
+            const paragraphs = contentElement?.getElementsByClassName('card-text');
+            if (paragraphs)
+                for (let i = 0; i < paragraphs.length; i++) {
+                    const paragraph = paragraphs[i];
+                    paragraph.innerHTML = linkify(paragraph.innerHTML);
+                }
+        });
+    } catch (error) {
+        console.error(`Error loading tweet detail (attempt ${retryCount + 1}/${maxRetries + 1}):`, error);
+
+        // Log essential error details for debugging stuck loading states
+        if (error && typeof error === 'object' && 'message' in error) {
+            console.error(`Error details: ${error.message}`);
+        }
+
+        // Check if this is a "tweet not found" error
+        const isTweetNotFound = error && typeof error === 'object' && 'message' in error &&
+                               error.message === 'Tweet not found (null response)';
+
+        if (isTweetNotFound) {
+            console.error('[TweetDetail] Tweet not found - showing specific error message')
+            isLoading.value = false
+            tweetNotFound.value = true
+        } else if (retryCount < maxRetries) {
+            console.log(`[TweetDetail] Retrying by refreshing page... (${retryCount + 1}/${maxRetries})`)
+            // Add delay before retry
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+
+            // Refresh immediately on error (within max retries limit)
+            const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
+            if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
+                clearTimeout(timeoutId);
+                window.location.reload();
+            } else {
+                console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached in retry logic, giving up`);
+                clearTimeout(timeoutId);
+                isLoading.value = false;
+                loadError.value = true;
+                sessionStorage.removeItem('tweetDetailRefreshCount');
+            }
+        } else {
+            console.error('[TweetDetail] Max retries reached, giving up')
+            clearTimeout(timeoutId)
+            isLoading.value = false
+            loadError.value = true
+        }
+    }
+}
+async function showTweet(timeoutId?: number) {
+    try {
+        sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
+
+        // Tweet content is ready to display - set loading to false early
+        document.title = formattedTitle.value
+        if (timeoutId) clearTimeout(timeoutId)
+        isLoading.value = false
+        sessionStorage.removeItem('tweetDetailRefreshCount') // Clear refresh count on success
+
+        // Load comments and additional data in parallel (truly non-blocking)
+        const loadPromises = []
+
+        // Load original tweet if needed
+        if (tweet.value.originalTweetId) {
+            loadPromises.push((async () => {
+                try {
+                    originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+                    if (!tweet.value.content && !tweet.value.attachments) {
+                        isRetweet.value = true
+                        await tweetStore.loadComments(originTweet.value)
+                    }
+                } catch (error) {
+                    console.warn('[TweetDetail] Failed to load original tweet:', error)
+                }
+            })())
+        } else {
+            loadPromises.push(tweetStore.loadComments(tweet.value).catch(error => {
+                console.warn('[TweetDetail] Failed to load comments:', error)
+            }))
+        }
+
+        // Fire and forget - let these run in background without blocking
+        Promise.allSettled(loadPromises).then(() => {
+            console.log('[TweetDetail] Background loading operations completed')
+        }).catch(error => {
+            console.warn('[TweetDetail] Some background operations failed:', error)
+        })
+    } catch (error) {
+        console.error('Error in showTweet:', error)
+        if (timeoutId) clearTimeout(timeoutId)
+        isLoading.value = false
+    }
 };
 
 const MAX_TITLE_LENGTH = 40
@@ -138,284 +291,10 @@ const formattedTitle = computed(() => {
     return title
 })
 
-function shareSummaryText(): string {
-    const source = preferredSummarySource()
-    if (!source) {
-        return 'Open this tweet on Tweet.'
-    }
-    if (!tweetStore.isEmptyString(source.content)) {
-        const content = source.content!.trim()
-        return content.length > 80 ? `${content.substring(0, 80)}…` : content
-    }
-    if (!tweetStore.isEmptyString(source.title)) {
-        const title = source.title!.trim()
-        return title.length > 80 ? `${title.substring(0, 80)}…` : title
-    }
-    if (source.attachments?.length) {
-        return source.attachments.map((attachment: MimeiFileType) => `[${attachment.type}]`).join(' ')
-    }
-    return 'Open this tweet on Tweet.'
-}
-
-function preferredSummarySource(): Tweet | undefined {
-    if (isRetweet.value && originTweet.value) {
-        return originTweet.value
-    }
-    return tweet.value
-}
-
-async function resolvePreviewImage(): Promise<string> {
-    const sourceTweet = preferredSummarySource()
-    if (!sourceTweet?.attachments?.length) {
-        return DEFAULT_PREVIEW_IMAGE
-    }
-
-    const firstImage = sourceTweet.attachments.find((attachment: MimeiFileType) =>
-        attachment.type?.toLowerCase().includes('image')
-    )
-    if (firstImage) {
-        const imageUrl = resolveAttachmentURL(firstImage, sourceTweet)
-        if (imageUrl) {
-            return imageUrl
-        }
-    }
-
-    const firstVideo = sourceTweet.attachments.find((attachment: MimeiFileType) =>
-        isVideoAttachment(attachment)
-    )
-    if (firstVideo) {
-        const cacheKey = firstVideo.mid
-        if (cacheKey && videoPreviewCache.has(cacheKey)) {
-            return videoPreviewCache.get(cacheKey)!
-        }
-
-        const videoUrl = resolveAttachmentURL(firstVideo, sourceTweet)
-        if (videoUrl) {
-            const posterUrl = await findExistingVideoPoster(videoUrl)
-            if (posterUrl) {
-                if (cacheKey) {
-                    videoPreviewCache.set(cacheKey, posterUrl)
-                }
-                return posterUrl
-            }
-            const generated = await captureVideoFrame(videoUrl)
-            if (generated) {
-                if (cacheKey) {
-                    videoPreviewCache.set(cacheKey, generated)
-                }
-                return generated
-            }
-        }
-    }
-
-    return DEFAULT_PREVIEW_IMAGE
-}
-
-async function refreshShareMetadata() {
-    if (!tweet.value) {
-        return
-    }
-    const title = formattedTitle.value || 'Tweet'
-    const summary = shareSummaryText()
-    const previewUrl = await resolvePreviewImage()
-    const currentUrl = window.location.href
-
-    updateMetaProperty('og:title', title)
-    updateMetaProperty('og:description', summary)
-    updateMetaProperty('og:image', previewUrl)
-    updateMetaProperty('og:url', currentUrl)
-    updateMetaProperty('og:type', 'article')
-
-    updateMetaName('description', summary)
-    updateMetaName('twitter:title', title)
-    updateMetaName('twitter:description', summary)
-    updateMetaName('twitter:image', previewUrl)
-    updateMetaName('twitter:card', 'summary_large_image')
-}
-
-function updateMetaProperty(property: string, content: string) {
-    if (!content) {
-        return
-    }
-    let meta = document.querySelector(`meta[property=\"${property}\"]`)
-    if (!meta) {
-        meta = document.createElement('meta')
-        meta.setAttribute('property', property)
-        document.head.appendChild(meta)
-    }
-    meta.setAttribute('content', content)
-}
-
-function updateMetaName(name: string, content: string) {
-    if (!content) {
-        return
-    }
-    let meta = document.querySelector(`meta[name="${name}"]`)
-    if (!meta) {
-        meta = document.createElement('meta')
-        meta.setAttribute('name', name)
-        document.head.appendChild(meta)
-    }
-    meta.setAttribute('content', content)
-}
-
-function isVideoAttachment(attachment: MimeiFileType): boolean {
-    const type = attachment.type?.toLowerCase() || ''
-    return type.includes('video') || type === 'hls_video'
-}
-
-async function findExistingVideoPoster(videoUrl: string): Promise<string | null> {
-    const candidates = buildPosterCandidates(videoUrl)
-    for (const candidate of candidates) {
-        try {
-            const response = await fetch(candidate, { method: 'HEAD', cache: 'force-cache' })
-            if (response.ok) {
-                return candidate
-            }
-        } catch (error) {
-            console.warn('[preview] Unable to probe video poster', candidate, error)
-        }
-    }
-    return null
-}
-
-function buildPosterCandidates(videoUrl: string): string[] {
-    const candidates = new Set<string>()
-    try {
-        const parsed = new URL(videoUrl, window.location.origin)
-        const path = parsed.pathname
-        const base = `${parsed.origin}${path}`
-        const directory = base.substring(0, base.lastIndexOf('/'))
-        const filename = base.substring(base.lastIndexOf('/') + 1)
-
-        if (filename.endsWith('master.m3u8') || filename.endsWith('playlist.m3u8')) {
-            candidates.add(`${directory}/poster.jpg`)
-            candidates.add(`${directory}/poster.png`)
-            candidates.add(`${directory}/thumbnail.jpg`)
-            candidates.add(`${directory}/preview.jpg`)
-            candidates.add(`${directory}/cover.jpg`)
-        }
-
-        const extensionMatch = filename.match(/\.(mp4|mov|m4v|webm|ts)$/i)
-        if (extensionMatch) {
-            candidates.add(base.replace(extensionMatch[0], '.jpg'))
-            candidates.add(base.replace(extensionMatch[0], '.png'))
-        }
-
-        candidates.add(`${base}.jpg`)
-        candidates.add(`${base}.png`)
-    } catch (error) {
-        console.warn('[preview] Failed to build poster candidates', error)
-    }
-    return Array.from(candidates)
-}
-
-async function captureVideoFrame(videoUrl: string): Promise<string | null> {
-    return new Promise((resolve) => {
-        const video = document.createElement('video')
-        const canvas = document.createElement('canvas')
-
-        const cleanup = () => {
-            video.pause()
-            video.removeAttribute('src')
-            video.load()
-        }
-
-        const fail = (error?: Event) => {
-            console.warn('[preview] Unable to capture frame', error)
-            cleanup()
-            resolve(null)
-        }
-
-        video.crossOrigin = 'anonymous'
-        video.muted = true
-        video.playsInline = true
-        video.preload = 'auto'
-        video.src = `${videoUrl}#t=1`
-
-        video.addEventListener('error', fail, { once: true })
-        video.addEventListener('loadeddata', () => {
-            try {
-                canvas.width = video.videoWidth || 640
-                canvas.height = video.videoHeight || 360
-                const ctx = canvas.getContext('2d')
-                if (!ctx) {
-                    fail()
-                    return
-                }
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-                const dataUrl = canvas.toDataURL('image/png')
-                cleanup()
-                resolve(dataUrl)
-            } catch (error) {
-                fail(error as unknown as Event)
-            }
-        }, { once: true })
-    })
-}
-
-function resolveAttachmentURL(attachment: MimeiFileType, tweetContext: Tweet): string | null {
-    const mid = attachment.mid
-    if (!mid) {
-        return null
-    }
-    if (mid.startsWith('http://') || mid.startsWith('https://')) {
-        return mid
-    }
-    const authorBase = tweetContext.author?.hostUrl
-    const fallback = authorBase ?? window.location.origin
-    try {
-        return tweetStore.getMediaUrl(mid, fallback)
-    } catch (error) {
-        console.warn('[preview] Failed to resolve attachment URL', error)
-        return null
-    }
-}
-
-// Download prompt computed properties
-const downloadText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '下载APP获得最佳体验'
-    } else if (language.startsWith('ja')) {
-        return 'ネイティブアプリで最高の体験を'
-    } else {
-        return '下载APP获得最佳体验'
-    }
-})
-
-const directDownloadText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '直接下载安卓 APK'
-    } else if (language.startsWith('ja')) {
-        return '直接ダウンロード Android APK'
-    } else {
-        return 'Download Android APK'
-    }
-})
-
-const apkText = computed(() => {
-    const language = navigator.language || 'en'
-    
-    if (language.startsWith('zh')) {
-        return '在浏览器中打开链接'
-    } else if (language.startsWith('ja')) {
-        return 'ブラウザでリンクを開く'
-    } else {
-        return 'Open the link in browser'
-    }
-})
-
-const downloadPageUrl = computed(() => {
-    return `${window.location.origin}/apk`
-})
 
 const downloadingText = computed(() => {
     const language = navigator.language || 'en'
-    
+
     if (language.startsWith('zh')) {
         return '下载中...'
     } else if (language.startsWith('ja')) {
@@ -425,16 +304,30 @@ const downloadingText = computed(() => {
     }
 })
 
+const backToTweetText = computed(() => {
+    const language = navigator.language || 'en'
+
+    if (language.startsWith('zh')) {
+        return '返回推文'
+    } else if (language.startsWith('ja')) {
+        return 'ツイートに戻る'
+    } else {
+        return 'Back to Tweet'
+    }
+})
+
 watch(tweetId, async (newValue, oldValue)=>{
+    console.log('[tweetId watcher] tweetId changed from', oldValue, 'to', newValue);
     if (newValue && oldValue !== newValue) {
-        let t = await tweetStore.getTweet(newValue, authorId.value)
-        if (t) {
-            console.log(t)
-            tweet.value = t
-            sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-            await showTweet()
-            // router.push(`/tweet/${tweetId.value}/${authorId.value}`)
-        }
+        console.log('[tweetId watcher] Reloading tweet data for:', newValue);
+        // Clear current tweet and use the same loadDetail function with retry logic
+        tweet.value = null
+        originTweet.value = null
+        isRetweet.value = false
+        await loadDetail(0)
+        console.log('[tweetId watcher] Finished reloading, tweet.value:', tweet.value);
+    } else {
+        console.log('[tweetId watcher] No change detected');
     }
 });
 
@@ -498,8 +391,8 @@ async function startDirectDownload() {
     }
 }
 
-function openInBrowser() {
-    window.open(downloadPageUrl.value, '_blank')
+function openInBrowser(url: string) {
+    window.open(url, '_blank')
 }
 
 function isVideoMedia(media?: MimeiFileType) {
@@ -513,9 +406,216 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
     return !!firstVideo && firstVideo.mid === media.mid
 }
 
-const isFromComment = computed(() => !!route.query.fromComment);
-const parentTweetId = computed(() => route.query.parentTweetId as string | undefined);
-const parentAuthorId = computed(() => route.query.parentAuthorId as string | undefined);
+// Filter media attachments (image, video, audio only) for the displayed tweet
+const displayedTweet = computed(() => {
+    return isRetweet.value && originTweet.value ? originTweet.value : tweet.value;
+});
+
+const mediaAttachments = computed(() => {
+    const attachments = displayedTweet.value?.attachments || [];
+    return attachments.filter((attachment: MimeiFileType) => {
+        const normalizedType = normalizeMediaType(attachment.type);
+        return normalizedType.includes('image') || 
+               normalizedType.includes('video') || 
+               normalizedType.includes('audio');
+    });
+});
+
+// Filter out media attachments (image, video, audio) to get documents
+const documentAttachments = computed(() => {
+    const attachments = displayedTweet.value?.attachments || [];
+    return attachments.filter((attachment: MimeiFileType) => {
+        const normalizedType = normalizeMediaType(attachment.type);
+        return !normalizedType.includes('image') && 
+               !normalizedType.includes('video') && 
+               !normalizedType.includes('audio');
+    });
+});
+
+// Format file size in human-readable form
+function formatFileSize(bytes: number | undefined): string {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Check if a file type can be viewed directly in the browser
+function isBrowserViewable(doc: MimeiFileType): boolean {
+    const normalizedType = normalizeMediaType(doc.type);
+    const fileName = doc.fileName?.toLowerCase() || '';
+    
+    // Check MIME types that browsers can display
+    const viewableMimeTypes = [
+        'application/pdf',
+        'text/html',
+        'application/xhtml+xml',
+        'text/plain',
+        'text/css',
+        'text/javascript',
+        'text/json',
+        'text/xml',
+        'application/xml',
+        'application/json',
+        'text/markdown',
+        'text/x-markdown',
+        'text/csv',
+        'application/javascript',
+        'application/x-javascript'
+    ];
+    
+    // Check if MIME type is viewable
+    for (const viewableType of viewableMimeTypes) {
+        if (normalizedType.includes(viewableType)) {
+            return true;
+        }
+    }
+    
+    // Also check file extensions as fallback
+    const viewableExtensions = ['.pdf', '.html', '.htm', '.txt', '.css', '.js', '.json', '.xml', '.md', '.markdown', '.csv'];
+    for (const ext of viewableExtensions) {
+        if (fileName.endsWith(ext)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Handle document click - open browser-viewable files directly, download others with filename
+async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
+    // Prevent any parent click handlers
+    event.stopPropagation();
+    
+    // Get the document URL
+    let docUrl: string;
+    
+    // If mid is already a full URL, use it directly
+    if (doc.mid.startsWith('http://') || doc.mid.startsWith('https://')) {
+        docUrl = doc.mid;
+    } else {
+        // Extract hash from mid if it contains a path separator
+        const lastIndexOf = doc.mid.lastIndexOf("/");
+        const hash = lastIndexOf > 0 ? doc.mid.substring(lastIndexOf + 1) : doc.mid;
+        
+        // Get provider IP from the tweet
+        const currentTweet = displayedTweet.value;
+        const providerIp = currentTweet?.provider || currentTweet?.author?.providerIp;
+        const baseUrl = providerIp ? `http://${providerIp}` : window.location.origin;
+        
+        // Construct the full URL using tweetStore.getMediaUrl
+        docUrl = tweetStore.getMediaUrl(hash, baseUrl);
+    }
+    
+    // Check if the document can be viewed directly in the browser
+    if (isBrowserViewable(doc)) {
+        // Open browser-viewable files directly in a new tab
+        window.open(docUrl, '_blank');
+        return;
+    }
+    
+    // For files that browsers cannot display, download with filename
+    const filename = doc.fileName || 'document';
+    
+    try {
+        // Fetch the file as a blob
+        const response = await fetch(docUrl);
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+        
+        const blob = await response.blob();
+        
+        // Create a blob URL
+        const blobUrl = window.URL.createObjectURL(blob);
+        
+        // Create download link with the filename
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the blob URL after a short delay
+        setTimeout(() => {
+            window.URL.revokeObjectURL(blobUrl);
+        }, 100);
+    } catch (error) {
+        console.error('Download failed:', error);
+        // Fallback: open in new tab if download fails
+        window.open(docUrl, '_blank');
+    }
+}
+
+// Store navigation metadata in sessionStorage to persist across route changes
+const navigationMeta = ref<{
+    fromComment: boolean;
+    parentTweetId: string | undefined;
+    parentAuthorId: string | undefined;
+} | null>(null);
+
+const updateNavigationMeta = () => {
+    try {
+        console.log('[updateNavigationMeta] route.query:', route.query);
+
+        // First check if we have navigation metadata in the URL query params
+        const fromQuery = {
+            fromComment: route.query.fromComment === 'true',
+            parentTweetId: route.query.parentTweetId as string | undefined,
+            parentAuthorId: route.query.parentAuthorId as string | undefined
+        };
+
+        console.log('[updateNavigationMeta] fromQuery:', fromQuery);
+
+        // If we have valid navigation metadata from query params, store it in sessionStorage
+        if (fromQuery.fromComment && fromQuery.parentTweetId) {
+            console.log('[updateNavigationMeta] Using query params, storing in sessionStorage');
+            sessionStorage.setItem('navigationMeta', JSON.stringify(fromQuery));
+            navigationMeta.value = fromQuery;
+            return;
+        }
+
+        console.log('[updateNavigationMeta] No valid query params, checking sessionStorage');
+
+        // Otherwise, check sessionStorage for previously stored metadata
+        const stored = sessionStorage.getItem('navigationMeta');
+        if (stored) {
+            console.log('[updateNavigationMeta] Found in sessionStorage:', stored);
+            navigationMeta.value = JSON.parse(stored);
+            return;
+        }
+
+        console.log('[updateNavigationMeta] No navigation metadata found');
+        navigationMeta.value = null;
+    } catch (error) {
+        console.warn('[updateNavigationMeta] Error parsing navigation meta:', error);
+        navigationMeta.value = null;
+    }
+};
+
+// Initialize navigation metadata
+updateNavigationMeta();
+
+// Watch for route changes and update navigation metadata
+watch(() => route.query, () => {
+    console.log('[TweetDetail] Route query changed, updating navigation meta');
+    updateNavigationMeta();
+}, { immediate: true });
+
+// Clear invalid navigation metadata (when parentTweetId equals current tweetId)
+watch(tweetId, () => {
+    if (navigationMeta.value && navigationMeta.value.parentTweetId === tweetId.value) {
+        console.log('[TweetDetail] Clearing invalid navigation metadata (points to self)');
+        sessionStorage.removeItem('navigationMeta');
+        navigationMeta.value = null;
+    }
+});
+
+const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
+const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
+const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
 function goBack() {
     if (parentTweetId.value && parentAuthorId.value) {
@@ -524,38 +624,73 @@ function goBack() {
         router.back();
     }
 }
+
+function retryLoad() {
+    console.log('[TweetDetail] User initiated retry');
+    tweetNotFound.value = false;
+    loadDetail(0);
+}
 </script>
 
 <template>
-<div class="row justify-content-start align-items-start">
-<div class="col-sm-12 col-md-10 col-lg-8" style="background-color:aliceblue;">
+<PageLayout width="wide">
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
-        ← Back to Tweet
+        ← {{ backToTweetText }}
     </div>
+    
+    <!-- Tweet not found error - specific message for non-existent tweets -->
+    <div v-if="tweetNotFound && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
+        <div class="alert alert-warning" role="alert">
+            <h5 class="alert-heading">Tweet Not Found</h5>
+            <p class="mb-3">This tweet doesn't exist or may have been deleted.</p>
+            <button @click="goBack" class="btn btn-secondary">
+                Go Back
+            </button>
+        </div>
+    </div>
+
+    <!-- General error message with retry button - for network/other errors -->
+    <div v-if="loadError && !isLoading && hasLoadAttempted && !tweet && !tweetNotFound" class="loading-retry-message text-center my-4">
+        <div class="alert alert-danger" role="alert">
+            <h5 class="alert-heading">Unable to Load Tweet</h5>
+            <p class="mb-2">There was an error loading this tweet.</p>
+            <p class="mb-3 text-muted small">Check browser console for detailed error information.</p>
+            <button @click="retryLoad" class="btn btn-primary">
+                <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                Retry
+            </button>
+        </div>
+    </div>
+
+    <DownloadPrompt :show="showDownloadPrompt" @click="openDownloadModal" />
+
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
-            <DetailHeader v-if="isRetweet" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
-                :is-retweet="isRetweet" :by="tweet.author?.username">
+            <DetailHeader v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
+                :is-retweet="isRetweet" :by="tweet.author.username">
             </DetailHeader>
-            <DetailHeader v-else :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
-        </div>
-        
-        <!-- App Download Prompt for All Users -->
-        <div v-if="showDownloadPrompt" class="download-prompt" @click="openDownloadModal">
-            <div class="prompt-content">
-                <div class="prompt-text">
-                    <p>{{ downloadText }} ⬇️</p>
-                </div>
-            </div>
+            <DetailHeader v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
         </div>
         
         <div v-if="isRetweet" class="card-body" id="content">
 
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
 
-            <div v-if="originTweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in originTweet.attachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, originTweet.attachments)" :media-list="originTweet.attachments" :media-index="index" class="img-fluid mb-1"></MediaView>
+            <div v-if="mediaAttachments.length > 0" class="media-attachments">
+                <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid"></MediaView>
+            </div>
+            <div v-if='documentAttachments.length > 0' class='document-attachments'>
+                <div 
+                    v-for='(doc, index) in documentAttachments' 
+                    :key='index' 
+                    class='document-row'
+                    @click='handleDocumentClick($event, doc)'
+                >
+                    <span class='document-icon'>📄</span>
+                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
+                </div>
             </div>
             <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
                 <div class='icon-item d-flex align-items-center'>
@@ -577,10 +712,22 @@ function goBack() {
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
 
-            <div v-if="tweet.attachments?.length" class="media-attachments">
-                <MediaView v-for="(media, index) in tweet.attachments" :key="index" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, tweet.attachments)" :media-list="tweet.attachments" :media-index="index" class="img-fluid">
+            <div v-if="mediaAttachments.length > 0" class="media-attachments">
+                <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
+                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
                 </MediaView>
+            </div>
+            <div v-if='documentAttachments.length > 0' class='document-attachments'>
+                <div 
+                    v-for='(doc, index) in documentAttachments' 
+                    :key='index' 
+                    class='document-row'
+                    @click='handleDocumentClick($event, doc)'
+                >
+                    <span class='document-icon'>📄</span>
+                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
+                </div>
             </div>
 
             <!-- quoted tweet -->
@@ -617,58 +764,52 @@ function goBack() {
     </div>
 
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
-        <div class="spinner-border" role="status">
-            <span class="visually-hidden">Loading...</span>
-        </div>
+        <LoadingSpinner />
     </div>
-    
-    <!-- Download Modal Popup -->
-    <div v-if="showDownloadModal" class="modal-overlay" @click="closeDownloadModal">
-        <div class="modal-content" @click.stop>
-            <div class="modal-body">
-                <div class="platform-options">
-                    <!-- Direct Download -->
-                    <div class="platform-option">
-                        <div class="platform-qr" @click="startDirectDownload">
-                            <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
-                        </div>
-                        <div class="platform-info">
-                            <p v-if="isDownloading">{{ downloadingText }}</p>
-                            <a v-else href="#" @click.prevent="openInBrowser" class="browser-link">{{ apkText }}</a>
-                        </div>
-                        <div v-if="isDownloading" class="download-spinner">
-                            <span class="spinner-border spinner-border-sm" role="status"></span>
-                        </div>
-                    </div>
-                    
-                    <!-- iOS/App Store -->
-                    <div class="platform-option">
-                        <div class="platform-icon">
-                            <img src="/src/apple.png" alt="Apple" height="48" width="48" />
-                        </div>
-                        <div class="platform-qr" @click="openAppStore">
-                            <QRCoder url="https://apps.apple.com/app/dtweet/id6751131431" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
-                        </div>
-                    </div>
-                    
-                    <!-- Android/Google Play -->
-                    <div class="platform-option">
-                        <div class="platform-icon">
-                            <img src="/src/android.png" alt="Android" height="48" width="48" />
-                        </div>
-                        <div class="platform-qr" @click="openPlayStore">
-                            <QRCoder url="https://play.google.com/store/apps/details?id=us.fireshare.tweet" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-</div>
+
+    <DownloadModal
+        :show="showDownloadModal"
+        :isDownloading="isDownloading"
+        @close="closeDownloadModal"
+        @startDownload="startDirectDownload"
+        @openAppStore="openAppStore"
+        @openPlayStore="openPlayStore"
+        @openBrowser="openInBrowser"
+    />
+</PageLayout>
 </template>
 
 <style scoped>
+/* Loading retry message styling */
+.loading-retry-message {
+    padding: 2rem 1rem;
+    color: #495057;
+    background-color: transparent;
+}
+
+/* Remove card styling on mobile for flush layout */
+@media (max-width: 575px) {
+  .card {
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .card-body {
+    padding: 0 !important;
+  }
+
+  .card-header {
+    padding: 0 !important;
+    padding-left: 8px !important; /* Add left padding for item header breathing room */
+  }
+}
+
+.loading-retry-message p {
+    font-size: 1rem;
+    color: #6c757d;
+}
+
 .card {
     width: 100%;
     margin: 0px 0px 30px 5px;
@@ -705,17 +846,32 @@ function goBack() {
 }
 
 .media-attachments {
-    max-width: 100%;
+    width: calc(100% + 5px);
+    max-width: calc(100% + 5px);
+    margin-left: -5px;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 0;
+    overflow: hidden;
 }
 
-/* Mobile: Full-width media */
-@media (max-width: 767px) {
-    .media-attachments {
-        margin-left: -8px;
-        margin-right: -8px;
-        width: calc(100% + 16px);
-        max-width: calc(100% + 16px);
-    }
+.media-attachments :deep(.container) {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.media-attachments :deep(img),
+.media-attachments :deep(video),
+.media-attachments :deep(.video-container),
+.media-attachments :deep(.video-wrapper),
+.media-attachments :deep(.video) {
+    width: 100% !important;
+    display: block;
+    margin: 0 !important;
+    padding: 0 !important;
+    object-fit: cover;
 }
 
 .rounded-circle {
@@ -776,46 +932,6 @@ function goBack() {
 }
 
 /* App Download Prompt Styles */
-.download-prompt {
-    position: relative;
-    width: 100%;
-    background: #1a1a1a;
-    color: #ffffff;
-    padding: 0 15px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    cursor: pointer;
-    transition: transform 0.2s ease;
-    animation: rotateToVertical 0.6s ease-out;
-    transform-style: preserve-3d;
-    perspective: 1000px;
-}
-
-.download-prompt:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.prompt-content {
-    display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    max-width: 100%;
-    margin: 0;
-    gap: 8px;
-}
-
-.prompt-text p {
-    margin: 0;
-    font-size: 1.0rem;
-    font-weight: 500;
-    opacity: 0.9;
-    line-height: 1.4;
-}
-
-.prompt-icon {
-    font-size: 1rem;
-    flex-shrink: 0;
-}
 
 /* Modal Styles */
 .modal-overlay {
@@ -835,7 +951,7 @@ function goBack() {
 .modal-content {
     background: white;
     border-radius: 12px;
-    max-width: 600px;
+    max-width: 400px;
     width: 100%;
     max-height: 90vh;
     overflow-y: auto;
@@ -944,16 +1060,6 @@ function goBack() {
     }
 }
 
-@keyframes rotateToVertical {
-    from {
-        transform: rotateX(90deg);
-        opacity: 0;
-    }
-    to {
-        transform: rotateX(0deg);
-        opacity: 1;
-    }
-}
 
 .back-button {
     padding: 8px 16px;
@@ -966,4 +1072,54 @@ function goBack() {
 .back-button:hover {
     opacity: 0.7;
 }
+
+.document-attachments {
+    margin-top: 12px;
+    padding: 8px;
+    border-top: 1px solid #e0e0e0;
+}
+
+.document-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    margin-bottom: 2px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    cursor: pointer;
+}
+
+.document-row:hover {
+    background-color: #e9ecef;
+}
+
+.document-row:last-child {
+    margin-bottom: 0;
+}
+
+.document-icon {
+    font-size: 20px;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.document-filename {
+    flex: 1;
+    min-width: 0;
+    font-weight: 500;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.document-size {
+    margin-left: 12px;
+    color: #6c757d;
+    font-size: 0.9em;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 </style>

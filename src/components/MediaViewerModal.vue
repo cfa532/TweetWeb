@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import type { PropType } from 'vue';
-import { Image } from '@/views';
+import { Image, VideoJS } from '@/views';
 
 const props = defineProps({
   mediaList: { type: Array as PropType<MimeiFileType[]>, required: false },
@@ -22,13 +22,31 @@ onMounted(() => {
   if (storedData) {
     try {
       mediaViewerData.value = JSON.parse(storedData);
-      currentIndex.value = mediaViewerData.value.initialIndex || 0;
+      const originalIndex = mediaViewerData.value.initialIndex || 0;
+      const originalMediaList = mediaViewerData.value.mediaList || [];
       
-      // Debug logging
-      console.log('MediaViewer data:', mediaViewerData.value);
-      console.log('Initial index:', currentIndex.value);
-      console.log('Media items:', mediaItems.value);
-      console.log('Current media:', currentMedia.value);
+      // Wait for computed values to be ready
+      nextTick(() => {
+        // Find the media at the original index
+        const targetMedia = originalMediaList[originalIndex];
+        
+        // Find the index of this media in the filtered list
+        if (targetMedia) {
+          const filteredIndex = mediaItems.value.findIndex(
+            (media: MimeiFileType) => media.mid === targetMedia.mid
+          );
+          currentIndex.value = filteredIndex >= 0 ? filteredIndex : 0;
+        } else {
+          currentIndex.value = 0;
+        }
+        
+        // Debug logging
+        console.log('MediaViewer data:', mediaViewerData.value);
+        console.log('Original index:', originalIndex);
+        console.log('Filtered index:', currentIndex.value);
+        console.log('Media items:', mediaItems.value);
+        console.log('Current media:', currentMedia.value);
+      });
     } catch (error) {
       console.error('Failed to parse media viewer data:', error);
       router.back();
@@ -59,15 +77,20 @@ const isClosing = ref(false);
 const mediaList = computed(() => props.mediaList || mediaViewerData.value?.mediaList || []);
 const tweet = computed(() => props.tweet || mediaViewerData.value?.tweet);
 
-// Filter media to only include images (videos have their own full-screen)
+// Filter media to include images and videos
 const mediaItems = computed(() => 
-  mediaList.value.filter((media: MimeiFileType) => 
-    media.type?.toLowerCase().includes('image')
-  )
+  mediaList.value.filter((media: MimeiFileType) => {
+    const type = media.type?.toLowerCase() || '';
+    return type.includes('image') || type.includes('video') || type.includes('hls_video');
+  })
 );
 
 const currentMedia = computed(() => mediaItems.value[currentIndex.value]);
 const isImage = computed(() => currentMedia.value?.type?.toLowerCase().includes('image'));
+const isVideo = computed(() => {
+  const type = currentMedia.value?.type?.toLowerCase() || '';
+  return type.includes('video') || type.includes('hls_video');
+});
 
 const currentMediaIndex = computed(() => currentIndex.value);
 
@@ -243,11 +266,18 @@ function goToMedia(index: number) {
 
       <!-- Media container -->
       <div class="media-container" ref="containerRef">
-        <div v-if="currentMedia" class="image-container">
+        <div v-if="currentMedia && isImage" class="image-container">
           <Image 
             :media="currentMedia" 
             :tweet="tweet"
             class="fullscreen-image"
+          />
+        </div>
+        <div v-else-if="currentMedia && isVideo" class="video-container">
+          <VideoJS 
+            :media="currentMedia" 
+            :tweet="tweet"
+            :autoplay="true"
           />
         </div>
         <div v-else class="no-media">
@@ -270,9 +300,18 @@ function goToMedia(index: number) {
           @click="goToMedia(index)"
         >
           <img 
+            v-if="media.type?.toLowerCase().includes('image')"
             :src="media.mid" 
             :alt="`Thumbnail ${index + 1}`"
           />
+          <div 
+            v-else
+            class="thumbnail-video"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          </div>
         </div>
       </div>
     </div>
@@ -376,7 +415,8 @@ function goToMedia(index: number) {
   margin: 0;
 }
 
-.image-container {
+.image-container,
+.video-container {
   width: 100vw;
   height: 100vh;
   display: flex;
@@ -393,6 +433,20 @@ function goToMedia(index: number) {
   object-fit: contain;
   object-position: center;
   display: block;
+}
+
+.video-container :deep(.video-container) {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+}
+
+.video-container :deep(.video) {
+  width: 100vw !important;
+  height: auto !important;
+  max-height: 100vh !important;
+  object-fit: contain !important;
 }
 
 .no-media {
@@ -455,6 +509,15 @@ function goToMedia(index: number) {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.thumbnail-video {
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Mobile optimizations */

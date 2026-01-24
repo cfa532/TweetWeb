@@ -44,26 +44,112 @@ function onDrop(e: DragEvent) {
 function onDragEnd(e: DragEvent) {
     emit("dragEnd")
 }
-function thumbnail() {
+async function thumbnail() {
     const fileType = props.src.type || '';
     if (fileType.includes("image")) {
         imageUrl.value = URL.createObjectURL(props.src)
         caption.value = props.src.name
     } else if (fileType.includes("video")) {
-        // For videos, show a placeholder icon instead of capturing frame
-        const canvas = document.createElement("canvas");
-        let ctx = canvas.getContext("2d")!;
-        canvas.width = 120;
-        canvas.height = 120;
-        ctx.fillStyle = '#333';
-        ctx.fillRect(0, 0, 120, 120);
-        ctx.fillStyle = '#fff';
-        ctx.font = '48px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('🎥', 60, 60);
-        imageUrl.value = canvas.toDataURL("image/png");
-        caption.value = props.src.name
+        // For videos, create a proper thumbnail from the first frame
+        try {
+            const videoUrl = URL.createObjectURL(props.src);
+            const video = document.createElement("video");
+            video.preload = "metadata";
+            video.muted = true;
+            video.playsInline = true;
+            video.src = videoUrl;
+            
+            await new Promise<void>((resolve, reject) => {
+                video.onloadedmetadata = () => resolve();
+                video.onerror = () => reject(new Error('Failed to load video'));
+                
+                // Timeout after 5 seconds
+                setTimeout(() => reject(new Error('Video loading timeout')), 5000);
+            });
+            
+            // Seek to 1 second or 10% of video duration (whichever is smaller)
+            const seekTime = Math.min(1, video.duration * 0.1);
+            video.currentTime = seekTime;
+            
+            await new Promise<void>((resolve) => {
+                video.onseeked = () => resolve();
+            });
+            
+            // Create canvas that fills the entire container (120x120)
+            const canvas = document.createElement("canvas");
+            const containerSize = 120;
+            canvas.width = containerSize;
+            canvas.height = containerSize;
+            
+            const ctx = canvas.getContext("2d")!;
+            
+            // Calculate scaling to fill container while maintaining aspect ratio (like object-fit: cover)
+            const videoAspect = video.videoWidth / video.videoHeight;
+            const containerAspect = 1; // 120/120 = 1 (square container)
+            
+            let drawWidth, drawHeight, offsetX, offsetY;
+            
+            if (videoAspect > containerAspect) {
+                // Video is wider than container - fit to height and crop sides
+                drawHeight = containerSize;
+                drawWidth = drawHeight * videoAspect;
+                offsetX = (containerSize - drawWidth) / 2;
+                offsetY = 0;
+            } else {
+                // Video is taller than container - fit to width and crop top/bottom
+                drawWidth = containerSize;
+                drawHeight = drawWidth / videoAspect;
+                offsetX = 0;
+                offsetY = (containerSize - drawHeight) / 2;
+            }
+            
+            // Draw video centered and cropped to fill container
+            ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
+            
+            // Add a play icon overlay to indicate it's a video (bottom-right corner)
+            const iconSize = Math.min(canvas.width, canvas.height) * 0.20;
+            const padding = iconSize * 0.3; // Small padding from edges
+            const centerX = canvas.width - iconSize - padding;
+            const centerY = canvas.height - iconSize - padding;
+            
+            // Draw semi-transparent circle
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, iconSize, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw play triangle
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.beginPath();
+            const triangleSize = iconSize * 0.6;
+            ctx.moveTo(centerX - triangleSize * 0.3, centerY - triangleSize * 0.5);
+            ctx.lineTo(centerX - triangleSize * 0.3, centerY + triangleSize * 0.5);
+            ctx.lineTo(centerX + triangleSize * 0.6, centerY);
+            ctx.closePath();
+            ctx.fill();
+            
+            imageUrl.value = canvas.toDataURL("image/png");
+            caption.value = props.src.name;
+            
+            // Clean up
+            URL.revokeObjectURL(videoUrl);
+        } catch (error) {
+            console.error('Error creating video thumbnail:', error);
+            // Fallback to placeholder icon
+            const canvas = document.createElement("canvas");
+            let ctx = canvas.getContext("2d")!;
+            canvas.width = 120;
+            canvas.height = 120;
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, 120, 120);
+            ctx.fillStyle = '#fff';
+            ctx.font = '48px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🎥', 60, 60);
+            imageUrl.value = canvas.toDataURL("image/png");
+            caption.value = props.src.name;
+        }
     } else {
         // everything else, draw avtar with file extensioin
         const canvas = document.createElement("canvas");
@@ -139,6 +225,8 @@ function thumbnail() {
     top: 10px;
     position: absolute;
     display: flex;
+    justify-content: center;
+    align-items: center;
     width: 100%;
     height: 120px;
     cursor: move;
@@ -173,12 +261,10 @@ function thumbnail() {
     background-color: #f8f9fa;
 }
 .postbox_media_photo_img {
-    /* display: block; */
-    margin-left: auto;
-    margin-right: auto;
-    margin-top:auto;
-    margin-bottom: auto;
     width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
 }
 .btn-reset {
     background: none;

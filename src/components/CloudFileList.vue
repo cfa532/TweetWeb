@@ -4,6 +4,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
+import { EmptyState } from '@/components';
 
 // --- State and Store References ---
 const route = useRoute();
@@ -255,7 +256,7 @@ function goHome() {
 
     <!-- No files message -->
     <div v-if='!loading && !error && files.length === 0' class='no-files'>
-      This directory is empty.
+      <EmptyState message="This directory is empty" icon="📁" />
     </div>
 
     <!-- Share dialog -->

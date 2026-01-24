@@ -3,18 +3,29 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
+import { useTweetStore } from '@/stores';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
   autoplay: { type: Boolean, required: false },
+  tweet: { type: Object as PropType<Tweet>, required: false },
+  mediaList: { type: Array as PropType<MimeiFileType[]>, required: false },
+  mediaIndex: { type: Number, required: false },
 })
 const router = useRouter();
+const tweetStore = useTweetStore();
 const vdiv = ref();
 const video = ref();
 const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
+
+// Touch handling for mobile scroll detection
+const touchStartX = ref(0);
+const touchStartY = ref(0);
+const touchStartTime = ref(0);
+const isScrolling = ref(false);
   const isHLS = computed(() => {
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'hls_video';
@@ -24,6 +35,9 @@ const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'video';
   });
+// Show native controls on desktop in detail view, hide elsewhere
+const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value)
+
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
@@ -95,6 +109,50 @@ onMounted(() => {
         });
         video.value.addEventListener('ended', () => {
           isPlaying.value = false;
+          
+          // Debug logging
+          if (video.value) {
+            console.log('🎬 VIDEO ENDED - Debug Info:', {
+              fileName: props.media.fileName,
+              mediaType: props.media.type,
+              isHLS: isHLS.value,
+              currentTime: video.value.currentTime,
+              duration: video.value.duration,
+              readyState: video.value.readyState,
+              readyStateText: ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'][video.value.readyState],
+              networkState: video.value.networkState,
+              networkStateText: ['NETWORK_EMPTY', 'NETWORK_IDLE', 'NETWORK_LOADING', 'NETWORK_NO_SOURCE'][video.value.networkState],
+              videoWidth: video.value.videoWidth,
+              videoHeight: video.value.videoHeight,
+              poster: video.value.poster,
+              src: video.value.src ? video.value.src.substring(0, 100) + '...' : 'HLS',
+              paused: video.value.paused,
+              ended: video.value.ended,
+              buffered: video.value.buffered.length > 0 ? {
+                start: video.value.buffered.start(0),
+                end: video.value.buffered.end(video.value.buffered.length - 1),
+                length: video.value.buffered.length
+              } : 'No buffered data'
+            });
+            
+            // Check if HLS instance exists and has buffer info
+            if (isHLS.value && hls) {
+              console.log('🎬 HLS Buffer Info:', {
+                levels: hls.levels?.length || 0,
+                currentLevel: hls.currentLevel,
+                loadLevel: hls.loadLevel,
+                autoLevelEnabled: hls.autoLevelEnabled,
+                media: hls.media ? 'attached' : 'detached'
+              });
+            }
+          }
+          
+          // Keep video at the end, don't reset to beginning
+          // This maintains the video container space
+          if (video.value) {
+            // Ensure video maintains its dimensions
+            video.value.style.minHeight = video.value.offsetHeight + 'px';
+          }
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
@@ -109,6 +167,18 @@ onMounted(() => {
           lastHandledError = null;
           if (video.value) {
             console.log('Video metadata loaded, duration:', video.value.duration);
+            // Capture video dimensions to maintain space after video ends
+            const videoHeight = video.value.videoHeight;
+            const videoWidth = video.value.videoWidth;
+            if (videoHeight > 0 && videoWidth > 0) {
+              // Calculate aspect ratio and set min-height based on width
+              const aspectRatio = videoHeight / videoWidth;
+              const containerWidth = video.value.offsetWidth || video.value.clientWidth;
+              if (containerWidth > 0) {
+                const calculatedHeight = containerWidth * aspectRatio;
+                video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
+              }
+            }
           }
         }, { once: true });
         
@@ -173,8 +243,14 @@ function setupHLS() {
       videoElement.style.willChange = 'transform'; // Optimize for animations
     }
   
-  // Check if HLS is supported natively
-  if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+  // Check if HLS is supported natively (Safari only - other browsers need hls.js)
+  // Only use native HLS if canPlayType returns 'probably' (Safari) not just truthy (Chrome/Edge return 'maybe')
+  const nativeHLS = videoElement.canPlayType('application/vnd.apple.mpegurl');
+  const isSafari = /^((?!chrome|android|edg).)*safari/i.test(navigator.userAgent) || 
+                   (/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream);
+  const useNativeHLS = isSafari && nativeHLS === 'probably';
+  
+  if (useNativeHLS) {
     // Simple approach: try master first, then playlist if master fails
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
@@ -189,12 +265,30 @@ function setupHLS() {
       videoElement.src = playlistUrl;
       videoElement.load();
       
-      // If playlist also fails, give up
+      // If playlist also fails, fall back to hls.js
       videoElement.addEventListener('error', () => {
-        console.error('Native HLS: Both playlists failed, cannot play HLS video');
+        console.log('Native HLS: Both playlists failed, falling back to hls.js');
+        // Clean up native attempt
+        videoElement.src = '';
+        videoElement.load();
+        // Use hls.js as fallback
+        if (Hls.isSupported()) {
+          setupHLSWithJS(videoElement);
+        } else {
+          console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
+        }
       }, { once: true });
     }, { once: true });
   } else if (Hls.isSupported()) {
+    // Use hls.js for all non-Safari browsers or when native HLS is not available
+    setupHLSWithJS(videoElement);
+  } else {
+    console.error('HLS is not supported in this browser');
+  }
+}
+
+// Setup HLS using hls.js library
+function setupHLSWithJS(videoElement: HTMLVideoElement) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
     const hlsConfig = isInTweetList.value ? {
       // Low quality settings for tweet list with hardware acceleration
@@ -246,43 +340,25 @@ function setupHLS() {
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
     
-    // Try both playlists simultaneously
-    let masterHls: Hls | null = null;
-    let playlistHls: Hls | null = null;
-    let isResolved = false;
-    let fallbackTimeout: ReturnType<typeof setTimeout> | null = null;
-    
-    const cleanupLoser = (loser: Hls | null) => {
-      if (loser) {
+    // Helper function to create and attach HLS instance
+    const createHLSInstance = (url: string, sourceName: string) => {
+      // Clean up any existing HLS instance
+      if (hls) {
         try {
-          loser.destroy();
+          hls.destroy();
         } catch (e) {
-          console.log('Error destroying loser HLS instance:', e);
+          console.log('Error destroying existing HLS instance:', e);
         }
-      }
-    };
-    
-    const resolveWinner = (winningUrl: string, sourceName: string) => {
-      if (isResolved) return;
-      isResolved = true;
-      
-      // Clear fallback timeout
-      if (fallbackTimeout) {
-        clearTimeout(fallbackTimeout);
-        fallbackTimeout = null;
+        hls = null;
       }
       
-      // Cleanup both temporary instances
-      cleanupLoser(masterHls);
-      cleanupLoser(playlistHls);
-      
-      // Create final HLS instance with the winning source
-      console.log(`HLS.js: ${sourceName} playlist succeeded first, creating final instance`);
+      // Create new HLS instance
+      console.log(`HLS.js: Creating instance with ${sourceName} playlist`);
       hls = new Hls(hlsConfig);
-      hls.loadSource(winningUrl);
+      hls.loadSource(url);
       hls.attachMedia(videoElement);
       
-      // Clear timeout when manifest is parsed
+      // Handle manifest parsed
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log(`HLS.js: ${sourceName} playlist manifest parsed successfully`);
         // Start playing if autoplay is enabled
@@ -294,7 +370,7 @@ function setupHLS() {
         }
       });
       
-      // Error handling for the final instance
+      // Error handling for the instance
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.log(`HLS Error (${sourceName}):`, data);
         
@@ -312,31 +388,39 @@ function setupHLS() {
           }
         } else {
           console.log(`HLS fatal error on ${sourceName}, attempting retry...`);
-          handleHLSFatalError(data, sourceName, winningUrl, videoElement);
+          handleHLSFatalError(data, sourceName, url, videoElement);
         }
       });
     };
     
-    // Try master playlist (without attaching to video yet)
-    console.log('HLS.js: Loading master playlist:', masterUrl);
-    masterHls = new Hls(hlsConfig);
+    // Try master playlist first
+    console.log('HLS.js: Trying master playlist first:', masterUrl);
+    const testMasterHls = new Hls(hlsConfig);
     
     const masterManifestPromise = new Promise<'master' | 'failed'>((resolve) => {
-      masterHls!.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (!isResolved) {
-          resolveWinner(masterUrl, 'master');
-          resolve('master');
-        } else {
-          resolve('master'); // Already resolved, but signal success
+      testMasterHls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('HLS.js: Master playlist loaded successfully');
+        // Clean up test instance
+        try {
+          testMasterHls.destroy();
+        } catch (e) {
+          console.log('Error destroying test master HLS instance:', e);
         }
+        // Create final instance with master
+        createHLSInstance(masterUrl, 'master');
+        resolve('master');
       });
       
-      masterHls!.on(Hls.Events.ERROR, (event, data) => {
+      testMasterHls.on(Hls.Events.ERROR, (event, data) => {
         if (data.fatal) {
-          if (!isResolved) {
-            console.log('Master playlist fatal error:', data);
+          console.log('Master playlist fatal error:', data);
+          // Clean up test instance
+          try {
+            testMasterHls.destroy();
+          } catch (e) {
+            console.log('Error destroying test master HLS instance:', e);
           }
-          resolve('failed'); // Resolve with failure status, don't reject
+          resolve('failed');
         } else {
           // Non-fatal errors can recover, wait for manifest
           console.log('Master playlist non-fatal error:', data);
@@ -344,52 +428,49 @@ function setupHLS() {
       });
     });
     
-    masterHls.loadSource(masterUrl);
+    testMasterHls.loadSource(masterUrl);
     
-    // Try playlist simultaneously (without attaching to video yet)
-    console.log('HLS.js: Loading playlist:', playlistUrl);
-    playlistHls = new Hls(hlsConfig);
-    
-    const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
-      playlistHls!.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (!isResolved) {
-          resolveWinner(playlistUrl, 'playlist');
-          resolve('playlist');
-        } else {
-          resolve('playlist'); // Already resolved, but signal success
-        }
-      });
-      
-      playlistHls!.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          if (!isResolved) {
-            console.log('Playlist fatal error:', data);
-          }
-          resolve('failed'); // Resolve with failure status, don't reject
-        } else {
-          // Non-fatal errors can recover, wait for manifest
-          console.log('Playlist non-fatal error:', data);
-        }
-      });
-    });
-    
-    playlistHls.loadSource(playlistUrl);
-    
-    // Race both promises - first one to succeed wins
-    Promise.race([masterManifestPromise, playlistManifestPromise]).catch(() => {
-      // If race fails, wait for the other one
-      if (!isResolved) {
-        Promise.allSettled([masterManifestPromise, playlistManifestPromise]).then(() => {
-          if (!isResolved) {
-            console.error('HLS.js: Both playlists failed');
-            cleanupLoser(masterHls);
-            cleanupLoser(playlistHls);
-            isResolved = true;
-          }
+    // If master fails, try playlist
+    masterManifestPromise.then((result) => {
+      if (result === 'failed') {
+        console.log('HLS.js: Master playlist failed, trying playlist:', playlistUrl);
+        const testPlaylistHls = new Hls(hlsConfig);
+        
+        const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
+          testPlaylistHls.on(Hls.Events.MANIFEST_PARSED, () => {
+            console.log('HLS.js: Playlist loaded successfully');
+            // Clean up test instance
+            try {
+              testPlaylistHls.destroy();
+            } catch (e) {
+              console.log('Error destroying test playlist HLS instance:', e);
+            }
+            // Create final instance with playlist
+            createHLSInstance(playlistUrl, 'playlist');
+            resolve('playlist');
+          });
+          
+          testPlaylistHls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              console.log('Playlist fatal error:', data);
+              // Clean up test instance
+              try {
+                testPlaylistHls.destroy();
+              } catch (e) {
+                console.log('Error destroying test playlist HLS instance:', e);
+              }
+              console.error('HLS.js: Both master and playlist failed, cannot play HLS video');
+              resolve('failed');
+            } else {
+              // Non-fatal errors can recover, wait for manifest
+              console.log('Playlist non-fatal error:', data);
+            }
+          });
         });
+        
+        testPlaylistHls.loadSource(playlistUrl);
       }
     });
-  }
 }
 
 // Setup regular video playback (non-HLS)
@@ -500,18 +581,43 @@ function getVideoSource(): string {
 }
 
 function getHLSSource(): string {
-  // For HLS videos, props.media.mid already contains the full IPFS URL
-  // We need to append the playlist filename
-  const playlistUrl = props.media.mid + '/playlist.m3u8';
+  // Get the base media URL (full URL)
+  const baseUrl = getBaseMediaUrl();
+  // Append the playlist filename
+  const playlistUrl = baseUrl + '/playlist.m3u8';
   console.log('Trying playlist.m3u8:', playlistUrl);
   return playlistUrl;
 }
 
 function getHLSMasterSource(): string {
-  // For HLS videos with multiple resolutions, try master playlist first
-  const masterUrl = props.media.mid + '/master.m3u8';
+  // Get the base media URL (full URL)
+  const baseUrl = getBaseMediaUrl();
+  // Append the master playlist filename
+  const masterUrl = baseUrl + '/master.m3u8';
   console.log('Trying master.m3u8:', masterUrl);
   return masterUrl;
+}
+
+function getBaseMediaUrl(): string {
+  // If props.media.mid is already a full URL, use it as-is
+  if (props.media.mid.startsWith('http://') || props.media.mid.startsWith('https://')) {
+    return props.media.mid;
+  }
+  
+  // Otherwise, construct the full URL from the hash using tweetStore.getMediaUrl
+  // Try to get provider IP from tweet author
+  let baseUrl = '';
+  if (props.tweet?.author?.providerIp) {
+    baseUrl = `http://${props.tweet.author.providerIp}`;
+  } else if (props.tweet?.provider) {
+    baseUrl = `http://${props.tweet.provider}`;
+  } else {
+    // Fallback to current origin (shouldn't happen in normal flow)
+    baseUrl = window.location.origin;
+  }
+  
+  // Use tweetStore.getMediaUrl to construct the URL (handles /ipfs/ vs /mm/ logic)
+  return tweetStore.getMediaUrl(props.media.mid, baseUrl);
 }
 
 // Fallback to progressive video when HLS streaming fails
@@ -583,12 +689,217 @@ function isMobileBrowser(): boolean {
   return hasTouch && isSmallScreen;
 }
 
+// Check if click is on video control area
+function isControlArea(clickY: number, videoHeight: number): boolean {
+  const controlsArea = videoHeight * 0.15; // Bottom 15% is controls area
+  return clickY > videoHeight - controlsArea;
+}
+
+// Open media viewer
+function openMediaViewer() {
+  console.log('VideoJS: openMediaViewer called');
+  console.log('VideoJS: props.tweet:', props.tweet);
+  console.log('VideoJS: props.mediaList:', props.mediaList);
+  console.log('VideoJS: props.mediaIndex:', props.mediaIndex);
+  
+  // Try to get tweet from props, or find it from the DOM
+  let tweet = props.tweet;
+  let allMedia = props.mediaList;
+  
+  // If tweet not in props, try to find it from parent container
+  if (!tweet && vdiv.value) {
+    const tweetContainer = vdiv.value.closest('.tweet-container');
+    if (tweetContainer) {
+      // Try to get tweet data from data attributes or find the tweet store
+      const tweetId = tweetContainer.id;
+      // For now, we'll use the mediaList if available
+    }
+  }
+  
+  // If still no media list, try to get from tweet attachments
+  if (!allMedia && tweet) {
+    allMedia = tweet.attachments || [];
+  }
+  
+  // If we still don't have media, create a single-item list
+  if (!allMedia || allMedia.length === 0) {
+    allMedia = [props.media];
+  }
+  
+  // Find current video index
+  const currentIndex = props.mediaIndex !== undefined 
+    ? props.mediaIndex 
+    : allMedia.findIndex(media => media.mid === props.media.mid);
+  
+  console.log('VideoJS: Final media list:', allMedia);
+  console.log('VideoJS: Current index:', currentIndex);
+  
+  // Store media data in session storage for the modal
+  const mediaViewerData = {
+    mediaList: allMedia,
+    initialIndex: currentIndex >= 0 ? currentIndex : 0,
+    tweet: tweet || null
+  };
+  
+  console.log('VideoJS: Storing media viewer data:', mediaViewerData);
+  sessionStorage.setItem('mediaViewerData', JSON.stringify(mediaViewerData));
+  
+  // Navigate to media viewer
+  console.log('VideoJS: Navigating to media viewer');
+  router.push('/media-viewer');
+}
+
+// Handle touch start for scroll detection
+function handleTouchStart(event: TouchEvent) {
+  if (!isMobileBrowser()) return;
+  
+  if (event.touches.length === 1) {
+    touchStartX.value = event.touches[0].clientX;
+    touchStartY.value = event.touches[0].clientY;
+    touchStartTime.value = Date.now();
+    isScrolling.value = false;
+  }
+}
+
+// Handle touch move to detect scrolling
+function handleTouchMove(event: TouchEvent) {
+  if (!isMobileBrowser()) return;
+  
+  if (event.touches.length === 1 && touchStartX.value !== 0) {
+    const deltaX = Math.abs(event.touches[0].clientX - touchStartX.value);
+    const deltaY = Math.abs(event.touches[0].clientY - touchStartY.value);
+    
+    // If movement is significant (more than 10px), it's a scroll
+    if (deltaX > 10 || deltaY > 10) {
+      isScrolling.value = true;
+    }
+  }
+}
+
+// Handle touch end
+function handleTouchEnd(event: TouchEvent) {
+  if (!isMobileBrowser()) return;
+  
+  // If user was scrolling, don't open media viewer
+  if (isScrolling.value) {
+    isScrolling.value = false;
+    touchStartX.value = 0;
+    touchStartY.value = 0;
+    return;
+  }
+  
+  // Check if it was a quick tap (less than 300ms)
+  const touchDuration = Date.now() - touchStartTime.value;
+  if (touchDuration > 300) {
+    // Too long, probably not a tap
+    touchStartX.value = 0;
+    touchStartY.value = 0;
+    return;
+  }
+  
+  // It's a tap, handle it
+  handleVideoTap(event);
+  
+  touchStartX.value = 0;
+  touchStartY.value = 0;
+}
+
 // Handle video element tap/click
 function handleVideoTap(event: Event) {
-  event.preventDefault();
-  event.stopPropagation();
+  const mouseEvent = event as MouseEvent | TouchEvent;
+  const target = event.target as HTMLElement;
   
-  if (video.value) {
+  if (!video.value) {
+    console.log('VideoJS: handleVideoTap - no video element');
+    return;
+  }
+  
+  // On mobile, check if touch is on video controls
+  if (isMobileBrowser()) {
+    console.log('VideoJS: Mobile browser detected, processing tap');
+
+    // Get touch position
+    let clickY = 0;
+    const videoHeight = video.value.offsetHeight || video.value.clientHeight;
+
+    if (mouseEvent instanceof TouchEvent) {
+      if (mouseEvent.changedTouches && mouseEvent.changedTouches.length > 0) {
+        const touch = mouseEvent.changedTouches[0];
+        const rect = video.value.getBoundingClientRect();
+        clickY = touch.clientY - rect.top;
+      }
+    } else if (mouseEvent instanceof MouseEvent) {
+      const rect = video.value.getBoundingClientRect();
+      clickY = mouseEvent.clientY - rect.top;
+    }
+
+    // Check if touch is on controls area (bottom 20% for mobile - controls are larger)
+    const isOnControls = clickY > videoHeight * 0.8;
+
+    // Check if controls are visible (video is playing or has been interacted with)
+    const controlsVisible = !video.value.paused || video.value.currentTime > 0;
+
+    // If touch is directly on video element (not wrapper), it might be on controls
+    if (target === video.value || target.closest('video') === video.value) {
+      // Check if it's in the controls area
+      if (isOnControls) {
+        console.log('VideoJS: Touch on video controls, letting native handle');
+        return; // Let native controls handle it
+      }
+    }
+
+    // Request fullscreen when controls are not visible, or when tapping on empty space
+    if (!controlsVisible) {
+      console.log('VideoJS: Mobile browser - controls not visible, requesting fullscreen');
+      event.preventDefault();
+      event.stopPropagation();
+      requestFullscreen();
+      return;
+    } else {
+      // Controls are visible
+      if (isOnControls) {
+        console.log('VideoJS: Mobile browser - tapping on controls, letting native handle');
+        return; // Let native controls handle it
+      } else {
+        console.log('VideoJS: Mobile browser - tapping on empty space with controls visible, requesting fullscreen');
+        event.preventDefault();
+        event.stopPropagation();
+        requestFullscreen();
+        return;
+      }
+    }
+  }
+  
+  // Desktop behavior - get click position
+  const rect = video.value.getBoundingClientRect();
+  const clickY = (mouseEvent as MouseEvent).clientY - rect.top;
+  const clickX = (mouseEvent as MouseEvent).clientX - rect.left;
+  const videoHeight = rect.height;
+  const videoWidth = rect.width;
+  
+  // Check if click is on control area (bottom 15% of video)
+  const isOnControls = isControlArea(clickY, videoHeight);
+  
+  // Check if controls are visible (video is playing or has been interacted with)
+  const controlsVisible = !video.value.paused || video.value.currentTime > 0;
+
+  if (!controlsVisible) {
+    // Controls not visible - show them and play
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Focus video to show controls
+    video.value.focus();
+
+    // Play the video
+    if (video.value.paused) {
+      video.value.play().catch(() => {
+        // If autoplay fails, try muted
+        video.value.muted = true;
+        video.value.play().catch(() => {});
+      });
+    }
+
     // Stop all other videos on the page
     const allVideos = document.querySelectorAll('video');
     allVideos.forEach(v => {
@@ -596,93 +907,39 @@ function handleVideoTap(event: Event) {
         v.pause();
       }
     });
-    
-    // Check if mobile browser
-    if (isMobileBrowser()) {
-      // Mobile: Play in fullscreen
-      // Pause video first if it's playing
-      if (!video.value.paused) {
-        video.value.pause();
-      }
-      
-      video.value.muted = false;
-      
-      // For iOS Safari, use webkitEnterFullscreen
-      if ((video.value as any).webkitEnterFullscreen) {
-        // iOS Safari - webkitEnterFullscreen automatically plays the video, but we'll ensure it plays
-        try {
-          (video.value as any).webkitEnterFullscreen();
-          // Explicitly play after entering fullscreen (webkitEnterFullscreen should auto-play, but ensure it)
-          setTimeout(() => {
-            if (video.value && video.value.paused) {
-              video.value.play().catch(() => {
-                // If play fails, try muted
-                video.value.muted = true;
-                video.value.play().then(() => {
-                  setTimeout(() => {
-                    if (video.value) {
-                      video.value.muted = false;
-                    }
-                  }, 100);
-                }).catch(() => {});
-              });
-            }
-          }, 200);
-        } catch (e) {
-          console.log('webkitEnterFullscreen failed:', e);
-          // Fallback: try to play normally
-          video.value.play();
-        }
-      } else {
-        // For Android Chrome and other mobile browsers
-        // Remove playsinline temporarily to allow fullscreen
-        const hadPlaysinline = video.value.hasAttribute('playsinline');
-        if (hadPlaysinline) {
-          video.value.removeAttribute('playsinline');
-        }
-        
-        // Try to enter fullscreen
-        const enterFullscreen = async () => {
-          try {
-            let fullscreenPromise: Promise<void> | null = null;
-            
-            if (video.value.requestFullscreen) {
-              fullscreenPromise = video.value.requestFullscreen() as Promise<void>;
-            } else if ((video.value as any).webkitRequestFullscreen) {
-              fullscreenPromise = (video.value as any).webkitRequestFullscreen();
-            } else if ((video.value as any).mozRequestFullScreen) {
-              fullscreenPromise = (video.value as any).mozRequestFullScreen();
-            } else if ((video.value as any).msRequestFullscreen) {
-              fullscreenPromise = (video.value as any).msRequestFullscreen();
-            }
-            
-            if (fullscreenPromise) {
-              await fullscreenPromise;
-            }
-            
-            // Play after fullscreen
-            await playAfterFullscreen();
-          } catch (fullscreenError) {
-            console.log('Fullscreen failed:', fullscreenError);
-            // Restore playsinline if fullscreen failed
-            if (hadPlaysinline && video.value) {
-              video.value.setAttribute('playsinline', '');
-            }
-            // Try to play anyway
-            if (video.value) {
-              video.value.play().catch(() => {});
-            }
-          }
-        };
-        
-        enterFullscreen();
-      }
+
+    return;
+  } else {
+    // Controls are visible
+    if (isOnControls) {
+      // Click is on controls - let native controls handle it
+      console.log('VideoJS: Tapping on controls, letting native handle');
+      return;
     } else {
-      // Desktop: Just play/stop (toggle play/pause)
-      if (video.value.paused) {
-        video.value.play();
+      // Click is on video area (not controls)
+      if (showControls) {
+        // Desktop in detail view: toggle play/pause
+        console.log('VideoJS: Desktop detail view - toggling play/pause');
+        event.preventDefault();
+        event.stopPropagation();
+        if (video.value) {
+          if (video.value.paused) {
+            video.value.play().catch(() => {
+              video.value!.muted = true;
+              video.value!.play().catch(() => {});
+            });
+          } else {
+            video.value.pause();
+          }
+        }
+        return;
       } else {
-        video.value.pause();
+        // Other contexts: request fullscreen
+        console.log('VideoJS: Tapping on video area, requesting fullscreen');
+        event.preventDefault();
+        event.stopPropagation();
+        requestFullscreen();
+        return;
       }
     }
   }
@@ -726,101 +983,27 @@ function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
   if (video.value) {
-    // Stop all other videos on the page
-    const allVideos = document.querySelectorAll('video');
-    allVideos.forEach(v => {
-      if (v !== video.value && !v.paused) {
-        v.pause();
-      }
-    });
-    
-    // Check if mobile browser
-    if (isMobileBrowser()) {
-      // Mobile: Play in fullscreen
-      video.value.muted = false;
-      
-      // For iOS Safari, use webkitEnterFullscreen
-      if ((video.value as any).webkitEnterFullscreen) {
-        try {
-          (video.value as any).webkitEnterFullscreen();
-          // Explicitly play after entering fullscreen
-          setTimeout(() => {
-            if (video.value && video.value.paused) {
-              video.value.play().then(() => {
-                isPlaying.value = true;
-                showPlayOverlay.value = false;
-              }).catch(() => {
-                video.value.muted = true;
-                video.value.play().then(() => {
-                  isPlaying.value = true;
-                  showPlayOverlay.value = false;
-                  setTimeout(() => {
-                    if (video.value) {
-                      video.value.muted = false;
-                    }
-                  }, 100);
-                }).catch(() => {});
-              });
-            }
-          }, 200);
-        } catch (e) {
-          console.log('webkitEnterFullscreen failed:', e);
-          video.value.play();
-          isPlaying.value = true;
-          showPlayOverlay.value = false;
-        }
-      } else {
-        // For Android Chrome and other mobile browsers
-        // Remove playsinline temporarily to allow fullscreen
-        const hadPlaysinline = video.value.hasAttribute('playsinline');
-        if (hadPlaysinline) {
-          video.value.removeAttribute('playsinline');
-        }
-        
-        // Try to enter fullscreen
-        const enterFullscreen = async () => {
-          try {
-            let fullscreenPromise: Promise<void> | null = null;
-            
-            if (video.value.requestFullscreen) {
-              fullscreenPromise = video.value.requestFullscreen() as Promise<void>;
-            } else if ((video.value as any).webkitRequestFullscreen) {
-              fullscreenPromise = (video.value as any).webkitRequestFullscreen();
-            } else if ((video.value as any).mozRequestFullScreen) {
-              fullscreenPromise = (video.value as any).mozRequestFullScreen();
-            } else if ((video.value as any).msRequestFullscreen) {
-              fullscreenPromise = (video.value as any).msRequestFullscreen();
-            }
-            
-            if (fullscreenPromise) {
-              await fullscreenPromise;
-            }
-            
-            // Play after fullscreen
-            await playAfterFullscreen();
-          } catch (fullscreenError) {
-            console.log('Fullscreen failed:', fullscreenError);
-            // Restore playsinline if fullscreen failed
-            if (hadPlaysinline && video.value) {
-              video.value.setAttribute('playsinline', '');
-            }
-            // Try to play anyway
-            if (video.value) {
-              video.value.play().then(() => {
-                isPlaying.value = true;
-                showPlayOverlay.value = false;
-              }).catch(() => {});
-            }
-          }
-        };
-        
-        enterFullscreen();
-      }
+    if (isPlaying.value) {
+      video.value.pause();
     } else {
-      // Desktop: Just play
-      video.value.play();
-      isPlaying.value = true;
-      showPlayOverlay.value = false;
+      // If video has ended, reset to beginning
+      if (video.value.ended || video.value.currentTime >= video.value.duration) {
+        video.value.currentTime = 0;
+      }
+
+      // Stop all other videos on the page
+      const allVideos = document.querySelectorAll('video');
+      allVideos.forEach(v => {
+        if (v !== video.value && !v.paused) {
+          v.pause();
+        }
+      });
+
+      video.value.play().catch(() => {
+        // If autoplay fails, try muted
+        video.value.muted = true;
+        video.value.play().catch(() => {});
+      });
     }
   }
 }
@@ -846,6 +1029,73 @@ function handleVisibilityChange() {
   }
 }
 
+// Request fullscreen for video
+async function requestFullscreen() {
+  if (!video.value) return;
+
+  console.log('VideoJS: Requesting fullscreen for video element');
+
+  // For mobile browsers, try multiple approaches
+  if (isMobileBrowser()) {
+    console.log('VideoJS: Mobile browser detected, trying mobile-specific fullscreen');
+
+    try {
+      // Try iOS-specific fullscreen first
+      if ((video.value as any).webkitEnterFullscreen) {
+        console.log('VideoJS: Using iOS webkitEnterFullscreen()');
+        (video.value as any).webkitEnterFullscreen();
+        return;
+      }
+
+      // Try standard fullscreen API
+      if (video.value.requestFullscreen) {
+        console.log('VideoJS: Using requestFullscreen()');
+        await video.value.requestFullscreen();
+        return;
+      }
+
+      // Try webkit fullscreen
+      if ((video.value as any).webkitRequestFullscreen) {
+        console.log('VideoJS: Using webkitRequestFullscreen()');
+        (video.value as any).webkitRequestFullscreen();
+        return;
+      }
+
+      console.log('VideoJS: No mobile fullscreen API available, ensuring video plays');
+      // If fullscreen isn't available, at least make sure video plays
+      if (video.value.paused) {
+        video.value.play().catch((e: any) => console.log('VideoJS: Play failed:', e));
+      }
+
+    } catch (error) {
+      console.log('VideoJS: Mobile fullscreen failed:', error);
+      // Fallback: just play the video
+      try {
+        if (video.value.paused) {
+          video.value.play().catch((e: any) => console.log('VideoJS: Fallback play failed:', e));
+        }
+      } catch (playError) {
+        console.log('VideoJS: All mobile fullscreen attempts failed');
+      }
+    }
+  } else {
+    // Desktop fullscreen
+    try {
+      if (video.value.requestFullscreen) {
+        await video.value.requestFullscreen();
+      } else if ((video.value as any).webkitRequestFullscreen) {
+        await (video.value as any).webkitRequestFullscreen();
+      } else if ((video.value as any).mozRequestFullScreen) {
+        await (video.value as any).mozRequestFullScreen();
+      } else if ((video.value as any).msRequestFullscreen) {
+        await (video.value as any).msRequestFullscreen();
+      }
+    } catch (error) {
+      console.log('VideoJS: Desktop fullscreen failed:', error);
+    }
+  }
+}
+
 // Handle fullscreen change
 function handleFullscreenChange() {
   const isFullscreen = !!(
@@ -854,13 +1104,21 @@ function handleFullscreenChange() {
     (document as any).mozFullScreenElement ||
     (document as any).msFullscreenElement
   );
-  
+
   if (!isFullscreen && video.value) {
     // Exited fullscreen - stop the video and hide controls
     video.value.pause();
     // Controls remain enabled
     video.value.muted = false; // Restore unmuted state
     isPlaying.value = false;
+  } else if (isFullscreen && video.value) {
+    // Entered fullscreen - ensure video is playing
+    if (video.value.paused) {
+      video.value.play().catch(() => {
+        video.value!.muted = true;
+        video.value!.play().catch(() => {});
+      });
+    }
   }
 }
 
@@ -1206,40 +1464,49 @@ function stopVideo() {
         </div>
       </div>
       
-      <!-- Play overlay for paused videos (mobile-friendly) -->
-      <div v-if="!isPlaying && showPlayOverlay && !autoplayBlocked" 
-           class="play-overlay" 
+      <!-- Play overlay for videos (mobile-friendly) -->
+      <div v-if="!showControls"
+           class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
         <div class="play-overlay-button">
-          <svg viewBox="0 0 24 24" fill="white">
+          <svg v-if="!isPlaying" viewBox="0 0 24 24" fill="white">
             <path d="M8 5v14l11-7z"/>
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="white">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
           </svg>
         </div>
       </div>
       
-      <video
-        ref="video"
-        class="video"
-        :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
-        :autoplay=props.autoplay
-        controls
-        :controlslist=controls
-        preload="auto"
-        playsinline
-        webkit-playsinline
-        x5-playsinline
-        x5-video-player-type="h5"
-        x5-video-player-fullscreen="true"
-        @loadedmetadata="checkVideoOrientation"
-        @contextmenu="disableRightClick"
+      <div 
+        class="video-tap-handler"
         @click="handleVideoTap"
-        @touchend="handleVideoTap"
+        @touchstart="handleTouchStart"
+        @touchmove="handleTouchMove"
+        @touchend="handleTouchEnd"
       >
-          <!-- For regular videos only - HLS videos are handled by HLS.js -->
-          <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
-        Your browser does not support the video tag.
-      </video>
+        <video
+          ref="video"
+          class="video"
+          :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
+          :autoplay=props.autoplay
+          :controls="showControls"
+          :controlslist="showControls ? controls : undefined"
+          preload="auto"
+          playsinline
+          webkit-playsinline
+          x5-playsinline
+          x5-video-player-type="h5"
+          x5-video-player-fullscreen="true"
+          @loadedmetadata="checkVideoOrientation"
+          @contextmenu="disableRightClick"
+        >
+            <!-- For regular videos only - HLS videos are handled by HLS.js -->
+            <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
+          Your browser does not support the video tag.
+        </video>
+      </div>
     </div>
     <p class="video-filename">
       {{ media.fileName }}
@@ -1264,6 +1531,15 @@ function stopVideo() {
   align-items: center;
   justify-content: center;
   background-color: #000;
+  /* Maintain minimum height to prevent collapse when video ends */
+  min-height: 200px;
+}
+
+.video-tap-handler {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .video {
@@ -1282,6 +1558,69 @@ function stopVideo() {
   background-color: #000;
   /* Center the video */
   margin: 0 auto;
+  /* Maintain dimensions after video ends - prevent collapse */
+  flex-shrink: 0;
+}
+
+/* Grid items - force video to fill container */
+.grid-item .video-container,
+.media-attachments .grid-item .video-container {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: relative !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+}
+
+/* Hide filename in grid context */
+.grid-item .video-filename,
+.media-attachments .grid-item .video-filename {
+  display: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 0 !important;
+  visibility: hidden !important;
+}
+
+.grid-item .video-wrapper,
+.media-attachments .grid-item .video-wrapper {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+}
+
+.grid-item .video,
+.media-attachments .grid-item .video {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  object-position: center !important;
+  max-width: none !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  aspect-ratio: unset !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  vertical-align: middle !important;
+  line-height: 0 !important;
 }
 
 .video-filename {

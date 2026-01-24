@@ -2,10 +2,14 @@
 import { computed, onMounted, ref, onUnmounted, watch } from 'vue';
 import { useTweetStore } from '@/stores';
 import { useRoute } from 'vue-router';
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 import { TweetView, AppHeader } from '@/views';
+import { isWeChatBrowser } from '@/lib';
+import { LoadingSpinner, PageLayout } from '@/components';
 
 const tweetStore = useTweetStore();
 const isLoading = ref(false);
+const retryMessage = ref('');
 const pageNumber = ref(0);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
@@ -29,9 +33,20 @@ function getBotVerificationMessage(): string {
 }
 
 onMounted(async () => {
+    // Wait a tick for route params to be fully available
+    if (!authorId.value) {
+        console.error('UserPage: authorId is undefined, waiting for route to be ready...');
+        // Wait for next tick and check again
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!authorId.value) {
+            console.error('UserPage: authorId still undefined after wait');
+            return;
+        }
+    }
+    
+    console.log('UserPage mounted for authorId:', authorId.value);
     tweetStore.removeUser(authorId.value);  // force reload user data from its host.
     await initialLoadTweets(authorId.value);
-    console.log('UserPage mounted', await tweetStore.getUser(authorId.value));
     window.addEventListener('scroll', handleScroll);
     // Scroll to top when page is opened
     window.scrollTo(0, 0);
@@ -42,7 +57,7 @@ onUnmounted(() => {
 });
 
 async function initialLoadTweets(authorId: MimeiId) {
-    if (sessionStorage['isBot'] !== 'No') {
+    if (sessionStorage['isBot'] !== 'No' && isWeChatBrowser()) {
         if (confirm(getBotVerificationMessage())) {
             sessionStorage['isBot'] = 'No';
             await loadTweetsWithMinimum(authorId);
@@ -50,6 +65,10 @@ async function initialLoadTweets(authorId: MimeiId) {
             history.go(-1);
         }
     } else {
+        // For non-WeChat browsers, automatically pass verification
+        if (sessionStorage['isBot'] !== 'No') {
+            sessionStorage['isBot'] = 'No';
+        }
         await loadTweetsWithMinimum(authorId);
     }
 }
@@ -60,46 +79,144 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     isLoading.value = true;
     pageNumber.value = 0; // Reset page number for initial load
     hasMoreTweets.value = true; // Reset the flag for initial load
-    
-    // Load initial page
-    await tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
-    
-    // Keep loading more pages until we have at least 6 tweets or no more tweets
-    const minTweets = 6;
-    let tweetsLoaded = 0;
-    let round = 0;
-    
-    while (isLoading.value && round < 10) {
-        // Load initial page
-        const loadedPageSize = await tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize);
-        if (loadedPageSize) {
-            tweetsLoaded += loadedPageSize;
-            round++;
-        } else {
-            console.warn("Init load failed. Cannot load tweets in round", round);
-            break;
-        }
-        if (tweetsLoaded >= minTweets) {
-            break;
+
+    let currentTimeoutId: number | null = null;
+
+    try {
+        // Keep loading more pages until we have at least 6 tweets or no more tweets
+        const minTweets = 6;
+        let tweetsLoaded = 0;
+        let round = 0;
+        let consecutiveFailures = 0;
+        const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
+        while (isLoading.value && round < 10) {
+            // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
+            const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
+
+            let hasTimedOut = false;
+            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize).then(result => {
+                // Clear timeout immediately when load succeeds
+                if (currentTimeoutId && !hasTimedOut) {
+                    clearTimeout(currentTimeoutId);
+                }
+                return result;
+            });
+
+            // Set timeout to refresh on failure
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                currentTimeoutId = window.setTimeout(() => {
+                    hasTimedOut = true;
+                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                        console.warn(`Load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
+                        sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
+                        window.location.reload();
+                    } else {
+                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage, stopping`);
+                        isLoading.value = false;
+                        sessionStorage.removeItem('userPageRefreshCount');
+                    }
+                    reject(new Error('Page load timeout'));
+                }, LOAD_TIMEOUT_MS);
+            });
+
+            let loadedPageSize: number;
+            try {
+                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
+                consecutiveFailures = 0; // Reset on success
+                sessionStorage.removeItem('userPageRefreshCount'); // Clear refresh count on success
+            } catch (error) {
+                // Timeout already handled the refresh, this catch is for any other errors
+                // which should be extremely rare since timeout handles the refresh
+                console.error('Unexpected error during load:', error);
+                break;
+            }
+            
+            if (loadedPageSize) {
+                tweetsLoaded += loadedPageSize;
+                round++;
+            } else {
+                console.warn("Init load failed. Cannot load tweets in round", round);
+                consecutiveFailures++;
+                
+                // Continue to next page if we haven't exceeded max failures
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    console.warn("Too many consecutive failures, stopping initial load");
+                    break;
+                }
+                
+                // Still increment page number and round to try next page
+                pageNumber.value++;
+                round++;
+                continue;
+            }
+            
+            if (tweetsLoaded >= minTweets) {
+                break;
+            }
+            
+            // If fewer tweets than requested were loaded, there are no more tweets
+            if (loadedPageSize < pageSize) {
+                console.log('No more tweets available from backend. Page number:', pageNumber.value);
+                break;
+            } else {
+                // Load next page
+                pageNumber.value++;
+                console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
+            }
         }
         
-        // If fewer tweets than requested were loaded, there are no more tweets
-        if (loadedPageSize < pageSize) {
-            console.log('No more tweets available from backend. Page number:', pageNumber.value);
-            break;
+        // Log final result
+        if (tweetsLoaded > 0) {
+            console.log(`Initial load completed: ${tweetsLoaded} tweets loaded in ${round} round(s)`);
         } else {
-            // Load next page
-            pageNumber.value++;
-            console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
+            console.warn('Initial load completed with no tweets loaded');
         }
+        
+        // Load pinned tweets (with 6-second timeout, refresh on failure - max 5 refreshes)
+        try {
+            const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
+            let pinnedHasTimedOut = false;
+            const pinnedPromise = tweetStore.loadPinnedTweets(authorId).then(result => {
+                // Clear timeout immediately when load succeeds
+                if (currentTimeoutId && !pinnedHasTimedOut) {
+                    clearTimeout(currentTimeoutId);
+                }
+                return result;
+            });
+
+            const pinnedTimeout = new Promise<Tweet[]>((_, reject) => {
+                currentTimeoutId = window.setTimeout(() => {
+                    pinnedHasTimedOut = true;
+                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                        console.warn(`Pinned tweets timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
+                        sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
+                        window.location.reload();
+                    } else {
+                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage pinned tweets, stopping`);
+                        isLoading.value = false;
+                        sessionStorage.removeItem('userPageRefreshCount');
+                    }
+                    reject(new Error('Pinned tweets timeout'));
+                }, LOAD_TIMEOUT_MS);
+            });
+
+            pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);
+            pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+            sessionStorage.removeItem('userPageRefreshCount'); // Clear on success
+        } catch (error) {
+            // Timeout already handled the refresh
+            console.error('Unexpected error loading pinned tweets:', error);
+            pinnedTweets.value = [];
+        }
+    } catch (error) {
+        console.error('Error in loadTweetsWithMinimum:', error);
+    } finally {
+        if (currentTimeoutId) {
+            clearTimeout(currentTimeoutId);
+        }
+        isLoading.value = false;
+        initialLoad.value = false;
     }
-    
-    // Load pinned tweets
-    pinnedTweets.value = await tweetStore.loadPinnedTweets(authorId);
-    pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
-    
-    isLoading.value = false;
-    initialLoad.value = false;
 }
 
 async function loadMoreTweets(isManualRetry = false) {
@@ -111,14 +228,24 @@ async function loadMoreTweets(isManualRetry = false) {
     }
     
     isLoading.value = true;
+    
     try {
+        // Load tweets without aggressive timeout - let connection pool handle timeouts
         const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
         
         if (tweetsLoaded && tweetsLoaded > 0) {
-            hasMoreTweets.value = true; // Re-enable loading if we got tweets
+            // Check if we've reached the end of the list
+            if (tweetsLoaded < pageSize) {
+                // Fewer tweets than requested = no more tweets available
+                console.log(`Reached end of tweet list. Loaded ${tweetsLoaded} tweets (less than page size ${pageSize})`);
+                hasMoreTweets.value = false;
+            } else {
+                // Full page loaded, there might be more
+                hasMoreTweets.value = true;
+            }
             pageNumber.value++;
         } else {
-            // For automatic loading, stop immediately
+            // No tweets loaded
             if (!isManualRetry) {
                 console.log('No more tweets available from backend');
                 hasMoreTweets.value = false;
@@ -184,48 +311,29 @@ const handleScroll = debounce(async () => {
     const documentHeight = document.documentElement.scrollHeight;
 
     if (documentHeight - scrollPosition < scrollThreshold) {
-        // Store current scroll position before loading
-        const currentScrollY = window.scrollY;
-        const currentDocumentHeight = documentHeight;
-        
         // Only load more tweets if we have more tweets available
         if (hasMoreTweets.value) {
             await loadMoreTweets(false); // Automatic loading
-        }
-        
-        // Restore scroll position after loading to prevent jumping
-        // Only if the document height increased (new content was added)
-        const newDocumentHeight = document.documentElement.scrollHeight;
-        if (newDocumentHeight > currentDocumentHeight) {
-            // Use requestAnimationFrame for smooth scroll restoration
-            requestAnimationFrame(() => {
-                const heightDifference = newDocumentHeight - currentDocumentHeight;
-                window.scrollTo({
-                    top: currentScrollY + heightDifference,
-                    behavior: 'instant' // Use instant to prevent animation conflicts
-                });
-            });
         }
     }
 }, 300); // Increased debounce delay to reduce conflicts
 </script>
 
 <template>
-    <div class='row justify-content-start align-items-start'>
-        <div class='col-sm-12 col-md-8 col-lg-6' style='background-color:aliceblue;'>
-            <AppHeader :userId='authorId' />
-            <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Pinned</b>
-            <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
-            <hr v-if='pinnedTweets?.length!>0' />
-            <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Tweets</b>
-            <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid'/>
-            <div v-if='isLoading' class='d-flex justify-content-center my-3'>
-                <div class='spinner-border' role='status'>
-                    <span class='visually-hidden'>Loading...</span>
-                </div>
+    <PageLayout width="normal">
+        <AppHeader :userId='authorId' />
+        <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Pinned</b>
+        <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
+        <hr v-if='pinnedTweets?.length!>0' />
+        <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Tweets</b>
+        <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid'/>
+        <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
+            <LoadingSpinner />
+            <div v-if='retryMessage' class='text-muted mt-2 small'>
+                {{ retryMessage }}
             </div>
         </div>
-    </div>
+    </PageLayout>
 </template>
 
 <style scoped>

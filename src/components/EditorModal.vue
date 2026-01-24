@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
 import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
 
 // Helper function to get human-readable aspect ratio names
 function getAspectRatioDisplayName(ratio: number): string {
@@ -31,7 +32,6 @@ const txtConent = ref()
 const divAttach = ref()
 const dropHere = ref()
 const textArea = ref<HTMLTextAreaElement>()
-const sliceSize = 1024 * 1024 * 10 // 10MB per slice of file
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
@@ -42,7 +42,6 @@ const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
 const tweetStore = useTweetStore()
-const hproseClient = tweetStore.loginUser?.client
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
 const mmFiles = ref<MimeiFileType[]>([]);
@@ -50,6 +49,79 @@ const showCidModal = ref(false);
 
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 const SMALL_VIDEO_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50MB
+
+// Retry configuration for uploads
+const UPLOAD_RETRY_CONFIG = {
+  maxRetries: 3,
+  initialDelay: 1000, // 1 second
+  maxDelay: 10000, // 10 seconds
+  backoffMultiplier: 2
+}
+
+// Utility function to determine if an error is retryable
+function isRetryableError(error: any): boolean {
+  if (!error) return false;
+
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const retryablePatterns = [
+    'timeout',
+    'Connection request timeout',
+    'Network error',
+    'ECONNRESET',
+    'ENOTFOUND',
+    'ECONNREFUSED',
+    'fetch failed',
+    'Failed to fetch'
+  ];
+
+  return retryablePatterns.some(pattern =>
+    errorMessage.toLowerCase().includes(pattern.toLowerCase())
+  );
+}
+
+// Generic retry wrapper for upload functions
+async function retryUpload<T>(
+  uploadFn: () => Promise<T>,
+  fileName: string,
+  config = UPLOAD_RETRY_CONFIG
+): Promise<T> {
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`[UPLOAD-RETRY] Attempting retry ${attempt}/${config.maxRetries} for ${fileName}`);
+      }
+
+      const result = await uploadFn();
+      if (attempt > 0) {
+        console.log(`[UPLOAD-RETRY] Retry successful for ${fileName} on attempt ${attempt + 1}`);
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.error(`[UPLOAD-RETRY] Attempt ${attempt + 1} failed for ${fileName}:`, error);
+
+      // Don't retry if this is the last attempt or error is not retryable
+      if (attempt >= config.maxRetries || !isRetryableError(error)) {
+        break;
+      }
+
+      // Calculate delay with exponential backoff
+      const delay = Math.min(
+        config.initialDelay * Math.pow(config.backoffMultiplier, attempt),
+        config.maxDelay
+      );
+
+      console.log(`[UPLOAD-RETRY] Waiting ${delay}ms before retry ${attempt + 1} for ${fileName}`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // All retries failed
+  console.error(`[UPLOAD-RETRY] All ${config.maxRetries + 1} attempts failed for ${fileName}`);
+  throw lastError;
+}
 
 onMounted(() => {
   tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
@@ -75,19 +147,15 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       let cid: string = '';
 
       // Handle different file types
-      if (fileType === 'Image') {
-        // Compress image to under 2MB
-        processedFile = await compressImage(file);
-        uploadProgress[i] = 50; // Show progress for compression
+      if (isImageType(fileType)) {
+        // Upload original file without any compression (debug mode)
+        console.log(`[UPLOAD] Uploading image ${file.name} (${(file.size / 1024).toFixed(1)}KB) without compression`)
+        cid = await retryUpload(
+          () => uploadFileFromFile(file, i),
+          file.name
+        );
         
-        // Upload compressed image using existing method
-        const fsid = await tweetStore.openTempFile();
-        const defaultTimeout = hproseClient.timeout;
-        hproseClient.timeout = 0;
-        cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
-        hproseClient.timeout = defaultTimeout;
-        
-      } else if (fileType === 'Video') {
+      } else if (isVideoType(fileType)) {
         // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
         
@@ -145,16 +213,19 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
               
               // Service is available, use regular video upload
               console.log(`Starting video upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-              cid = await uploadVideo(
-                file, 
-                baseUrl, 
-                cloudDrivePort,
-                (progress) => {
-                  // Update progress based on job processing progress
-                  uploadProgress[i] = progress;
-                  console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
-                },
-                noResample.value
+              cid = await retryUpload(
+                () => uploadVideo(
+                  file,
+                  baseUrl,
+                  cloudDrivePort,
+                  (progress) => {
+                    // Update progress based on job processing progress
+                    uploadProgress[i] = progress;
+                    console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
+                  },
+                  noResample.value
+                ),
+                file.name
               );
               
               // Validate that we received a valid CID
@@ -180,41 +251,39 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
             useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
           }
           
-          // Use the same IPFS upload method as other files
-          const fsid = await tweetStore.openTempFile();
-          const defaultTimeout = hproseClient.timeout;
-          hproseClient.timeout = 0;
-          cid = await readFileSlice(fsid, await file.arrayBuffer(), 0, i);
-          hproseClient.timeout = defaultTimeout;
+          // Use the new upload_ipfs API (matches iOS)
+          cid = await retryUpload(
+            () => uploadFileFromFile(file, i),
+            file.name
+          );
         }
         
         // Store HLS conversion status for later use
         (file as any).__isHLSConverted = isHLSConverted;
         
       } else {
-        // Handle other file types with existing method
-        const fsid = await tweetStore.openTempFile();
-        const defaultTimeout = hproseClient.timeout;
-        hproseClient.timeout = 0;
-        cid = await readFileSlice(fsid, await processedFile.arrayBuffer(), 0, i);
-        hproseClient.timeout = defaultTimeout;
+        // Handle other file types with new upload_ipfs API (matches iOS)
+        cid = await retryUpload(
+          () => uploadFileFromFile(processedFile, i),
+          file.name
+        );
       }
 
-      const aspectRatio = fileType === 'Video' ? await getVideoAspectRatio(file) : 
-                         fileType === 'Image' ? await getImageAspectRatio(file) : null;
+      const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) : 
+                         isImageType(fileType) ? await getImageAspectRatio(file) : null;
       
       // Log aspect ratio detection result
-      if (fileType === 'Video' && aspectRatio) {
+      if (isVideoType(fileType) && aspectRatio) {
         console.log(`🎬 [VIDEO PREVIEW] File: ${file.name}`);
         console.log(`📐 [VIDEO PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
-      } else if (fileType === 'Image' && aspectRatio) {
+      } else if (isImageType(fileType) && aspectRatio) {
         console.log(`🖼️ [IMAGE PREVIEW] File: ${file.name}`);
         console.log(`📐 [IMAGE PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
       }
       
       const fi = {
         mid: cid,
-        type: fileType === 'Video' ? ((file as any).__isHLSConverted ? 'hls_video' : 'Video') : fileType,
+        type: isVideoType(fileType) ? ((file as any).__isHLSConverted ? MEDIA_TYPES.HLS_VIDEO : MEDIA_TYPES.VIDEO) : fileType,
         size: processedFile.size,
         fileName: file.name,
         timestamp: file.lastModified,
@@ -250,6 +319,13 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
 async function onSubmit() {
   console.log('[TWEET-SUBMIT] Starting tweet submission...');
+  
+  // Check if user is logged in (matches iOS behavior)
+  if (!tweetStore.loginUser) {
+    useAlertStore().error('Please log in to post a tweet')
+    return
+  }
+  
   loading.value = true
   let attachments = <MimeiFileType[]>[]
   try {
@@ -274,7 +350,7 @@ async function onSubmit() {
     
     // upload tweet
     let tweet = {
-      authorId: tweetStore.loginUser?.mid,
+      authorId: tweetStore.loginUser!.mid,  // Safe: we validated loginUser exists above
       title: tweetTitle.value,
       content: txtConent.value,
       attachments: attachments.concat(mmFiles.value),
@@ -372,26 +448,155 @@ async function onSubmit() {
   }
 }
 
-async function readFileSlice(
-  fsid: string,
-  arr: ArrayBuffer,
-  start: number,
-  index: number
+// Upload file using upload_ipfs API - reads file directly using FileReader
+async function uploadFileFromFile(
+  file: File,
+  fileIndex: number
 ): Promise<string> {
-  // reading file slice by slice, start at given position
-  var end = Math.min(start + sliceSize, arr.byteLength)
-  let count = await hproseClient.MFSetData(fsid, arr.slice(start, end), start)
-  // Calculate progress
-  uploadProgress[index] = Math.floor(((start + count) / arr.byteLength) * 100)
-  console.log('Uploading...', uploadProgress[index] + '%', end, arr.byteLength)
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const arrayBuffer = e.target?.result as ArrayBuffer
+        if (!arrayBuffer) {
+          reject(new Error('Failed to read file'))
+          return
+        }
+        const cid = await uploadFileToIPFS(arrayBuffer, fileIndex, file.name)
+        resolve(cid)
+      } catch (error) {
+        reject(error)
+      }
+    }
+    reader.onerror = () => reject(new Error('FileReader error'))
+    reader.readAsArrayBuffer(file)
+  })
+}
 
-  if (end === arr.byteLength) {
-    // last slice read. Convert temp to IPFS file
-    const cid = await hproseClient.MFTemp2Ipfs(fsid)
+// Upload file using upload_ipfs API (matches iOS implementation)
+async function uploadFileToIPFS(
+  data: ArrayBuffer,
+  fileIndex: number,
+  fileName: string
+): Promise<string> {
+  console.log(`[UPLOAD] Starting upload for ${fileName} (${(data.byteLength / 1024 / 1024).toFixed(2)}MB)`)
+  console.log(`[UPLOAD] ArrayBuffer details: byteLength=${data.byteLength}, constructor=${data.constructor.name}`)
+  
+  const chunkSize = 1024 * 1024 // 1MB chunks to match iOS
+  let offset = 0
+  let fsid: string | null = null
+  let chunkNumber = 0
+  
+  // Get a direct connection for uploads to avoid connection pool timeout
+  // File uploads are long-running and shouldn't use the shared pool
+  const providerIp = tweetStore.loginUser?.providerIp
+  if (!providerIp) {
+    throw new Error('Provider IP not available')
+  }
+  
+  const uploadClient = await tweetStore.lapi.connectionPool.getConnection(providerIp)
+  
+  try {
+    // Set a longer timeout for file uploads (10 minutes)
+    uploadClient.timeout = 10 * 60 * 1000
+    
+    while (offset < data.byteLength) {
+      const end = Math.min(offset + chunkSize, data.byteLength)
+      const chunk = data.slice(offset, end)
+      const uint8Chunk = new Uint8Array(chunk)
+      chunkNumber++
+      
+      console.log(`[UPLOAD] Chunk ${chunkNumber}: offset=${offset}, end=${end}, size=${chunk.byteLength}, uint8Length=${uint8Chunk.length}`)
+      
+      // Build request object (matches iOS structure)
+      const request: any = {
+        aid: tweetStore.appId,
+        ver: 'last',
+        version: 'v2',
+        offset: offset
+      }
+      
+      if (fsid) {
+        request.fsid = fsid
+      }
+      
+      // NOTE: Do NOT set finished='true' here - that's done in a separate finalization request (matches iOS)
+      
+      console.log(`[UPLOAD] Uploading chunk ${chunkNumber} for ${fileName}: ${((offset / data.byteLength) * 100).toFixed(1)}%`)
+      
+      // Call upload_ipfs API directly (matches iOS implementation)
+      const response = await uploadClient.RunMApp('upload_ipfs', request, [uint8Chunk])
+      
+      // Update progress
+      uploadProgress[fileIndex] = Math.floor((end / data.byteLength) * 100)
+      
+      // Handle v2 response format: {success: true, data: fsid|cid} or {success: false, message: string}
+      if (response && typeof response === 'object') {
+        if (response.success === false) {
+          throw new Error(response.message || 'Upload failed')
+        }
+        
+        if (response.success === true && response.data) {
+          fsid = response.data
+          offset = end
+        } else {
+          throw new Error(`Invalid response structure: ${JSON.stringify(response)}`)
+        }
+      } else if (typeof response === 'string') {
+        // Handle non-v2 response (direct string)
+        fsid = response
+        offset = end
+      } else {
+        throw new Error(`Unexpected response type: ${typeof response}`)
+      }
+    }
+    
+    if (!fsid) {
+      throw new Error('No file ID returned from server')
+    }
+    
+    // Send finalization request (matches iOS - separate request with finished='true')
+    console.log(`[UPLOAD] Uploaded ${chunkNumber} chunks, finalizing...`)
+    const finalRequest: any = {
+      aid: tweetStore.appId,
+      ver: 'last',
+      version: 'v2',
+      offset: offset,
+      fsid: fsid,
+      finished: 'true'
+    }
+    
+    const finalResponse = await uploadClient.RunMApp('upload_ipfs', finalRequest)
+    
+    // Parse finalization response
+    let cid: string | null = null
+    if (finalResponse && typeof finalResponse === 'object') {
+      if (finalResponse.success === true && finalResponse.data) {
+        cid = finalResponse.data
+      } else if (finalResponse.cid) {
+        cid = finalResponse.cid
+      }
+    } else if (typeof finalResponse === 'string') {
+      cid = finalResponse
+    }
+    
+    if (!cid) {
+      throw new Error('No CID returned from finalization')
+    }
+    
+    uploadProgress[fileIndex] = 100
+    console.log(`[UPLOAD] Upload completed for ${fileName}, CID: ${cid}`)
     return cid
-  } else {
-    // recursive call
-    return await readFileSlice(fsid, arr, start + count, index)
+    
+  } catch (error) {
+    console.error(`[UPLOAD] Error uploading ${fileName}:`, error)
+    throw error
+  } finally {
+    // Always release the connection back to the pool
+    if (providerIp) {
+      tweetStore.lapi.connectionPool.releaseConnection(providerIp, uploadClient)
+      console.log(`[UPLOAD] Released connection for ${fileName}`)
+    }
   }
 }
 

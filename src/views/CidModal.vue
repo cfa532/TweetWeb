@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useAlertStore } from '@/stores';
 import { watch, ref } from 'vue';
-import { getVideoAspectRatio, getImageAspectRatio } from '@/utils/uploadUtils';
+import { getVideoAspectRatio, getImageAspectRatio, getMediaType as getMediaTypeFromUtils } from '@/utils/uploadUtils';
+import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib';
 
 // Helper function to get human-readable aspect ratio names
 function getAspectRatioDisplayName(ratio: number): string {
@@ -32,29 +33,15 @@ const selectFile = () => {
         fileInput.value.click();
     }
 };
-function getMediaType(t: string, filename?: string) {
-  const lowerType = t.toLowerCase();
-  if (lowerType.startsWith('image/')) return 'Image'
-  if (lowerType.startsWith('video/')) return 'hls_video' // Default to hls_video for video MIME types
-  if (lowerType.startsWith('audio/')) return 'Audio'
-  
-  // Fallback to file extension if MIME type is not recognized
-  if (filename) {
-    const ext = filename.toLowerCase().split('.').pop();
-    if (['mkv', 'avi', 'mp4', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ogv'].includes(ext || '')) {
-      return 'hls_video'; // Default to hls_video for video files
-    }
-    if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff'].includes(ext || '')) {
-      return 'Image';
-    }
-    if (['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a', 'wma'].includes(ext || '')) {
-      return 'Audio';
-    }
+// Use media type detection from uploadUtils, but return hls_video for videos in this modal
+function getMediaType(t: string, filename?: string): string {
+  const baseType = getMediaTypeFromUtils(t, filename);
+  // In CidModal, videos default to hls_video type
+  if (baseType === MEDIA_TYPES.VIDEO) {
+    return MEDIA_TYPES.HLS_VIDEO;
   }
-  
-  return 'Unknown' // Return 'Unknown' for unrecognized types to match uploadUtils.ts
+  return baseType;
 }
-// Note: getVideoAspectRatio and getImageAspectRatio are imported from uploadUtils.ts
 
 const handleFileSelect = async (event: Event) => {
     const target = event.target as HTMLInputElement;
@@ -64,7 +51,7 @@ const handleFileSelect = async (event: Event) => {
         let aspectRatio: number | null = null;
         const mediaType = getMediaType(file.type, file.name);
         
-        if (mediaType === 'hls_video') {
+        if (isVideoType(mediaType)) {
             try {
                 aspectRatio = await getVideoAspectRatio(file);
                 console.log(`🎬 [FILE SELECTION] Video: ${file.name}`);
@@ -84,7 +71,7 @@ const handleFileSelect = async (event: Event) => {
                 }
                 console.log(`⚠️ [FILE SELECTION] Using fallback aspect ratio ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)}) for ${file.name}`);
             }
-        } else if (mediaType === 'Image') {
+        } else if (isImageType(mediaType)) {
             try {
                 aspectRatio = await getImageAspectRatio(file);
                 console.log(`🖼️ [FILE SELECTION] Image: ${file.name}`);

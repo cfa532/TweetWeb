@@ -3,6 +3,7 @@ import { computed } from "vue";
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { Image, PDFView, VideoJS, BlobData } from './index'
+import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -20,12 +21,12 @@ const mediaMid = computed(() => {
 })
 
 const userComponent = computed(() => {
-    let p = props.media.type?.toLowerCase() || ''
-    if (p.includes("image")) {
+    const mediaType = normalizeMediaType(props.media.type);
+    if (isImageType(mediaType) || mediaType.includes("image")) {
         return Image
-    } else if (p.includes("pdf")) {
+    } else if (mediaType.includes("pdf")) {
         return PDFView
-    } else if (p.includes("video") || p.includes("audio") ) {
+    } else if (isVideoType(mediaType) || mediaType.includes("video") || mediaType.includes("audio")) {
         return VideoJS
     } else {
         return BlobData
@@ -33,34 +34,37 @@ const userComponent = computed(() => {
 })
 
 const isMediaViewable = computed(() => {
-    const mediaType = props.media.type?.toLowerCase() || '';
-    // Only allow tap gesture for images, not videos since they have native full-screen
-    return mediaType.includes("image");
+    const mediaType = normalizeMediaType(props.media.type);
+    return isImageType(mediaType) || isVideoType(mediaType) || mediaType.includes("image") || mediaType.includes("video");
 });
 
 function handleMediaClick(event: MouseEvent) {
-    // Only open full-screen for images (videos have their own full-screen button)
-    if (!isMediaViewable.value) return;
+    const mediaType = normalizeMediaType(props.media.type);
     
-    // Prevent the tweet click event from firing
-    event.stopPropagation();
-    
-    // Get all media items from the tweet
-    const allMedia = props.mediaList || (props.tweet?.attachments || []);
-    
-    // Filter to only images and find the current image's index within the filtered list
-    const imageMedia = allMedia.filter(media => media.type?.toLowerCase().includes('image'));
-    const currentImageIndex = imageMedia.findIndex(media => media.mid === props.media.mid);
-    
-    // Store media data in session storage for the modal
-    sessionStorage.setItem('mediaViewerData', JSON.stringify({
-        mediaList: allMedia,
-        initialIndex: currentImageIndex,
-        tweet: props.tweet
-    }));
-    
-    // Navigate to media viewer
-    router.push('/media-viewer');
+    // For images, always open media viewer
+    if (isImageType(mediaType) || mediaType.includes("image")) {
+        // Prevent the tweet click event from firing
+        event.stopPropagation();
+        
+        // Get all media items from the tweet
+        const allMedia = props.mediaList || (props.tweet?.attachments || []);
+        
+        // Filter to only images and find the current image's index within the filtered list
+        const imageMedia = allMedia.filter(media => media.type?.toLowerCase().includes('image'));
+        const currentImageIndex = imageMedia.findIndex(media => media.mid === props.media.mid);
+        
+        // Store media data in session storage for the modal
+        sessionStorage.setItem('mediaViewerData', JSON.stringify({
+            mediaList: allMedia,
+            initialIndex: currentImageIndex,
+            tweet: props.tweet
+        }));
+        
+        // Navigate to media viewer
+        router.push('/media-viewer');
+    }
+    // For videos, the click is handled by VideoJS component
+    // MediaView just needs to allow the click to pass through
 }
 </script>
 
@@ -82,6 +86,20 @@ function handleMediaClick(event: MouseEvent) {
 <style>
 .container {
     position: relative;
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: hidden;
+    background-color: #000;
+}
+
+/* In grid context, ensure container fills completely */
+.grid-item .container {
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 .clickable-media {
@@ -99,6 +117,8 @@ function handleMediaClick(event: MouseEvent) {
     position: absolute;
     top: 0;
     left: 0;
+    right: 0;
+    bottom: 0;
     width: 100%;
     height: 100%;
     background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
@@ -109,5 +129,24 @@ function handleMediaClick(event: MouseEvent) {
     font-size: 48px;
     font-weight: bold;
     pointer-events: none; /* Ensures the overlay doesn't interfere with clicks */
+    margin: 0;
+    padding: 0;
+}
+
+/* Ensure overlay is centered in grid items */
+.grid-item .overlay,
+.media-attachments .grid-item .overlay {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    text-align: center !important;
+    line-height: 1 !important;
 }
 </style>

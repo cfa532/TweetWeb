@@ -310,17 +310,21 @@ else
     REFERENCE_DIM=$DISPLAY_HEIGHT
 fi
 
-# Determine normalization strategy
+# Get source bitrate in kbps (already extracted as BITRATE_KBPS)
+SOURCE_BITRATE_K=$BITRATE_KBPS
+MIN_BITRATE=500
+
+# Calculate target bitrate based on resolution
 if [ $REFERENCE_DIM -gt 720 ]; then
     # Resolution >720p: normalize to 720p @ 1500k
     echo -e "${YELLOW}[INFO] Video resolution >720p, normalizing to 720p @ 1500k${NC}"
     TARGET_DIM=720
-    TARGET_BITRATE=1500
+    CALCULATED_BITRATE=1500
 elif [ $REFERENCE_DIM -eq 720 ]; then
     # Resolution =720p: normalize to 720p @ 1000k
     echo -e "${YELLOW}[INFO] Video resolution =720p, normalizing @ 1000k${NC}"
     TARGET_DIM=720
-    TARGET_BITRATE=1000
+    CALCULATED_BITRATE=1000
 else
     # Resolution <720p: keep original resolution with proportional bitrate
     echo -e "${YELLOW}[INFO] Video resolution <720p, keeping original resolution with proportional bitrate${NC}"
@@ -328,12 +332,21 @@ else
     
     # Calculate proportional bitrate based on pixel count ratio to 720p
     # bitrate = (original_pixels / 720p_pixels) * 1000k
-    TARGET_BITRATE=$(awk "BEGIN {printf \"%.0f\", ($ORIG_RESOLUTION / $REFERENCE_720P_PIXELS) * $REFERENCE_720P_BITRATE}")
+    CALCULATED_BITRATE=$(awk "BEGIN {printf \"%.0f\", ($ORIG_RESOLUTION / $REFERENCE_720P_PIXELS) * $REFERENCE_720P_BITRATE}")
     
     # Ensure minimum bitrate of 500k
-    if [ $TARGET_BITRATE -lt 500 ]; then
-        TARGET_BITRATE=500
+    if [ $CALCULATED_BITRATE -lt $MIN_BITRATE ]; then
+        CALCULATED_BITRATE=$MIN_BITRATE
     fi
+fi
+
+# Determine final target bitrate:
+# If source bitrate is lower than calculated target but higher than minimum, keep source bitrate
+if [ -n "$SOURCE_BITRATE_K" ] && [ $SOURCE_BITRATE_K -lt $CALCULATED_BITRATE ] && [ $SOURCE_BITRATE_K -ge $MIN_BITRATE ]; then
+    echo -e "${GREEN}[BITRATE] Using source bitrate ${SOURCE_BITRATE_K}k (between min ${MIN_BITRATE}k and target ${CALCULATED_BITRATE}k)${NC}"
+    TARGET_BITRATE=$SOURCE_BITRATE_K
+else
+    TARGET_BITRATE=$CALCULATED_BITRATE
 fi
 
 # Calculate target dimensions
