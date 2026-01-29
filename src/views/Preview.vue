@@ -75,32 +75,33 @@ async function thumbnail() {
                 video.onseeked = () => resolve();
             });
             
-            // Create canvas that fills the entire container (120x120)
+            // Create canvas that fills the entire container (120x130)
             const canvas = document.createElement("canvas");
-            const containerSize = 120;
-            canvas.width = containerSize;
-            canvas.height = containerSize;
-            
+            const containerWidth = 120;
+            const containerHeight = 130;
+            canvas.width = containerWidth;
+            canvas.height = containerHeight;
+
             const ctx = canvas.getContext("2d")!;
-            
+
             // Calculate scaling to fill container while maintaining aspect ratio (like object-fit: cover)
             const videoAspect = video.videoWidth / video.videoHeight;
-            const containerAspect = 1; // 120/120 = 1 (square container)
+            const containerAspect = containerWidth / containerHeight;
             
             let drawWidth, drawHeight, offsetX, offsetY;
-            
+
             if (videoAspect > containerAspect) {
                 // Video is wider than container - fit to height and crop sides
-                drawHeight = containerSize;
+                drawHeight = containerHeight;
                 drawWidth = drawHeight * videoAspect;
-                offsetX = (containerSize - drawWidth) / 2;
+                offsetX = (containerWidth - drawWidth) / 2;
                 offsetY = 0;
             } else {
                 // Video is taller than container - fit to width and crop top/bottom
-                drawWidth = containerSize;
+                drawWidth = containerWidth;
                 drawHeight = drawWidth / videoAspect;
                 offsetX = 0;
-                offsetY = (containerSize - drawHeight) / 2;
+                offsetY = (containerHeight - drawHeight) / 2;
             }
             
             // Draw video centered and cropped to fill container
@@ -139,27 +140,32 @@ async function thumbnail() {
             const canvas = document.createElement("canvas");
             let ctx = canvas.getContext("2d")!;
             canvas.width = 120;
-            canvas.height = 120;
+            canvas.height = 130;
             ctx.fillStyle = '#333';
-            ctx.fillRect(0, 0, 120, 120);
+            ctx.fillRect(0, 0, 120, 130);
             ctx.fillStyle = '#fff';
             ctx.font = '48px serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('🎥', 60, 60);
+            ctx.fillText('🎥', 60, 65);
             imageUrl.value = canvas.toDataURL("image/png");
             caption.value = props.src.name;
         }
     } else {
-        // everything else, draw avtar with file extensioin
+        // everything else, draw avatar with file extension
         const canvas = document.createElement("canvas");
         let ctx = canvas.getContext("2d")!;
-          canvas.width = 120;
-          canvas.height = 120;
-          ctx.font = '48px serif';
-          ctx.fillText(props.src.name.substring(props.src.name.lastIndexOf('.')+1), 15, 60);
-          imageUrl.value = canvas.toDataURL("image/png");
-          caption.value = props.src.name
+        canvas.width = 120;
+        canvas.height = 130;
+        ctx.fillStyle = '#f5f5f5';
+        ctx.fillRect(0, 0, 120, 130);
+        ctx.fillStyle = '#333';
+        ctx.font = '32px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(props.src.name.substring(props.src.name.lastIndexOf('.')+1), 60, 65);
+        imageUrl.value = canvas.toDataURL("image/png");
+        caption.value = props.src.name
     }
 }
 </script>
@@ -193,8 +199,8 @@ async function thumbnail() {
         >
             <img :src="imageUrl" class="postbox_media_photo_img" draggable="false">
         </div>
-        <div style="overflow:hidden; height:40px; position:absolute; bottom: 0px; left: 0px; padding: 5px 2px 0px 3px;">
-            <div style="font-size:small; inline-size: 119px; overflow-wrap: break-word;">{{caption}}</div>
+        <div style="overflow:hidden; height:40px; position:absolute; bottom: 0px; left: 0px; right: 0px; padding: 5px 3px 0px 3px; background: rgba(255, 255, 255, 0.95);">
+            <div style="font-size:small; overflow-wrap: break-word;">{{caption}}</div>
         </div>
         <div v-if="props.progress < 100" class="progress-bar-overlay">
             <div class="progress-bar" :style="{width: props.progress + '%', height: '10px', backgroundColor: 'green', borderRadius: '5px'}"></div>
@@ -222,17 +228,15 @@ async function thumbnail() {
     border-radius: 5px;
   }
   .postbox_media_photo_img_wrapper {
-    top: 10px;
+    top: 0;
+    left: 0;
     position: absolute;
-    display: flex;
-    justify-content: center;
-    align-items: center;
     width: 100%;
-    height: 120px;
+    height: 130px;
     cursor: move;
     user-select: none;
     overflow: hidden;
-    /* height: calc(100% - 32px); */
+    background-color: #000;
 }
 
 .postbox_media_photo_wrapper {
@@ -240,11 +244,10 @@ async function thumbnail() {
     width: 120px;
     position: relative;
     display: inline-block;
-    background-color: #fff;
+    background-color: #f5f5f5;
     border-radius: 3px;
     box-shadow: 0 1px 3px rgba(0,0,0,.1);
     transition: All .15s ease-out;
-    /* max-width: calc(25% - 32px); */
     flex-grow: 1;
     margin-right: 15px;
     margin-top: 5px;
@@ -265,6 +268,8 @@ async function thumbnail() {
     height: 100%;
     object-fit: cover;
     object-position: center;
+    display: block;
+    background-color: #000;
 }
 .btn-reset {
     background: none;
