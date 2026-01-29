@@ -1,16 +1,26 @@
 <script setup lang="ts">
 // share menu or other right click items
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, computed } from 'vue'
 import { useTweetStore } from '@/stores';
 import type { PropType } from 'vue'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
 const shareMenu = ref()
 const btnDelete = ref()
-const props = defineProps({ 
+const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false},
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false}
+})
+
+// Truncate mid with ellipsis in the middle if too long
+const displayMid = computed(() => {
+  const mid = props.tweet?.mid || ''
+  const maxLength = 24
+  if (mid.length <= maxLength) return mid
+  const start = mid.slice(0, 10)
+  const end = mid.slice(-10)
+  return `${start}...${end}`
 })
 
 function showMenu() {
@@ -111,7 +121,7 @@ async function deleteItem() {
     <div ref="shareMenu" class="menu" hidden>
         <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">
             <span style="text-decoration: none; font-size: smaller;">
-                <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ props.tweet?.mid }}
+                <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
             </span>
         </div>
         <div ref="btnDelete" class="item clickable-item" @click.stop="deleteItem" hidden style="cursor: pointer;">
@@ -135,7 +145,8 @@ async function deleteItem() {
     z-index: 20;
     background-color: whitesmoke;
     box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
-    width: 250px;
+    min-width: 220px;
+    padding: 4px 8px;
 }
 .item {
     border-bottom: 1px dotted;
