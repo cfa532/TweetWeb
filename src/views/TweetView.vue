@@ -525,6 +525,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </template>
 
 <style scoped>
+/* TweetView-specific styles - scoped to .tweet-container to prevent affecting other views */
 .tweet-container {
   overflow: hidden;
   max-height: 80vh;
@@ -595,28 +596,21 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   display: block;
 }
 
-.grid-item .container {
+.grid-item :deep(.container) {
   width: 100% !important;
   height: 100% !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  display: block !important;
   overflow: hidden;
   background-color: #000;
   margin: 0 !important;
   padding: 0 !important;
-  position: relative;
+  position: relative !important;
 }
 
-/* Force images in grid to fill containers - override Bootstrap img-fluid */
-.media-attachments .grid-item,
-.media-attachments .grid-item .container,
-.media-attachments .grid-item .container img {
+/* TweetView-specific: Force images to fill grid containers with cover */
+.media-attachments .grid-item :deep(.container) {
   width: 100% !important;
   height: 100% !important;
-}
-
-.media-attachments .grid-item .container {
   position: relative !important;
   display: block !important;
   margin: 0 !important;
@@ -625,65 +619,31 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #000 !important;
 }
 
-/* Force images to fill grid containers - highest specificity */
-.media-attachments .grid-item .container {
-  position: relative !important;
-}
-
-.media-attachments .grid-item .container img,
-.media-attachments .grid-item .container > img,
-.media-attachments .grid-item img {
-  max-width: 100% !important;
-  max-height: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  object-fit: contain !important;
+.media-attachments .grid-item :deep(img) {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
   object-position: center !important;
   display: block !important;
   margin: 0 !important;
   padding: 0 !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
-  vertical-align: middle !important;
-  line-height: 0 !important;
 }
 
-/* Force videos to fill grid containers - highest specificity */
-.media-attachments .grid-item .video-container,
-.grid-item .video-container {
-  max-width: 100% !important;
-  max-height: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+/* TweetView-specific: Force videos to fill grid containers with cover */
+.media-attachments .grid-item :deep(.video-container) {
+  width: 100% !important;
+  height: 100% !important;
   position: relative !important;
   overflow: hidden !important;
   background-color: #000 !important;
   margin: 0 !important;
   padding: 0 !important;
-  min-height: 0 !important;
 }
 
-.media-attachments .grid-item .video-wrapper,
-.grid-item .video-wrapper {
-  max-width: 100% !important;
-  max-height: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  overflow: hidden !important;
-  background-color: #000 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  min-height: 0 !important;
-}
-
-.media-attachments .grid-item .video,
-.grid-item .video {
+.media-attachments .grid-item :deep(.video-wrapper) {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
@@ -691,17 +651,25 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: contain !important;
+  overflow: hidden !important;
+  background-color: #000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.media-attachments .grid-item :deep(.video) {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
   object-position: center !important;
-  min-height: 0 !important;
-  aspect-ratio: unset !important;
-  max-width: none !important;
-  max-height: none !important;
   display: block !important;
   margin: 0 !important;
   padding: 0 !important;
-  vertical-align: middle !important;
-  line-height: 0 !important;
 }
 
 /* 2 items - Both portrait: horizontal layout */
@@ -901,7 +869,8 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 }
 
 /* Ensure single attachment media fills container */
-.single-attachment .container {
+/* TweetView-specific: single attachment with cover */
+.single-attachment :deep(.container) {
   width: 100% !important;
   height: 100% !important;
   display: block !important;
@@ -912,11 +881,11 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #000 !important;
 }
 
-.single-attachment .container img,
-.single-attachment .container video,
-.single-attachment .video-container,
-.single-attachment .video-wrapper,
-.single-attachment .video {
+.single-attachment :deep(img),
+.single-attachment :deep(video),
+.single-attachment :deep(.video-container),
+.single-attachment :deep(.video-wrapper),
+.single-attachment :deep(.video) {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
@@ -926,13 +895,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   height: 100% !important;
   object-fit: cover !important;
   object-position: center !important;
-  max-width: none !important;
-  max-height: none !important;
   display: block !important;
   margin: 0 !important;
   padding: 0 !important;
-  vertical-align: middle !important;
-  line-height: 0 !important;
 }
 
 .card {
