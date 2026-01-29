@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
 import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
+import ContentRenderer from "@/components/ContentRenderer.vue";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
 
@@ -674,7 +675,13 @@ function retryLoad() {
         
         <div v-if="isRetweet" class="card-body" id="content">
 
-            <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
+            <ContentRenderer
+                v-if="originTweet.content"
+                :content="originTweet.content"
+                :content-type="originTweet.contentType"
+                :tweet="originTweet"
+                class="card-text"
+            />
 
             <div v-if="mediaAttachments.length > 0" class="media-attachments">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -710,7 +717,13 @@ function retryLoad() {
             </div>
         </div>
         <div v-else class="card-body">
-            <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
+            <ContentRenderer
+                v-if="tweet.content"
+                :content="tweet.content"
+                :content-type="tweet.contentType"
+                :tweet="tweet"
+                class="card-text"
+            />
 
             <div v-if="mediaAttachments.length > 0" class="media-attachments">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media

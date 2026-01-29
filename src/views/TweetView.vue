@@ -5,6 +5,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { MediaView, ItemHeader } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
+import ContentRenderer from '@/components/ContentRenderer.vue';
 
 const tweetStore = useTweetStore()
 const router = useRouter()
@@ -342,7 +343,17 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       />
     </div>
     <div class='card-body' :id="props.tweet.mid">
-      <p v-if='displayedTweet.content' class='card-text' v-html='processedContent'></p>
+      <ContentRenderer
+        v-if='displayedTweet.content'
+        :content='displayedTweet.content'
+        :content-type='displayedTweet.contentType'
+        :tweet='displayedTweet'
+        :max-lines='MAX_LINES'
+        :max-chars='MAX_CHARS_CHINESE'
+        :text-only='true'
+        @clipped='(val: boolean) => isContentClipped = val'
+        class='card-text'
+      />
       <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
         <div v-if='mediaAttachments.length === 1' class='single-attachment'>

@@ -36,6 +36,7 @@ interface Tweet {
     authorId: MimeiId;
     author: User;
     content?: string;
+    contentType?: 'txt' | 'editorjs';  // Content format: txt (plain text) or editorjs (JSON blocks)
     title?: string;
     attachments?: MimeiFileType[];
     timestamp: string | number;
@@ -72,6 +73,7 @@ interface MimeiFileType {
     fileName?: string
     timestamp: string | number
     aspectRatio?: number    // for video files
+    caption?: string        // Caption/description for the media
 
     // not saved in Mimei DB, for display only. The value is assigned from Tweet's downloadable
     // upload render the attachment.

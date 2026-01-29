@@ -7,6 +7,8 @@ import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
 import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
+import BlockEditor from '@/components/BlockEditor.vue'
+import type { MediaBlockData } from '@/editor/MediaBlockTool'
 
 // Helper function to get human-readable aspect ratio names
 function getAspectRatioDisplayName(ratio: number): string {
@@ -28,12 +30,14 @@ const route = useRoute()
 const router = useRouter()
 const tweetId = computed(() => route.params.tweetId as MimeiId | undefined)
 const tweetTitle = ref()
-const txtConent = ref()
+const editorContent = ref('')
 const divAttach = ref()
 const dropHere = ref()
-const textArea = ref<HTMLTextAreaElement>()
+const blockEditor = ref<InstanceType<typeof BlockEditor> | null>(null)
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
+const uploadedAttachments = ref<MimeiFileType[]>([])  // track uploaded media for tweet submission
+const pendingCaptions = new Map<string, string>()  // track captions for pending files by filename
 const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 const loading = ref(false)
@@ -319,41 +323,69 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 
 async function onSubmit() {
   console.log('[TWEET-SUBMIT] Starting tweet submission...');
-  
+
   // Check if user is logged in (matches iOS behavior)
   if (!tweetStore.loginUser) {
     useAlertStore().error('Please log in to post a tweet')
     return
   }
-  
+
   loading.value = true
-  let attachments = <MimeiFileType[]>[]
   try {
-    console.log('[TWEET-SUBMIT] File uploads to process:', filesUpload.value.length);
+    console.log('[TWEET-SUBMIT] Already uploaded attachments:', uploadedAttachments.value.length);
+    console.log('[TWEET-SUBMIT] Queued files to upload:', filesUpload.value.length);
     console.log('[TWEET-SUBMIT] CID modal files:', mmFiles.value.length);
-    
+
+    // Upload queued files
+    let queuedAttachments: MimeiFileType[] = []
     if (filesUpload.value.length > 0) {
-      console.log('[TWEET-SUBMIT] Processing file uploads...');
-      // with attachments to be uploaded
-      // reopen the DB mimei as cur version, for writing
-      attachments = (await uploadAttachedFiles(filesUpload.value))
-        .filter((v) => { return v.status === 'fulfilled' })
+      const results = await uploadAttachedFiles(filesUpload.value)
+      queuedAttachments = results
+        .filter((v) => v.status === 'fulfilled')
         .map((v: any) => {
-          return v.value    // get FileInfo of each attachment
+          const mediaFile = v.value as MimeiFileType
+          // Apply caption from pendingCaptions
+          const caption = pendingCaptions.get(mediaFile.fileName || '')
+          if (caption) {
+            mediaFile.caption = caption
+          }
+          return mediaFile
         })
-      console.log('[TWEET-SUBMIT] File uploads completed:', attachments.length);
-      if (attachments?.length < filesUpload.value.length) {
-        // uploading files failed
-        throw 'Attachments uploading failed' + attachments.toString()
+
+      if (queuedAttachments.length < filesUpload.value.length) {
+        throw 'Some attachments failed to upload'
       }
     }
-    
+
+    // Insert CID modal files into the editor (they haven't been inserted yet)
+    for (const mediaFile of mmFiles.value) {
+      await insertMediaIntoEditor(mediaFile)
+    }
+
+    // Get content from block editor and replace placeholder CIDs with real CIDs
+    let content = blockEditor.value ? await blockEditor.value.getContent() : ''
+
+    // Replace placeholder CIDs (pending:filename) with real CIDs
+    for (const mediaFile of queuedAttachments) {
+      if (mediaFile.fileName) {
+        const placeholder = `pending:${mediaFile.fileName}`
+        content = content.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), mediaFile.mid)
+      }
+    }
+
+    // Combine all attachments: already uploaded + queued + CID modal files
+    const allAttachments = uploadedAttachments.value.concat(queuedAttachments).concat(mmFiles.value)
+
+    // Clear pending captions
+    pendingCaptions.clear()
+
     // upload tweet
     let tweet = {
       authorId: tweetStore.loginUser!.mid,  // Safe: we validated loginUser exists above
       title: tweetTitle.value,
-      content: txtConent.value,
-      attachments: attachments.concat(mmFiles.value),
+      content: content,
+      contentType: 'editorjs' as const,
+      attachments: allAttachments,
       isPrivate: isPrivate.value,
       downloadable: downloadable.value,
       timestamp: Date.now()
@@ -364,7 +396,7 @@ async function onSubmit() {
       title: tweet.title,
       contentLength: tweet.content?.length || 0,
       totalAttachments: tweet.attachments.length,
-      uploadedAttachments: attachments.length,
+      uploadedMediaCount: uploadedAttachments.value.length,
       cidModalAttachments: mmFiles.value.length,
       isPrivate: tweet.isPrivate,
       downloadable: tweet.downloadable
@@ -388,10 +420,13 @@ async function onSubmit() {
       useAlertStore().success("Tweet uploaded successfully!")
       
       // Clear form only on success
-      txtConent.value = null
+      if (blockEditor.value) {
+        await blockEditor.value.clear()
+      }
       tweetTitle.value = null
       filesUpload.value = []
       mmFiles.value = []
+      uploadedAttachments.value = []
       noResample.value = false
       
       // If this was a comment (tweetId exists), navigate back to parent tweet's detail view
@@ -655,60 +690,184 @@ async function onSelect(e: Event) {
     (e as ClipboardEvent).clipboardData?.files  // copy and paste
 
   if (files && files.length > 0) {
-    let totalSize = 0;
-    filesUpload.value.forEach(f => totalSize += f.size);
-
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      totalSize += file.size;
 
-      if (totalSize > MAX_UPLOAD_SIZE) {
-        useAlertStore().error("Total upload size exceeds 4GB limit.");
-        return; // Stop adding files
+      if (file.size > MAX_UPLOAD_SIZE) {
+        useAlertStore().error("File size exceeds 4GB limit.");
+        continue;
       }
 
       // Assign a title if it's not already set
-      if (!tweetTitle.value && !txtConent.value) {
+      if (!tweetTitle.value) {
         tweetTitle.value = file.name;
       }
 
-      // Remove duplication and add files to the upload list
-      if (
-        filesUpload.value.findIndex((e: File) => {
-          return e.size === file.size && e.name === file.name
-        }) === -1
-      ) {
-        filesUpload.value.push(file)
-      }
+      // Upload immediately and insert into editor
+      await uploadAndInsertMedia(file);
     }
 
-    divAttach.value!.hidden = false;
-    textArea.value!.hidden = false;
     dropHere.value!.hidden = true;
-  } else {
-    // Clipboard works only with HTTPS
-    if ((e.target as HTMLTextAreaElement) === textArea.value) {
-      // Paste into text area
-      document.execCommand('paste');
+  }
+}
+
+// Upload a single file and insert it into the editor at cursor position
+async function uploadAndInsertMedia(file: File): Promise<void> {
+  // Prompt for caption before upload
+  const caption = prompt(`Enter caption for "${file.name}" (optional):`, '') || '';
+
+  loading.value = true;
+  try {
+    // Add to upload tracking
+    const fileIndex = filesUpload.value.length;
+    filesUpload.value.push(file);
+    uploadProgress[fileIndex] = 0;
+    divAttach.value!.hidden = false;
+
+    // Upload the file
+    const results = await uploadAttachedFiles([file]);
+    const result = results[0];
+
+    if (result.status === 'fulfilled') {
+      const mediaFile = result.value;
+      mediaFile.caption = caption;
+
+      // Insert into editor at current cursor position
+      await insertMediaIntoEditor(mediaFile);
+
+      // Also track in attachments for metadata
+      uploadedAttachments.value.push(mediaFile);
+
+      // Remove from preview (it's now in the editor)
+      const idx = filesUpload.value.indexOf(file);
+      if (idx > -1) {
+        filesUpload.value.splice(idx, 1);
+        uploadProgress.splice(idx, 1);
+      }
+
+      // Hide preview if empty
+      if (filesUpload.value.length === 0 && mmFiles.value.length === 0) {
+        divAttach.value!.hidden = true;
+      }
+
+      useAlertStore().success(`"${file.name}" uploaded and inserted`);
+    } else {
+      throw result.reason;
     }
+  } catch (error) {
+    console.error('Upload failed:', error);
+    useAlertStore().error(`Failed to upload "${file.name}": ${error}`);
+    // Remove failed file from preview
+    const idx = filesUpload.value.indexOf(file);
+    if (idx > -1) {
+      filesUpload.value.splice(idx, 1);
+      uploadProgress.splice(idx, 1);
+    }
+  } finally {
+    loading.value = false;
   }
 }
 
 function dragOver() {
-  textArea!.value!.hidden = true
   dropHere!.value!.hidden = false
 }
 
 function dragLeave(e: DragEvent) {
   // Only hide the drop zone if we're leaving the modal-content container entirely
-  // Check if the related target is still within the modal-content
   const modalContent = (e.currentTarget as HTMLElement)
   const relatedTarget = e.relatedTarget as HTMLElement
 
   if (!modalContent.contains(relatedTarget)) {
-    textArea!.value!.hidden = false
     dropHere!.value!.hidden = true
   }
+}
+
+// Drop on editor area - add placeholder and queue for upload on submit
+async function onDropInEditor(e: DragEvent) {
+  dropHere!.value!.hidden = true  // Close drop zone immediately
+
+  const files = e.dataTransfer?.files
+  if (files && files.length > 0) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+
+      // Check size
+      let totalSize = 0
+      filesUpload.value.forEach(f => totalSize += f.size)
+      totalSize += file.size
+
+      if (totalSize > MAX_UPLOAD_SIZE) {
+        useAlertStore().error("Total upload size exceeds 4GB limit.")
+        return
+      }
+
+      if (!tweetTitle.value) {
+        tweetTitle.value = file.name
+      }
+
+      // Prompt for caption
+      const caption = prompt(`Enter caption for "${file.name}" (optional):`, '') || ''
+
+      // Add to upload queue
+      if (filesUpload.value.findIndex((e: File) => e.size === file.size && e.name === file.name) === -1) {
+        filesUpload.value.push(file)
+        // Track caption for this file
+        pendingCaptions.set(file.name, caption)
+      }
+
+      // Insert placeholder in editor (will be replaced with real CID after upload)
+      await insertPlaceholderInEditor(file.name, caption)
+    }
+
+    divAttach.value!.hidden = false
+  }
+}
+
+// Drop on canvas - just add to attachment queue (no editor placeholder)
+async function onDropOnCanvas(e: DragEvent) {
+  dropHere!.value!.hidden = true
+
+  const files = e.dataTransfer?.files
+  if (files && files.length > 0) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+
+      // Check size
+      let totalSize = 0
+      filesUpload.value.forEach(f => totalSize += f.size)
+      totalSize += file.size
+
+      if (totalSize > MAX_UPLOAD_SIZE) {
+        useAlertStore().error("Total upload size exceeds 4GB limit.")
+        return
+      }
+
+      if (!tweetTitle.value) {
+        tweetTitle.value = file.name
+      }
+
+      // Add to queue (no editor placeholder)
+      if (filesUpload.value.findIndex((e: File) => e.size === file.size && e.name === file.name) === -1) {
+        filesUpload.value.push(file)
+      }
+    }
+
+    divAttach.value!.hidden = false
+  }
+}
+
+// Insert a placeholder in the editor for a pending file
+async function insertPlaceholderInEditor(fileName: string, caption: string): Promise<void> {
+  if (!blockEditor.value) return
+
+  const mediaData: MediaBlockData = {
+    cid: `pending:${fileName}`,  // Placeholder CID
+    mediaType: 'image',  // Will be determined on upload
+    fileName: fileName,
+    caption: caption
+  }
+
+  await blockEditor.value.insertMedia(mediaData)
 }
 
 function removeFile(f: File) {
@@ -727,7 +886,7 @@ const handleCids = (ids: MimeiFileType[]) => {
   showCidModal.value = false;
   if (ids.length > 0) {
     divAttach.value.hidden = false
-    if (!tweetTitle.value && !txtConent.value) {
+    if (!tweetTitle.value) {
       tweetTitle.value = ids[0].fileName;
     }
   }
@@ -738,6 +897,28 @@ const cancelCidsModal = () => {
 };
 const openModal = () => {
   showCidModal.value = true;
+}
+
+// Get media URL for the BlockEditor preview
+function getMediaUrlForEditor(cid: string): string {
+  const providerIp = tweetStore.loginUser?.providerIp
+  const baseUrl = providerIp ? `http://${providerIp}` : ''
+  return tweetStore.getMediaUrl(cid, baseUrl)
+}
+
+// Insert uploaded media into the block editor
+async function insertMediaIntoEditor(mediaFile: MimeiFileType): Promise<void> {
+  if (!blockEditor.value) return
+
+  const mediaData: MediaBlockData = {
+    cid: mediaFile.mid,
+    mediaType: isImageType(mediaFile.type) ? 'image' : isVideoType(mediaFile.type) ? 'video' : 'audio',
+    fileName: mediaFile.fileName,
+    caption: mediaFile.caption || '',
+    aspectRatio: mediaFile.aspectRatio
+  }
+
+  await blockEditor.value.insertMedia(mediaData)
 }
 function removeMimei(m: MimeiFileType) {
   const i = mmFiles.value.findIndex((e) => e.mid == m.mid)
@@ -805,14 +986,20 @@ function handleDragEnd() {
         <ItemHeader :author='author'></ItemHeader>
         <button class='logout' @click.prevent='logout'>Logout</button>
       </div>
-      <div class='modal-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
+      <div class='modal-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onDropInEditor'>
         <div>
           <input type='text' placeholder='Title...' v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
-          <textarea ref='textArea' v-model='txtConent' placeholder='Input......' class='input-textarea'></textarea>
-          <div ref='dropHere' hidden class='drop-here'>
-            <p>DROP HERE</p>
+          <BlockEditor
+            ref='blockEditor'
+            v-model='editorContent'
+            placeholder='Start writing...'
+            :get-media-url='getMediaUrlForEditor'
+            class='block-editor-area'
+          />
+          <div ref='dropHere' hidden class='drop-here' @drop.prevent.stop='onDropOnCanvas'>
+            <p>DROP HERE<br><small>(attach for later)</small></p>
           </div>
         </div>
         <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
@@ -906,12 +1093,22 @@ function handleDragEnd() {
   border-radius: 5px;
 }
 
+.block-editor-area {
+  margin: 5px;
+  min-height: 200px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
 .drop-here {
   border: 1px solid lightgrey;
   width: 100%;
-  height: 400px;
+  height: 200px;
   margin: 0px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .preview-container {
