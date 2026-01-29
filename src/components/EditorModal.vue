@@ -699,6 +699,18 @@ function dragOver() {
   dropHere!.value!.hidden = false
 }
 
+function dragLeave(e: DragEvent) {
+  // Only hide the drop zone if we're leaving the modal-content container entirely
+  // Check if the related target is still within the modal-content
+  const modalContent = (e.currentTarget as HTMLElement)
+  const relatedTarget = e.relatedTarget as HTMLElement
+
+  if (!modalContent.contains(relatedTarget)) {
+    textArea!.value!.hidden = false
+    dropHere!.value!.hidden = true
+  }
+}
+
 function removeFile(f: File) {
   // removed file from preview list
   var i = filesUpload.value.findIndex((e: File) => e == f)
@@ -793,7 +805,7 @@ function handleDragEnd() {
         <ItemHeader :author='author'></ItemHeader>
         <button class='logout' @click.prevent='logout'>Logout</button>
       </div>
-      <div class='modal-content' @dragover.prevent='dragOver' @drop.prevent='onSelect'>
+      <div class='modal-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
           <input type='text' placeholder='Title...' v-model='tweetTitle' class='input-caption' />
         </div>
