@@ -369,7 +369,9 @@ async function onSubmit() {
     for (const mediaFile of queuedAttachments) {
       if (mediaFile.fileName) {
         const placeholder = `pending:${mediaFile.fileName}`
-        content = content.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), mediaFile.mid)
+        // Extract just the CID from full URL
+        const rawCid = mediaFile.mid.split('/').pop() || mediaFile.mid
+        content = content.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), rawCid)
       }
     }
 
@@ -910,8 +912,11 @@ function getMediaUrlForEditor(cid: string): string {
 async function insertMediaIntoEditor(mediaFile: MimeiFileType): Promise<void> {
   if (!blockEditor.value) return
 
+  // Extract just the CID from full URL (mid may be http://ip/ipfs/cid)
+  const rawCid = mediaFile.mid.split('/').pop() || mediaFile.mid
+
   const mediaData: MediaBlockData = {
-    cid: mediaFile.mid,
+    cid: rawCid,  // Store just the CID, not full URL
     mediaType: isImageType(mediaFile.type) ? 'image' : isVideoType(mediaFile.type) ? 'video' : 'audio',
     fileName: mediaFile.fileName,
     caption: mediaFile.caption || '',

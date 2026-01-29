@@ -93,23 +93,45 @@ const plainTextContent = computed(() => {
   return text
 })
 
+// Get base URL for media from tweet
+function getBaseUrl(): string {
+  const providerIp = props.tweet?.author?.providerIp || props.tweet?.provider
+  return providerIp ? `http://${providerIp}` : ''
+}
+
 // Convert media block data to MimeiFileType for MediaView
 function mediaBlockToMimeiFile(data: any): MimeiFileType {
+  const baseUrl = getBaseUrl()
   return {
-    mid: data.cid,
+    mid: tweetStore.getMediaUrl(data.cid, baseUrl),  // Convert CID to full URL
     type: data.mediaType || 'image',
     fileName: data.fileName,
     aspectRatio: data.aspectRatio,
+    caption: data.caption,
     timestamp: Date.now()
   }
 }
 
-// Get media URL from CID
-function getMediaUrl(cid: string): string {
-  const providerIp = props.tweet?.author?.providerIp || props.tweet?.provider
-  const baseUrl = providerIp ? `http://${providerIp}` : ''
-  return tweetStore.getMediaUrl(cid, baseUrl)
+// Extract inline media CIDs from content blocks
+function getInlineMediaCids(): Set<string> {
+  const cids = new Set<string>()
+  if (!isEditorJSContent.value || !props.content) return cids
+
+  const parsed = parseEditorJSContent(props.content)
+  if (parsed?.blocks) {
+    for (const block of parsed.blocks) {
+      if (block.type === 'media' && block.data?.cid) {
+        cids.add(block.data.cid)
+      }
+    }
+  }
+  return cids
 }
+
+// Expose inline media CIDs for parent components to filter attachments
+defineExpose({
+  getInlineMediaCids
+})
 
 // Process header level
 function getHeaderTag(level: number): string {

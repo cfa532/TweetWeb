@@ -412,13 +412,56 @@ const displayedTweet = computed(() => {
     return isRetweet.value && originTweet.value ? originTweet.value : tweet.value;
 });
 
+// Helper to extract inline media CIDs from editorjs content
+function getInlineMediaCids(tweet: Tweet): Set<string> {
+  const cids = new Set<string>()
+  if (!tweet?.content) return cids
+
+  // Auto-detect editorjs format by trying to parse as JSON with blocks array
+  try {
+    const parsed = JSON.parse(tweet.content)
+    if (parsed?.blocks && Array.isArray(parsed.blocks)) {
+      for (const block of parsed.blocks) {
+        if (block.type === 'media' && block.data?.cid) {
+          // Extract just the CID from full URL (cid may be full URL like http://ip/ipfs/cid)
+          const cidValue = block.data.cid
+          const extractedCid = cidValue.split('/').pop() || cidValue
+          cids.add(extractedCid)
+        }
+      }
+    }
+  } catch {
+    // Not valid JSON, treat as plain text - no inline media
+  }
+  return cids
+}
+
 const mediaAttachments = computed(() => {
     const attachments = displayedTweet.value?.attachments || [];
+    const inlineCids = getInlineMediaCids(displayedTweet.value);
+
+    console.log('[mediaAttachments] contentType:', displayedTweet.value?.contentType);
+    console.log('[mediaAttachments] inlineCids:', Array.from(inlineCids));
+    console.log('[mediaAttachments] attachments mids:', attachments.map((a: MimeiFileType) => a.mid));
+
     return attachments.filter((attachment: MimeiFileType) => {
         const normalizedType = normalizeMediaType(attachment.type);
-        return normalizedType.includes('image') || 
-               normalizedType.includes('video') || 
+        const isMedia = normalizedType.includes('image') ||
+               normalizedType.includes('video') ||
                normalizedType.includes('audio');
+
+        // Filter out media that's already inline in content
+        if (isMedia && inlineCids.size > 0) {
+          // Extract CID from the full URL (mid may be full URL like http://ip/ipfs/cid)
+          const cidFromMid = attachment.mid.split('/').pop() || attachment.mid;
+          console.log('[mediaAttachments] comparing:', cidFromMid, 'in', Array.from(inlineCids));
+          if (inlineCids.has(cidFromMid)) {
+            console.log('[mediaAttachments] FILTERED OUT:', cidFromMid);
+            return false;  // Skip this attachment, it's inline
+          }
+        }
+
+        return isMedia;
     });
 });
 
