@@ -67,23 +67,10 @@ onMounted(async () => {
         loadDetail()
     }
 
-    // Show download prompt after 2 seconds (modal only 1/3 of the time)
+    // Show download button after 2 seconds
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
-
-    // Show download modal after 6 seconds (modal only 1/3 of the time)
-    setTimeout(() => {
-        // Show modal only 50% of the time (random)
-        if (Math.random() < 0.3) {
-            showDownloadModal.value = true
-        }
-    }, 6000)
-
-    // Auto-hide download prompt after 30 seconds
-    setTimeout(() => {
-        showDownloadPrompt.value = false
-    }, 30000)
 });
 async function loadDetail(retryCount = 0) {
     const maxRetries = MAX_REFRESH_ATTEMPTS
@@ -301,6 +288,18 @@ const downloadingText = computed(() => {
         return 'ダウンロード中...'
     } else {
         return 'Downloading...'
+    }
+})
+
+const downloadText = computed(() => {
+    const language = navigator.language || 'en'
+
+    if (language.startsWith('zh')) {
+        return '下载APP获得最佳体验'
+    } else if (language.startsWith('ja')) {
+        return 'ネイティブアプリで最高の体験を'
+    } else {
+        return '下载APP获得最佳体验'
     }
 })
 
@@ -662,8 +661,6 @@ function retryLoad() {
         </div>
     </div>
 
-    <DownloadPrompt :show="showDownloadPrompt" @click="openDownloadModal" />
-
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-center">
             <DetailHeader v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
@@ -776,6 +773,14 @@ function retryLoad() {
         @openPlayStore="openPlayStore"
         @openBrowser="openInBrowser"
     />
+
+    <!-- Download Button -->
+    <div v-if="showDownloadPrompt" class="download-button-container">
+        <button class="download-button" @click="openDownloadModal">
+            <img src="/src/ic_splash.png" alt="App Icon" class="download-icon" />
+            <span class="download-text">{{ downloadText }}</span>
+        </button>
+    </div>
 </PageLayout>
 </template>
 
@@ -1120,6 +1125,76 @@ function retryLoad() {
     font-size: 0.9em;
     white-space: nowrap;
     flex-shrink: 0;
+}
+
+/* Download Button Styles */
+.download-button-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    width: 90%;
+    max-width: 600px;
+    display: flex;
+    justify-content: center;
+}
+
+.download-button {
+    background: #5a67d8;
+    color: #ffffff;
+    border: none;
+    border-radius: 25px;
+    padding: 12px 28px;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(90, 103, 216, 0.4);
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.download-icon {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    object-fit: contain;
+}
+
+.download-text {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.download-button:hover {
+    background: #4c5bc7;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(90, 103, 216, 0.5);
+}
+
+.download-button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(90, 103, 216, 0.4);
+}
+
+@media (max-width: 768px) {
+    .download-button {
+        font-size: 0.9rem;
+        padding: 10px 24px;
+    }
+
+    .download-text {
+        font-size: 0.9rem;
+    }
+
+    .download-icon {
+        width: 20px;
+        height: 20px;
+    }
 }
 
 </style>
