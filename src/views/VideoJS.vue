@@ -986,6 +986,22 @@ function handlePlayOverlayClick(event: Event) {
     if (isPlaying.value) {
       video.value.pause();
     } else {
+      // On mobile, open fullscreen when play button is tapped
+      if (isMobileBrowser()) {
+        // Start playing before requesting fullscreen
+        if (video.value.paused) {
+          video.value.play().catch(() => {
+            // If play fails, try muted
+            video.value.muted = true;
+            video.value.play().catch(() => {});
+          });
+        }
+        // Request fullscreen
+        requestFullscreen();
+        return;
+      }
+
+      // Desktop: play inline
       // If video has ended, reset to beginning
       if (video.value.ended || video.value.currentTime >= video.value.duration) {
         video.value.currentTime = 0;
