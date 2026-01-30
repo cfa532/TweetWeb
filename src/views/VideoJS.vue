@@ -20,6 +20,7 @@ const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
+const isBuffering = ref(false); // Show spinner when video is loading/buffering
 
 // Touch handling for mobile scroll detection
 const touchStartX = ref(0);
@@ -99,9 +100,20 @@ onMounted(() => {
         video.value.addEventListener('play', () => {
           isPlaying.value = true;
           showPlayOverlay.value = false;
+          isBuffering.value = true; // Show spinner when play starts, hide when actually playing
+        });
+        video.value.addEventListener('playing', () => {
+          isBuffering.value = false; // Video is actually playing now
+        });
+        video.value.addEventListener('waiting', () => {
+          isBuffering.value = true; // Video is buffering
+        });
+        video.value.addEventListener('canplay', () => {
+          isBuffering.value = false; // Enough data to play
         });
         video.value.addEventListener('pause', () => {
           isPlaying.value = false;
+          isBuffering.value = false;
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
@@ -1480,8 +1492,13 @@ function stopVideo() {
         </div>
       </div>
       
+      <!-- Loading spinner overlay -->
+      <div v-if="isBuffering" class="buffering-overlay">
+        <div class="buffering-spinner"></div>
+      </div>
+
       <!-- Play overlay for videos (mobile-friendly) -->
-      <div v-if="!showControls"
+      <div v-if="!showControls && !isBuffering"
            class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
@@ -1727,6 +1744,36 @@ function stopVideo() {
   margin: 0;
   opacity: 0.8;
   font-weight: 500;
+}
+
+/* Buffering spinner overlay */
+.buffering-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.buffering-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Play overlay styles - positioned at top */
