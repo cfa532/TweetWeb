@@ -87,7 +87,7 @@ function handleMediaClick(event: MouseEvent) {
 .container {
     position: relative;
     width: 100%;
-    max-height: 90vh;
+    max-height: 80vh;
     display: flex;
     align-items: center;
     justify-content: center;

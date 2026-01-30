@@ -1562,7 +1562,7 @@ function stopVideo() {
   width: 100%;
   max-width: 100%;
   height: auto;
-  max-height: 90vh;
+  max-height: 100%;
   display: block;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -1681,7 +1681,7 @@ function stopVideo() {
 
 /* Portrait video overrides aspect ratio */
 .video-portrait {
-  max-height: 90vh; /* Limit to viewport height */
+  max-height: 100%; /* Fit within container */
   width: 100%; /* Use full width to fill container */
   max-width: 100%;
   object-fit: contain; /* Use contain to show full video without cropping */

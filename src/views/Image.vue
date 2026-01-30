@@ -26,7 +26,7 @@ const props = defineProps({
 .container img {
     display: block;
     max-width: 100%;
-    max-height: 90vh;
+    max-height: 100%;
     width: auto;
     height: auto;
     object-fit: contain; /* Default for single images */
@@ -72,7 +72,7 @@ div.media-attachments div.grid-item div.container img {
 
     .container img {
         max-width: 100%;
-        max-height: 90vh;
+        max-height: 100%;
         width: auto;
         height: auto;
         object-fit: contain;
