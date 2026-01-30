@@ -909,6 +909,22 @@ function retryLoad() {
     object-fit: contain;
 }
 
+/* Desktop: ensure video takes at least 80vh */
+@media (min-width: 768px) {
+    .media-attachments:has(video) {
+        min-height: 80vh;
+    }
+
+    .media-attachments :deep(.video-container),
+    .media-attachments :deep(.video-wrapper) {
+        min-height: 80vh !important;
+    }
+
+    .media-attachments :deep(video) {
+        min-height: 80vh !important;
+    }
+}
+
 .rounded-circle {
     width: 40px;
     height: 40px;
@@ -1161,13 +1177,12 @@ function retryLoad() {
 .download-button-container {
     position: fixed;
     bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
+    left: 50% !important;
+    transform: translateX(-50%) !important;
     z-index: 1000;
-    width: 90%;
-    max-width: 600px;
     display: flex;
     justify-content: center;
+    pointer-events: none;
 }
 
 .download-button {
@@ -1180,11 +1195,12 @@ function retryLoad() {
     font-weight: 500;
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(90, 103, 216, 0.4);
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
     white-space: nowrap;
     display: flex;
     align-items: center;
     gap: 8px;
+    pointer-events: auto;
 }
 
 .download-icon {
@@ -1202,12 +1218,10 @@ function retryLoad() {
 
 .download-button:hover {
     background: #4c5bc7;
-    transform: translateY(-2px);
     box-shadow: 0 6px 16px rgba(90, 103, 216, 0.5);
 }
 
 .download-button:active {
-    transform: translateY(0);
     box-shadow: 0 2px 8px rgba(90, 103, 216, 0.4);
 }
 
