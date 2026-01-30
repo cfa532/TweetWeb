@@ -859,24 +859,54 @@ function retryLoad() {
     margin-bottom: 0;
     padding: 0;
     overflow: hidden;
+    max-height: 80vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .media-attachments :deep(.container) {
     width: 100% !important;
+    height: 100% !important;
+    max-height: 80vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.media-attachments :deep(img) {
+    max-width: 100% !important;
+    max-height: 80vh !important;
+    width: auto !important;
+    height: auto !important;
+    display: block;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    object-fit: contain;
+}
+
+.media-attachments :deep(.video-container),
+.media-attachments :deep(.video-wrapper) {
+    width: 100% !important;
+    max-height: 80vh !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     margin: 0 !important;
     padding: 0 !important;
 }
 
-.media-attachments :deep(img),
-.media-attachments :deep(video),
-.media-attachments :deep(.video-container),
-.media-attachments :deep(.video-wrapper),
-.media-attachments :deep(.video) {
-    width: 100% !important;
+.media-attachments :deep(video) {
+    max-width: 100% !important;
+    max-height: 80vh !important;
+    width: auto !important;
+    height: auto !important;
     display: block;
-    margin: 0 !important;
+    margin: 0 auto !important;
     padding: 0 !important;
-    object-fit: cover;
+    object-fit: contain;
 }
 
 .rounded-circle {

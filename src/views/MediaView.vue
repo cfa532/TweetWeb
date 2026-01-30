@@ -95,6 +95,14 @@ function handleMediaClick(event: MouseEvent) {
     background-color: #000;
 }
 
+.container video {
+    max-width: 100%;
+    max-height: 80vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+
 /* In grid context, ensure container fills completely */
 .grid-item .container {
     width: 100% !important;

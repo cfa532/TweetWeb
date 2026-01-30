@@ -1534,21 +1534,21 @@ function stopVideo() {
 .video-container {
   width: 100%;
   max-width: 100%;
+  max-height: 80vh;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
+  justify-content: center;
 }
 
 .video-wrapper {
   position: relative;
   width: 100%;
-  /* This wrapper will size itself based on the video */
+  max-height: 80vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background-color: #000;
-  /* Maintain minimum height to prevent collapse when video ends */
-  min-height: 200px;
 }
 
 .video-tap-handler {
@@ -1559,24 +1559,17 @@ function stopVideo() {
 }
 
 .video {
-  width: 100%;
   max-width: 100%;
+  max-height: 80vh;
+  width: auto;
   height: auto;
-  max-height: 100%;
   display: block;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  /* Ensure video has minimum dimensions */
-  min-height: 200px;
-  /* Set default aspect ratio to prevent layout shifts before metadata loads */
-  aspect-ratio: 16 / 9;
-  object-fit: contain; /* Use 'contain' to maintain aspect ratio and fit within container */
-  object-position: center; /* Center the video content within the container */
+  object-fit: contain;
+  object-position: center;
   background-color: #000;
-  /* Center the video */
   margin: 0 auto;
-  /* Maintain dimensions after video ends - prevent collapse */
-  flex-shrink: 0;
 }
 
 /* Grid items - force video to fill container */
@@ -1783,12 +1776,12 @@ function stopVideo() {
   height: 24px;
 }
 
-/* Responsive video in detail view - adapts to screen width */
+/* Responsive video in detail view - adapts to screen width and height */
 .video-container:not(.tweet-list) .video {
-  width: 100% !important;
   max-width: 100% !important;
+  max-height: 80vh !important;
+  width: auto !important;
   height: auto !important;
-  max-height: 100vh !important;
   object-fit: contain !important;
 }
 
