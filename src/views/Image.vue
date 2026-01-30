@@ -24,12 +24,11 @@ const props = defineProps({
 }
 /* Default styles for non-grid images */
 .container img {
-    /* position:relative; */
     display: block;
     max-width: 100%;
-    width: 100%;
-    height: auto;
     max-height: 90vh;
+    width: auto;
+    height: auto;
     object-fit: contain; /* Default for single images */
     object-position: center;
 }
@@ -70,11 +69,13 @@ div.media-attachments div.grid-item div.container img {
         max-width: 100%;
         display: block;
     }
-    
+
     .container img {
-        width: 100%;
         max-width: 100%;
-        object-fit: cover;
+        max-height: 90vh;
+        width: auto;
+        height: auto;
+        object-fit: contain;
     }
 }
 
