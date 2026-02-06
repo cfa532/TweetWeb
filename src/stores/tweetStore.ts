@@ -79,16 +79,10 @@ export const useTweetStore = defineStore('tweetStore', {
             pageSize: number = TWEET_COUNT
         ): Promise<number | null> {
             if (authorId) {
-                // load author's tweets
                 return await this.loadTweetsByUser(authorId, pageNumber, pageSize)
             } else {
-                if (this.loginUser) {
-                    // load tweets from all the followings of login user.
-                    return await this.getTweetFeed(this.loginUser, pageNumber, pageSize)  
-                } else {
-                    // load admin's tweets
-                    return await this.loadTweetsByUser(this.followings[0], pageNumber, pageSize)
-                }
+                // Guest users are redirected to a user profile page, so this is only called for logged-in users.
+                return await this.getTweetFeed(this.loginUser!, pageNumber, pageSize)
             }
         },
         /**

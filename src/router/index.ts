@@ -6,7 +6,7 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
 import { useAlertStore } from '@/stores';
 
 export const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     { 
       path: '/', name: "main", component: MainPage

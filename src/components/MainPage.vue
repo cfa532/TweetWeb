@@ -1,5 +1,6 @@
 <script setup lang='ts'>
 import { computed, onMounted, ref, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout } from '@/components';
@@ -7,6 +8,7 @@ import { isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 
 const tweetStore = useTweetStore();
+const router = useRouter();
 const isLoading = ref(false);
 const retryMessage = ref('');
 const scrollThreshold = 200; // Distance from bottom to trigger load
@@ -101,6 +103,12 @@ const handleScroll = debounce(async () => {
 }, 300); // Increased debounce delay to reduce conflicts
 
 onMounted(async () => {
+    // Guest user: redirect to the default user's profile page
+    if (!tweetStore.loginUser) {
+        router.replace(`/author/${tweetStore.followings[0]}`);
+        return;
+    }
+
     // Only load tweets if we don't have any yet or if this is a fresh session
     const shouldLoad = tweetStore.tweets.length === 0 || initialLoad.value;
 
