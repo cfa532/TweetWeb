@@ -95,6 +95,12 @@ function openDetailView() {
     }
 }
 
+function onTextClick(event: MouseEvent) {
+  // Don't navigate if user clicked on a link
+  if ((event.target as HTMLElement).closest('a')) return;
+  openDetailView();
+}
+
 function linkify(text: string) {
   const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
   return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
@@ -342,7 +348,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       />
     </div>
     <div class='card-body' :id="props.tweet.mid">
-      <p v-if='displayedTweet.content' class='card-text' v-html='processedContent'></p>
+      <p v-if='displayedTweet.content' class='card-text' v-html='processedContent' @click='onTextClick'></p>
       <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
         <div v-if='mediaAttachments.length === 1' class='single-attachment'>
@@ -921,6 +927,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   white-space: pre-wrap;
   padding: 4px 0 0 8px;
   overflow: hidden;
+  cursor: pointer;
   display: -webkit-box;
   -webkit-line-clamp: v-bind('isContentClipped ? MAX_LINES : undefined');
   -webkit-box-orient: vertical;

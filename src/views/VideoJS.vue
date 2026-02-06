@@ -21,6 +21,7 @@ const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
 const isBuffering = ref(false); // Show spinner when video is loading/buffering
+const showVideoError = ref(false); // Show error message when video fails to play
 
 // Touch handling for mobile scroll detection
 const touchStartX = ref(0);
@@ -90,6 +91,13 @@ let isRetryingVideo = false;
 let lastHandledError: { code: number; src: string; timestamp: number } | null = null;
 const ERROR_HANDLING_COOLDOWN = 3000; // 3 seconds cooldown between handling same error
 let isHLSInitialized = false; // Prevent multiple HLS initializations
+let mediaErrorRecoveryCount = 0;
+const MAX_MEDIA_ERROR_RECOVERIES = 3;
+let lastMediaErrorTime = 0;
+const MEDIA_ERROR_COOLDOWN = 2000; // 2 seconds cooldown between media error recoveries
+let currentPlaylistType: 'master' | 'playlist' | null = null;
+let hasTriedPlaylistFallback = false;
+let failedFragments = new Set<string>(); // Track fragments that have failed to avoid infinite loops
 
 onMounted(() => {
   vdiv.value.hidden = false;
@@ -173,10 +181,15 @@ onMounted(() => {
         
         // Add metadata loaded event listener (only once)
         video.value.addEventListener('loadedmetadata', () => {
-          // Metadata loaded successfully - reset retry count
+          // Metadata loaded successfully - reset retry count and media error recovery count
           videoErrorRetryCount = 0;
           isRetryingVideo = false;
           lastHandledError = null;
+          mediaErrorRecoveryCount = 0;
+          lastMediaErrorTime = 0;
+          hasTriedPlaylistFallback = false;
+          showVideoError.value = false;
+          failedFragments.clear();
           if (video.value) {
             console.log('Video metadata loaded, duration:', video.value.duration);
             // Capture video dimensions to maintain space after video ends
@@ -373,6 +386,13 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       // Handle manifest parsed
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log(`HLS.js: ${sourceName} playlist manifest parsed successfully`);
+        // Track which playlist type we're using
+        currentPlaylistType = sourceName as 'master' | 'playlist';
+        // Reset media error recovery counter on successful manifest parse
+        mediaErrorRecoveryCount = 0;
+        lastMediaErrorTime = 0;
+        showVideoError.value = false;
+        failedFragments.clear();
         // Start playing if autoplay is enabled
         if (props.autoplay) {
           videoElement.play().catch(() => {
@@ -385,7 +405,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       // Error handling for the instance
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.log(`HLS Error (${sourceName}):`, data);
-        
+
         // For non-fatal errors, try to recover
         if (!data.fatal) {
           switch (data.type) {
@@ -394,7 +414,79 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
               hls?.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
-              console.log('Media error, attempting to recover...');
+              // For fragment parsing errors, track and recover to skip to next segment
+              // This allows playback to continue even with some corrupted/incompatible segments (like iOS does)
+              if (data.details === 'fragParsingError') {
+                const fragUrl = data.frag?.url || 'unknown';
+
+                // Check if we've already tried to recover this fragment
+                if (failedFragments.has(fragUrl)) {
+                  console.log(`Fragment ${fragUrl} has already failed - skipping without recovery`);
+                  return; // Don't recover same fragment multiple times
+                }
+
+                // Mark this fragment as failed and attempt recovery once
+                failedFragments.add(fragUrl);
+                console.log(`Fragment parsing error for ${fragUrl} - attempting recovery (attempt 1)`);
+                hls?.recoverMediaError();
+                return;
+              }
+
+              // For other media errors (bufferSeekOverHole, etc.), use recovery logic
+              const now = Date.now();
+              const timeSinceLastError = now - lastMediaErrorTime;
+
+              // Check if we're within cooldown period
+              if (timeSinceLastError < MEDIA_ERROR_COOLDOWN) {
+                console.log(`Media error cooldown active (${timeSinceLastError}ms < ${MEDIA_ERROR_COOLDOWN}ms), skipping recovery`);
+                return;
+              }
+
+              // Check if we've exceeded max recovery attempts
+              if (mediaErrorRecoveryCount >= MAX_MEDIA_ERROR_RECOVERIES) {
+                console.error(`Media error: Max recovery attempts (${MAX_MEDIA_ERROR_RECOVERIES}) reached`);
+
+                // Try fallback to alternative playlist if we haven't tried it yet
+                if (!hasTriedPlaylistFallback && currentPlaylistType === 'master') {
+                  console.log('Attempting fallback to playlist.m3u8...');
+                  hasTriedPlaylistFallback = true;
+
+                  // Destroy current HLS instance
+                  if (hls) {
+                    try {
+                      hls.destroy();
+                      hls = null;
+                    } catch (e) {
+                      console.log('Error destroying HLS instance:', e);
+                    }
+                  }
+
+                  // Reset counters for new attempt
+                  mediaErrorRecoveryCount = 0;
+                  lastMediaErrorTime = 0;
+
+                  // Try the playlist URL
+                  const playlistUrl = getHLSSource();
+                  createHLSInstance(playlistUrl, 'playlist');
+                  return;
+                }
+
+                // If fallback also failed or we were already on playlist, give up
+                console.error('All recovery attempts exhausted, stopping playback');
+                if (hls) {
+                  console.log('Destroying HLS instance to stop error loop');
+                  hls.destroy();
+                  hls = null;
+                }
+                // Show error message to user
+                showVideoError.value = true;
+                isBuffering.value = false;
+                return;
+              }
+
+              mediaErrorRecoveryCount++;
+              lastMediaErrorTime = now;
+              console.log(`Media error, attempting to recover (${mediaErrorRecoveryCount}/${MAX_MEDIA_ERROR_RECOVERIES})...`);
               hls?.recoverMediaError();
               break;
           }
@@ -1408,6 +1500,9 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log(`HLS.js retry: ${retryUrl === masterUrl ? 'master' : 'playlist'} playlist loaded successfully`);
         isRetryingVideo = false;
+        // Reset media error recovery counter on successful retry
+        mediaErrorRecoveryCount = 0;
+        lastMediaErrorTime = 0;
         if (props.autoplay) {
           videoElement.play().catch(() => {
             showPlayOverlay.value = false;
@@ -1458,23 +1553,29 @@ function stopVideo() {
       video.value.pause();
       isPlaying.value = false;
     }
-    
+
     // Reset video to beginning
     video.value.currentTime = 0;
   }
-  
+
   // Clean up HLS instance
   if (hls) {
     hls.destroy();
     hls = null;
   }
-  
+
   // Reset flags
   hasTriedSinglePlaylist = false;
   videoErrorRetryCount = 0;
   isRetryingVideo = false;
   lastHandledError = null;
   isHLSInitialized = false;
+  mediaErrorRecoveryCount = 0;
+  lastMediaErrorTime = 0;
+  currentPlaylistType = null;
+  hasTriedPlaylistFallback = false;
+  showVideoError.value = false;
+  failedFragments.clear();
 }
 </script>
 
@@ -1482,6 +1583,15 @@ function stopVideo() {
   <div ref="vdiv" hidden class="video-container" :class="{ 'tweet-list': isInTweetList }">
     <div class="video-wrapper">
       
+      <!-- Video error overlay -->
+      <div v-if="showVideoError" class="video-error-overlay">
+        <div class="video-error-content">
+          <div class="error-icon">⚠️</div>
+          <p class="error-message">Video playback error</p>
+          <p class="error-hint">This video format may not be supported in your browser</p>
+        </div>
+      </div>
+
       <!-- Autoplay blocked overlay -->
       <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
         <div class="autoplay-blocked-content">
@@ -1700,6 +1810,48 @@ function stopVideo() {
   margin: 0 auto; /* Center horizontally */
 }
 
+
+/* Video error overlay styles */
+.video-error-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 25;
+  pointer-events: none;
+}
+
+.video-error-content {
+  text-align: center;
+  color: white;
+  padding: 20px;
+  max-width: 80%;
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  opacity: 0.9;
+}
+
+.error-message {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: #ff6b6b;
+}
+
+.error-hint {
+  font-size: 13px;
+  margin: 0;
+  opacity: 0.8;
+  color: #ccc;
+}
 
 /* Autoplay blocked overlay styles */
 .autoplay-blocked-overlay {

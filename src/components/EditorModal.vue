@@ -102,6 +102,15 @@ async function retryUpload<T>(
       lastError = error;
       console.error(`[UPLOAD-RETRY] Attempt ${attempt + 1} failed for ${fileName}:`, error);
 
+      // Clear connection pool if we hit a connection timeout - connections may be stale
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Connection request timeout')) {
+        console.log(`[UPLOAD-RETRY] Connection pool timeout detected, clearing stale connections`);
+        console.log(`[UPLOAD-RETRY] Pool stats before clear:`, tweetStore.lapi.connectionPool.getStats());
+        tweetStore.lapi.connectionPool.clearAll();
+        console.log(`[UPLOAD-RETRY] Pool cleared, stats after:`, tweetStore.lapi.connectionPool.getStats());
+      }
+
       // Don't retry if this is the last attempt or error is not retryable
       if (attempt >= config.maxRetries || !isRetryableError(error)) {
         break;
