@@ -32,24 +32,8 @@ function getBotVerificationMessage(): string {
     }
 }
 
-onMounted(async () => {
-    // Wait a tick for route params to be fully available
-    if (!authorId.value) {
-        console.error('UserPage: authorId is undefined, waiting for route to be ready...');
-        // Wait for next tick and check again
-        await new Promise(resolve => setTimeout(resolve, 100));
-        if (!authorId.value) {
-            console.error('UserPage: authorId still undefined after wait');
-            return;
-        }
-    }
-    
-    console.log('UserPage mounted for authorId:', authorId.value);
-    tweetStore.removeUser(authorId.value);  // force reload user data from its host.
-    await initialLoadTweets(authorId.value);
+onMounted(() => {
     window.addEventListener('scroll', handleScroll);
-    // Scroll to top when page is opened
-    window.scrollTo(0, 0);
 });
 
 onUnmounted(() => {
@@ -77,8 +61,6 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     if (isLoading.value) return; // Prevent multiple loads
     
     isLoading.value = true;
-    pageNumber.value = 0; // Reset page number for initial load
-    hasMoreTweets.value = true; // Reset the flag for initial load
 
     let currentTimeoutId: number | null = null;
 
@@ -282,15 +264,18 @@ const tweetFeed = computed(() => {
     return filteredTweets.sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
 });
 
+// Single entry point for loading tweets — covers both initial mount and route changes
 watch(authorId, async (nv, ov) => {
-    if (nv && nv !== ov) {
-        pageNumber.value = 0; // Reset page number when loading new author's tweets
-        hasMoreTweets.value = true; // Reset the flag for new user
-        await initialLoadTweets(nv);
-        // Scroll to top when switching to a different author
-        window.scrollTo(0, 0);
-    }
-});
+    if (!nv || nv === ov) return;
+
+    console.log('UserPage loading authorId:', nv);
+    tweetStore.removeUser(nv);  // force reload user data from its host.
+    pageNumber.value = 0;
+    hasMoreTweets.value = true;
+    initialLoad.value = true;
+    await initialLoadTweets(nv);
+    window.scrollTo(0, 0);
+}, { immediate: true });
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
