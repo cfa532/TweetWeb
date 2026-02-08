@@ -1177,8 +1177,9 @@ function retryLoad() {
 .download-button-container {
     position: fixed;
     bottom: 20px;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
+    left: 0;
+    width: 100%;
+    max-width: 900px;
     z-index: 1000;
     display: flex;
     justify-content: center;
