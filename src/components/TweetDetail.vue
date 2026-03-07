@@ -673,14 +673,14 @@ function retryLoad() {
 
             <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
 
-            <div v-if="mediaAttachments.length > 0" class="media-attachments">
+            <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
                     v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid"></MediaView>
             </div>
             <div v-if='documentAttachments.length > 0' class='document-attachments'>
-                <div 
-                    v-for='(doc, index) in documentAttachments' 
-                    :key='index' 
+                <div
+                    v-for='(doc, index) in documentAttachments'
+                    :key='index'
                     class='document-row'
                     @click='handleDocumentClick($event, doc)'
                 >
@@ -709,7 +709,7 @@ function retryLoad() {
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
 
-            <div v-if="mediaAttachments.length > 0" class="media-attachments">
+            <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
                     v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
                 </MediaView>
@@ -907,6 +907,24 @@ function retryLoad() {
     margin: 0 auto !important;
     padding: 0 !important;
     object-fit: contain;
+}
+
+/* Multiple media: vertical list layout */
+.media-attachments--multi {
+    flex-direction: column;
+    align-items: stretch;
+    max-height: none;
+    overflow: visible;
+    gap: 8px;
+    width: 100%;
+}
+
+.media-attachments--multi :deep(.container),
+.media-attachments--multi :deep(img),
+.media-attachments--multi :deep(video) {
+    width: 100% !important;
+    max-height: none !important;
+    content-visibility: auto;
 }
 
 /* Desktop: ensure video takes at least 80vh */
