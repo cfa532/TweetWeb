@@ -676,9 +676,9 @@ async function onSelect(e: Event) {
         return; // Stop adding files
       }
 
-      // Assign a title if it's not already set
+      // Assign content if neither title nor content is set
       if (!tweetTitle.value && !txtConent.value) {
-        tweetTitle.value = file.name;
+        txtConent.value = file.name;
       }
 
       // Remove duplication and add files to the upload list
@@ -737,7 +737,7 @@ const handleCids = (ids: MimeiFileType[]) => {
   if (ids.length > 0) {
     divAttach.value.hidden = false
     if (!tweetTitle.value && !txtConent.value) {
-      tweetTitle.value = ids[0].fileName;
+      txtConent.value = ids[0].fileName;
     }
   }
 };
