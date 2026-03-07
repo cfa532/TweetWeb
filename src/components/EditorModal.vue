@@ -37,6 +37,7 @@ const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 const loading = ref(false)
+const submitFailed = ref(false)
 const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
@@ -395,7 +396,8 @@ async function onSubmit() {
     if (result) {
       console.log('[TWEET-SUBMIT] Tweet upload successful!');
       useAlertStore().success("Tweet uploaded successfully!")
-      
+      submitFailed.value = false
+
       // Clear form only on success
       txtConent.value = null
       tweetTitle.value = null
@@ -451,6 +453,20 @@ async function onSubmit() {
     console.error('[TWEET-SUBMIT] Error occurred:', err);
     console.error('onSubmit err:', err)
     useAlertStore().error(err instanceof Error ? err.message : String(err))
+    submitFailed.value = true
+
+    // Thoroughly refresh loginUser: clear all stale caches and re-fetch from network
+    const mid = tweetStore.loginUser?.mid
+    if (mid) {
+      tweetStore.removeUser(mid)
+      sessionStorage.removeItem('user')
+      tweetStore._user = null
+      const freshUser = await tweetStore.getUser(mid, true)
+      if (freshUser) {
+        sessionStorage.setItem('user', JSON.stringify(freshUser))
+        tweetStore._user = freshUser
+      }
+    }
   } finally {
     console.log('[TWEET-SUBMIT] Submission process completed, setting loading to false');
     loading.value = false
@@ -840,7 +856,7 @@ function handleDragEnd() {
               <label for='private-checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
               <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
               <label for='noresample-checkbox' title='Preserve original video quality without resampling (larger file size)'>Preserve Quality</label>&nbsp;&nbsp;&nbsp;
-              <button class='btn' type='submit'>Submit</button>
+              <button class='btn' type='submit'>{{ submitFailed ? 'Re-submit' : 'Submit' }}</button>
             </span>
           </div>
           <Loading :visible='loading' />
