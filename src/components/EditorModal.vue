@@ -455,16 +455,15 @@ async function onSubmit() {
     useAlertStore().error(err instanceof Error ? err.message : String(err))
     submitFailed.value = true
 
-    // Thoroughly refresh loginUser: clear all stale caches and re-fetch from network
+    // Refresh loginUser: clear per-user cache and re-fetch from network,
+    // then overwrite _user and sessionStorage['user'] in place (never null them first)
     const mid = tweetStore.loginUser?.mid
     if (mid) {
-      tweetStore.removeUser(mid)
-      sessionStorage.removeItem('user')
-      tweetStore._user = null
+      tweetStore.removeUser(mid)  // clears users map + sessionStorage[mid]
       const freshUser = await tweetStore.getUser(mid, true)
       if (freshUser) {
-        sessionStorage.setItem('user', JSON.stringify(freshUser))
         tweetStore._user = freshUser
+        sessionStorage.setItem('user', JSON.stringify(freshUser))
       }
     }
   } finally {
