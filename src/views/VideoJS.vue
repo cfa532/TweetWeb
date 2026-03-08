@@ -1602,8 +1602,8 @@ function stopVideo() {
         </div>
       </div>
       
-      <!-- Loading spinner overlay -->
-      <div v-if="isBuffering" class="buffering-overlay">
+      <!-- Loading spinner overlay (only when native controls are hidden, to avoid double spinner) -->
+      <div v-if="isBuffering && !showControls" class="buffering-overlay">
         <div class="buffering-spinner"></div>
       </div>
 

@@ -18,7 +18,6 @@ const uploadProgress = reactive<number[]>([]) // New ref to store upload progres
 const loading = ref(false)
 const selectFiles = ref()
 const tweetStore = useTweetStore()
-const hproseClient = tweetStore.loginUser?.client
 const isAppPackage = ref(true)
 const isMini = ref(false)
 

@@ -84,7 +84,7 @@ export const router = createRouter({
       component: UploadPackage,
       beforeEnter: (to, from, next) => {
         let user = sessionStorage.getItem("user")
-        if (!user || JSON.parse(user)["username"]!="developer") {
+        if (!user || JSON.parse(user)["username"]!="admin") {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else
           next()
