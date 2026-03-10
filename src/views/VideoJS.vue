@@ -1607,17 +1607,14 @@ function stopVideo() {
         <div class="buffering-spinner"></div>
       </div>
 
-      <!-- Play overlay for videos (mobile-friendly) -->
-      <div v-if="!showControls && !isBuffering"
+      <!-- Centered play button in detail view (shown when paused) -->
+      <div v-if="!isInTweetList && !isPlaying && !isBuffering"
            class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
         <div class="play-overlay-button">
-          <svg v-if="!isPlaying" viewBox="0 0 24 24" fill="white">
+          <svg viewBox="0 0 24 24" fill="white">
             <path d="M8 5v14l11-7z"/>
-          </svg>
-          <svg v-else viewBox="0 0 24 24" fill="white">
-            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
           </svg>
         </div>
       </div>
@@ -1931,34 +1928,30 @@ function stopVideo() {
 /* Play overlay styles - positioned at top */
 .play-overlay {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  width: auto;
-  height: auto;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   background: transparent;
   display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: center;
   z-index: 15;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   pointer-events: auto;
   touch-action: manipulation;
-  /* Ensure overlay doesn't affect layout */
-  margin: 0;
-  padding: 0;
 }
 
 .play-overlay-button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
-  background: rgba(0, 0, 0, 0.7);
+  width: 72px;
+  height: 72px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 2px solid rgba(255, 255, 255, 0.6);
   border-radius: 50%;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
 }
 
 .play-overlay:hover .play-overlay-button {
@@ -1971,8 +1964,9 @@ function stopVideo() {
 }
 
 .play-overlay-button svg {
-  width: 24px;
-  height: 24px;
+  width: 40px;
+  height: 40px;
+  margin-left: 4px; /* optical center for play triangle */
 }
 
 /* Responsive video in detail view - adapts to screen width and height */
@@ -2006,13 +2000,13 @@ function stopVideo() {
   }
   
   .play-overlay-button {
-    width: 44px;
-    height: 44px;
+    width: 64px;
+    height: 64px;
   }
-  
+
   .play-overlay-button svg {
-    width: 22px;
-    height: 22px;
+    width: 36px;
+    height: 36px;
   }
 }
 </style>
