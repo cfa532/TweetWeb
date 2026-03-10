@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { computed, onMounted, ref, onUnmounted } from 'vue';
+import { onMounted, ref, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
@@ -41,48 +41,56 @@ function debounce<T extends Function>(func: T, delay: number) {
     };
 }
 
+function getNoMorePostsMessage(): string {
+    const language = navigator.language || 'en';
+    if (language.startsWith('zh')) return '没有更多帖子了';
+    if (language.startsWith('ja')) return 'これ以上の投稿はありません';
+    if (language.startsWith('ko')) return '더 이상 게시물이 없습니다';
+    if (language.startsWith('es')) return 'No hay más publicaciones';
+    if (language.startsWith('fr')) return 'Plus de publications';
+    if (language.startsWith('de')) return 'Keine weiteren Beiträge';
+    return 'No more posts';
+}
+
 async function loadMoreTweets(isManualRetry = false) {
     if (isLoading.value) return; // Prevent multiple loads
-    
+
     // For automatic loading, stop immediately if no more tweets
     if (!isManualRetry && !hasMoreTweets.value) {
         return;
     }
-    
+
     isLoading.value = true;
-    
+
     try {
-        // Load tweets without aggressive timeout - let connection pool handle timeouts
-        const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
-        
+        const tweetsLoaded = await Promise.race([
+            tweetStore.loadTweets(undefined, pageNumber.value, pageSize),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 6000))
+        ]);
+
         if (tweetsLoaded && tweetsLoaded > 0) {
-            // Check if we've reached the end of the list
             if (tweetsLoaded < pageSize) {
-                // Fewer tweets than requested = no more tweets available
-                console.log(`Reached end of tweet list. Loaded ${tweetsLoaded} tweets (less than page size ${pageSize})`);
                 hasMoreTweets.value = false;
             } else {
-                // Full page loaded, there might be more
                 hasMoreTweets.value = true;
             }
             pageNumber.value++;
         } else {
-            // No tweets loaded
             if (!isManualRetry) {
                 console.log('No more tweets available from backend.');
                 hasMoreTweets.value = false;
             }
-            // For manual retries, do nothing - let user keep trying
         }
     } catch (error) {
-        console.error('Error loading more tweets:', error);
-        
-        // For automatic loading, stop on error
-        if (!isManualRetry) {
-            hasMoreTweets.value = false;
+        if (error instanceof Error && error.message === 'TIMEOUT') {
+            console.log('Scroll load timed out after 6s — will retry on next scroll');
+            // Do not stop pagination; user can trigger another scroll to retry
+        } else {
+            console.error('Error loading more tweets:', error);
+            if (!isManualRetry) hasMoreTweets.value = false;
         }
-        // For manual retries, do nothing - let user keep trying
     } finally {
+        appendNewToDisplayed();
         isLoading.value = false;
     }
 }
@@ -117,6 +125,8 @@ onMounted(async () => {
             sessionStorage['isBot'] = 'No'
             if (shouldLoad) {
                 await loadTweetsWithMinimum()
+            } else {
+                appendNewToDisplayed();
             }
         } else {
             history.go(-1)
@@ -128,6 +138,8 @@ onMounted(async () => {
         }
         if (shouldLoad) {
             await loadTweetsWithMinimum()
+        } else {
+            appendNewToDisplayed();
         }
     }
     window.addEventListener('scroll', handleScroll);
@@ -160,8 +172,6 @@ async function loadTweetsWithMinimum() {
         let round = 0;
         let consecutiveFailures = 0;
         const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
-        let retryCount = 0;
-        const maxRetries = 5;
 
         while (isLoading.value && round < pagesToLoad) {
             // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
@@ -195,23 +205,18 @@ async function loadTweetsWithMinimum() {
             let loadedPageSize: number;
             try {
                 loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
-                consecutiveFailures = 0; // Reset on success
-                retryCount = 0; // Reset retry count on success
-                sessionStorage.removeItem('mainPageRefreshCount'); // Clear refresh count on success
+                consecutiveFailures = 0;
+                sessionStorage.removeItem('mainPageRefreshCount');
             } catch (error) {
-                // Timeout already handled the refresh, this catch is for any other errors
-                // which should be extremely rare since timeout handles the refresh
                 console.error('Unexpected error during load:', error);
                 break;
             }
-            
-            // Handle the loaded page size - 0 is a valid success case
+
             if (loadedPageSize !== null && loadedPageSize !== undefined) {
                 tweetsLoaded += loadedPageSize;
                 round++;
-                consecutiveFailures = 0; // Reset on successful load
-                
-                // If 0 tweets loaded on first page, stop immediately (no tweets available)
+                consecutiveFailures = 0;
+
                 if (round === 1 && loadedPageSize === 0) {
                     console.log('First page loaded 0 tweets, no content available');
                     break;
@@ -253,46 +258,51 @@ async function loadTweetsWithMinimum() {
         console.error('Error in loadTweetsWithMinimum:', error);
     } finally {
         clearTimeout(timeoutId);
+        appendNewToDisplayed();
         isLoading.value = false;
         initialLoad.value = false;
     }
 }
 
-async function loadTweets() {
-    if (isLoading.value)
-        return; // Prevent multiple loads
-    isLoading.value = true;
-    pageNumber.value = 0; // Reset page number for initial load
-    await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
-    isLoading.value = false;
-    initialLoad.value = false;
+const displayedTweets = ref<Tweet[]>([]);
+
+function appendNewToDisplayed() {
+    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const topTimestamp = displayedTweets.value.length > 0
+        ? (displayedTweets.value[0].timestamp as number)
+        : Infinity;
+
+    const newTweets = tweetStore.tweets
+        .filter(e => {
+            if (existingIds.has(e.mid)) return false;
+            return !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null);
+        })
+        .sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
+
+    if (newTweets.length === 0) return;
+
+    const newer = newTweets.filter(t => (t.timestamp as number) > topTimestamp);
+    const older = newTweets.filter(t => (t.timestamp as number) <= topTimestamp);
+    if (newer.length > 0) displayedTweets.value.unshift(...newer);
+    if (older.length > 0) displayedTweets.value.push(...older);
 }
 
-const tweetFeed = computed(() => {
-    const filteredTweets = tweetStore.tweets.filter(e => {
-        // Filter out private tweets
-        const isNotPrivate = !e.isPrivate;
-        
-        // Filter out tweets that have originalTweetId but originalTweet is null
-        const hasValidOriginalTweet = !e.originalTweetId || e.originalTweet !== null;
-        
-        return isNotPrivate && hasValidOriginalTweet;
-    });
-    
-    // Sort by timestamp in descending order (newest first)
-    return filteredTweets.sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
-});
+// Pick up tweets added in the background (e.g. updateFollowingTweets)
+watch(() => tweetStore.tweets.length, () => appendNewToDisplayed());
 </script>
 
 <template>
     <PageLayout width="normal">
         <AppHeader />
-        <TweetView v-for='tweet in tweetFeed' :tweet='tweet' :key='tweet.mid' />
+        <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid' />
         <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
             <LoadingSpinner />
             <div v-if='retryMessage' class='text-muted mt-2 small'>
                 {{ retryMessage }}
             </div>
+        </div>
+        <div v-else-if='!hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>
+            {{ getNoMorePostsMessage() }}
         </div>
     </PageLayout>
 </template>

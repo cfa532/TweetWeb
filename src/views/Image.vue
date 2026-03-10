@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { ref } from 'vue';
 import type { PropType } from 'vue'
 
 const props = defineProps({
@@ -7,13 +7,50 @@ const props = defineProps({
     title: {type: String, required: false},
     index: {type: Number, required: false},
 })
+
+const isLoaded = ref(false);
 </script>
 
 <template>
-    <img :src="props.media.mid"/>
+    <div class="img-wrapper">
+        <div v-if="!isLoaded" class="img-loading-overlay">
+            <div class="img-spinner"></div>
+        </div>
+        <img :src="props.media.mid" @load="isLoaded = true" @error="isLoaded = true"/>
+    </div>
 </template>
 
 <style>
+.img-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.img-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.img-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: img-spin 0.7s linear infinite;
+}
+
+@keyframes img-spin {
+    to { transform: rotate(360deg); }
+}
+
 .container {
     /* text-align: left; */
     margin: 2px;

@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
-import { Image, PDFView, VideoJS, BlobData } from './index'
+import { Image, PDFView, VideoJS, BlobData, AudioPlayer } from './index'
 import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
 
 const props = defineProps({ 
@@ -26,7 +26,9 @@ const userComponent = computed(() => {
         return Image
     } else if (mediaType.includes("pdf")) {
         return PDFView
-    } else if (isVideoType(mediaType) || mediaType.includes("video") || mediaType.includes("audio")) {
+    } else if (mediaType.includes("audio")) {
+        return AudioPlayer
+    } else if (isVideoType(mediaType) || mediaType.includes("video")) {
         return VideoJS
     } else {
         return BlobData
@@ -36,6 +38,7 @@ const userComponent = computed(() => {
 const isMediaViewable = computed(() => {
     const mediaType = normalizeMediaType(props.media.type);
     return isImageType(mediaType) || isVideoType(mediaType) || mediaType.includes("image") || mediaType.includes("video");
+    // audio excluded — it has its own inline player
 });
 
 function handleMediaClick(event: MouseEvent) {

@@ -20,7 +20,8 @@ const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
-const isBuffering = ref(false); // Show spinner when video is loading/buffering
+const isAudio = props.media.type?.toLowerCase().includes('audio') ?? false;
+const isBuffering = ref(!isAudio); // Show spinner for video until ready; audio renders naturally
 const showVideoError = ref(false); // Show error message when video fails to play
 
 // Touch handling for mobile scroll detection
@@ -104,6 +105,11 @@ onMounted(() => {
   
     // Setup video element immediately
     if (video.value && !isHLSInitialized) {
+        // Clear initial spinner if video is already in a playable state (e.g. from cache)
+        if (video.value.readyState >= 3) {
+          isBuffering.value = false;
+        }
+
         // Add play/pause event listeners to track state
         video.value.addEventListener('play', () => {
           isPlaying.value = true;
@@ -117,7 +123,7 @@ onMounted(() => {
           isBuffering.value = true; // Video is buffering
         });
         video.value.addEventListener('canplay', () => {
-          isBuffering.value = false; // Enough data to play
+          isBuffering.value = false;
         });
         video.value.addEventListener('pause', () => {
           isPlaying.value = false;
