@@ -1616,8 +1616,8 @@ function stopVideo() {
         </div>
       </div>
       
-      <!-- Loading spinner overlay (only on desktop, to avoid double spinner) -->
-      <div v-if="isBuffering && !showControls && !isMobile" class="buffering-overlay">
+      <!-- Loading spinner overlay: always on desktop; on mobile only after user has started playback -->
+      <div v-if="isBuffering && !showControls && (!isMobile || isPlaying)" class="buffering-overlay">
         <div class="buffering-spinner"></div>
       </div>
 
