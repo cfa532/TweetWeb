@@ -23,6 +23,14 @@ const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if
 const isAudio = props.media.type?.toLowerCase().includes('audio') ?? false;
 const isBuffering = ref(!isAudio); // Show spinner for video until ready; audio renders naturally
 const showVideoError = ref(false); // Show error message when video fails to play
+const isMobile = isMobileBrowser(); // cached at setup time
+
+// Pre-size video wrapper using attachment's aspect ratio to avoid black-screen flash
+const videoWrapperStyle = computed(() => {
+  const ar = props.media.aspectRatio;
+  if (ar && ar > 0) return { aspectRatio: String(ar) };
+  return {};
+});
 
 // Touch handling for mobile scroll detection
 const touchStartX = ref(0);
@@ -1587,7 +1595,7 @@ function stopVideo() {
 
 <template>
   <div ref="vdiv" hidden class="video-container" :class="{ 'tweet-list': isInTweetList }">
-    <div class="video-wrapper">
+    <div class="video-wrapper" :style="videoWrapperStyle">
       
       <!-- Video error overlay -->
       <div v-if="showVideoError" class="video-error-overlay">
@@ -1608,13 +1616,13 @@ function stopVideo() {
         </div>
       </div>
       
-      <!-- Loading spinner overlay (only when native controls are hidden, to avoid double spinner) -->
-      <div v-if="isBuffering && !showControls" class="buffering-overlay">
+      <!-- Loading spinner overlay (only on desktop, to avoid double spinner) -->
+      <div v-if="isBuffering && !showControls && !isMobile" class="buffering-overlay">
         <div class="buffering-spinner"></div>
       </div>
 
-      <!-- Centered play button in detail view (shown when paused) -->
-      <div v-if="!isInTweetList && !isPlaying && !isBuffering"
+      <!-- Centered play button in detail view (shown when paused; on mobile also shown while buffering) -->
+      <div v-if="!isInTweetList && !isPlaying && (!isBuffering || isMobile)"
            class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">

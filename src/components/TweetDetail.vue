@@ -400,9 +400,14 @@ function isVideoMedia(media?: MimeiFileType) {
 }
 
 function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
-    if (!mediaList?.length) return false
-    const firstVideo = mediaList.find(item => isVideoMedia(item))
-    return !!firstVideo && firstVideo.mid === media.mid
+    // Only autoplay on desktop
+    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    if (hasTouch && window.innerWidth <= 768) return false;
+    if (!mediaList?.length) return false;
+    // Only autoplay when this is the sole video in the attachment list
+    const videoItems = mediaList.filter(item => isVideoMedia(item));
+    if (videoItems.length !== 1) return false;
+    return videoItems[0].mid === media.mid;
 }
 
 // Filter media attachments (image, video, audio only) for the displayed tweet
