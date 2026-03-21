@@ -3,7 +3,6 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
   MediaViewerModal
 } from "@/components"
-import AgentAuthDemo from "@/views/AgentAuthDemo.vue"
 import { useAlertStore } from '@/stores';
 
 export const router = createRouter({
@@ -127,12 +126,6 @@ export const router = createRouter({
       path: '/media-viewer',
       name: "mediaViewer",
       component: MediaViewerModal,
-    },
-    {
-      // Agent Authentication Demo page
-      path: '/agent-auth-demo',
-      name: "agentAuthDemo",
-      component: AgentAuthDemo,
     },
   ],
 })

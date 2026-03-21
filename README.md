@@ -48,7 +48,6 @@ Visit `http://localhost:5173` to access the application.
 
 Complete documentation is available in the [docs](docs/) folder:
 
-- **[Agent Authentication API](docs/AGENT_AUTH.md)** - AI agent authentication for programmatic posting ⭐ NEW
 - **[Features Overview](docs/FEATURES.md)** - Comprehensive feature documentation
 - **[Setup & Installation Guide](docs/SETUP.md)** - Detailed setup instructions
 - **[API Documentation](docs/API.md)** - Complete API reference
