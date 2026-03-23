@@ -904,10 +904,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .single-attachment :deep(.video-wrapper),
 .single-attachment :deep(.video) {
   position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
   width: 100% !important;
   height: 100% !important;
   object-fit: cover !important;
