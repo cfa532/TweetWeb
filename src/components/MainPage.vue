@@ -6,7 +6,7 @@ import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout } from '@/components';
 import { isWeChatBrowser } from '@/lib';
-import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
+
 
 const { t } = useI18n();
 
@@ -129,115 +129,17 @@ onUnmounted(() => {
 });
 
 async function loadTweetsWithMinimum() {
-    if (isLoading.value) return; // Prevent multiple loads
-    
-    isLoading.value = true;
-    pageNumber.value = 0; // Reset page number for initial load
-    hasMoreTweets.value = true; // Reset the flag for initial load
+    if (isLoading.value) return;
 
-    // Set timeout to hide spinner after 15 seconds (increased to accommodate getProviderIp health checks)
-    const timeoutId = setTimeout(() => {
-        if (isLoading.value) {
-            console.warn('Initial load timeout after 15 seconds, hiding spinner');
-            isLoading.value = false;
-            initialLoad.value = false;
-        }
-    }, 15000);
+    isLoading.value = true;
+    pageNumber.value = 0;
+    hasMoreTweets.value = true;
 
     try {
-        // Load exactly 3 pages (30 tweets) initially
-        const pagesToLoad = 3;
-        let tweetsLoaded = 0;
-        let round = 0;
-        let consecutiveFailures = 0;
-        const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
-
-        while (isLoading.value && round < pagesToLoad) {
-            // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
-            const refreshCount = parseInt(sessionStorage.getItem('mainPageRefreshCount') || '0');
-
-            let timeoutId: number | null = null;
-            let hasTimedOut = false;
-            const loadPromise = tweetStore.loadTweets(undefined, pageNumber.value, pageSize).then(result => {
-                // Clear timeout immediately when load succeeds
-                if (timeoutId && !hasTimedOut) {
-                    clearTimeout(timeoutId);
-                }
-                return result;
-            });
-            const timeoutPromise = new Promise<never>((_, reject) =>
-                timeoutId = window.setTimeout(() => {
-                    hasTimedOut = true;
-                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-                        console.warn(`Load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
-                        sessionStorage.setItem('mainPageRefreshCount', (refreshCount + 1).toString());
-                        window.location.reload();
-                    } else {
-                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for MainPage, stopping`);
-                        isLoading.value = false;
-                        sessionStorage.removeItem('mainPageRefreshCount');
-                    }
-                    reject(new Error('Page load timeout'));
-                }, LOAD_TIMEOUT_MS)
-            );
-            
-            let loadedPageSize: number;
-            try {
-                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
-                consecutiveFailures = 0;
-                sessionStorage.removeItem('mainPageRefreshCount');
-            } catch (error) {
-                console.error('Unexpected error during load:', error);
-                break;
-            }
-
-            if (loadedPageSize !== null && loadedPageSize !== undefined) {
-                tweetsLoaded += loadedPageSize;
-                round++;
-                consecutiveFailures = 0;
-
-                if (round === 1 && loadedPageSize === 0) {
-                    console.log('First page loaded 0 tweets, no content available');
-                    break;
-                }
-                
-                // If fewer tweets than requested were loaded, there are no more tweets
-                if (loadedPageSize < pageSize) {
-                    console.log('No more tweets available from backend. Page number:', pageNumber.value);
-                    break;
-                } else {
-                    // Load next page
-                    pageNumber.value++;
-                    console.log('Loaded', tweetsLoaded, 'tweets so far. Loading next page:', pageNumber.value);
-                }
-            } else {
-                console.warn("Init load failed. Cannot load tweets in round", round);
-                consecutiveFailures++;
-                
-                // Continue to next page if we haven't exceeded max failures
-                if (consecutiveFailures >= maxConsecutiveFailures) {
-                    console.warn("Too many consecutive failures, stopping initial load");
-                    break;
-                }
-                
-                // Still increment page number and round to try next page
-                pageNumber.value++;
-                round++;
-                continue;
-            }
-        }
-        
-        // Log final result
-        if (tweetsLoaded > 0) {
-            console.log(`Initial load completed: ${tweetsLoaded} tweets loaded in ${round} round(s)`);
-        } else {
-            console.warn('Initial load completed with no tweets loaded');
-        }
+        await loadMoreTweets();
     } catch (error) {
         console.error('Error in loadTweetsWithMinimum:', error);
     } finally {
-        clearTimeout(timeoutId);
-        appendNewToDisplayed();
         isLoading.value = false;
         initialLoad.value = false;
     }
