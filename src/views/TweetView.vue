@@ -541,7 +541,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   max-height: 80vh;
 }
 .quoted-tweet {
-  margin: 8px 12px;
+  margin: 8px 12px 8px 56px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;
