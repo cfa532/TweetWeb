@@ -8,6 +8,7 @@ import { formatTimeDifference } from '@/lib';
 
 const router = useRouter()
 const tweetStore = useTweetStore()
+const isLoggedIn = computed(() => !!tweetStore.loginUser)
 const qrSize = 100
 const props = defineProps({
     userId: { type: String, required: false },
@@ -80,8 +81,8 @@ watch(userId, async (nv, ov) => {
 
 <template>
     <div class="row mb-1">
-        <div class="d-flex justify-content-between">
-            <div class="d-flex">
+        <div class="header-row">
+            <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
                     <img :src="user ? user.avatar : avatarUrl" @click="router.push({ name: 'main' })" alt="Logo"
                         class="rounded-circle" />
@@ -106,7 +107,17 @@ watch(userId, async (nv, ov) => {
                     <a href="http://tweet.fireshare.us">HTTP://tweet.fireshare.us</a>
                 </div>
             </div>
-
+            <a href="#" class="account-btn" @click.prevent="router.push('/account')"
+                :title="isLoggedIn ? 'Account' : 'Login'">
+                <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
+                    class="account-avatar rounded-circle"
+                    @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
+                <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+            </a>
         </div>
         <!-- Followers and Friends Links -->
         <div v-if="user" class="user-actions">
@@ -139,17 +150,20 @@ watch(userId, async (nv, ov) => {
     font-size: 0.8rem;
 }
 
-.d-flex {
-    margin: 2px 0px;
+.header-row {
     display: flex;
-    align-items: stretch;
-    /* Changed from center to stretch */
+    align-items: center;
     justify-content: space-between;
-    /* Ensures space between elements */
     flex-wrap: nowrap;
-    /* Prevents wrapping of the QR code */
     min-height: 56px;
-    /* Added height to the parent */
+    margin: 2px 0;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
 }
 
 .avatar img {
@@ -253,9 +267,8 @@ watch(userId, async (nv, ov) => {
         /* Reduces font size for smaller screens */
     }
 
-    .d-flex {
+    .header-row {
         min-height: 50px;
-        /* Adjust height for smaller screens */
     }
 }
 
@@ -388,15 +401,23 @@ watch(userId, async (nv, ov) => {
     text-decoration: underline;
 }
 
-@keyframes slideDown {
-    from {
-        transform: translateY(-100%);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
+.account-btn {
+    color: grey;
+    padding: 4px 10px 8px 10px;
+    text-decoration: none;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+
+.account-btn:hover {
+    color: #0d6efd;
+}
+
+.account-avatar {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
 }
 
 @keyframes slideDown {

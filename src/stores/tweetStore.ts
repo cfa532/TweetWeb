@@ -1446,7 +1446,12 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         logout() {
             sessionStorage.clear()
-            this.$reset
+            this._user = null
+            this._followings = []
+            this.tweets = []
+            this.originalTweets = []
+            this.users.clear()
+            this.lapi.connectionPool?.clearAll()
         },
         /**
          * Gets the list of followers for a specific user
@@ -2166,6 +2171,180 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param address full ip address with port
          * @returns IP without port
          */
+        /**
+         * Registers a new user account (matches iOS registerUser)
+         */
+        async register(
+            username: string,
+            password: string,
+            alias?: string,
+            profile?: string,
+            hostId?: string,
+            cloudDrivePort: number = 0
+        ): Promise<boolean> {
+            const userObj: any = {
+                mid: "",
+                username: username,
+                password: password,
+                name: alias || "",
+                profile: profile || "",
+                cloudDrivePort: cloudDrivePort,
+                timestamp: Date.now(),
+            }
+            if (hostId && hostId.trim()) {
+                userObj.hostIds = [hostId.trim()]
+            }
+
+            const originalTimeout = this.lapi.client.timeout
+            this.lapi.client.timeout = 15000
+            let ret
+            try {
+                ret = await this.lapi.client.RunMApp("register", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    user: JSON.stringify(userObj)
+                })
+            } finally {
+                this.lapi.client.timeout = originalTimeout
+            }
+
+            if (!ret || !ret["success"]) {
+                const msg = ret?.["message"] || "Registration failed"
+                throw new Error(msg)
+            }
+            return true
+        },
+
+        /**
+         * Updates the current user's profile data (matches iOS updateUserCore)
+         */
+        async updateProfile(updates: {
+            name?: string,
+            profile?: string,
+            password?: string,
+            hostId?: string,
+            cloudDrivePort?: number,
+            domainToShare?: string,
+        }): Promise<boolean> {
+            const user = this.loginUser
+            if (!user) throw new Error("Not logged in")
+
+            const userObj: any = {
+                mid: user.mid,
+                username: user.username,
+                name: updates.name ?? user.name ?? "",
+                profile: updates.profile ?? user.profile ?? "",
+                timestamp: typeof user.timestamp === 'number' ? user.timestamp : Date.now(),
+                cloudDrivePort: updates.cloudDrivePort ?? user.cloudDrivePort ?? 0,
+            }
+            if (updates.password) {
+                userObj.password = updates.password
+            }
+            // hostId: use provided value if non-empty, otherwise preserve existing
+            if (updates.hostId !== undefined && updates.hostId.trim()) {
+                userObj.hostIds = [updates.hostId.trim()]
+            } else {
+                userObj.hostIds = user.hostIds || []
+            }
+            // domainToShare: if explicitly provided (even empty string to clear), use it
+            if (updates.domainToShare !== undefined) {
+                const trimmed = updates.domainToShare.trim()
+                if (trimmed) userObj.domainToShare = trimmed
+            }
+
+            const originalTimeout = user.client.timeout
+            user.client.timeout = 15000
+            let ret
+            try {
+                ret = await user.client.RunMApp("set_author_core_data", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    user: JSON.stringify(userObj)
+                })
+            } finally {
+                user.client.timeout = originalTimeout
+            }
+
+            if (!ret) throw new Error("Profile update failed")
+            if (ret["success"] === false) {
+                throw new Error(ret["message"] || "Profile update failed")
+            }
+
+            // Update local state
+            if (updates.name !== undefined) user.name = updates.name
+            if (updates.profile !== undefined) user.profile = updates.profile
+            if (updates.cloudDrivePort !== undefined) user.cloudDrivePort = updates.cloudDrivePort
+            if (updates.hostId !== undefined && updates.hostId.trim()) {
+                user.hostIds = [updates.hostId.trim()]
+            }
+            this._user = user
+            sessionStorage.setItem("user", JSON.stringify(user))
+
+            return true
+        },
+
+        /**
+         * Fetches the backend domain from the server via check_upgrade API.
+         * Returns the domain without protocol prefix (matching iOS backendDomainToShare).
+         */
+        async fetchBackendDomain(): Promise<string> {
+            const user = this.loginUser
+            if (!user) return ""
+            try {
+                const ret = await user.client.RunMApp("check_upgrade", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    entry: "check_upgrade"
+                })
+                if (!ret) return ""
+                let domain = ret["domain"]
+                if (!domain && ret["data"]) {
+                    domain = ret["data"]["domain"]
+                }
+                if (!domain) return ""
+                // Strip protocol prefix like iOS does for placeholder display
+                if (domain.startsWith("https://")) return domain.slice(8)
+                if (domain.startsWith("http://")) return domain.slice(7)
+                return domain
+            } catch (e) {
+                console.warn("[fetchBackendDomain] Failed:", e)
+                return ""
+            }
+        },
+
+        /**
+         * Deletes the current user's account (matches iOS deleteAccount)
+         */
+        async deleteAccount(): Promise<boolean> {
+            const user = this.loginUser
+            if (!user) throw new Error("Not logged in")
+
+            const originalTimeout = user.client.timeout
+            user.client.timeout = 15000
+            let ret
+            try {
+                ret = await user.client.RunMApp("delete_account", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    userid: user.mid
+                })
+            } finally {
+                user.client.timeout = originalTimeout
+            }
+
+            if (ret && ret["success"] === false) {
+                throw new Error(ret["message"] || "Delete account failed")
+            }
+
+            // Clean up local state same as logout
+            this.logout()
+            return true
+        },
+
         getIpWithoutPort(address: string): string | null {
             const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
             const match = address.match(regex);

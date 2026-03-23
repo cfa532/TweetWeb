@@ -1,7 +1,7 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
-  MediaViewerModal
+  MediaViewerModal, UserAccount
 } from "@/components"
 import { useAlertStore } from '@/stores';
 
@@ -33,6 +33,7 @@ export const router = createRouter({
       component: Login,
       props: (route) => ({ redirect: route.query.redirect || '/' })
     },
+    { path: '/account', name: "account", component: UserAccount },
     { path: '/ips', name: "IPs", component: IPs },
     {
       path: '/post/:tweetId?', name: "post", component: AddPost,
