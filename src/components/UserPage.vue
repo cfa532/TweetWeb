@@ -256,6 +256,7 @@ async function loadMoreTweets(isManualRetry = false) {
 }
 
 const displayedTweets = ref<Tweet[]>([]);
+const pendingCount = ref(0);
 
 function appendNewToDisplayed() {
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
@@ -281,8 +282,32 @@ function appendNewToDisplayed() {
     if (older.length > 0) displayedTweets.value.push(...older);
 }
 
-// Pick up any tweets added to the store outside of direct scroll loads
-watch(() => tweetStore.tweets.length, () => appendNewToDisplayed());
+function showPendingTweets() {
+    appendNewToDisplayed();
+    pendingCount.value = 0;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Pick up any tweets added/removed in the store (e.g. background updates, deleteTweet)
+watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
+    // Handle deletions — remove from displayed immediately
+    if (newLen < oldLen) {
+        const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
+        displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
+        return;
+    }
+    // Handle additions — only count as pending, don't auto-insert
+    if (initialLoad.value || isLoading.value) return;
+    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const count = tweetStore.tweets.filter(e => {
+        if (existingIds.has(e.mid)) return false;
+        const isAuthorMatch = e.isPrivate
+            ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
+            : e.authorId === authorId.value;
+        return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
+    }).length;
+    pendingCount.value = count;
+});
 
 // Single entry point for loading tweets — covers both initial mount and route changes
 watch(authorId, async (nv, ov) => {
@@ -332,6 +357,9 @@ const handleScroll = debounce(async () => {
         <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
         <hr v-if='pinnedTweets?.length!>0' />
         <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;Tweets</b>
+        <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
+            Show {{ pendingCount }} new tweet{{ pendingCount > 1 ? 's' : '' }}
+        </div>
         <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid'/>
         <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
             <LoadingSpinner />
@@ -346,5 +374,15 @@ const handleScroll = debounce(async () => {
 </template>
 
 <style scoped>
-
+.new-tweets-banner {
+    text-align: center;
+    padding: 10px;
+    color: #1da1f2;
+    cursor: pointer;
+    border-bottom: 1px solid #e6ecf0;
+    font-size: 14px;
+}
+.new-tweets-banner:hover {
+    background-color: #f5f8fa;
+}
 </style>

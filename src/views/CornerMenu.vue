@@ -2,11 +2,17 @@
 // share menu or other right click items
 import { ref, nextTick, computed } from 'vue'
 import { useTweetStore } from '@/stores';
+import { useAlertStore } from '@/stores/alert.store';
 import type { PropType } from 'vue'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
+const alertStore = useAlertStore()
 const shareMenu = ref()
+const dotBtn = ref()
 const btnDelete = ref()
+const btnEdit = ref()
+const showEditor = ref(false)
+const editContent = ref('')
 const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false},
     parentTweet: {type: Object as PropType<Tweet>, required: false},
@@ -24,6 +30,10 @@ const displayMid = computed(() => {
 })
 
 function showMenu() {
+    // Position menu using fixed positioning to avoid overflow clipping
+    const rect = dotBtn.value.getBoundingClientRect()
+    shareMenu.value.style.top = rect.bottom + 'px'
+    shareMenu.value.style.left = Math.max(0, rect.right - 220) + 'px'
     shareMenu.value.hidden = false
     
     // Show delete button if:
@@ -35,6 +45,9 @@ function showMenu() {
         
         if (isTweetAuthor || isParentTweetAuthor) {
             btnDelete.value.hidden = false
+        }
+        if (isTweetAuthor) {
+            btnEdit.value.hidden = false
         }
     }
     
@@ -69,6 +82,24 @@ function copyLink() {
     document.execCommand('copy');
     document.body.removeChild(input);
     shareMenu.value.hidden = true
+}
+
+function openEditor() {
+  if (!props.tweet) return
+  shareMenu.value.hidden = true
+  editContent.value = props.tweet.content || ''
+  showEditor.value = true
+}
+
+async function submitEdit() {
+  if (!props.tweet || !tweetStore.loginUser) return
+  try {
+    await tweetStore.updateTweet(props.tweet.mid, editContent.value)
+    props.tweet.content = editContent.value
+    showEditor.value = false
+  } catch (error: any) {
+    alertStore.error(error.message || 'Failed to update tweet')
+  }
 }
 
 async function deleteItem() {
@@ -116,16 +147,34 @@ async function deleteItem() {
 </script>
 
 <template>
-<div style=" width:100%; position: relative; text-align: right;">
-    <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
+<div style=" width:100%; text-align: right;">
+    <a ref="dotBtn" href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="shareMenu" class="menu" hidden>
         <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">
             <span style="text-decoration: none; font-size: smaller;">
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
             </span>
         </div>
+        <div ref="btnEdit" class="item clickable-item" @click.stop="openEditor" hidden style="cursor: pointer;">
+            <span style="text-decoration: none;"><font-awesome-icon icon="pen" style="margin-right: 5px;" />Edit</span>
+        </div>
         <div ref="btnDelete" class="item clickable-item" @click.stop="deleteItem" hidden style="cursor: pointer;">
-            <span style="text-decoration: none;">Delete</span>
+            <span style="text-decoration: none;"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />Delete</span>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div v-if="showEditor" class="edit-overlay" @click.self="showEditor = false">
+    <div class="edit-modal" @click.stop>
+        <div class="edit-header">
+            <span>Edit Tweet</span>
+            <a href="#" @click.prevent="showEditor = false" style="color: grey; text-decoration: none;">&times;</a>
+        </div>
+        <textarea v-model="editContent" class="edit-textarea" rows="6"></textarea>
+        <div class="edit-actions">
+            <button class="btn-cancel" @click="showEditor = false">Cancel</button>
+            <button class="btn-submit" @click="submitEdit">Save</button>
         </div>
     </div>
 </div>
@@ -139,10 +188,8 @@ async function deleteItem() {
     text-decoration: none;
 }
 .menu {
-    position: absolute;
-    top: 5px;
-    right: 0px;
-    z-index: 20;
+    position: fixed;
+    z-index: 50;
     background-color: whitesmoke;
     box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
     min-width: 220px;
@@ -161,4 +208,62 @@ async function deleteItem() {
     background-color: #e0e0e0;
     transition: background-color 0.2s ease;
 }
+.edit-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.edit-modal {
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.edit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: bold;
+    margin-bottom: 12px;
+    font-size: 16px;
+}
+.edit-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 14px;
+    resize: vertical;
+    font-family: inherit;
+}
+.edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+.btn-cancel {
+    padding: 6px 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+}
+.btn-cancel:hover { background: #f0f0f0; }
+.btn-submit {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    background: #1da1f2;
+    color: white;
+    cursor: pointer;
+}
+.btn-submit:hover { background: #1a91da; }
 </style>

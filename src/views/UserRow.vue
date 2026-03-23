@@ -14,10 +14,13 @@ const tweetStore = useTweetStore()
 const user = ref<User | null>(null)
 const isLoading = ref(true)
 
-// Fetch user data when component mounts
+// Fetch user data when component mounts, with a short timeout to avoid blocking
 onMounted(async () => {
     try {
-        const userData = await tweetStore.getUser(props.userId)
+        const userData = await Promise.race([
+            tweetStore.getUser(props.userId),
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 5000))
+        ])
         user.value = userData || null
     } catch (error) {
         console.error('Failed to load user:', error)

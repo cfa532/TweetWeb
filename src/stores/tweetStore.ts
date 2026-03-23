@@ -159,14 +159,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (!tweet.originalTweet) {
                             console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
   Retweet ID: ${tweet.mid}
-  Original Tweet ID: ${tweet.originalTweetId}
-  Original Author ID: ${tweet.originalAuthorId}
-  Possible causes: 
-    - Original tweet was deleted
-    - Original tweet is private/restricted
-    - Backend failed to include original tweet in response
-    - Network/provider node is unreachable
-  Note: This reduces visible tweet count and may affect pagination`)
+  Original Tweet ID: ${tweet.originalTweetId}`)
                             return
                         }
                     } catch (error) {
@@ -174,7 +167,6 @@ export const useTweetStore = defineStore('tweetStore', {
   Retweet ID: ${tweet.mid}
   Original Tweet ID: ${tweet.originalTweetId}
   Error:`, error)
-                        // Skip this tweet if original tweet cannot be fetched
                         console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
                         return
                     }
@@ -290,7 +282,17 @@ export const useTweetStore = defineStore('tweetStore', {
                             const author = await this.getUser(originalTweet.authorId)
                             if (author) {
                                 originalTweet.author = author
+                                originalTweet.provider = author.providerIp
+                                if (originalTweet.attachments) {
+                                    originalTweet.attachments.forEach((e: MimeiFileType) => {
+                                        e.mid = this.getMediaUrl(e.mid, "http://" + author.providerIp)
+                                        e.downloadable = originalTweet.downloadable
+                                    })
+                                }
                                 this.originalTweets.push(originalTweet)
+                                try {
+                                    sessionStorage.setItem(originalTweet.mid, JSON.stringify(originalTweet))
+                                } catch (e) { /* ignore sessionStorage errors */ }
                             }
                         }
                     } catch (e) {
@@ -1687,6 +1689,35 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error(errorMessage);
             }
             return ret.mid
+        },
+        /**
+         * Updates an existing tweet's content
+         * @param tweet The full tweet object with modified content
+         * @returns The mid of the updated tweet
+         */
+        async updateTweet(tweetId: MimeiId, content: string) {
+            if (!this.loginUser) {
+                throw new Error('Not authorized to edit this tweet')
+            }
+            try {
+                const ret = await this.loginUser.client.RunMApp("update_tweet",
+                    {aid: this.appId, ver: "last",
+                        appuserid: this.loginUser.mid,
+                        tweetid: tweetId,
+                        content: content})
+                if (!ret || !ret.success) {
+                    throw new Error(ret?.message || 'Failed to update tweet')
+                }
+                // Update local tweet in store
+                const idx = this.tweets.findIndex(t => t.mid === tweetId)
+                if (idx !== -1) {
+                    this.tweets[idx].content = content
+                }
+                return ret.mid
+            } catch (error) {
+                console.error('[TWEET-STORE] Update tweet failed:', error)
+                throw error
+            }
         },
         /**
          * Upload App upgrade package file.

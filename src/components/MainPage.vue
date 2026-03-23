@@ -265,6 +265,7 @@ async function loadTweetsWithMinimum() {
 }
 
 const displayedTweets = ref<Tweet[]>([]);
+const pendingCount = ref(0);
 
 function appendNewToDisplayed() {
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
@@ -287,13 +288,36 @@ function appendNewToDisplayed() {
     if (older.length > 0) displayedTweets.value.push(...older);
 }
 
-// Pick up tweets added in the background (e.g. updateFollowingTweets)
-watch(() => tweetStore.tweets.length, () => appendNewToDisplayed());
+function showPendingTweets() {
+    appendNewToDisplayed();
+    pendingCount.value = 0;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Pick up tweets added/removed in the background (e.g. updateFollowingTweets, deleteTweet)
+watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
+    // Handle deletions — remove from displayed immediately
+    if (newLen < oldLen) {
+        const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
+        displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
+        return;
+    }
+    // Handle additions — only count as pending, don't auto-insert
+    if (initialLoad.value || isLoading.value) return;
+    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const count = tweetStore.tweets.filter(e =>
+        !existingIds.has(e.mid) && !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null)
+    ).length;
+    pendingCount.value = count;
+});
 </script>
 
 <template>
     <PageLayout width="normal">
         <AppHeader />
+        <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
+            Show {{ pendingCount }} new tweet{{ pendingCount > 1 ? 's' : '' }}
+        </div>
         <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid' />
         <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
             <LoadingSpinner />
@@ -308,4 +332,15 @@ watch(() => tweetStore.tweets.length, () => appendNewToDisplayed());
 </template>
 
 <style scoped>
+.new-tweets-banner {
+    text-align: center;
+    padding: 10px;
+    color: #1da1f2;
+    cursor: pointer;
+    border-bottom: 1px solid #e6ecf0;
+    font-size: 14px;
+}
+.new-tweets-banner:hover {
+    background-color: #f5f8fa;
+}
 </style>

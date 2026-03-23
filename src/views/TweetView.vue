@@ -526,6 +526,10 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
         </div>
       </div>
+      <!-- Embedded original tweet for quote tweets -->
+      <blockquote v-if="!isRetweet && !isQuoted && originalTweet" class="quoted-tweet">
+        <TweetView :tweet="originalTweet" :is-quoted="true" />
+      </blockquote>
     </div>
   </div>
 </template>
@@ -535,6 +539,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .tweet-container {
   overflow: hidden;
   max-height: 80vh;
+}
+.quoted-tweet {
+  margin: 8px 12px;
+  padding: 0;
+  border: 1px solid #e6ecf0;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 /* Remove card styling on mobile for flush layout */
