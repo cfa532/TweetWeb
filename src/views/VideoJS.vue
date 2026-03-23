@@ -4,6 +4,7 @@ import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
+import { registerVideo, unregisterVideo, requestPlay } from '@/composables/useVideoPlaybackCoordinator';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -93,7 +94,6 @@ const supportsHardwareAcceleration = computed(() => {
 
 let hls: Hls | null = null;
 let hasTriedSinglePlaylist = false;
-let intersectionObserver: IntersectionObserver | null = null;
 let videoErrorRetryCount = 0;
 const MAX_VIDEO_ERROR_RETRIES = 2;
 let isRetryingVideo = false;
@@ -236,9 +236,9 @@ onMounted(() => {
           setupRegularVideo();
         }
         
-        // Set up intersection observer for autoplay in tweet list
+        // Register with video playback coordinator for single-video-at-a-time in tweet list
         if (isInTweetList.value) {
-          setupIntersectionObserver();
+          registerVideo(video.value, vdiv.value);
         }
       }
   
@@ -260,10 +260,9 @@ onUnmounted(() => {
   document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
   
-  // Clean up intersection observer
-  if (intersectionObserver) {
-    intersectionObserver.disconnect();
-    intersectionObserver = null;
+  // Unregister from video playback coordinator
+  if (video.value) {
+    unregisterVideo(video.value);
   }
   
   // Stop video and clean up HLS
@@ -1018,13 +1017,10 @@ function handleVideoTap(event: Event) {
       });
     }
 
-    // Stop all other videos on the page
-    const allVideos = document.querySelectorAll('video');
-    allVideos.forEach(v => {
-      if (v !== video.value && !v.paused) {
-        v.pause();
-      }
-    });
+    // Tell coordinator this is now the active video (pauses all others)
+    if (video.value) {
+      requestPlay(video.value);
+    }
 
     return;
   } else {
@@ -1125,16 +1121,10 @@ function handlePlayOverlayClick(event: Event) {
         video.value.currentTime = 0;
       }
 
-      // Stop all other videos on the page
-      const allVideos = document.querySelectorAll('video');
-      allVideos.forEach(v => {
-        if (v !== video.value && !v.paused) {
-          v.pause();
-        }
-      });
+      // Tell coordinator this is now the active video (pauses all others)
+      requestPlay(video.value);
 
       video.value.play().catch(() => {
-        // If autoplay fails, try muted
         video.value.muted = true;
         video.value.play().catch(() => {});
       });
@@ -1256,69 +1246,6 @@ function handleFullscreenChange() {
   }
 }
 
-// Set up intersection observer for autoplay in tweet list
-function setupIntersectionObserver() {
-  if (!video.value || !vdiv.value) return;
-  
-  // Add click handler to enable autoplay on first user interaction
-  const enableAutoplay = () => {
-    if (video.value) {
-      video.value.muted = true;
-      video.value.volume = 0;
-      video.value.play().catch(() => {});
-    }
-    document.removeEventListener('touchstart', enableAutoplay);
-    document.removeEventListener('click', enableAutoplay);
-  };
-  
-  document.addEventListener('touchstart', enableAutoplay, { once: true });
-  document.addEventListener('click', enableAutoplay, { once: true });
-  
-  intersectionObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        // Video is visible - start muted autoplay
-        if (video.value && video.value.paused) {
-          // Ensure video is muted for mobile compatibility
-          video.value.muted = true;
-          video.value.volume = 0;
-          
-          // Ensure video is loaded before playing
-          if (video.value.readyState >= 1) {
-            // Metadata is loaded, can play
-            video.value.play().catch(() => {
-              // If fails, show play button overlay instead
-              showPlayOverlay.value = true;
-            });
-          } else {
-            // Metadata not loaded yet, wait for it
-            const onLoadedMetadata = () => {
-              if (video.value) {
-                video.value.play().catch(() => {
-                  showPlayOverlay.value = true;
-                });
-              }
-            };
-            video.value.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-            video.value.load(); // Force load if not already loading
-          }
-        }
-      } else {
-        // Video is not visible - pause it
-        if (video.value && !video.value.paused) {
-          video.value.pause();
-        }
-        // Hide play overlay when not visible
-        showPlayOverlay.value = false;
-      }
-    });
-  }, {
-    threshold: 0.5, // Video must be 50% visible
-    rootMargin: '0px'
-  });
-  
-  intersectionObserver.observe(vdiv.value);
-}
 
 // Handle video element errors with retry mechanism
 async function handleVideoError(e: Event) {
