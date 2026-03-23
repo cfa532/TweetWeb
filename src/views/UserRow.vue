@@ -4,6 +4,9 @@ import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({ 
     userId: {type: String as PropType<MimeiId>, required: true},
@@ -74,7 +77,7 @@ function openUserPage(userId: string) {
   <!-- Error state -->
   <div v-else class="tweet-header d-flex align-items-start">
     <div class="user-info flex-grow-1">
-      <span class="text-muted">Failed to load user</span>
+      <span class="text-muted">{{ $t('tweet.failedLoadUser') }}</span>
     </div>
   </div>
 </template>

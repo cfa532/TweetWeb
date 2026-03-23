@@ -3,17 +3,19 @@
 import { onMounted, ref } from 'vue'
 import { useTweetStore } from '@/stores';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 
 const router = useRouter();
 const tweetStore = useTweetStore()
+const { t } = useI18n()
 const actionMenu = ref()
-const loginAction = ref("Login")
+const loginAction = ref(t('auth.login'))
 
 onMounted(() => {
     if (tweetStore.loginUser) {
-        loginAction.value = "Logout"
+        loginAction.value = t('auth.logout')
     } else {
-        loginAction.value = "Login"
+        loginAction.value = t('auth.login')
     }
 })
 
@@ -52,7 +54,7 @@ function login() {
     if (tweetStore.loginUser) {
         tweetStore.logout()
         sessionStorage.setItem("isBot", "No")
-        loginAction.value = "Login"
+        loginAction.value = t('auth.login')
         location.reload()
     } else {
         router.push({name: 'login'})
@@ -66,10 +68,10 @@ function login() {
     <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="actionMenu" class="action" hidden>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="uploadTweet">Publish</a>
+            <a href="#" style="text-decoration: none;" @click.stop="uploadTweet">{{ $t('common.publish') }}</a>
         </div>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="netdisk">Netdisk</a>
+            <a href="#" style="text-decoration: none;" @click.stop="netdisk">{{ $t('userActions.netdisk') }}</a>
         </div>
         <div class="item">
             <a href="#" style="text-decoration: none;" @click.stop="login">{{ loginAction }}</a>

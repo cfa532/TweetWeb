@@ -4,6 +4,7 @@ import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { normalizeMediaType, v4Only } from '@/lib';
+import i18n from '@/i18n';
 const GUEST_ID = "000000000000000000000000000"
 const TWEET_COUNT = 30
 
@@ -1406,7 +1407,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         this._user = user
                         this.addFollowing(userId)
                         console.log(`[login] Login flow completed successfully for ${username}`);
-                        useAlertStore().success("Login successful!")
+                        useAlertStore().success(i18n.global.t("auth.loginSuccessful"))
                         return user
                     } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)

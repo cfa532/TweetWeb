@@ -1,5 +1,6 @@
 <script setup lang='ts'>
 import { ref, reactive, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loading, Preview, ItemHeader, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
@@ -23,6 +24,7 @@ function getAspectRatioDisplayName(ratio: number): string {
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
+const { t } = useI18n();
 const emit = defineEmits(['uploaded', 'hide'])
 const route = useRoute()
 const router = useRouter()
@@ -332,7 +334,7 @@ async function onSubmit() {
   
   // Check if user is logged in (matches iOS behavior)
   if (!tweetStore.loginUser) {
-    useAlertStore().error('Please log in to post a tweet')
+    useAlertStore().error(t('editor.loginToPost'))
     return
   }
   
@@ -395,7 +397,7 @@ async function onSubmit() {
     console.log('[TWEET-SUBMIT] Tweet upload result:', result);
     if (result) {
       console.log('[TWEET-SUBMIT] Tweet upload successful!');
-      useAlertStore().success("Tweet uploaded successfully!")
+      useAlertStore().success(t('editor.tweetUploaded'))
       submitFailed.value = false
 
       // Clear form only on success
@@ -687,7 +689,7 @@ async function onSelect(e: Event) {
       totalSize += file.size;
 
       if (totalSize > MAX_UPLOAD_SIZE) {
-        useAlertStore().error("Total upload size exceeds 4GB limit.");
+        useAlertStore().error(t('editor.uploadSizeExceeds'));
         return; // Stop adding files
       }
 
@@ -827,35 +829,35 @@ function handleDragEnd() {
     <div class='col-sm-12 col-md-10 col-lg-8' style='background-color:aliceblue;'>
       <div class='card-header d-flex align-items-center'>
         <ItemHeader :author='author'></ItemHeader>
-        <button class='logout' @click.prevent='logout'>Logout</button>
+        <button class='logout' @click.prevent='logout'>{{ $t('auth.logout') }}</button>
       </div>
       <div class='modal-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
-          <input type='text' placeholder='Title...' v-model='tweetTitle' class='input-caption' />
+          <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
-          <textarea ref='textArea' v-model='txtConent' placeholder='Input......' class='input-textarea'></textarea>
+          <textarea ref='textArea' v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
           <div ref='dropHere' hidden class='drop-here'>
-            <p>DROP HERE</p>
+            <p>{{ $t('editor.dropHere') }}</p>
           </div>
         </div>
         <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
           <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
           <div class='button-container'>
             <span>
-              <button class='btn' @click.prevent='selectFiles.click()'>Files</button>&nbsp;
+              <button class='btn' @click.prevent='selectFiles.click()'>{{ $t('editor.files') }}</button>&nbsp;
               <label class="bottom-btn" @click.prevent="openModal">
                 <IconLink />
               </label>
             </span>
             <span>
               <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>&nbsp;
-              <label for='downloadable-checkbox'>Downloadable</label>&nbsp;&nbsp;&nbsp;
+              <label for='downloadable-checkbox'>{{ $t('editor.downloadable') }}</label>&nbsp;&nbsp;&nbsp;
               <input type='checkbox' v-model='isPrivate' id='private-checkbox'>&nbsp;
-              <label for='private-checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
+              <label for='private-checkbox'>{{ $t('editor.private') }}</label>&nbsp;&nbsp;&nbsp;
               <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
-              <label for='noresample-checkbox' title='Preserve original video quality without resampling (larger file size)'>Preserve Quality</label>&nbsp;&nbsp;&nbsp;
-              <button class='btn' type='submit'>{{ submitFailed ? 'Re-submit' : 'Submit' }}</button>
+              <label for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">{{ $t('editor.preserveQuality') }}</label>&nbsp;&nbsp;&nbsp;
+              <button class='btn' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
             </span>
           </div>
           <Loading :visible='loading' />

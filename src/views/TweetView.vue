@@ -1,11 +1,13 @@
 <script setup lang='ts'>
 import { onMounted, ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
 import { MediaView, ItemHeader } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
 
+const { t } = useI18n();
 const tweetStore = useTweetStore()
 const router = useRouter()
 const route = useRoute()
@@ -209,7 +211,7 @@ const documentAttachments = computed(() => {
 
 // Format file size in human-readable form
 function formatFileSize(bytes: number | undefined): string {
-  if (!bytes || bytes === 0) return '0 Bytes';
+  if (!bytes || bytes === 0) return '0 ' + t('size.bytes');
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -522,7 +524,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           @click='handleDocumentClick($event, doc)'
         >
           <span class='document-icon'>📄</span>
-          <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+          <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
           <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
         </div>
       </div>

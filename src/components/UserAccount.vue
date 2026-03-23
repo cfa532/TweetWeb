@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useTweetStore, useAlertStore } from '@/stores';
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
+
+const { t } = useI18n();
 
 const router = useRouter();
 const tweetStore = useTweetStore();
@@ -80,7 +83,7 @@ async function handleLogin() {
     const u = loginUsername.value.trim();
     const p = loginPassword.value.trim();
     if (!u || !p) {
-        errorMessage.value = 'Username and password are required.';
+        errorMessage.value = t('auth.usernamePasswordRequired');
         return;
     }
     isLoading.value = true;
@@ -91,7 +94,7 @@ async function handleLogin() {
             activeView.value = 'profile';
             loginPassword.value = '';
         } else {
-            errorMessage.value = 'Login failed. Please check your credentials.';
+            errorMessage.value = t('auth.loginFailed');
         }
     } catch (err: any) {
         errorMessage.value = err?.message || 'Login failed.';
@@ -108,15 +111,15 @@ async function handleRegister() {
     const cp = regConfirmPassword.value.trim();
 
     if (!u || !p) {
-        errorMessage.value = 'Username and password are required.';
+        errorMessage.value = t('auth.usernamePasswordRequired');
         return;
     }
     if (p !== cp) {
-        errorMessage.value = 'Passwords do not match.';
+        errorMessage.value = t('auth.passwordsMismatch');
         return;
     }
     if (regHostId.value.trim() && regHostId.value.trim().length !== MIMEI_ID_LENGTH) {
-        errorMessage.value = `Host ID must be exactly ${MIMEI_ID_LENGTH} characters.`;
+        errorMessage.value = t('auth.hostIdLength', { n: MIMEI_ID_LENGTH });
         return;
     }
     isLoading.value = true;
@@ -127,13 +130,13 @@ async function handleRegister() {
             regProfile.value.trim() || undefined,
             regHostId.value.trim() || undefined,
         );
-        alertStore.success('Registration successful. Please wait a few minutes before logging in.');
+        alertStore.success(t('auth.registrationSuccessful'));
         loginUsername.value = u;
         regPassword.value = '';
         regConfirmPassword.value = '';
         activeView.value = 'login';
     } catch (err: any) {
-        errorMessage.value = err?.message || 'Registration failed.';
+        errorMessage.value = err?.message || t('auth.registrationFailed');
     } finally {
         isLoading.value = false;
     }
@@ -144,18 +147,18 @@ async function handleUpdateProfile() {
     clearError();
 
     if (editPassword.value && editPassword.value !== editConfirmPassword.value) {
-        errorMessage.value = 'Passwords do not match.';
+        errorMessage.value = t('auth.passwordsMismatch');
         return;
     }
     if (editHostId.value.trim() && editHostId.value.trim().length !== MIMEI_ID_LENGTH) {
-        errorMessage.value = `Host ID must be exactly ${MIMEI_ID_LENGTH} characters.`;
+        errorMessage.value = t('auth.hostIdLength', { n: MIMEI_ID_LENGTH });
         return;
     }
     const port = editCloudDrivePort.value.trim();
     if (port) {
         const portNum = parseInt(port, 10);
         if (isNaN(portNum) || portNum < 8000 || portNum > 65535) {
-            errorMessage.value = 'Cloud Drive Port must be between 8000 and 65535.';
+            errorMessage.value = t('auth.portRange');
             return;
         }
     }
@@ -170,12 +173,12 @@ async function handleUpdateProfile() {
             cloudDrivePort: port ? parseInt(port, 10) : undefined,
             domainToShare: editDomainToShare.value.trim() || undefined,
         });
-        alertStore.success('Profile updated successfully.');
+        alertStore.success(t('auth.profileUpdated'));
         editPassword.value = '';
         editConfirmPassword.value = '';
         activeView.value = 'profile';
     } catch (err: any) {
-        errorMessage.value = err?.message || 'Update failed.';
+        errorMessage.value = err?.message || t('auth.updateFailed');
     } finally {
         isLoading.value = false;
     }
@@ -199,13 +202,13 @@ async function handleDeleteAccount() {
     clearError();
     try {
         await tweetStore.deleteAccount();
-        alertStore.success('Account deleted.');
+        alertStore.success(t('auth.accountDeleted'));
         activeView.value = 'login';
         loginUsername.value = '';
         loginPassword.value = '';
         router.push('/');
     } catch (err: any) {
-        errorMessage.value = err?.message || 'Failed to delete account.';
+        errorMessage.value = err?.message || t('auth.deleteFailed');
     } finally {
         isLoading.value = false;
     }
@@ -226,7 +229,7 @@ function goBack() {
                     <polyline points="15 18 9 12 15 6"></polyline>
                 </svg>
             </button>
-            <h5 class="mb-0">Account</h5>
+            <h5 class="mb-0">{{ $t('auth.account') }}</h5>
             <div style="width: 36px;"></div>
         </div>
 
@@ -235,70 +238,70 @@ function goBack() {
             <ul class="nav nav-tabs">
                 <li class="nav-item">
                     <a class="nav-link" :class="{ active: activeView === 'login' }" href="#"
-                        @click.prevent="switchView('login')">Login</a>
+                        @click.prevent="switchView('login')">{{ $t('auth.login') }}</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" :class="{ active: activeView === 'register' }" href="#"
-                        @click.prevent="switchView('register')">Register</a>
+                        @click.prevent="switchView('register')">{{ $t('auth.register') }}</a>
                 </li>
             </ul>
 
             <!-- LOGIN FORM -->
             <form v-if="activeView === 'login'" @submit.prevent="handleLogin" class="mt-3">
                 <div class="mb-3">
-                    <label class="form-label">Username</label>
+                    <label class="form-label">{{ $t('auth.username') }}</label>
                     <input v-model="loginUsername" type="text" class="form-control" :disabled="isLoading"
                         autocomplete="username" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Password</label>
+                    <label class="form-label">{{ $t('auth.password') }}</label>
                     <input v-model="loginPassword" type="password" class="form-control" :disabled="isLoading"
                         autocomplete="current-password" />
                 </div>
                 <div v-if="errorMessage" class="alert alert-danger py-2">{{ errorMessage }}</div>
                 <button type="submit" class="btn btn-primary w-100" :disabled="isLoading">
                     <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
-                    {{ isLoading ? 'Logging in...' : 'Login' }}
+                    {{ isLoading ? $t('auth.loggingIn') : $t('auth.login') }}
                 </button>
             </form>
 
             <!-- REGISTRATION FORM (matches iOS Registration.swift) -->
             <form v-if="activeView === 'register'" @submit.prevent="handleRegister" class="mt-3">
                 <div class="mb-3">
-                    <label class="form-label">Username <span class="text-danger">*</span></label>
+                    <label class="form-label">{{ $t('auth.username') }} <span class="text-danger">*</span></label>
                     <input v-model="regUsername" type="text" class="form-control" :disabled="isLoading"
                         autocomplete="username" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Password <span class="text-danger">*</span></label>
+                    <label class="form-label">{{ $t('auth.password') }} <span class="text-danger">*</span></label>
                     <input v-model="regPassword" type="password" class="form-control" :disabled="isLoading"
                         autocomplete="new-password" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Confirm Password <span class="text-danger">*</span></label>
+                    <label class="form-label">{{ $t('auth.confirmPassword') }} <span class="text-danger">*</span></label>
                     <input v-model="regConfirmPassword" type="password" class="form-control" :disabled="isLoading"
                         autocomplete="new-password" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Display Name</label>
+                    <label class="form-label">{{ $t('auth.displayName') }}</label>
                     <input v-model="regAlias" type="text" class="form-control" :disabled="isLoading"
-                        placeholder="Optional" />
+                        :placeholder="$t('auth.optional')" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Bio</label>
+                    <label class="form-label">{{ $t('auth.bio') }}</label>
                     <textarea v-model="regProfile" class="form-control" rows="3" :disabled="isLoading"
-                        placeholder="Optional"></textarea>
+                        :placeholder="$t('auth.optional')"></textarea>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Host ID</label>
+                    <label class="form-label">{{ $t('auth.hostId') }}</label>
                     <input v-model="regHostId" type="text" class="form-control" :disabled="isLoading"
-                        :maxlength="MIMEI_ID_LENGTH" placeholder="Optional, 27 characters" />
-                    <div class="form-text">Join an existing server or leave blank for default.</div>
+                        :maxlength="MIMEI_ID_LENGTH" :placeholder="$t('auth.hostIdPlaceholder')" />
+                    <div class="form-text">{{ $t('auth.hostIdHint') }}</div>
                 </div>
                 <div v-if="errorMessage" class="alert alert-danger py-2">{{ errorMessage }}</div>
                 <button type="submit" class="btn btn-primary w-100" :disabled="isLoading">
                     <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
-                    {{ isLoading ? 'Creating Account...' : 'Create Account' }}
+                    {{ isLoading ? $t('auth.creatingAccount') : $t('auth.createAccount') }}
                 </button>
             </form>
         </div>
@@ -323,30 +326,30 @@ function goBack() {
                 <div class="stats-row mb-3">
                     <div class="stat-item" @click="router.push(`/followers/${user?.mid}`)">
                         <div class="fw-bold">{{ user?.followersCount ?? 0 }}</div>
-                        <small class="text-muted">Followers</small>
+                        <small class="text-muted">{{ $t('profile.followers') }}</small>
                     </div>
                     <div class="stat-item" @click="router.push(`/followings/${user?.mid}`)">
                         <div class="fw-bold">{{ user?.followingCount ?? 0 }}</div>
-                        <small class="text-muted">Following</small>
+                        <small class="text-muted">{{ $t('profile.following') }}</small>
                     </div>
                     <div class="stat-item">
                         <div class="fw-bold">{{ user?.tweetCount ?? 0 }}</div>
-                        <small class="text-muted">Tweets</small>
+                        <small class="text-muted">{{ $t('profile.tweets') }}</small>
                     </div>
                 </div>
 
                 <!-- Info rows -->
                 <div class="info-section mb-3">
                     <div v-if="user?.hostIds?.[0]" class="info-row">
-                        <span class="info-label">Host ID</span>
+                        <span class="info-label">{{ $t('auth.hostId') }}</span>
                         <span class="info-value text-muted">{{ user.hostIds[0] }}</span>
                     </div>
                     <div v-if="user?.cloudDrivePort" class="info-row">
-                        <span class="info-label">Cloud Drive Port</span>
+                        <span class="info-label">{{ $t('auth.cloudDrivePort') }}</span>
                         <span class="info-value text-muted">{{ user.cloudDrivePort }}</span>
                     </div>
                     <div class="info-row">
-                        <span class="info-label">Joined</span>
+                        <span class="info-label">{{ $t('auth.joined') }}</span>
                         <span class="info-value text-muted">{{ formatTimeDifference(user?.timestamp as number) }}</span>
                     </div>
                 </div>
@@ -355,9 +358,9 @@ function goBack() {
 
                 <!-- Actions -->
                 <div class="d-grid gap-2">
-                    <button class="btn btn-outline-primary" @click="switchView('edit')">Edit Profile</button>
-                    <button class="btn btn-outline-secondary" @click="showLogoutConfirm = true">Logout</button>
-                    <button class="btn btn-outline-danger btn-sm mt-2" @click="showDeleteConfirm = true">Delete Account</button>
+                    <button class="btn btn-outline-primary" @click="switchView('edit')">{{ $t('auth.editProfile') }}</button>
+                    <button class="btn btn-outline-secondary" @click="showLogoutConfirm = true">{{ $t('auth.logout') }}</button>
+                    <button class="btn btn-outline-danger btn-sm mt-2" @click="showDeleteConfirm = true">{{ $t('auth.deleteAccount') }}</button>
                 </div>
             </div>
 
@@ -369,53 +372,53 @@ function goBack() {
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label text-muted">Username</label>
+                    <label class="form-label text-muted">{{ $t('auth.username') }}</label>
                     <input type="text" class="form-control" :value="user?.username" disabled />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">New Password</label>
+                    <label class="form-label">{{ $t('auth.newPassword') }}</label>
                     <input v-model="editPassword" type="password" class="form-control" :disabled="isLoading"
-                        placeholder="Leave blank to keep current" autocomplete="new-password" />
+                        :placeholder="$t('auth.passwordKeepCurrent')" autocomplete="new-password" />
                 </div>
                 <div v-if="editPassword" class="mb-3">
-                    <label class="form-label">Confirm New Password</label>
+                    <label class="form-label">{{ $t('auth.confirmNewPassword') }}</label>
                     <input v-model="editConfirmPassword" type="password" class="form-control" :disabled="isLoading"
                         autocomplete="new-password" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Display Name</label>
+                    <label class="form-label">{{ $t('auth.displayName') }}</label>
                     <input v-model="editName" type="text" class="form-control" :disabled="isLoading"
                         :placeholder="user?.name || ''" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Bio</label>
+                    <label class="form-label">{{ $t('auth.bio') }}</label>
                     <textarea v-model="editProfile" class="form-control" rows="3" :disabled="isLoading"
                         :placeholder="user?.profile || ''"></textarea>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Host ID</label>
+                    <label class="form-label">{{ $t('auth.hostId') }}</label>
                     <input v-model="editHostId" type="text" class="form-control" :disabled="isLoading"
-                        :maxlength="MIMEI_ID_LENGTH" :placeholder="user?.hostIds?.[0] || '27 characters'" />
+                        :maxlength="MIMEI_ID_LENGTH" :placeholder="user?.hostIds?.[0] || $t('auth.hostIdPlaceholder')" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Cloud Drive Port</label>
+                    <label class="form-label">{{ $t('auth.cloudDrivePort') }}</label>
                     <input v-model="editCloudDrivePort" type="text" inputmode="numeric" class="form-control"
-                        :disabled="isLoading" placeholder="8000-65535" />
+                        :disabled="isLoading" :placeholder="$t('auth.portPlaceholder')" />
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Share Domain</label>
+                    <label class="form-label">{{ $t('auth.shareDomain') }}</label>
                     <input v-model="editDomainToShare" type="url" class="form-control" :disabled="isLoading"
-                        :placeholder="backendDomain || 'Custom domain for sharing links'" />
+                        :placeholder="backendDomain || $t('auth.shareDomainPlaceholder')" />
                 </div>
 
                 <div v-if="errorMessage" class="alert alert-danger py-2">{{ errorMessage }}</div>
 
                 <div class="d-flex gap-2">
                     <button type="button" class="btn btn-outline-secondary flex-fill"
-                        @click="switchView('profile')" :disabled="isLoading">Cancel</button>
+                        @click="switchView('profile')" :disabled="isLoading">{{ $t('common.cancel') }}</button>
                     <button type="submit" class="btn btn-primary flex-fill" :disabled="isLoading">
                         <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
-                        {{ isLoading ? 'Saving...' : 'Save' }}
+                        {{ isLoading ? $t('auth.saving') : $t('common.save') }}
                     </button>
                 </div>
             </form>
@@ -426,10 +429,10 @@ function goBack() {
         <!-- Logout Confirmation -->
         <div v-if="showLogoutConfirm" class="confirm-overlay" @click.self="showLogoutConfirm = false">
             <div class="confirm-dialog">
-                <p class="mb-3">Are you sure you want to logout?</p>
+                <p class="mb-3">{{ $t('auth.logoutConfirm') }}</p>
                 <div class="d-flex gap-2">
-                    <button class="btn btn-outline-secondary flex-fill" @click="showLogoutConfirm = false">Cancel</button>
-                    <button class="btn btn-primary flex-fill" @click="handleLogout">Logout</button>
+                    <button class="btn btn-outline-secondary flex-fill" @click="showLogoutConfirm = false">{{ $t('common.cancel') }}</button>
+                    <button class="btn btn-primary flex-fill" @click="handleLogout">{{ $t('auth.logout') }}</button>
                 </div>
             </div>
         </div>
@@ -437,13 +440,13 @@ function goBack() {
         <!-- Delete Account Confirmation -->
         <div v-if="showDeleteConfirm" class="confirm-overlay" @click.self="showDeleteConfirm = false">
             <div class="confirm-dialog">
-                <h6 class="text-danger mb-2">Delete Account</h6>
-                <p class="mb-3">This action is permanent and cannot be undone. All your data will be lost.</p>
+                <h6 class="text-danger mb-2">{{ $t('auth.deleteAccount') }}</h6>
+                <p class="mb-3">{{ $t('auth.deleteConfirm') }}</p>
                 <div class="d-flex gap-2">
-                    <button class="btn btn-outline-secondary flex-fill" @click="showDeleteConfirm = false">Cancel</button>
+                    <button class="btn btn-outline-secondary flex-fill" @click="showDeleteConfirm = false">{{ $t('common.cancel') }}</button>
                     <button class="btn btn-danger flex-fill" @click="handleDeleteAccount" :disabled="isLoading">
                         <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
-                        Delete
+                        {{ $t('common.delete') }}
                     </button>
                 </div>
             </div>

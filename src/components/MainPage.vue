@@ -1,11 +1,14 @@
 <script setup lang='ts'>
 import { onMounted, ref, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout } from '@/components';
 import { isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
+
+const { t } = useI18n();
 
 const tweetStore = useTweetStore();
 const router = useRouter();
@@ -17,19 +20,6 @@ const pageNumber = ref(0);
 const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 
-// Localization for bot verification
-function getBotVerificationMessage(): string {
-    const language = navigator.language || 'en';
-    
-    if (language.startsWith('zh')) {
-        return '点击OK。证明你不是机器人\n\n芝麻，开门！';
-    } else if (language.startsWith('ja')) {
-        return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
-    } else {
-        return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
-    }
-}
-
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
     let timeout: any;
@@ -39,17 +29,6 @@ function debounce<T extends Function>(func: T, delay: number) {
             func.apply(this, args);
         }, delay);
     };
-}
-
-function getNoMorePostsMessage(): string {
-    const language = navigator.language || 'en';
-    if (language.startsWith('zh')) return '没有更多帖子了';
-    if (language.startsWith('ja')) return 'これ以上の投稿はありません';
-    if (language.startsWith('ko')) return '더 이상 게시물이 없습니다';
-    if (language.startsWith('es')) return 'No hay más publicaciones';
-    if (language.startsWith('fr')) return 'Plus de publications';
-    if (language.startsWith('de')) return 'Keine weiteren Beiträge';
-    return 'No more posts';
 }
 
 async function loadMoreTweets(isManualRetry = false) {
@@ -121,7 +100,7 @@ onMounted(async () => {
     const shouldLoad = tweetStore.tweets.length === 0 || initialLoad.value;
 
     if (sessionStorage['isBot'] != 'No' && isWeChatBrowser()) {
-        if (confirm(getBotVerificationMessage())) {
+        if (confirm(t('botVerification'))) {
             sessionStorage['isBot'] = 'No'
             if (shouldLoad) {
                 await loadTweetsWithMinimum()
@@ -316,7 +295,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
     <PageLayout width="normal">
         <AppHeader />
         <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
-            Show {{ pendingCount }} new tweet{{ pendingCount > 1 ? 's' : '' }}
+            {{ $t('tweet.showNewTweets', pendingCount) }}
         </div>
         <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid' />
         <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
@@ -326,7 +305,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
             </div>
         </div>
         <div v-else-if='!hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>
-            {{ getNoMorePostsMessage() }}
+            {{ $t('tweet.noMorePosts') }}
         </div>
     </PageLayout>
 </template>

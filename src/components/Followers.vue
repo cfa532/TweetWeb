@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import { AppHeader, UserRow } from "@/views";
 import { LoadingSpinner, PageLayout } from "@/components";
 
+const { t } = useI18n();
 const route = useRoute();
 const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
@@ -185,12 +187,12 @@ onUnmounted(() => {
         
         <!-- End of list indicator -->
         <div v-if="!hasMoreUsers && visibleUserIds.length > 0" class="text-center text-muted my-3">
-            <small>No more users to load</small>
+            <small>{{ $t('tweet.noMoreUsers') }}</small>
         </div>
         
         <!-- Empty state -->
         <div v-if="!isLoading && followerIds.length === 0" class="text-center text-muted my-3">
-            <small>No users found</small>
+            <small>{{ $t('tweet.noUsersFound') }}</small>
         </div>
     </div>
     </PageLayout>

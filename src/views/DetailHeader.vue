@@ -3,6 +3,9 @@ import type { PropType } from 'vue';
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({
   author: { type: Object as PropType<User>, required: true },
@@ -28,7 +31,7 @@ function openUserPage(userId: string) {
       </div>
       <div class='user-info flex-grow-1'>
         <div v-if='isRetweet' class='label text-muted small'>
-          Forwarded by @{{ by }}
+          {{ $t('tweet.forwardedBy', { name: by }) }}
         </div>
         <div class='username-alias-time'>
           <span class='username fw-bold'>{{ author.name }}</span>

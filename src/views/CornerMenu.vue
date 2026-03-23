@@ -3,10 +3,12 @@
 import { ref, nextTick, computed } from 'vue'
 import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
+import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
+const { t } = useI18n()
 const shareMenu = ref()
 const dotBtn = ref()
 const btnDelete = ref()
@@ -98,7 +100,7 @@ async function submitEdit() {
     props.tweet.content = editContent.value
     showEditor.value = false
   } catch (error: any) {
-    alertStore.error(error.message || 'Failed to update tweet')
+    alertStore.error(error.message || t('tweet.failedUpdateTweet'))
   }
 }
 
@@ -156,10 +158,10 @@ async function deleteItem() {
             </span>
         </div>
         <div ref="btnEdit" class="item clickable-item" @click.stop="openEditor" hidden style="cursor: pointer;">
-            <span style="text-decoration: none;"><font-awesome-icon icon="pen" style="margin-right: 5px;" />Edit</span>
+            <span style="text-decoration: none;"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
         </div>
         <div ref="btnDelete" class="item clickable-item" @click.stop="deleteItem" hidden style="cursor: pointer;">
-            <span style="text-decoration: none;"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />Delete</span>
+            <span style="text-decoration: none;"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
         </div>
     </div>
 </div>
@@ -168,13 +170,13 @@ async function deleteItem() {
 <div v-if="showEditor" class="edit-overlay" @click.self="showEditor = false">
     <div class="edit-modal" @click.stop>
         <div class="edit-header">
-            <span>Edit Tweet</span>
+            <span>{{ $t('tweet.editTweet') }}</span>
             <a href="#" @click.prevent="showEditor = false" style="color: grey; text-decoration: none;">&times;</a>
         </div>
         <textarea v-model="editContent" class="edit-textarea" rows="6"></textarea>
         <div class="edit-actions">
-            <button class="btn-cancel" @click="showEditor = false">Cancel</button>
-            <button class="btn-submit" @click="submitEdit">Save</button>
+            <button class="btn-cancel" @click="showEditor = false">{{ $t('common.cancel') }}</button>
+            <button class="btn-submit" @click="submitEdit">{{ $t('common.save') }}</button>
         </div>
     </div>
 </div>

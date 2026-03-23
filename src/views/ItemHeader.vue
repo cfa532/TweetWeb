@@ -4,7 +4,10 @@ import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
+import { useI18n } from 'vue-i18n';
 import { CornerMenu } from '@/views';
+
+const { t } = useI18n();
 
 const props = defineProps({
     author: {type: Object as PropType<User | null>, required: false},
@@ -47,15 +50,15 @@ function openDetailView() {
     <div class='user-info flex-grow-1' @click.prevent='openDetailView'>
       <!-- Optional Label -->
       <div v-if='isRetweet' class='label text-muted small'>
-        Forwarded by @{{ by }}
+        {{ $t('tweet.forwardedBy', { name: by }) }}
       </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>
-        <span class='username fw-bold' :class='{ "loading-text": !props.author }'>{{ props.author?.name || 'Loading...' }}</span>
+        <span class='username fw-bold' :class='{ "loading-text": !props.author }'>{{ props.author?.name || $t('tweet.loadingAuthor') }}</span>
       </div>
       <!-- Followers and Friends Links -->
       <div class='mt-1'>
-        <span class='alias text-muted' :class='{ "loading-text": !props.author }'>@{{ props.author?.username || 'loading' }}</span>
+        <span class='alias text-muted' :class='{ "loading-text": !props.author }'>@{{ props.author?.username || $t('tweet.loadingUsername') }}</span>
         <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
           }}</span>
       </div>

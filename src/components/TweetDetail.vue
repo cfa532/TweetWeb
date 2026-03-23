@@ -1,11 +1,14 @@
 <script lang="ts" setup>
 import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
 import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
+
+const { t } = useI18n();
 
 const route = useRoute();
 const router = useRouter();
@@ -25,35 +28,10 @@ const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
 
-// Localization for bot verification
-function getBotVerificationMessage(): string {
-    const language = navigator.language || 'en';
-    
-    if (language.startsWith('zh')) {
-        return '点击OK。证明你不是机器人\n\n芝麻，开门！';
-    } else if (language.startsWith('ja')) {
-        return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
-    } else {
-        return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
-    }
-}
-
-// Localization for loading retry message
-function getLoadingRetryMessage(): string {
-    const language = navigator.language || 'en';
-
-    if (language.startsWith('zh')) {
-        return '正在加载推文，6秒后重试...';
-    } else if (language.startsWith('ja')) {
-        return 'ツイートを読み込んでいます、6秒後に再試行...';
-    } else {
-        return 'Loading tweet, retrying in 6s...';
-    }
-}
 
 onMounted(async () => {
     if (sessionStorage["isBot"] != "No" && isWeChatBrowser()) {
-        if (confirm(getBotVerificationMessage())) {
+        if (confirm(t('botVerification'))) {
             sessionStorage["isBot"] = "No"
             loadDetail()
         } else {
@@ -279,41 +257,6 @@ const formattedTitle = computed(() => {
 })
 
 
-const downloadingText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载中...'
-    } else if (language.startsWith('ja')) {
-        return 'ダウンロード中...'
-    } else {
-        return 'Downloading...'
-    }
-})
-
-const downloadText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载APP获得最佳体验'
-    } else if (language.startsWith('ja')) {
-        return 'ネイティブアプリで最高の体験を'
-    } else {
-        return '下载APP获得最佳体验'
-    }
-})
-
-const backToTweetText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '返回推文'
-    } else if (language.startsWith('ja')) {
-        return 'ツイートに戻る'
-    } else {
-        return 'Back to Tweet'
-    }
-})
 
 watch(tweetId, async (newValue, oldValue)=>{
     console.log('[tweetId watcher] tweetId changed from', oldValue, 'to', newValue);
@@ -438,7 +381,7 @@ const documentAttachments = computed(() => {
 
 // Format file size in human-readable form
 function formatFileSize(bytes: number | undefined): string {
-    if (!bytes || bytes === 0) return '0 Bytes';
+    if (!bytes || bytes === 0) return '0 ' + t('size.bytes');
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -639,16 +582,16 @@ function retryLoad() {
 <template>
 <PageLayout width="wide">
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
-        ← {{ backToTweetText }}
+        ← {{ $t('common.back') }}
     </div>
     
     <!-- Tweet not found error - specific message for non-existent tweets -->
     <div v-if="tweetNotFound && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
         <div class="alert alert-warning" role="alert">
-            <h5 class="alert-heading">Tweet Not Found</h5>
-            <p class="mb-3">This tweet doesn't exist or may have been deleted.</p>
+            <h5 class="alert-heading">{{ $t('tweet.tweetNotFound') }}</h5>
+            <p class="mb-3">{{ $t('tweet.tweetNotFoundDesc') }}</p>
             <button @click="goBack" class="btn btn-secondary">
-                Go Back
+                {{ $t('tweet.goBack') }}
             </button>
         </div>
     </div>
@@ -656,12 +599,12 @@ function retryLoad() {
     <!-- General error message with retry button - for network/other errors -->
     <div v-if="loadError && !isLoading && hasLoadAttempted && !tweet && !tweetNotFound" class="loading-retry-message text-center my-4">
         <div class="alert alert-danger" role="alert">
-            <h5 class="alert-heading">Unable to Load Tweet</h5>
-            <p class="mb-2">There was an error loading this tweet.</p>
-            <p class="mb-3 text-muted small">Check browser console for detailed error information.</p>
+            <h5 class="alert-heading">{{ $t('tweet.unableToLoad') }}</h5>
+            <p class="mb-2">{{ $t('tweet.loadError') }}</p>
+            <p class="mb-3 text-muted small">{{ $t('tweet.checkConsole') }}</p>
             <button @click="retryLoad" class="btn btn-primary">
                 <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                Retry
+                {{ $t('common.retry') }}
             </button>
         </div>
     </div>
@@ -690,7 +633,7 @@ function retryLoad() {
                     @click='handleDocumentClick($event, doc)'
                 >
                     <span class='document-icon'>📄</span>
-                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
@@ -727,7 +670,7 @@ function retryLoad() {
                     @click='handleDocumentClick($event, doc)'
                 >
                     <span class='document-icon'>📄</span>
-                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
@@ -783,7 +726,7 @@ function retryLoad() {
     <div v-if="showDownloadPrompt" class="download-button-container">
         <button class="download-button" @click="openDownloadModal">
             <img src="/src/ic_splash.png" alt="App Icon" class="download-icon" />
-            <span class="download-text">{{ downloadText }}</span>
+            <span class="download-text">{{ $t('download.downloadApp') }}</span>
         </button>
     </div>
 </PageLayout>

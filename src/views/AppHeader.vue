@@ -1,10 +1,13 @@
 <script lang="ts" setup>
 import { watch, onMounted, ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { QRCoder, UserActions } from '@/views';
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
+
+const { t } = useI18n();
 
 const router = useRouter()
 const tweetStore = useTweetStore()
@@ -108,7 +111,7 @@ watch(userId, async (nv, ov) => {
                 </div>
             </div>
             <a href="#" class="account-btn" @click.prevent="router.push('/account')"
-                :title="isLoggedIn ? 'Account' : 'Login'">
+                :title="isLoggedIn ? $t('auth.account') : $t('auth.login')">
                 <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
                     class="account-avatar rounded-circle"
                     @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
@@ -123,10 +126,10 @@ watch(userId, async (nv, ov) => {
         <div v-if="user" class="user-actions">
             <div v-if="user" class="links">
                 <a href="#" @click.prevent="router.push(`/followers/${user.mid}`)" class="text-muted">{{
-                    user.followersCount }} fans</a>
+                    user.followersCount }} {{ $t('profile.fans') }}</a>
                 <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
-                    user.followingCount }} following</a>
-                <a href="#"  class="text-muted">{{ user.tweetCount }} tweet</a>
+                    user.followingCount }} {{ $t('profile.following') }}</a>
+                <a href="#"  class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
             </div>
             <UserActions></UserActions>
         </div>
