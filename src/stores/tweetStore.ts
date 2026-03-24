@@ -2533,10 +2533,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     user.client.timeout = originalTimeout
                 }
 
-                // Update local state
-                user.avatar = this.getMediaUrl(confirmedAvatar, `http://${providerIp}`)
-                this._user = user
-                sessionStorage.setItem("user", JSON.stringify(user))
+                // Update local state with new object to trigger reactivity
+                const updatedUser = { ...user, avatar: this.getMediaUrl(confirmedAvatar, `http://${providerIp}`) }
+                this._user = updatedUser
+                sessionStorage.setItem("user", JSON.stringify(updatedUser))
 
                 return confirmedAvatar
             } finally {

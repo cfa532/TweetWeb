@@ -217,13 +217,20 @@ async function handleDeleteAccount() {
     }
 }
 
+// Local blob URL for immediate avatar display after crop
+const localAvatarUrl = ref<string | null>(null);
+
 async function handleAvatarCrop(blob: Blob) {
     showAvatarCropper.value = false;
     isUploadingAvatar.value = true;
+    // Show cropped image immediately using local blob URL
+    localAvatarUrl.value = URL.createObjectURL(blob);
     try {
         await tweetStore.setUserAvatar(blob);
         alertStore.success(t('avatar.uploadSuccess'));
     } catch (err: any) {
+        // Revert local preview on failure
+        localAvatarUrl.value = null;
         alertStore.error(err?.message || t('avatar.uploadFailed'));
     } finally {
         isUploadingAvatar.value = false;
@@ -328,7 +335,7 @@ function goBack() {
             <!-- PROFILE VIEW (matches iOS ProfileView.swift) -->
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
-                    <img :src="user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                    <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
                         alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
                     <span class="text-muted">@{{ user?.username }}</span>
@@ -384,7 +391,7 @@ function goBack() {
             <form v-if="activeView === 'edit'" @submit.prevent="handleUpdateProfile">
                 <div class="text-center mb-3">
                     <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
-                        <img :src="user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                        <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
                             alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
                         <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
                             <span class="spinner-border spinner-border-sm text-white"></span>
