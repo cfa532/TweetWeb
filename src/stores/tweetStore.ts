@@ -928,8 +928,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (author && tweet) {
                     tweet.author = author
                     authorLoadSuccess = true
-                    // Update media URLs with correct author provider IP
-                    if (tweet.attachments) {
+                    // Only update media URLs if author's provider IP differs from initial one
+                    if (tweet.attachments && author.providerIp && author.providerIp !== providerIp) {
                         tweet.attachments.forEach((e: MimeiFileType) => {
                             e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + author.providerIp)
                         })
@@ -947,8 +947,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.getUser(originalTweetData.authorId).then(originalAuthor => {
                     if (originalAuthor && tweet.originalTweet) {
                         tweet.originalTweet.author = originalAuthor
-                        // Update media URLs with correct author provider IP
-                        if (tweet.originalTweet.attachments) {
+                        // Only update media URLs if author's provider IP differs from initial one
+                        if (tweet.originalTweet.attachments && originalAuthor.providerIp && originalAuthor.providerIp !== providerIp) {
                             tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
                                 e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + originalAuthor.providerIp)
                             })
