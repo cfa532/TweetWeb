@@ -164,7 +164,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <PageLayout width="normal">
+    <PageLayout>
         <AppHeader :userId="userId"/>
 
         <div ref="containerRef" class="users-container">

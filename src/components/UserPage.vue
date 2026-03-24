@@ -354,7 +354,7 @@ const handleScroll = debounce(async () => {
 </script>
 
 <template>
-    <PageLayout width="normal">
+    <PageLayout>
         <AppHeader :userId='authorId' />
         <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
         <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>

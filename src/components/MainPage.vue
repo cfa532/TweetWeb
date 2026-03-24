@@ -192,7 +192,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
 </script>
 
 <template>
-    <PageLayout width="normal">
+    <PageLayout>
         <AppHeader />
         <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
             {{ $t('tweet.showNewTweets', pendingCount) }}

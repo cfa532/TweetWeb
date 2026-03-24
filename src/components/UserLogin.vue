@@ -69,7 +69,7 @@ async function onSubmit(values: any) {
 </script>
 
 <template>
-<div class="col-sm-12 col-md-8 col-lg-6" >
+<div>
     <div class="card m-3">
         <h4 class="card-header">{{ $t('auth.login') }}</h4>
         <div class="card-body">

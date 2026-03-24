@@ -1,7 +1,7 @@
 <script setup lang='ts'>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loading, Preview, ItemHeader, CidPreview } from '@/views'
+import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
@@ -743,9 +743,12 @@ function removeFile(f: File) {
   filesUpload.value.splice(i, 1)
 }
 
-function logout() {
-  tweetStore.logout();
-  location.reload()
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/')
+  }
 }
 
 const handleCids = (ids: MimeiFileType[]) => {
@@ -825,13 +828,18 @@ function handleDragEnd() {
 <template>
   <CidModal :isVisible="showCidModal" @save="handleCids" @cancel="cancelCidsModal" />
 
-  <div class='row justify-content-start align-items-start'>
-    <div class='col-sm-12 col-md-10 col-lg-8' style='background-color:aliceblue;'>
-      <div class='card-header d-flex align-items-center'>
-        <ItemHeader :author='author'></ItemHeader>
-        <button class='logout' @click.prevent='logout'>{{ $t('auth.logout') }}</button>
+  <div style='background-color:aliceblue;'>
+      <div class='editor-header'>
+        <img :src='author.avatar' alt='Avatar' class='editor-avatar'>
+        <div class='editor-author'>
+          <div class='fw-bold'>{{ author.name }}</div>
+          <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>
+        </div>
+        <div class='cancel-btn' @click='goBack'>
+          <font-awesome-icon icon="circle-xmark" size="xl" />
+        </div>
       </div>
-      <div class='modal-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
+      <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
           <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
@@ -882,7 +890,6 @@ function handleDragEnd() {
           :src="m.fileName as string" />
       </div>
     </div>
-  </div>
 </template>
 
 <style scoped>
@@ -892,20 +899,32 @@ function handleDragEnd() {
   margin: 8px 8px 8px 8px;
 }
 
-.card-header {
-  margin-left: 10px;
+.editor-header {
   display: flex;
   align-items: center;
+  padding: 8px 10px;
 }
 
-.logout {
-  border-radius: 5px;
-  border: 1px solid rgb(143, 139, 139);
-  padding: 3px 10px;
-  margin-left: auto;
+.editor-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-right: 8px;
 }
 
-.modal-content {
+.editor-author {
+  flex: 1;
+}
+
+.cancel-btn {
+  cursor: pointer;
+  color: #e0245e;
+  padding: 4px;
+  margin-right: 6px;
+}
+
+.editor-content {
   width: 100%;
   position: relative;
   display: flex;
@@ -913,7 +932,7 @@ function handleDragEnd() {
   border-radius: 10px;
   background-color: #ebf0f3;
   border: 1px solid #888;
-  margin: 10px 0 0 10px;
+  margin: 10px 0 0 0;
   flex-direction: column;
   flex: 1;
 }

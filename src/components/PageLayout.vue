@@ -7,7 +7,6 @@
 <style>
 .page-layout {
   width: 100%;
-  max-width: 600px;
   margin: 0;
   background-color: aliceblue;
   overflow-x: hidden; /* Prevent horizontal overflow */

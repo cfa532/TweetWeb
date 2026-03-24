@@ -70,7 +70,7 @@ function openDetailView() {
       {{ tweet?.title }}
     </div>
   </div>
-  <div class='corner-menu-container'>
+  <div v-if="tweet" class='corner-menu-container'>
     <CornerMenu :tweet="actualTweet || tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
   </div>
 </template>

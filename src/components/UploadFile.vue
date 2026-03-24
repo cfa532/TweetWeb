@@ -318,8 +318,7 @@ function removeFile(f: File) {
 
 <template>
 
-    <div class="row justify-content-start align-items-start mt-2">
-        <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
+    <div style="background-color:aliceblue;">
             <div class="card-header d-flex align-items-center">
                 <input v-model="isResumableUpload" type="checkbox" checked>&nbsp;Enable resumable uploads</input>
                 <span @click='router.push({name: "netdisk"})' class='breadcrumb-link'>{{ $t('userActions.netdisk') }}</span>
@@ -355,7 +354,6 @@ function removeFile(f: File) {
                 </div>
             </div>
         </div>
-    </div>
 </template>
 
 <style scoped>

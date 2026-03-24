@@ -571,7 +571,7 @@ function retryLoad() {
 </script>
 
 <template>
-<PageLayout width="wide">
+<PageLayout>
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
         ← {{ $t('common.back') }}
     </div>
