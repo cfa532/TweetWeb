@@ -56,30 +56,24 @@ const startDirectDownload = async () => {
     }
 }
 
-onMounted(async () => {
-    if (props.userId) {
-        user.value = await tweetStore.getUser(props.userId)
-    }
+onMounted(() => {
     // Show download prompt after 2 seconds
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
-    
+
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
 })
 watch(userId, async (nv, ov) => {
-    if (nv !== ov) {
-        if (nv) {
-            user.value = await tweetStore.getUser(nv)
-            console.log(user.value)
-        }
-        else {
-            user.value = undefined
-        }
+    if (nv) {
+        user.value = await tweetStore.getUser(nv)
     }
-})
+    else {
+        user.value = undefined
+    }
+}, { immediate: true })
 </script>
 
 <template>
