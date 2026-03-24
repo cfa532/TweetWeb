@@ -982,6 +982,27 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
+            // Try sessionStorage cache for faster initial display
+            if (!forceRefresh) {
+                const cached = sessionStorage.getItem(userId)
+                if (cached) {
+                    try {
+                        const cachedUser = JSON.parse(cached)
+                        if (cachedUser && cachedUser.mid && cachedUser.hostIds) {
+                            cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
+                            cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
+                            if (cachedUser.writableHostIp === undefined) {
+                                cachedUser.writableHostIp = null
+                            }
+                            this.users.set(userId, cachedUser)
+                            return cachedUser
+                        }
+                    } catch (e) {
+                        sessionStorage.removeItem(userId)
+                    }
+                }
+            }
+
             // Try to get user with up to 2 attempts total
             let providerIp: string | null = null
             let user: any = null
