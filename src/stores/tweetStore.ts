@@ -266,11 +266,123 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                     }
                 }
+                // Cache this user's tweets to localStorage for instant display on next visit
+                this.cacheUserTweets(userId)
+
                 return tweetsData?.length || null
             } catch (e) {
                 console.error("Error fetching tweets for user:", user.mid)
                 console.error("Exception:", e)
                 return null
+            }
+        },
+
+        /**
+         * Cache a user's tweets to localStorage for instant display on next visit
+         */
+        cacheUserTweets(userId: string) {
+            try {
+                const userTweets = this.tweets
+                    .filter(t => t.authorId === userId)
+                    .map(t => {
+                        // Strip non-serializable fields (client, etc.)
+                        const { author, originalTweet, comments, ...rest } = t
+                        const cached: any = { ...rest }
+                        if (author) {
+                            const { client, ...authorRest } = author as any
+                            cached.author = authorRest
+                        }
+                        if (originalTweet) {
+                            const { author: origAuthor, comments: origComments, ...origRest } = originalTweet
+                            cached.originalTweet = { ...origRest }
+                            if (origAuthor) {
+                                const { client, ...origAuthorRest } = origAuthor as any
+                                cached.originalTweet.author = origAuthorRest
+                            }
+                        }
+                        return cached
+                    })
+                    .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+                localStorage.setItem(`tweets_${userId}`, JSON.stringify(userTweets))
+            } catch (e) {
+                console.warn("Failed to cache user tweets to localStorage:", e)
+            }
+        },
+
+        /**
+         * Load cached tweets for a user from localStorage
+         * Returns tweets with author.client restored
+         */
+        getCachedUserTweets(userId: string): Tweet[] {
+            try {
+                const cached = localStorage.getItem(`tweets_${userId}`)
+                if (!cached) return []
+                const tweets = JSON.parse(cached) as Tweet[]
+                for (const t of tweets) {
+                    if (t.author?.providerIp) {
+                        t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
+                    }
+                    if (t.originalTweet?.author?.providerIp) {
+                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                    }
+                    t.comments = []
+                }
+                return tweets
+            } catch (e) {
+                console.warn("Failed to load cached user tweets:", e)
+                return []
+            }
+        },
+
+        /**
+         * Cache pinned tweets for a user to localStorage
+         */
+        cachePinnedTweets(userId: string, tweets: Tweet[]) {
+            try {
+                const serializable = tweets.map(t => {
+                    const { author, originalTweet, comments, ...rest } = t
+                    const cached: any = { ...rest }
+                    if (author) {
+                        const { client, ...authorRest } = author as any
+                        cached.author = authorRest
+                    }
+                    if (originalTweet) {
+                        const { author: origAuthor, comments: origComments, ...origRest } = originalTweet
+                        cached.originalTweet = { ...origRest }
+                        if (origAuthor) {
+                            const { client, ...origAuthorRest } = origAuthor as any
+                            cached.originalTweet.author = origAuthorRest
+                        }
+                    }
+                    return cached
+                })
+                localStorage.setItem(`pinned_${userId}`, JSON.stringify(serializable))
+            } catch (e) {
+                console.warn("Failed to cache pinned tweets:", e)
+            }
+        },
+
+        /**
+         * Load cached pinned tweets from localStorage
+         */
+        getCachedPinnedTweets(userId: string): Tweet[] {
+            try {
+                const cached = localStorage.getItem(`pinned_${userId}`)
+                if (!cached) return []
+                const tweets = JSON.parse(cached) as Tweet[]
+                for (const t of tweets) {
+                    if (t.author?.providerIp) {
+                        t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
+                    }
+                    if (t.originalTweet?.author?.providerIp) {
+                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                    }
+                    t.comments = []
+                }
+                return tweets
+            } catch (e) {
+                console.warn("Failed to load cached pinned tweets:", e)
+                return []
             }
         },
 

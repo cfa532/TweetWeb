@@ -174,6 +174,9 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 
             pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);
             pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+            if (pinnedTweets.value?.length) {
+                tweetStore.cachePinnedTweets(authorId, pinnedTweets.value);
+            }
             sessionStorage.removeItem('userPageRefreshCount'); // Clear on success
         } catch (error) {
             // Timeout already handled the refresh
@@ -186,6 +189,9 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         if (currentTimeoutId) {
             clearTimeout(currentTimeoutId);
         }
+        // Reconcile: remove cached tweets no longer on server, update changed ones, add new ones
+        const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
+        displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
         appendNewToDisplayed();
         isLoading.value = false;
         initialLoad.value = false;
@@ -238,7 +244,17 @@ const displayedTweets = ref<Tweet[]>([]);
 const pendingCount = ref(0);
 
 function appendNewToDisplayed() {
-    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const displayedMap = new Map(displayedTweets.value.map(t => [t.mid, t]));
+
+    // Update existing tweets in-place if data changed (e.g. likeCount, content)
+    for (const storeTweet of tweetStore.tweets) {
+        const existing = displayedMap.get(storeTweet.mid);
+        if (existing) {
+            Object.assign(existing, storeTweet);
+        }
+    }
+
+    const existingIds = new Set(displayedMap.keys());
     const topTimestamp = displayedTweets.value.length > 0
         ? (displayedTweets.value[0].timestamp as number)
         : Infinity;
@@ -293,11 +309,19 @@ watch(authorId, async (nv, ov) => {
     if (!nv || nv === ov) return;
 
     console.log('UserPage loading authorId:', nv);
-    tweetStore.removeUser(nv);  // force reload user data from its host.
     pageNumber.value = 0;
     hasMoreTweets.value = true;
     initialLoad.value = true;
-    displayedTweets.value = [];
+
+    // Show cached tweets instantly while fresh data loads
+    const cached = tweetStore.getCachedUserTweets(nv);
+    displayedTweets.value = cached;
+    pinnedTweets.value = tweetStore.getCachedPinnedTweets(nv);
+    if (cached.length > 0) {
+        console.log(`Showing ${cached.length} cached tweets for ${nv}`);
+    }
+
+    tweetStore.removeUser(nv);  // force reload user data from its host.
     await initialLoadTweets(nv);
     window.scrollTo(0, 0);
 }, { immediate: true });
