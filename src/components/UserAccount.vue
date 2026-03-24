@@ -332,7 +332,7 @@ function goBack() {
                         <div class="fw-bold">{{ user?.followingCount ?? 0 }}</div>
                         <small class="text-muted">{{ $t('profile.following') }}</small>
                     </div>
-                    <div class="stat-item">
+                    <div class="stat-item" @click="router.push(`/author/${user?.mid}`)">
                         <div class="fw-bold">{{ user?.tweetCount ?? 0 }}</div>
                         <small class="text-muted">{{ $t('profile.tweets') }}</small>
                     </div>

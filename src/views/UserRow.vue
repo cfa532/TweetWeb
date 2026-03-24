@@ -17,8 +17,16 @@ const tweetStore = useTweetStore()
 const user = ref<User | null>(null)
 const isLoading = ref(true)
 
-// Fetch user data when component mounts, with a short timeout to avoid blocking
+// Show cached data immediately if available, otherwise load from server
+const cachedUser = tweetStore.users.get(props.userId) ||
+    (tweetStore.loginUser?.mid === props.userId ? tweetStore.loginUser : null)
+if (cachedUser) {
+    user.value = cachedUser
+    isLoading.value = false
+}
+
 onMounted(async () => {
+    if (user.value) return // Already have cached data
     try {
         const userData = await Promise.race([
             tweetStore.getUser(props.userId),
