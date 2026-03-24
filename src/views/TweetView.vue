@@ -542,7 +542,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 /* TweetView-specific styles - scoped to .tweet-container to prevent affecting other views */
 .tweet-container {
   overflow: hidden;
-  max-height: 80vh;
 }
 .quoted-tweet {
   margin: 8px 12px 8px 56px;
