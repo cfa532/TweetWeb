@@ -149,7 +149,7 @@ async function deleteItem() {
 </script>
 
 <template>
-<div style=" width:100%; text-align: right;">
+<div style="width:100%; text-align: right;">
     <a ref="dotBtn" href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="shareMenu" class="menu" hidden>
         <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">

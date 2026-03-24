@@ -406,7 +406,7 @@ watch(userId, async (nv, ov) => {
 
 .account-btn {
     color: grey;
-    padding: 4px 12px 8px 10px;
+    padding: 4px 20px 8px 10px;
     text-decoration: none;
     flex-shrink: 0;
     display: flex;

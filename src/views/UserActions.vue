@@ -84,7 +84,8 @@ function login() {
 .dot {
     font-size: 15px;
     color: grey;
-    padding: 4px 10px 8px 10px;
+    padding: 4px 8px 8px 8px;
+    margin-right: 10px;
     text-decoration: none;
 }
 .action {
