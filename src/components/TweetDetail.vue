@@ -728,7 +728,7 @@ function retryLoad() {
 
 .card {
     width: 100%;
-    margin: 0px 0px 30px 5px;
+    margin: 0px 0px 30px 0px;
 }
 
 .card-header {
