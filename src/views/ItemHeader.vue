@@ -47,7 +47,7 @@ function openDetailView() {
       <div v-else class='rounded-circle loading-avatar'></div>
     </div>
     <!-- User Info -->
-    <div class='user-info flex-grow-1' @click.prevent='openDetailView'>
+    <div class='user-info flex-grow-1' @click.stop.prevent='openDetailView'>
       <!-- Optional Label -->
       <div v-if='isRetweet' class='label text-muted small'>
         {{ $t('tweet.forwardedBy', { name: by }) }}
@@ -65,7 +65,7 @@ function openDetailView() {
     </div>
   </div>
   <div class='tweet-title-container'>
-    <div class='tweet-title' @click.prevent='openDetailView'>
+    <div class='tweet-title' @click.stop.prevent='openDetailView'>
       {{ tweet?.title }}
     </div>
   </div>

@@ -51,7 +51,7 @@ const displayedTweet = computed(() => {
 
 function openDetailView() {
     sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
-    const basePath = `/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`;
+    const basePath = `/tweet/${displayedTweet.value.mid}`;
 
     if (props.isComment) {
         // Use props.parentTweet for correct parent information
