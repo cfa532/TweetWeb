@@ -1940,7 +1940,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!tweet.author?.client) throw new Error('Author client not available for toggle_favorite')
             const client = tweet.author.client
             const originalTimeout = client.timeout
-            client.timeout = 15000
+            client.timeout = 30000
             try {
                 var ret = await client.RunMApp("toggle_favorite", {
                     aid: this.appId, ver: "last", version: "v2", appuserid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
@@ -1959,7 +1959,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!tweet.author?.client) throw new Error('Author client not available for toggle_bookmark')
             const client = tweet.author.client
             const originalTimeout = client.timeout
-            client.timeout = 15000
+            client.timeout = 30000
             try {
                 var ret = await client.RunMApp("toggle_bookmark", {
                     aid: this.appId, ver: "last", version: "v2", userid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
