@@ -983,13 +983,6 @@ export const useTweetStore = defineStore('tweetStore', {
             let user: any = null
             let providerClient: any = null
 
-            // First check if there are any provider IPs available at all
-            const availableIps = await this.getProviderIps(userId)
-            if (availableIps.length === 0) {
-                console.warn(`No provider IPs available for user ${userId} - user may not exist or be unreachable`)
-                return undefined
-            }
-
             for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
                     providerIp = await this.getProviderIp(userId)
