@@ -52,13 +52,13 @@ function login() {
     <a href="#" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="actionMenu" class="action" hidden>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="uploadTweet">{{ $t('common.publish') }}</a>
+            <a href="#" style="text-decoration: none;" @click.stop.prevent="uploadTweet">{{ $t('common.publish') }}</a>
         </div>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="netdisk">{{ $t('userActions.netdisk') }}</a>
+            <a href="#" style="text-decoration: none;" @click.stop.prevent="netdisk">{{ $t('userActions.netdisk') }}</a>
         </div>
         <div class="item">
-            <a href="#" style="text-decoration: none;" @click.stop="login">{{ loginAction }}</a>
+            <a href="#" style="text-decoration: none;" @click.stop.prevent="login">{{ loginAction }}</a>
         </div>
     </div>
 </div>

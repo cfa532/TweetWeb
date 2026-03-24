@@ -744,11 +744,7 @@ function removeFile(f: File) {
 }
 
 function goBack() {
-  if (window.history.length > 1) {
-    router.back()
-  } else {
-    router.push('/')
-  }
+  router.back()
 }
 
 const handleCids = (ids: MimeiFileType[]) => {
