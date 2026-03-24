@@ -11,8 +11,8 @@ const alertStore = useAlertStore()
 const { t } = useI18n()
 const shareMenu = ref()
 const dotBtn = ref()
-const btnDelete = ref()
-const btnEdit = ref()
+const canDelete = ref(false)
+const canEdit = ref(false)
 const showEditor = ref(false)
 const editContent = ref('')
 const props = defineProps({
@@ -37,40 +37,25 @@ function showMenu() {
     shareMenu.value.style.top = rect.bottom + 'px'
     shareMenu.value.style.left = Math.max(0, rect.right - 220) + 'px'
     shareMenu.value.hidden = false
-    
+
     // Show delete button if:
     // 1. User is the tweet/comment author, OR
     // 2. It's a comment and user is the parent tweet author
     if (tweetStore.loginUser && props.tweet) {
         const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
-        
+
         if (isTweetAuthor || isParentTweetAuthor) {
-            btnDelete.value.hidden = false
+            canDelete.value = true
         }
         if (isTweetAuthor) {
-            btnEdit.value.hidden = false
+            canEdit.value = true
         }
     }
-    
-    // toggle right menu on and off
-    setTimeout(() => {
-        window.onclick = function (e: MouseEvent) {
-            // Don't interfere with video player interactions
-            const target = e.target as HTMLElement;
-            if (target && (target.tagName === 'VIDEO' || target.closest('video') ||
-                          target.classList.contains('video-js') || target.closest('.video-js'))) {
-                return; // Let video player handle this click
-            }
-
-            if (shareMenu.value && !shareMenu.value.contains(e.target as Node)) {
-                shareMenu.value.hidden = true
-                setTimeout(()=>{
-                    window.onclick = null
-                }, 100)
-            }
-        }
-    }, 100)
+}
+function hideMenu() {
+    if (shareMenu.value)
+        shareMenu.value.hidden = true
 }
 function copyLink() {
     console.log(window.location.href);
@@ -149,18 +134,18 @@ async function deleteItem() {
 </script>
 
 <template>
-<div style="width:100%; text-align: right;">
-    <a ref="dotBtn" href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
-    <div ref="shareMenu" class="menu" hidden>
+<div style="width:100%; text-align: right;" @mouseenter="showMenu" @mouseleave="hideMenu">
+    <a ref="dotBtn" href="#" class="dot"> &#8226;&#8226;&bull; </a>
+    <div ref="shareMenu" class="menu" hidden @mouseenter="showMenu" @mouseleave="hideMenu">
         <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">
             <span style="text-decoration: none; font-size: smaller;">
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
             </span>
         </div>
-        <div ref="btnEdit" class="item clickable-item" @click.stop="openEditor" hidden style="cursor: pointer;">
+        <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor" style="cursor: pointer;">
             <span style="text-decoration: none;"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
         </div>
-        <div ref="btnDelete" class="item clickable-item" @click.stop="deleteItem" hidden style="cursor: pointer;">
+        <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem" style="cursor: pointer;">
             <span style="text-decoration: none;"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
         </div>
     </div>
@@ -201,6 +186,9 @@ async function deleteItem() {
     border-bottom: 1px dotted;
     padding: 10px;
     text-align: center;
+}
+.item:last-child {
+    border-bottom: none;
 }
 .clickable-item:hover {
     background-color: #e0e0e0;

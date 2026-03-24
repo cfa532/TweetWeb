@@ -21,26 +21,10 @@ onMounted(() => {
 
 function showMenu() {
     actionMenu.value.hidden = false
-
-    // toggle right menu on and off
-    setTimeout(() => {
-        window.onclick = function (e: MouseEvent) {
-            // Don't interfere with video player interactions
-            const target = e.target as HTMLElement;
-            if (target && (target.tagName === 'VIDEO' || target.closest('video') ||
-                          target.classList.contains('video-js') || target.closest('.video-js'))) {
-                return; // Let video player handle this click
-            }
-
-            if (e.target !== actionMenu.value) {
-                if (actionMenu.value)
-                    actionMenu.value.hidden = true
-                setTimeout(()=>{
-                    window.onclick = null
-                }, 100)
-            }
-        }
-    }, 100)
+}
+function hideMenu() {
+    if (actionMenu.value)
+        actionMenu.value.hidden = true
 }
 function netdisk() {
     actionMenu.value.hidden = true
@@ -64,8 +48,8 @@ function login() {
 </script>
 
 <template>
-<div style=" width:100%; position: relative; text-align: right;">
-    <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
+<div style=" width:100%; position: relative; text-align: right;" @mouseenter="showMenu" @mouseleave="hideMenu">
+    <a href="#" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="actionMenu" class="action" hidden>
         <div class="item">
             <a href="#" style="text-decoration: none;" @click.stop="uploadTweet">{{ $t('common.publish') }}</a>
@@ -101,5 +85,8 @@ function login() {
     border-bottom: 1px dotted;
     padding: 10px;
     text-align: center;
+}
+.item:last-child {
+    border-bottom: none;
 }
 </style>
