@@ -177,5 +177,12 @@
   },
   "size": {
     "bytes": "バイト"
+  },
+  "avatar": {
+    "selectPhoto": "写真を選択",
+    "choosePhoto": "写真を選ぶ",
+    "choose": "選択",
+    "uploadSuccess": "アバターが更新されました",
+    "uploadFailed": "アバターのアップロードに失敗しました"
   }
 }

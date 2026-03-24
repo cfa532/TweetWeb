@@ -2434,6 +2434,117 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Uploads avatar image to IPFS and sets it as user avatar (matches iOS ProfileEditView.swift)
+         * @param blob The cropped avatar image blob
+         * @returns The confirmed avatar MimeiId
+         */
+        async setUserAvatar(blob: Blob): Promise<string> {
+            const user = this.loginUser
+            if (!user) throw new Error("Not logged in")
+
+            const providerIp = user.providerIp
+            if (!providerIp) throw new Error("Provider IP not available")
+
+            // Convert blob to ArrayBuffer and upload via upload_ipfs
+            const arrayBuffer = await blob.arrayBuffer()
+            const uint8Data = new Uint8Array(arrayBuffer)
+            const chunkSize = 1024 * 1024
+            let offset = 0
+            let fsid: string | null = null
+
+            const uploadClient = await this.lapi.connectionPool.getConnection(providerIp)
+
+            try {
+                uploadClient.timeout = 60000
+
+                while (offset < uint8Data.length) {
+                    const end = Math.min(offset + chunkSize, uint8Data.length)
+                    const chunk = uint8Data.slice(offset, end)
+
+                    const request: any = {
+                        aid: this.appId,
+                        ver: 'last',
+                        version: 'v2',
+                        offset: offset
+                    }
+                    if (fsid) request.fsid = fsid
+
+                    const response = await uploadClient.RunMApp('upload_ipfs', request, [chunk])
+
+                    if (response && typeof response === 'object') {
+                        if (response.success === false) throw new Error(response.message || 'Upload failed')
+                        if (response.success === true && response.data) {
+                            fsid = response.data
+                            offset = end
+                        } else {
+                            throw new Error(`Invalid response: ${JSON.stringify(response)}`)
+                        }
+                    } else if (typeof response === 'string') {
+                        fsid = response
+                        offset = end
+                    } else {
+                        throw new Error(`Unexpected response type: ${typeof response}`)
+                    }
+                }
+
+                if (!fsid) throw new Error('No file ID returned')
+
+                // Finalize upload
+                const finalResponse = await uploadClient.RunMApp('upload_ipfs', {
+                    aid: this.appId,
+                    ver: 'last',
+                    version: 'v2',
+                    offset: offset,
+                    fsid: fsid,
+                    finished: 'true'
+                })
+
+                let cid: string | null = null
+                if (finalResponse && typeof finalResponse === 'object') {
+                    if (finalResponse.success === true && finalResponse.data) cid = finalResponse.data
+                    else if (finalResponse.cid) cid = finalResponse.cid
+                } else if (typeof finalResponse === 'string') {
+                    cid = finalResponse
+                }
+
+                if (!cid) throw new Error('No CID returned from finalization')
+
+                // Set user avatar on server (matches iOS HproseInstance.setUserAvatar)
+                const originalTimeout = user.client.timeout
+                user.client.timeout = 15000
+                let confirmedAvatar: string
+                try {
+                    const ret = await user.client.RunMApp("set_user_avatar", {
+                        aid: this.appId,
+                        ver: "last",
+                        version: "v2",
+                        userid: user.mid,
+                        avatar: cid
+                    })
+
+                    if (ret && typeof ret === 'object') {
+                        confirmedAvatar = ret.data || ret.avatar || cid
+                    } else if (typeof ret === 'string') {
+                        confirmedAvatar = ret
+                    } else {
+                        confirmedAvatar = cid
+                    }
+                } finally {
+                    user.client.timeout = originalTimeout
+                }
+
+                // Update local state
+                user.avatar = this.getMediaUrl(confirmedAvatar, `http://${providerIp}`)
+                this._user = user
+                sessionStorage.setItem("user", JSON.stringify(user))
+
+                return confirmedAvatar
+            } finally {
+                this.lapi.connectionPool.releaseConnection(providerIp, uploadClient)
+            }
+        },
+
+        /**
          * Fetches the backend domain from the server via check_upgrade API.
          * Returns the domain without protocol prefix (matching iOS backendDomainToShare).
          */

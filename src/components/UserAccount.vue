@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore, useAlertStore } from '@/stores';
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
+import AvatarCropper from '@/views/AvatarCropper.vue';
 
 const { t } = useI18n();
 
@@ -19,6 +20,8 @@ const isLoading = ref(false);
 const errorMessage = ref<string | null>(null);
 const showDeleteConfirm = ref(false);
 const showLogoutConfirm = ref(false);
+const showAvatarCropper = ref(false);
+const isUploadingAvatar = ref(false);
 
 // --- Login fields ---
 const loginUsername = ref('');
@@ -214,6 +217,19 @@ async function handleDeleteAccount() {
     }
 }
 
+async function handleAvatarCrop(blob: Blob) {
+    showAvatarCropper.value = false;
+    isUploadingAvatar.value = true;
+    try {
+        await tweetStore.setUserAvatar(blob);
+        alertStore.success(t('avatar.uploadSuccess'));
+    } catch (err: any) {
+        alertStore.error(err?.message || t('avatar.uploadFailed'));
+    } finally {
+        isUploadingAvatar.value = false;
+    }
+}
+
 function goBack() {
     router.back();
 }
@@ -367,8 +383,20 @@ function goBack() {
             <!-- EDIT PROFILE (matches iOS ProfileEditView.swift) -->
             <form v-if="activeView === 'edit'" @submit.prevent="handleUpdateProfile">
                 <div class="text-center mb-3">
-                    <img :src="user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                        alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
+                    <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
+                        <img :src="user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                            alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
+                        <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
+                            <span class="spinner-border spinner-border-sm text-white"></span>
+                        </div>
+                        <div class="avatar-camera-badge">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                fill="white" stroke="none">
+                                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                <circle cx="12" cy="13" r="4"/>
+                            </svg>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="mb-3">
@@ -451,6 +479,9 @@ function goBack() {
                 </div>
             </div>
         </div>
+
+        <!-- Avatar Cropper -->
+        <AvatarCropper :visible="showAvatarCropper" @crop="handleAvatarCrop" @cancel="showAvatarCropper = false" />
     </div>
 </template>
 
@@ -492,6 +523,38 @@ function goBack() {
     width: 80px;
     height: 80px;
     object-fit: cover;
+}
+
+.avatar-edit-wrapper {
+    position: relative;
+    display: inline-block;
+    cursor: pointer;
+}
+
+.avatar-upload-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.avatar-camera-badge {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #007AFF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .bio-section {

@@ -177,5 +177,12 @@
   },
   "size": {
     "bytes": "Bytes"
+  },
+  "avatar": {
+    "selectPhoto": "Select a photo",
+    "choosePhoto": "Choose Photo",
+    "choose": "Choose",
+    "uploadSuccess": "Avatar updated successfully",
+    "uploadFailed": "Failed to upload avatar"
   }
 }

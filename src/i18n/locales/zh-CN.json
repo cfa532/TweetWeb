@@ -177,5 +177,12 @@
   },
   "size": {
     "bytes": "字节"
+  },
+  "avatar": {
+    "selectPhoto": "选择照片",
+    "choosePhoto": "选择照片",
+    "choose": "确定",
+    "uploadSuccess": "头像更新成功",
+    "uploadFailed": "头像上传失败"
   }
 }
