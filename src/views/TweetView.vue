@@ -3,7 +3,7 @@ import { onMounted, ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { MediaView, ItemHeader } from '@/views';
+import { MediaView, ItemHeader, TweetActionBar } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
 
@@ -51,7 +51,8 @@ const displayedTweet = computed(() => {
 
 function openDetailView() {
     sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
-    const basePath = `/tweet/${displayedTweet.value.mid}`;
+    const authorId = displayedTweet.value.author?.mid || displayedTweet.value.authorId;
+    const basePath = `/tweet/${displayedTweet.value.mid}${authorId ? '/' + authorId : ''}`;
 
     if (props.isComment) {
         // Use props.parentTweet for correct parent information
@@ -533,6 +534,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         <TweetView :tweet="originalTweet" :is-quoted="true" />
       </blockquote>
     </div>
+    <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="(t) => currentTweet = t" />
   </div>
 </template>
 

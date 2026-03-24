@@ -84,7 +84,14 @@
     "loadingRetry": "ツイートを読み込み中、6秒後に再試行...",
     "failedLoadUser": "ユーザーの読み込みに失敗しました",
     "noMoreUsers": "これ以上ユーザーはいません",
-    "noUsersFound": "ユーザーが見つかりません"
+    "noUsersFound": "ユーザーが見つかりません",
+    "comment": "コメント",
+    "retweet": "リツイート",
+    "like": "いいね",
+    "bookmark": "ブックマーク",
+    "share": "共有",
+    "copyLink": "リンクをコピー",
+    "linkCopied": "リンクをコピーしました!"
   },
   "time": {
     "secondsAgo": "{n}秒前",

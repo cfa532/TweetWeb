@@ -84,7 +84,14 @@
     "loadingRetry": "加载推文中，6秒后重试...",
     "failedLoadUser": "加载用户失败",
     "noMoreUsers": "没有更多用户了",
-    "noUsersFound": "未找到用户"
+    "noUsersFound": "未找到用户",
+    "comment": "评论",
+    "retweet": "转发",
+    "like": "喜欢",
+    "bookmark": "收藏",
+    "share": "分享",
+    "copyLink": "复制链接",
+    "linkCopied": "链接已复制!"
   },
   "time": {
     "secondsAgo": "{n}秒前",

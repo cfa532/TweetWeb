@@ -84,7 +84,14 @@
     "loadingRetry": "Loading tweet, retrying in 6s...",
     "failedLoadUser": "Failed to load user",
     "noMoreUsers": "No more users to load",
-    "noUsersFound": "No users found"
+    "noUsersFound": "No users found",
+    "comment": "Comment",
+    "retweet": "Retweet",
+    "like": "Like",
+    "bookmark": "Bookmark",
+    "share": "Share",
+    "copyLink": "Copy link",
+    "linkCopied": "Link copied!"
   },
   "time": {
     "secondsAgo": "{n} seconds ago",

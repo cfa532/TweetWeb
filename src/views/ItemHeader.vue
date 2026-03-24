@@ -34,7 +34,8 @@ function openDetailView() {
      * Try to open a comment as Tweet detail page. The comment is stored with the tweet,
      * so it cannot be find by the authorId of the comment. Have to seach for the commentId (tweetId)
     */
-    router.push(`/tweet/${props.tweet?.mid}`);
+    const authorId = props.tweet?.author?.mid || props.tweet?.authorId;
+    router.push(`/tweet/${props.tweet?.mid}${authorId ? '/' + authorId : ''}`);
 };
 
 </script>

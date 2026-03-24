@@ -3,7 +3,7 @@ import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
-import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
+import { MediaView, DetailHeader, TweetView, QRCoder, TweetActionBar } from "@/views";
 import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
@@ -282,25 +282,6 @@ watch(route, () => {
 function linkify(text: string) {
     const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
-}
-
-function addComment(tweetId: MimeiId) {
-    router.push({ name: 'post', params: { tweetId: tweetId } })
-}
-
-async function toggleLike(t: Tweet) {
-    if (!tweetStore.loginUser) {
-        router.push({ name: 'login' })
-        return
-    }
-    tweet.value = await tweetStore.toggleFavorite(t.mid)
-}
-async function toggleBookmark(t: Tweet) {
-    if (!tweetStore.loginUser) {
-        router.push({ name: 'login' })
-        return
-    }
-    tweet.value  = await tweetStore.toggleBookmark(t.mid)
 }
 
 // Download prompt functions
@@ -637,22 +618,7 @@ function retryLoad() {
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
-            <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleLike(originTweet)" src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ originTweet.likeCount > 0 ? originTweet.likeCount : null }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleBookmark(originTweet)" src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ originTweet.bookmarkCount > 0 ? originTweet.bookmarkCount : null
-                        }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="addComment(originTweet.mid)" src='/src/ic_notice.png' alt='Comment' class='icon' />
-                    <span class='icon-number'>{{ originTweet.commentCount > 0 ? originTweet.commentCount : null
-                        }}</span>
-                </div>
-            </div>
+            <TweetActionBar :tweet="originTweet" @updated="(t) => originTweet = t" />
         </div>
         <div v-else class="card-body">
             <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
@@ -680,20 +646,7 @@ function retryLoad() {
                 <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
-            <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleLike(tweet)" src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleBookmark(tweet)" src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="addComment(tweet.mid)" src='/src/ic_notice.png' alt='Comment' class='icon' />
-                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
-                </div>
-            </div>
+            <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
         </div>
     </div>
 
@@ -894,58 +847,6 @@ function retryLoad() {
 .rounded-circle {
     width: 40px;
     height: 40px;
-}
-
-.icon-item {
-    position: relative;
-    /* Establishes a positioning context for the number */
-    display: flex;
-    flex-direction: column;
-    /* Stacks the icon and number vertically */
-    align-items: center;
-}
-
-.icon-number {
-    position: absolute;
-    /* Positions the number on top of the icon */
-    bottom: -1px;
-    /* Positions the number slightly below the icon */
-    right: -15px;
-    /* Aligns the number to the right edge of the icon */
-    font-size: 15px;
-    /* Adjust the font size for better visibility */
-    color: rgba(0, 0, 0, 0.78);
-    /* Change the color to ensure visibility */
-}
-
-.icon-row {
-    display: flex;
-    justify-content: space-around;
-}
-
-.icon {
-    width: 18px;
-    /* Set a uniform width for icons */
-    height: 18px;
-    /* Set a uniform height for icons */
-    transition: transform 0.3s;
-    cursor: pointer;
-}
-
-.icon:hover {
-    transform: scale(1.1);
-    /* Slightly enlarge the icon on hover */
-}
-
-.icon-item span {
-    margin-top: 5px;
-    /* Adds space between the icon and the number */
-    color: rgba(0, 0, 0, 0.775);
-    /* Change the color to ensure visibility */
-    font-weight: bold;
-    /* Makes the number stand out */
-    pointer-events: none;
-    /* Ensures the number doesn't interfere with icon hover */
 }
 
 /* App Download Prompt Styles */
