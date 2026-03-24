@@ -54,8 +54,18 @@ async function onLike() {
     router.push({ name: 'login' });
     return;
   }
-  const updated = await tweetStore.toggleFavorite(props.tweet.mid);
-  if (updated) emit('updated', updated);
+  const original = { ...props.tweet };
+  const wasLiked = (original.likeCount ?? 0) > 0;
+  // Optimistic update: show result immediately
+  emit('updated', { ...original, likeCount: (original.likeCount ?? 0) + (wasLiked ? -1 : 1) });
+  try {
+    const serverResult = await tweetStore.toggleFavorite(original);
+    emit('updated', serverResult);
+  } catch (e) {
+    // Rollback on failure
+    emit('updated', original);
+    console.error('[onLike] failed:', e);
+  }
 }
 
 async function onBookmark() {
@@ -63,8 +73,16 @@ async function onBookmark() {
     router.push({ name: 'login' });
     return;
   }
-  const updated = await tweetStore.toggleBookmark(props.tweet.mid);
-  if (updated) emit('updated', updated);
+  const original = { ...props.tweet };
+  const wasBookmarked = (original.bookmarkCount ?? 0) > 0;
+  emit('updated', { ...original, bookmarkCount: (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1) });
+  try {
+    const serverResult = await tweetStore.toggleBookmark(original);
+    emit('updated', serverResult);
+  } catch (e) {
+    emit('updated', original);
+    console.error('[onBookmark] failed:', e);
+  }
 }
 
 function onShare() {
@@ -90,7 +108,7 @@ async function copyLink() {
   setTimeout(() => {
     copied.value = false;
     showShareMenu.value = false;
-  }, 1500);
+  }, 15000);
 }
 
 function closeShareMenu() {

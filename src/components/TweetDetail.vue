@@ -99,6 +99,16 @@ async function loadDetail(retryCount = 0) {
                         console.warn('[TweetDetail] Failed to load author:', error)
                     })
                 }
+                // Refresh tweet data from server in background
+                tweetStore.getTweet(tweetId.value, authorId.value, true).then(freshTweet => {
+                    if (freshTweet && tweet.value) {
+                        const author = tweet.value.author
+                        tweet.value = { ...freshTweet, author: freshTweet.author || author }
+                        sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
+                    }
+                }).catch(error => {
+                    console.warn('[TweetDetail] Background refresh failed:', error)
+                })
             } else {
                 console.log('[loadDetail] Stored tweet doesn\'t match route, fetching new tweet');
                 // Stored tweet doesn't match current route, fetch new one

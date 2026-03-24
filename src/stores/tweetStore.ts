@@ -105,6 +105,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.comments = []     // load comments only on detail page
                 tweet.author = author
                 tweet.provider = author.providerIp
+                // Map server field name to web field name
+                if (tweet.likeCount === undefined && (tweet as any).favoriteCount !== undefined) {
+                    tweet.likeCount = (tweet as any).favoriteCount
+                }
                 
                 if (tweet.attachments) {
                     tweet.attachments = tweet.attachments.map(e => {
@@ -887,7 +891,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 originalTweetId: tweetData.originalTweetId,
                 originalAuthorId: tweetData.originalAuthorId,
                 provider: providerIp,
-                likeCount: tweetData.likeCount,
+                likeCount: tweetData.favoriteCount ?? tweetData.likeCount,
                 bookmarkCount: tweetData.bookmarkCount,
                 commentCount: tweetData.commentCount,
             }
@@ -910,7 +914,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     originalTweetId: originalTweetData.originalTweetId,
                     originalAuthorId: originalTweetData.originalAuthorId,
                     provider: providerIp,
-                    likeCount: originalTweetData.likeCount,
+                    likeCount: originalTweetData.favoriteCount ?? originalTweetData.likeCount,
                     bookmarkCount: originalTweetData.bookmarkCount,
                     commentCount: originalTweetData.commentCount,
                 }
@@ -1932,28 +1936,66 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweetId The ID of the tweet to toggle like for
          * @returns The updated tweet object
          */
-        async toggleFavorite(tweetId: MimeiId) {
-            var ret = await this.loginUser?.client.RunMApp("toggle_favorite", {
-                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
-            })
-            var tweet = this.tweets.find(e => e.mid == tweetId)
-            tweet!.likeCount = ret["count"]
-            localStorage.setItem(tweetId, JSON.stringify(tweet))
-            return tweet
+        async toggleFavorite(tweet: Tweet) {
+            if (!tweet.author?.client) throw new Error('Author client not available for toggle_favorite')
+            const client = tweet.author.client
+            const originalTimeout = client.timeout
+            client.timeout = 15000
+            try {
+                var ret = await client.RunMApp("toggle_favorite", {
+                    aid: this.appId, ver: "last", version: "v2", appuserid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
+                })
+                return this._applyServerTweet(tweet, ret)
+            } finally {
+                client!.timeout = originalTimeout
+            }
         },
         /**
          * Toggles the bookmark status of a tweet
-         * @param tweetId The ID of the tweet to toggle bookmark for
+         * @param tweet The tweet to toggle bookmark for
          * @returns The updated tweet object
          */
-        async toggleBookmark(tweetId: MimeiId) {
-            var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
-                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
-            })
-            var tweet = this.tweets.find(e => e.mid == tweetId)
-            tweet!.bookmarkCount = ret["count"]
-            localStorage.setItem(tweetId, JSON.stringify(tweet))
-            return tweet
+        async toggleBookmark(tweet: Tweet) {
+            if (!tweet.author?.client) throw new Error('Author client not available for toggle_bookmark')
+            const client = tweet.author.client
+            const originalTimeout = client.timeout
+            client.timeout = 15000
+            try {
+                var ret = await client.RunMApp("toggle_bookmark", {
+                    aid: this.appId, ver: "last", version: "v2", userid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
+                })
+                return this._applyServerTweet(tweet, ret)
+            } finally {
+                client!.timeout = originalTimeout
+            }
+        },
+        _applyServerTweet(tweet: Tweet, ret: any): Tweet {
+            console.log('[_applyServerTweet] ret:', JSON.stringify(ret))
+            // Unwrap v2 response: if ret has data field, use it
+            const response = (ret?.success && ret.data) ? ret.data : ret
+            if (response?.success && response.tweet) {
+                const s = response.tweet
+                const updated = { ...tweet,
+                    likeCount: s.favoriteCount ?? tweet.likeCount,
+                    bookmarkCount: s.bookmarkCount ?? tweet.bookmarkCount,
+                    commentCount: s.commentCount ?? tweet.commentCount,
+                    retweetCount: s.retweetCount ?? tweet.retweetCount,
+                }
+                const idx = this.tweets.findIndex(e => e.mid == tweet.mid)
+                if (idx >= 0) {
+                    Object.assign(this.tweets[idx], updated)
+                }
+                localStorage.setItem(tweet.mid, JSON.stringify(updated))
+
+                // Update login user from server response (like Android's appUser.from)
+                if (response.user && this.loginUser) {
+                    Object.assign(this.loginUser, response.user)
+                    sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+                }
+
+                return updated
+            }
+            return { ...tweet }
         },
 
         /**

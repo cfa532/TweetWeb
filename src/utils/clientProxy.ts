@@ -59,10 +59,7 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
             client = await connectionPool.getConnection(ip);
 
             // CRITICAL: Apply custom timeout to the real client before calling method
-            if (customTimeout !== 10000) {
-              console.log(`[POOLED-CLIENT] Applying timeout ${customTimeout}ms to client for ${ip}`);
-              (client as any).timeout = customTimeout;
-            }
+            (client as any).timeout = customTimeout;
 
             // Get the method from the actual client
             const method = (client as any)[prop];
