@@ -131,7 +131,6 @@ onUnmounted(() => {
 async function loadTweetsWithMinimum() {
     if (isLoading.value) return;
 
-    isLoading.value = true;
     pageNumber.value = 0;
     hasMoreTweets.value = true;
 
@@ -140,7 +139,6 @@ async function loadTweetsWithMinimum() {
     } catch (error) {
         console.error('Error in loadTweetsWithMinimum:', error);
     } finally {
-        isLoading.value = false;
         initialLoad.value = false;
     }
 }
