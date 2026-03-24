@@ -186,7 +186,7 @@ async function deleteItem() {
 .dot {
     font-size: 15px;
     color: grey;
-    padding: 4px 10px 8px 10px;
+    padding: 4px 0px 8px 10px;
     text-decoration: none;
 }
 .menu {

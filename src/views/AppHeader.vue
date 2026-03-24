@@ -83,7 +83,7 @@ watch(userId, async (nv, ov) => {
 </script>
 
 <template>
-    <div class="row mb-1">
+    <div class="mb-1">
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
@@ -406,7 +406,7 @@ watch(userId, async (nv, ov) => {
 
 .account-btn {
     color: grey;
-    padding: 4px 10px 8px 10px;
+    padding: 4px 12px 8px 10px;
     text-decoration: none;
     flex-shrink: 0;
     display: flex;
@@ -414,7 +414,18 @@ watch(userId, async (nv, ov) => {
 }
 
 .account-btn:hover {
-    color: #0d6efd;
+    color: grey;
+    background-color: transparent !important;
+}
+
+.account-btn img,
+.account-btn svg {
+    transition: transform 0.2s ease;
+}
+
+.account-btn:hover img,
+.account-btn:hover svg {
+    transform: scale(1.25);
 }
 
 .account-avatar {
