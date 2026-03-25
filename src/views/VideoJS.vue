@@ -4,7 +4,7 @@ import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
-import { registerVideo, unregisterVideo, requestPlay } from '@/composables/useVideoPlaybackCoordinator';
+import { registerVideo, unregisterVideo, requestPlay, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -238,7 +238,17 @@ onMounted(() => {
         
         // Register with video playback coordinator for single-video-at-a-time in tweet list
         if (isInTweetList.value) {
-          registerVideo(video.value, vdiv.value);
+          const onPrimaryChange: PrimaryChangeCallback = (isPrimary) => {
+            if (!hls) return;
+            if (isPrimary) {
+              // Resume loading so the active video gets full bandwidth
+              hls.startLoad(-1);
+            } else {
+              // Stop loading fragments to free bandwidth for the primary video
+              hls.stopLoad();
+            }
+          };
+          registerVideo(video.value, vdiv.value, onPrimaryChange);
         }
       }
   

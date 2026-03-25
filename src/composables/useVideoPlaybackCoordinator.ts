@@ -8,6 +8,9 @@
  *  - Debounces selection during scroll to avoid rapid switching.
  */
 
+/** Callback invoked when a video's primary status changes. */
+export type PrimaryChangeCallback = (isPrimary: boolean) => void
+
 interface VideoEntry {
   /** The <video> element */
   el: HTMLVideoElement
@@ -17,6 +20,8 @@ interface VideoEntry {
   ratio: number
   /** Last known boundingClientRect.top */
   top: number
+  /** Optional callback when primary status changes */
+  onPrimaryChange?: PrimaryChangeCallback
 }
 
 const registry = new Map<HTMLVideoElement, VideoEntry>()
@@ -27,8 +32,8 @@ const VISIBILITY_THRESHOLD = 0.5
 const DEBOUNCE_MS = 200
 
 /** Register a video with the coordinator. Call from onMounted. */
-export function registerVideo(el: HTMLVideoElement, wrapper: HTMLElement) {
-  registry.set(el, { el, wrapper, ratio: 0, top: Infinity })
+export function registerVideo(el: HTMLVideoElement, wrapper: HTMLElement, onPrimaryChange?: PrimaryChangeCallback) {
+  registry.set(el, { el, wrapper, ratio: 0, top: Infinity, onPrimaryChange })
   setupObserver(el, wrapper)
 }
 
@@ -95,9 +100,13 @@ function selectPrimary() {
   if (best) {
     setPrimary(best.el)
   } else {
-    // No video sufficiently visible – pause current primary
-    if (primaryVideo && !primaryVideo.paused) {
-      primaryVideo.pause()
+    // No video sufficiently visible – pause current primary and stop all loading
+    if (primaryVideo) {
+      if (!primaryVideo.paused) {
+        primaryVideo.pause()
+      }
+      const entry = registry.get(primaryVideo)
+      entry?.onPrimaryChange?.(false)
     }
     primaryVideo = null
   }
@@ -106,14 +115,21 @@ function selectPrimary() {
 function setPrimary(el: HTMLVideoElement) {
   if (primaryVideo === el) return
 
-  // Pause old primary and every other playing video
+  // Pause old primary and every other playing video; notify them they lost primary
   for (const entry of registry.values()) {
-    if (entry.el !== el && !entry.el.paused) {
-      entry.el.pause()
+    if (entry.el !== el) {
+      if (!entry.el.paused) {
+        entry.el.pause()
+      }
+      entry.onPrimaryChange?.(false)
     }
   }
 
   primaryVideo = el
+
+  // Notify the new primary
+  const newEntry = registry.get(el)
+  newEntry?.onPrimaryChange?.(true)
 
   // Start the new primary (muted for autoplay compatibility)
   if (el.paused) {
