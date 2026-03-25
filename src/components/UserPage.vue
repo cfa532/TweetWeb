@@ -47,12 +47,81 @@ async function initialLoadTweets(authorId: MimeiId) {
     }
 }
 
+async function loadPinnedTweetsForUser(authorId: MimeiId) {
+    try {
+        const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
+        let pinnedHasTimedOut = false;
+        let timeoutId: number | null = null;
+
+        const pinnedPromise = tweetStore.loadPinnedTweets(authorId).then(result => {
+            if (timeoutId && !pinnedHasTimedOut) {
+                clearTimeout(timeoutId);
+            }
+            return result;
+        });
+
+        const pinnedTimeout = new Promise<Tweet[]>((_, reject) => {
+            timeoutId = window.setTimeout(() => {
+                pinnedHasTimedOut = true;
+                if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+                    console.warn(`Pinned tweets timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
+                    sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
+                    window.location.reload();
+                } else {
+                    console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage pinned tweets, stopping`);
+                    isLoading.value = false;
+                    sessionStorage.removeItem('userPageRefreshCount');
+                }
+                reject(new Error('Pinned tweets timeout'));
+            }, LOAD_TIMEOUT_MS);
+        });
+
+        const freshPinned = await Promise.race([pinnedPromise, pinnedTimeout]);
+        if (freshPinned?.length) {
+            freshPinned.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
+
+            // Merge fresh data into existing cached entries so Vue keeps the same
+            // component instances (and running videos) instead of re-creating them.
+            const existingMap = new Map(pinnedTweets.value.map(t => [t.mid, t]));
+            const freshIds = new Set(freshPinned.map((t: Tweet) => t.mid));
+
+            // Remove pinned tweets that are no longer pinned
+            pinnedTweets.value = pinnedTweets.value.filter(t => freshIds.has(t.mid));
+
+            // Update existing tweets in-place with scalar changes; append truly new ones
+            for (const ft of freshPinned) {
+                const existing = existingMap.get(ft.mid);
+                if (existing) {
+                    // Update scalar fields only — preserve media/author refs to avoid video restart
+                    for (const key of ['content', 'likeCount', 'commentCount', 'retweetCount', 'bookmarkCount', 'timestamp', 'isPrivate', 'downloadable'] as (keyof Tweet)[]) {
+                        if (existing[key] !== ft[key]) {
+                            (existing as any)[key] = ft[key];
+                        }
+                    }
+                } else {
+                    pinnedTweets.value.push(ft);
+                }
+            }
+
+            tweetStore.cachePinnedTweets(authorId, pinnedTweets.value);
+        }
+        sessionStorage.removeItem('userPageRefreshCount');
+    } catch (error) {
+        console.error('Unexpected error loading pinned tweets:', error);
+        pinnedTweets.value = [];
+    }
+}
+
 async function loadTweetsWithMinimum(authorId: MimeiId) {
     if (isLoading.value) return; // Prevent multiple loads
     
     isLoading.value = true;
 
     let currentTimeoutId: number | null = null;
+
+    // Start loading pinned tweets in parallel with regular tweets so the pinned
+    // video (shown first on the page) gets priority bandwidth.
+    const pinnedPromiseOuter = loadPinnedTweetsForUser(authorId);
 
     try {
         // Keep loading more pages until we have at least 6 tweets or no more tweets
@@ -144,54 +213,21 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             console.warn('Initial load completed with no tweets loaded');
         }
         
-        // Load pinned tweets (with 6-second timeout, refresh on failure - max 5 refreshes)
-        try {
-            const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
-            let pinnedHasTimedOut = false;
-            const pinnedPromise = tweetStore.loadPinnedTweets(authorId).then(result => {
-                // Clear timeout immediately when load succeeds
-                if (currentTimeoutId && !pinnedHasTimedOut) {
-                    clearTimeout(currentTimeoutId);
-                }
-                return result;
-            });
-
-            const pinnedTimeout = new Promise<Tweet[]>((_, reject) => {
-                currentTimeoutId = window.setTimeout(() => {
-                    pinnedHasTimedOut = true;
-                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-                        console.warn(`Pinned tweets timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
-                        sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
-                        window.location.reload();
-                    } else {
-                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage pinned tweets, stopping`);
-                        isLoading.value = false;
-                        sessionStorage.removeItem('userPageRefreshCount');
-                    }
-                    reject(new Error('Pinned tweets timeout'));
-                }, LOAD_TIMEOUT_MS);
-            });
-
-            pinnedTweets.value = await Promise.race([pinnedPromise, pinnedTimeout]);
-            pinnedTweets.value?.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
-            if (pinnedTweets.value?.length) {
-                tweetStore.cachePinnedTweets(authorId, pinnedTweets.value);
-            }
-            sessionStorage.removeItem('userPageRefreshCount'); // Clear on success
-        } catch (error) {
-            // Timeout already handled the refresh
-            console.error('Unexpected error loading pinned tweets:', error);
-            pinnedTweets.value = [];
-        }
+        // Await the pinned tweets that were kicked off in parallel
+        await pinnedPromiseOuter;
     } catch (error) {
         console.error('Error in loadTweetsWithMinimum:', error);
     } finally {
         if (currentTimeoutId) {
             clearTimeout(currentTimeoutId);
         }
-        // Reconcile: remove cached tweets no longer on server, update changed ones, add new ones
+        // Reconcile: remove cached tweets no longer on server, add new ones
         const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
-        displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
+        const filtered = displayedTweets.value.filter(t => storeIds.has(t.mid));
+        // Only replace array if items were actually removed, to avoid unnecessary re-render
+        if (filtered.length !== displayedTweets.value.length) {
+            displayedTweets.value = filtered;
+        }
         appendNewToDisplayed();
         isLoading.value = false;
         initialLoad.value = false;
@@ -246,11 +282,20 @@ const pendingCount = ref(0);
 function appendNewToDisplayed() {
     const displayedMap = new Map(displayedTweets.value.map(t => [t.mid, t]));
 
-    // Update existing tweets in-place if data changed (e.g. likeCount, content)
+    // Update only scalar fields that may change (e.g. likeCount, content)
+    // Avoid replacing object/array references (media, author) to prevent video re-renders
+    const scalarKeys: (keyof Tweet)[] = [
+        'content', 'likeCount', 'commentCount', 'retweetCount',
+        'bookmarkCount', 'timestamp', 'isPrivate', 'downloadable',
+    ];
     for (const storeTweet of tweetStore.tweets) {
         const existing = displayedMap.get(storeTweet.mid);
         if (existing) {
-            Object.assign(existing, storeTweet);
+            for (const key of scalarKeys) {
+                if (existing[key] !== storeTweet[key]) {
+                    (existing as any)[key] = storeTweet[key];
+                }
+            }
         }
     }
 

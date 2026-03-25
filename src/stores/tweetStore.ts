@@ -19,7 +19,8 @@ export const useTweetStore = defineStore('tweetStore', {
         installApk: import.meta.env.VITE_APP_PKG,
         _user: null as User | null,      // login user data
         healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(), // Cache health check results
-        healthCheckInProgress: new Map<string, Promise<boolean>>() // Track ongoing health checks
+        healthCheckInProgress: new Map<string, Promise<boolean>>(), // Track ongoing health checks
+        _pendingUserFetches: new Map<string, Promise<User | undefined>>() // Deduplicate concurrent getUser calls
     }),
     getters: {
         /**
@@ -468,26 +469,20 @@ export const useTweetStore = defineStore('tweetStore', {
                             // Update existing tweet with pin timestamp info
                             tweetsWithPinTime.push({tweet: existingTweet, pinTimestamp})
                         } else {
-                            // Ensure the tweet has a proper author object
-                            if (!tweetObject.author || typeof tweetObject.author !== 'object') {
-                                try {
-                                    // Try to get the author from the tweet's authorId
-                                    const author = await this.getUser(tweetObject.authorId)
-                                    if (author) {
-                                        tweetObject.author = author
-                                    } else {
-                                        console.warn("Could not fetch author for pinned tweet:", tweetObject.mid)
-                                        continue
-                                    }
-                                } catch (error) {
-                                    console.error("Error fetching author for pinned tweet:", tweetObject.mid, error)
-                                    continue
-                                }
+                            // Process through addTweetToStore so media URLs are constructed
+                            try {
+                                await this.addTweetToStore(tweetObject)
+                            } catch (error) {
+                                console.error("Error adding pinned tweet to store:", tweetObject.mid, error)
+                                continue
                             }
-                            
-                            // Add new tweet to cache and pinned list
-                            this.tweets.push(tweetObject)
-                            tweetsWithPinTime.push({tweet: tweetObject, pinTimestamp})
+                            // addTweetToStore may skip the tweet (e.g. missing author)
+                            const stored = this.tweets.find(t => t.mid === tweetObject.mid)
+                            if (!stored) {
+                                console.warn("Pinned tweet was not added to store:", tweetObject.mid)
+                                continue
+                            }
+                            tweetsWithPinTime.push({tweet: stored, pinTimestamp})
                             console.log("Successfully added pinned tweet to cache:", tweetObject.mid)
                         }
                     } catch (error) {
@@ -982,6 +977,22 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
+            // Deduplicate concurrent fetches for the same user
+            if (!forceRefresh) {
+                const pending = this._pendingUserFetches.get(userId)
+                if (pending) return pending
+            }
+
+            const fetchPromise = this._fetchUser(userId, forceRefresh)
+            this._pendingUserFetches.set(userId, fetchPromise)
+            try {
+                return await fetchPromise
+            } finally {
+                this._pendingUserFetches.delete(userId)
+            }
+        },
+
+        async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {
             // Try sessionStorage cache for faster initial display
             if (!forceRefresh) {
                 const cached = sessionStorage.getItem(userId)
