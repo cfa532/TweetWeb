@@ -77,70 +77,17 @@ async function loadDetail(retryCount = 0) {
     }
 
     try {
-        let s = sessionStorage.getItem("tweetDetail")
-        console.log('[loadDetail] sessionStorage data exists:', !!s);
-        if (s) {
-            const storedTweet = JSON.parse(s)
-            console.log('[loadDetail] storedTweet.mid:', storedTweet.mid, 'tweetId.value:', tweetId.value);
-            console.log('[loadDetail] storedTweet.author?.mid:', storedTweet.author?.mid, 'authorId.value:', authorId.value);
-            // Only use sessionStorage if the stored tweet matches the current route
-            if (storedTweet.mid === tweetId.value && (!authorId.value || storedTweet.author?.mid === authorId.value)) {
-                console.log('[loadDetail] Using cached tweet data');
-                tweet.value = storedTweet
-                // Render tweet immediately without waiting for author
-                await showTweet(timeoutId)
-                // Load author asynchronously (only if not already loaded)
-                if (!tweet.value.author && tweet.value.authorId) {
-                    tweetStore.getUser(tweet.value.authorId).then(user => {
-                        if (user && tweet.value) {
-                            tweet.value.author = user
-                        }
-                    }).catch(error => {
-                        console.warn('[TweetDetail] Failed to load author:', error)
-                    })
-                }
-                // Refresh tweet data from server in background
-                tweetStore.getTweet(tweetId.value, authorId.value, true).then(freshTweet => {
-                    if (freshTweet && tweet.value) {
-                        const author = tweet.value.author
-                        tweet.value = { ...freshTweet, author: freshTweet.author || author }
-                        sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-                    }
-                }).catch(error => {
-                    console.warn('[TweetDetail] Background refresh failed:', error)
-                })
-            } else {
-                console.log('[loadDetail] Stored tweet doesn\'t match route, fetching new tweet');
-                // Stored tweet doesn't match current route, fetch new one
-                sessionStorage.removeItem("tweetDetail")
-                // Fetch tweet if it is not in session already.
-                // Use racing for faster loading on TweetDetail page
-                console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
-                tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
-                console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
+        // Always fetch fresh data from server
+        console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
+        tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+        console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
 
-                if (!tweet.value) {
-                    throw new Error('Tweet not found (null response)')
-                }
-
-                loadError.value = false
-                await showTweet(timeoutId)
-            }
+        if (!tweet.value) {
+            throw new Error('Tweet not found (null response)')
         }
-        else {
-            // Fetch tweet if it is not in session already.
-            // Use racing for faster loading on TweetDetail page
-            console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
-            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
-            console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
 
-            if (!tweet.value) {
-                throw new Error('Tweet not found (null response)')
-            }
-
-            loadError.value = false
-            await showTweet(timeoutId)
-        }
+        loadError.value = false
+        await showTweet(timeoutId)
         console.log(tweet.value)
 
         // display url as link
@@ -197,8 +144,6 @@ async function loadDetail(retryCount = 0) {
 }
 async function showTweet(timeoutId?: number) {
     try {
-        sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-
         // Tweet content is ready to display - set loading to false early
         document.title = formattedTitle.value
         if (timeoutId) clearTimeout(timeoutId)
@@ -661,14 +606,14 @@ function retryLoad() {
     </div>
 
     <!-- Show comments of the original tweet if it is a retweet -->
-    <div v-if="tweet">
-        <div v-if="isRetweet">
-            <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
-        </div>
+    <div v-if="tweet" class="comment-list mt-3">
+        <template v-if="isRetweet">
+            <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card" />
+        </template>
         <!-- Show comments of the tweet -->
-        <div v-else>
-            <TweetView v-for="comment in tweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
-        </div>
+        <template v-else>
+            <TweetView v-for="comment in tweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card" />
+        </template>
     </div>
 
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
@@ -696,6 +641,16 @@ function retryLoad() {
 </template>
 
 <style scoped>
+.comment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.comment-list > .card {
+    margin-bottom: 0;
+}
+
 /* Loading retry message styling */
 .loading-retry-message {
     padding: 2rem 1rem;

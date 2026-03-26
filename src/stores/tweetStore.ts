@@ -1021,7 +1021,8 @@ export const useTweetStore = defineStore('tweetStore', {
 
             for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
-                    providerIp = await this.getProviderIp(userId)
+                    // Force server to refresh its IP cache when forceRefresh (login) or on retry to avoid stale IPs
+                    providerIp = await this.getProviderIp(userId, v4Only, forceRefresh || attempt > 1)
                     if (!providerIp) {
                         console.warn(`No provider found for user ${userId}, attempt ${attempt}/2`)
                         if (attempt === 2) return undefined
@@ -1253,8 +1254,8 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns A single IP address, or null if none found
          */
-        async getProviderIp(mid: string, v4only: boolean = v4Only): Promise<string | null> {
-            const ips = await this.getProviderIps(mid, v4only);
+        async getProviderIp(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string | null> {
+            const ips = await this.getProviderIps(mid, v4only, refresh);
             return ips.length > 0 ? ips[0] : null;
         },
 
@@ -1264,10 +1265,10 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns Array of IP addresses (up to 2), or empty array if none found
          */
-        async getProviderIps(mid: string, v4only: boolean = v4Only): Promise<string[]> {
+        async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
             try {
-                console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
-                
+                console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
+
                 // Call get_provider_ips (plural) to get list of IPs
                 const params: any = {
                     aid: this.lapi.appId,
@@ -1275,10 +1276,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     version: "v2",
                     mid: mid,
                 };
-                
+
                 // Only add v4only parameter if true
                 if (v4only) {
                     params.v4only = "true";
+                }
+
+                // Force server to bypass its IP cache and return fresh IPs
+                if (refresh) {
+                    params.refresh = "true";
                 }
                 
                 const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
