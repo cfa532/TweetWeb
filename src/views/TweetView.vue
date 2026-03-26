@@ -696,7 +696,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-2-portrait {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -710,7 +710,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-2-landscape {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -724,7 +724,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-2-mixed {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -743,7 +743,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-all-portrait {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -758,7 +758,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-all-portrait .grid-item-golden-right .grid-item {
@@ -770,7 +770,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-all-landscape {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -785,7 +785,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-height: 0;
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-all-landscape .grid-item-golden-bottom .grid-item {
@@ -797,7 +797,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-first-portrait {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -812,7 +812,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-first-portrait .grid-item-right-stacked .grid-item {
@@ -824,7 +824,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-first-landscape {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -839,7 +839,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-height: 0;
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-first-landscape .grid-item-bottom-two .grid-item {
