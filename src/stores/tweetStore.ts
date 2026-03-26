@@ -1395,7 +1395,11 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweet The tweet to load comments for
          */
         async loadComments(tweet: Tweet) {
-            if (!tweet || !tweet.provider) return
+            if (!tweet || !tweet.provider) {
+                console.warn('[loadComments] Skipping: no tweet or provider', tweet?.mid, tweet?.provider)
+                return
+            }
+            console.log('[loadComments] Loading comments for tweet:', tweet.mid, 'provider:', tweet.provider)
             let client = await this.lapi.getClient(tweet.provider)
             let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
@@ -1405,7 +1409,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 pn: 0,
                 ps: 20
             }) as any[]
-            
+
+            console.log('[loadComments] API returned:', comments?.length ?? 0, 'comments', comments)
+
             // comment type is a different Tweet type from the definition in this app
             if (comments) {
                 // Create comment objects without authors first, then load authors asynchronously
@@ -1417,8 +1423,8 @@ export const useTweetStore = defineStore('tweetStore', {
                             return null
                         }
 
-                        // Create reactive comment object without author initially
-                        const comment: any = reactive({
+                        // Create comment object without author initially
+                        const comment: any = {
                             mid: e.mid,
                             authorId: e.authorId,
                             author: null as User | null, // Will be loaded asynchronously
@@ -1432,7 +1438,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                     }
                                     return a
                                 }),
-                        })
+                        }
 
                         // Load author asynchronously
                         this.getUser(e.authorId).then(author => {
@@ -1457,10 +1463,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 const commentObjects = await Promise.all(commentPromises)
                 const validComments = commentObjects.filter((c): c is NonNullable<typeof c> => c !== null)
 
-                // Add all comments to the tweet
-                if (tweet.comments) {
-                    tweet.comments.push(...validComments)
+                console.log('[loadComments] Valid comments to add:', validComments.length)
+
+                // Assign new array to ensure Vue reactivity triggers
+                if (!tweet.comments) {
+                    tweet.comments = []
                 }
+                tweet.comments = [...tweet.comments, ...validComments]
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },

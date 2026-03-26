@@ -173,13 +173,10 @@ async function showTweet(timeoutId?: number) {
         }
 
         // Await comments loading, then trigger Vue reactivity
-        Promise.allSettled(loadPromises).then(() => {
-            // Use triggerRef to notify Vue that the ref's inner value has changed
-            triggerRef(tweet)
-            triggerRef(originTweet)
-        }).catch(error => {
-            console.warn('[TweetDetail] Some background operations failed:', error)
-        })
+        await Promise.allSettled(loadPromises)
+        // Use triggerRef to notify Vue that the ref's inner value has changed
+        triggerRef(tweet)
+        triggerRef(originTweet)
     } catch (error) {
         console.error('Error in showTweet:', error)
         if (timeoutId) clearTimeout(timeoutId)
@@ -649,7 +646,7 @@ function retryLoad() {
     gap: 1px;
 }
 .comment-list.has-comments {
-    margin-bottom: 5rem;
+    margin-bottom: 1rem;
 }
 
 .comment-list > .card {
