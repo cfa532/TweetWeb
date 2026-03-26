@@ -1440,10 +1440,14 @@ export const useTweetStore = defineStore('tweetStore', {
                                 }),
                         }
 
-                        // Load author asynchronously
+                        // Load author asynchronously — update through the reactive
+                        // tweet.comments proxy so Vue detects the change.
                         this.getUser(e.authorId).then(author => {
-                            if (author && comment) {
-                                comment.author = author
+                            if (author && tweet.comments) {
+                                const reactiveComment = tweet.comments.find(c => c.mid === e.mid)
+                                if (reactiveComment) {
+                                    reactiveComment.author = author
+                                }
                             }
                         }).catch(error => {
                             // Only log errors for non-timeout cases to reduce noise
