@@ -30,10 +30,13 @@ const MAX_CHARS_CHINESE = 300;
 
 onMounted(async () => {
   if (currentTweet.value.originalTweetId) {
-    originalTweet.value = await tweetStore.fetchTweet(
-      currentTweet.value.originalTweetId,
-      currentTweet.value.originalAuthorId
-    );
+    // Use already-loaded originalTweet (e.g. from pinned tweet cache) if available,
+    // otherwise fetch it from the store/network
+    originalTweet.value = currentTweet.value.originalTweet
+      || await tweetStore.fetchTweet(
+        currentTweet.value.originalTweetId,
+        currentTweet.value.originalAuthorId
+      );
 
     if (originalTweet.value) {
       if (!currentTweet.value.content && !currentTweet.value.attachments) {
