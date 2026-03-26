@@ -554,7 +554,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 /* Remove card styling on mobile for flush layout */
 @media (max-width: 575px) {
   .tweet-container.card {
-    margin: 0 0 15px 0; /* Keep bottom margin for spacing between tweets */
+    margin: 0 0 1px 0; /* Keep bottom margin for spacing between tweets */
     border: none;
     border-radius: 0;
   }
@@ -921,7 +921,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 
 .card {
   width: 100%;
-  margin: 0 0 15px 0;
+  margin: 0 0 1px 0;
 }
 .card-header {
   margin: 0;

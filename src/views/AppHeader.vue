@@ -190,10 +190,12 @@ watch(userId, async (nv, ov) => {
     flex-wrap: wrap;
     /* Allows text to wrap on smaller screens */
     font-size: 0.95rem;
+    color: #ccd0d4;
 }
 
 .text-muted {
     font-size: 0.95rem;
+    color: #ccd0d4 !important;
 }
 
 .user-actions {
@@ -211,7 +213,7 @@ watch(userId, async (nv, ov) => {
 }
 
 .links a {
-    color: #3d5563;
+    color: #ccd0d4 !important;
     text-decoration: none;
     font-size: 0.9rem;
     white-space: nowrap;
@@ -240,6 +242,10 @@ watch(userId, async (nv, ov) => {
     justify-content: flex-end;
     /* Align content to the bottom */
     flex-grow: 1;
+}
+
+.no-user-container a {
+    color: #ccd0d4;
 }
 
 @media (max-width: 600px) {
@@ -399,7 +405,7 @@ watch(userId, async (nv, ov) => {
 }
 
 .account-btn {
-    color: grey;
+    color: #ccd0d4;
     padding: 4px 20px 8px 10px;
     text-decoration: none;
     flex-shrink: 0;
@@ -408,7 +414,7 @@ watch(userId, async (nv, ov) => {
 }
 
 .account-btn:hover {
-    color: grey;
+    color: #ccd0d4;
     background-color: transparent !important;
 }
 

@@ -67,7 +67,7 @@ function login() {
 <style scoped>
 .dot {
     font-size: 15px;
-    color: grey;
+    color: #ccd0d4;
     padding: 4px 8px 8px 8px;
     margin-right: 10px;
     text-decoration: none;
