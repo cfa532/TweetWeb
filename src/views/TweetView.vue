@@ -607,6 +607,8 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #000;
   min-width: 0;
   min-height: 0;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 /* Ensure MediaView container fills the grid item */
