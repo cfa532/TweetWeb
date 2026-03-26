@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, watch, computed, nextTick } from 'vue';
+import { ref, onMounted, watch, computed, nextTick, triggerRef } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
@@ -172,9 +172,11 @@ async function showTweet(timeoutId?: number) {
             }))
         }
 
-        // Fire and forget - let these run in background without blocking
+        // Await comments loading, then trigger Vue reactivity
         Promise.allSettled(loadPromises).then(() => {
-            console.log('[TweetDetail] Background loading operations completed')
+            // Use triggerRef to notify Vue that the ref's inner value has changed
+            triggerRef(tweet)
+            triggerRef(originTweet)
         }).catch(error => {
             console.warn('[TweetDetail] Some background operations failed:', error)
         })
@@ -606,7 +608,7 @@ function retryLoad() {
     </div>
 
     <!-- Show comments of the original tweet if it is a retweet -->
-    <div v-if="tweet" class="comment-list mt-3">
+    <div v-if="tweet" :class="['comment-list', 'mt-3', { 'has-comments': isRetweet ? originTweet?.comments?.length : tweet.comments?.length }]">
         <template v-if="isRetweet">
             <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card" />
         </template>
@@ -645,6 +647,9 @@ function retryLoad() {
     display: flex;
     flex-direction: column;
     gap: 1px;
+}
+.comment-list.has-comments {
+    margin-bottom: 5rem;
 }
 
 .comment-list > .card {

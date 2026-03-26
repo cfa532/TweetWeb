@@ -109,7 +109,7 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
         sessionStorage.removeItem('userPageRefreshCount');
     } catch (error) {
         console.error('Unexpected error loading pinned tweets:', error);
-        pinnedTweets.value = [];
+        // Keep cached pinned tweets on error instead of wiping them
     }
 }
 

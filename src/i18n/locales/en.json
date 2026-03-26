@@ -69,7 +69,7 @@
   "tweet": {
     "noMorePosts": "No more posts",
     "showNewTweets": "Show {count} new tweet | Show {count} new tweets",
-    "forwardedBy": "Forwarded by @{name}",
+    "forwardedBy": "Forwarded by {'@'}{name}",
     "loadingAuthor": "Loading...",
     "loadingUsername": "loading",
     "editTweet": "Edit Tweet",

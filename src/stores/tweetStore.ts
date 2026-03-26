@@ -999,17 +999,24 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (cached) {
                     try {
                         const cachedUser = JSON.parse(cached)
-                        if (cachedUser && cachedUser.mid && cachedUser.hostIds) {
-                            cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
-                            cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
-                            if (cachedUser.writableHostIp === undefined) {
-                                cachedUser.writableHostIp = null
+                        if (cachedUser && cachedUser.mid && cachedUser.hostIds && cachedUser.providerIp) {
+                            // Validate cached IP against current resolved IP to detect stale entries
+                            const currentIp = await this.getProviderIp(userId, v4Only, false)
+                            if (currentIp && currentIp !== cachedUser.providerIp) {
+                                console.warn(`[_fetchUser] Cached IP (${cachedUser.providerIp}) differs from resolved IP (${currentIp}) for ${userId}, invalidating cache`)
+                                this._nullifyCachedIp(userId)
+                            } else {
+                                cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
+                                cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
+                                if (cachedUser.writableHostIp === undefined) {
+                                    cachedUser.writableHostIp = null
+                                }
+                                this.users.set(userId, cachedUser)
+                                return cachedUser
                             }
-                            this.users.set(userId, cachedUser)
-                            return cachedUser
                         }
                     } catch (e) {
-                        sessionStorage.removeItem(userId)
+                        this._nullifyCachedIp(userId)
                     }
                 }
             }
@@ -1018,6 +1025,7 @@ export const useTweetStore = defineStore('tweetStore', {
             let providerIp: string | null = null
             let user: any = null
             let providerClient: any = null
+            let failedIp: string | null = null
 
             for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
@@ -1027,6 +1035,13 @@ export const useTweetStore = defineStore('tweetStore', {
                         console.warn(`No provider found for user ${userId}, attempt ${attempt}/2`)
                         if (attempt === 2) return undefined
                         continue
+                    }
+
+                    // Skip retry if refreshed IP is the same as the one that already failed
+                    if (attempt > 1 && providerIp === failedIp) {
+                        console.warn(`[_fetchUser] Refreshed IP for ${userId} is the same stale IP (${providerIp}), giving up`)
+                        this._nullifyCachedIp(userId)
+                        return undefined
                     }
 
                     providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
@@ -1051,7 +1066,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 // Other server error, may retry
                                 console.log(`get_user server error for user ${userId}, attempt ${attempt}/2:`, user.message)
                                 user = null;
-                                if (attempt === 2) return undefined
+                                failedIp = providerIp
+                                if (attempt === 2) {
+                                    this._nullifyCachedIp(userId)
+                                    return undefined
+                                }
                                 continue
                             }
                         }
@@ -1067,13 +1086,19 @@ export const useTweetStore = defineStore('tweetStore', {
                 } catch (error) {
                     console.error(`get_user attempt ${attempt}/2 failed for user ${userId}:`, error)
                     user = null
-                    if (attempt === 2) return undefined
+                    failedIp = providerIp
+                    if (attempt === 2) {
+                        this._nullifyCachedIp(userId)
+                        return undefined
+                    }
                 }
             }
 
             // Validate user object
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
                 console.error(`get_user returned invalid User object for user ${userId} after 2 attempts:`, user)
+                // Clear stale sessionStorage cache so next call doesn't reuse the bad IP
+                this._nullifyCachedIp(userId)
                 return undefined
             }
             
@@ -1103,7 +1128,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         removeUser(userId: MimeiId) {
             this.users.delete(userId)
-            sessionStorage.removeItem(userId)
+            this._nullifyCachedIp(userId)
         },
 
         /**
@@ -1257,6 +1282,23 @@ export const useTweetStore = defineStore('tweetStore', {
         async getProviderIp(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string | null> {
             const ips = await this.getProviderIps(mid, v4only, refresh);
             return ips.length > 0 ? ips[0] : null;
+        },
+
+        /**
+         * Nullify the providerIp in the sessionStorage cache for a user,
+         * so the next fetch won't reuse a stale IP while preserving other cached data.
+         */
+        _nullifyCachedIp(userId: string) {
+            const cached = sessionStorage.getItem(userId)
+            if (cached) {
+                try {
+                    const cachedUser = JSON.parse(cached)
+                    cachedUser.providerIp = null
+                    sessionStorage.setItem(userId, JSON.stringify(cachedUser))
+                } catch (e) {
+                    sessionStorage.removeItem(userId)
+                }
+            }
         },
 
         /**
@@ -1470,7 +1512,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     // Clear any cached user data before retry to force fresh IP resolution
                     if (attempt > 0) {
                         this.removeUser(userId)
-                        sessionStorage.removeItem(userId)
+                        this._nullifyCachedIp(userId)
                     }
                     let user = await this.getUser(userId, true)
                     console.log(`[login] getUser returned:`, user ? `user with providerIp: ${user.providerIp}` : 'null')
