@@ -19,6 +19,7 @@ const initialLoad = ref(true);
 const pageNumber = ref(0);
 const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
+const loadPaused = ref(false); // Paused due to repeated failures (not same as "no more tweets")
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
@@ -34,8 +35,8 @@ function debounce<T extends Function>(func: T, delay: number) {
 async function loadMoreTweets(isManualRetry = false) {
     if (isLoading.value) return; // Prevent multiple loads
 
-    // For automatic loading, stop immediately if no more tweets
-    if (!isManualRetry && !hasMoreTweets.value) {
+    // For automatic loading, stop if no more tweets or paused due to failures
+    if (!isManualRetry && (!hasMoreTweets.value || loadPaused.value)) {
         return;
     }
 
@@ -48,6 +49,7 @@ async function loadMoreTweets(isManualRetry = false) {
         ]);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
+            loadPaused.value = false;
             if (tweetsLoaded < pageSize) {
                 hasMoreTweets.value = false;
             } else {
@@ -62,8 +64,8 @@ async function loadMoreTweets(isManualRetry = false) {
         }
     } catch (error) {
         if (error instanceof Error && error.message === 'TIMEOUT') {
-            console.log('Scroll load timed out after 6s — will retry on next scroll');
-            // Do not stop pagination; user can trigger another scroll to retry
+            console.log('Scroll load timed out after 6s — pausing auto-load');
+            loadPaused.value = true;
         } else {
             console.error('Error loading more tweets:', error);
             if (!isManualRetry) hasMoreTweets.value = false;
@@ -133,6 +135,7 @@ async function loadTweetsWithMinimum() {
 
     pageNumber.value = 0;
     hasMoreTweets.value = true;
+    loadPaused.value = false;
 
     try {
         await loadMoreTweets();
