@@ -306,9 +306,11 @@ function appendNewToDisplayed() {
         ? (displayedTweets.value[0].timestamp as number)
         : Infinity;
 
+    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
     const newTweets = tweetStore.tweets
         .filter(e => {
             if (existingIds.has(e.mid)) return false;
+            if (pinnedIds.has(e.mid)) return false;
             const isAuthorMatch = e.isPrivate
                 ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
                 : e.authorId === authorId.value;
@@ -341,8 +343,10 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
     // Handle additions — only count as pending, don't auto-insert
     if (initialLoad.value || isLoading.value) return;
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
     const count = tweetStore.tweets.filter(e => {
         if (existingIds.has(e.mid)) return false;
+        if (pinnedIds.has(e.mid)) return false;
         const isAuthorMatch = e.isPrivate
             ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
             : e.authorId === authorId.value;
@@ -362,9 +366,10 @@ watch(authorId, async (nv, ov) => {
     initialLoad.value = true;
 
     // Show cached tweets instantly while fresh data loads
-    const cached = tweetStore.getCachedUserTweets(nv);
-    displayedTweets.value = cached;
     pinnedTweets.value = tweetStore.getCachedPinnedTweets(nv);
+    const cached = tweetStore.getCachedUserTweets(nv);
+    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
+    displayedTweets.value = cached.filter(t => !pinnedIds.has(t.mid));
     if (cached.length > 0) {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }
@@ -405,7 +410,7 @@ const handleScroll = debounce(async () => {
     <PageLayout>
         <AppHeader :userId='authorId' />
         <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
-        <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
+        <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key="'pinned-' + tweet.mid"/>
         <hr v-if='pinnedTweets?.length!>0' />
         <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
         <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
