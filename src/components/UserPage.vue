@@ -404,10 +404,10 @@ const handleScroll = debounce(async () => {
 <template>
     <PageLayout>
         <AppHeader :userId='authorId' />
-        <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
+        <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
         <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key='tweet.mid'/>
         <hr v-if='pinnedTweets?.length!>0' />
-        <b v-if='pinnedTweets?.length!>0'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
+        <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
         <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
             {{ $t('tweet.showNewTweets', pendingCount) }}
         </div>
