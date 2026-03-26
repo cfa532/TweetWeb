@@ -207,7 +207,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
                 {{ retryMessage }}
             </div>
         </div>
-        <div v-else-if='!hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>
+        <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>
             {{ $t('tweet.noMorePosts') }}
         </div>
     </PageLayout>
