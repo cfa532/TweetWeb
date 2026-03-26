@@ -747,6 +747,11 @@ function goBack() {
   router.back()
 }
 
+function openUserPage() {
+  tweetStore.addFollowing(author.mid)
+  router.push(`/author/${author.mid}`)
+}
+
 const handleCids = (ids: MimeiFileType[]) => {
   mmFiles.value = ids;
   showCidModal.value = false;
@@ -826,8 +831,8 @@ function handleDragEnd() {
 
   <div style='background-color:aliceblue;'>
       <div class='editor-header'>
-        <img :src='author.avatar' alt='Avatar' class='editor-avatar'>
-        <div class='editor-author'>
+        <img :src='author.avatar' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer'>
+        <div class='editor-author' @click='openUserPage' style='cursor:pointer'>
           <div class='fw-bold'>{{ author.name }}</div>
           <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>
         </div>
