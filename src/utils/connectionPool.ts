@@ -6,6 +6,7 @@
  */
 
 interface PooledConnection {
+  id: number;
   client: any;
   ip: string;
   inUse: boolean;
@@ -23,8 +24,9 @@ interface PendingRequest {
 class ConnectionPoolManager {
   private connections: Map<string, PooledConnection[]> = new Map();
   private pendingRequests: PendingRequest[] = [];
-  private readonly maxConnectionsPerIp: number = 8; // 8 connections per IP
-  private readonly maxTotalConnections: number = 16; // Total 16 connections across all IPs
+  private nextId: number = 0;
+  private readonly maxConnectionsPerIp: number = 8; // connections per IP
+  private readonly maxTotalConnections: number = 16; // Total connections across all IPs
   private readonly connectionTimeout: number = 15000; // 15 seconds
   private readonly idleTimeout: number = 1800000; // 30 minute idle before cleanup
   private readonly ayApi: string[];
@@ -65,28 +67,32 @@ class ConnectionPoolManager {
       if (!conn.inUse) {
         conn.inUse = true;
         conn.lastUsed = Date.now();
+        conn.client.__poolId = conn.id;
         return conn.client;
       }
     }
-    
+
     // Check if we can create a new connection
     const totalConnections = this.getTotalConnectionCount();
-    const canCreateConnection = 
-      ipConnections.length < this.maxConnectionsPerIp && 
+    const canCreateConnection =
+      ipConnections.length < this.maxConnectionsPerIp &&
       totalConnections < this.maxTotalConnections;
-    
+
     if (canCreateConnection) {
       // Create new connection
+      const id = this.nextId++;
       const client = this.createClient(ip);
-      
+      client.__poolId = id;
+
       const connection: PooledConnection = {
+        id,
         client,
         ip,
         inUse: true,
         createdAt: Date.now(),
         lastUsed: Date.now()
       };
-      
+
       ipConnections.push(connection);
       return client;
     }
@@ -124,14 +130,17 @@ class ConnectionPoolManager {
       return;
     }
     
-    const conn = ipConnections.find(c => c.client === client);
+    const poolId = client?.__poolId;
+    const conn = poolId !== undefined
+      ? ipConnections.find(c => c.id === poolId)
+      : ipConnections.find(c => c.client === client);
     if (conn) {
       conn.inUse = false;
       conn.lastUsed = Date.now();
-      
+
       // Process pending requests for this IP first
       this.processPendingRequests(ip);
-      
+
       // If no pending requests for this IP, check if other IPs can use this slot
       if (this.pendingRequests.length > 0) {
         this.processPendingRequests();
@@ -177,6 +186,7 @@ class ConnectionPoolManager {
       if (!conn.inUse) {
         conn.inUse = true;
         conn.lastUsed = Date.now();
+        conn.client.__poolId = conn.id;
         this.pendingRequests.splice(requestIndex, 1);
         request.resolve(conn.client);
         return;
@@ -191,9 +201,12 @@ class ConnectionPoolManager {
     
     if (canCreateConnection) {
       this.pendingRequests.splice(requestIndex, 1);
-      
+
+      const id = this.nextId++;
       const client = this.createClient(request.ip);
+      client.__poolId = id;
       const connection: PooledConnection = {
+        id,
         client,
         ip: request.ip,
         inUse: true,
