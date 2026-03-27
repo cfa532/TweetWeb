@@ -35,16 +35,14 @@ function debounce<T extends Function>(func: T, delay: number) {
 
 async function loadMoreTweets() {
     if (isLoading.value || !hasMoreTweets.value) return;
-    if (lastErrorTime && Date.now() - lastErrorTime < 3000) return;
 
     isLoading.value = true;
+    loadError.value = '';
 
     try {
         const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
-            loadError.value = '';
-            lastErrorTime = 0;
             if (tweetsLoaded < pageSize) {
                 hasMoreTweets.value = false;
             } else {
@@ -57,7 +55,7 @@ async function loadMoreTweets() {
         }
     } catch (error) {
         console.error('Error loading more tweets:', error);
-        loadError.value = t('tweet.loadError', 'Loading failed, tap to retry');
+        loadError.value = t('tweet.loadMoreError');
         lastErrorTime = Date.now();
     } finally {
         appendNewToDisplayed();
@@ -66,19 +64,18 @@ async function loadMoreTweets() {
 }
 
 const handleScroll = debounce(async () => {
-    // Prevent multiple simultaneous loads
     if (isLoading.value) return;
-    
+    if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+
     const scrollPosition = window.innerHeight + window.scrollY;
     const documentHeight = document.documentElement.scrollHeight;
 
     if (documentHeight - scrollPosition < scrollThreshold) {
-        // Only load more tweets if we have more tweets available
         if (hasMoreTweets.value) {
             await loadMoreTweets();
         }
     }
-}, 300); // Increased debounce delay to reduce conflicts
+}, 300);
 
 onMounted(async () => {
     // Guest user: redirect to the default user's profile page
@@ -196,7 +193,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
                 {{ retryMessage }}
             </div>
         </div>
-        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6; cursor: pointer;' @click='loadMoreTweets()'>
+        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
             {{ loadError }}
         </div>
         <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>

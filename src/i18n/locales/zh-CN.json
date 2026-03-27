@@ -80,6 +80,7 @@
     "goBack": "返回",
     "unableToLoad": "无法加载推文",
     "loadError": "加载此推文时出错。",
+    "loadMoreError": "加载失败，请重试。",
     "checkConsole": "查看浏览器控制台获取详细错误信息。",
     "loadingRetry": "加载推文中，6秒后重试...",
     "failedLoadUser": "加载用户失败",

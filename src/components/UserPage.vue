@@ -22,7 +22,7 @@ const pageSize = 5; // Using the same page size as MainPage
 const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
-let lastErrorTime = 0; // Cooldown to prevent auto-retry loop from layout reflow
+let lastErrorTime = 0;
 
 onMounted(() => {
     window.addEventListener('scroll', handleScroll);
@@ -239,17 +239,14 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 
 async function loadMoreTweets() {
     if (isLoading.value || !hasMoreTweets.value) return;
-    // Cooldown after error to prevent auto-retry from layout reflow scroll events
-    if (lastErrorTime && Date.now() - lastErrorTime < 3000) return;
 
     isLoading.value = true;
+    loadError.value = '';
 
     try {
         const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
-            loadError.value = '';
-            lastErrorTime = 0;
             if (tweetsLoaded <= pageSize) {
                 hasMoreTweets.value = false;
             }
@@ -260,7 +257,7 @@ async function loadMoreTweets() {
         }
     } catch (error) {
         console.error('Error loading more tweets:', error);
-        loadError.value = t('tweet.loadError', 'Loading failed, tap to retry');
+        loadError.value = t('tweet.loadMoreError');
         lastErrorTime = Date.now();
     } finally {
         appendNewToDisplayed();
@@ -383,19 +380,19 @@ function debounce<T extends Function>(func: T, delay: number) {
 }
 
 const handleScroll = debounce(async () => {
-    // Prevent multiple simultaneous loads
     if (isLoading.value) return;
-    
+    // After an error, ignore scroll for 2s to skip layout-reflow events
+    if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+
     const scrollPosition = window.innerHeight + window.scrollY;
     const documentHeight = document.documentElement.scrollHeight;
 
     if (documentHeight - scrollPosition < scrollThreshold) {
-        // Only load more tweets if we have more tweets available
         if (hasMoreTweets.value) {
             await loadMoreTweets();
         }
     }
-}, 300); // Increased debounce delay to reduce conflicts
+}, 300);
 </script>
 
 <template>
@@ -415,7 +412,7 @@ const handleScroll = debounce(async () => {
                 {{ retryMessage }}
             </div>
         </div>
-        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6; cursor: pointer;' @click='loadMoreTweets()'>
+        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
             {{ loadError }}
         </div>
         <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center my-4 small' style='color: #8899a6;'>

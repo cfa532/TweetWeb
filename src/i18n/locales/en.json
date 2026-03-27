@@ -80,6 +80,7 @@
     "goBack": "Go Back",
     "unableToLoad": "Unable to Load Tweet",
     "loadError": "There was an error loading this tweet.",
+    "loadMoreError": "Loading failed. Retry.",
     "checkConsole": "Check browser console for detailed error information.",
     "loadingRetry": "Loading tweet, retrying in 6s...",
     "failedLoadUser": "Failed to load user",
