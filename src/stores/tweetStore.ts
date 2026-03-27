@@ -7,12 +7,14 @@ import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
 import i18n from '@/i18n';
 const GUEST_ID = "000000000000000000000000000"
-const TWEET_COUNT = 30
+const TWEET_COUNT = 5
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
-        tweets: [] as Tweet[],      // tweets 
+        tweets: [] as Tweet[],      // tweets
+        tweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         originalTweets: [] as Tweet[],
+        originalTweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         users: new Map<MimeiId, User>(),
         _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
@@ -95,10 +97,11 @@ export const useTweetStore = defineStore('tweetStore', {
         async addTweetToStore(tweet: Tweet) {
             try {
                 // skip tweet that is in this.tweets already.
-                if (this.tweets.find(e => e.mid == tweet.mid))
+                if (this.tweetIndex.has(tweet.mid))
                     return
-                
-                let author = await this.getUser(tweet.authorId)
+
+                // Use pre-resolved author if caller already set it, otherwise fetch
+                let author = tweet.author || await this.getUser(tweet.authorId)
                 if (!author) {
                     console.warn("Author not found for tweet:", tweet.mid, "authorId:", tweet.authorId)
                     return
@@ -147,7 +150,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 if (tweet.originalTweetId) {
                     try {
-                        const originalTweet = this.originalTweets.find(t => t.mid == tweet.originalTweetId)
+                        const originalTweet = this.originalTweetIndex.get(tweet.originalTweetId)
                         if (originalTweet) {
                             tweet.originalTweet = originalTweet
                         } else {
@@ -187,6 +190,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 
                 this.tweets.push(tweet);
+                this.tweetIndex.set(tweet.mid, tweet);
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -257,11 +261,19 @@ export const useTweetStore = defineStore('tweetStore', {
                     await this.updateOriginalTweets(originalTweetsData)
                 }
 
+                // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
+                if (tweetsData) {
+                    const uniqueAuthorIds = [...new Set(
+                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                    )] as string[]
+                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                }
+
                 if (tweetsData) {
                     for (const tweetJson of tweetsData) {
                         if (tweetJson != null) {
                             const tweet = tweetJson as Tweet
-                            const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                            const cachedTweet = this.tweetIndex.get(tweet.mid)
                             if (!cachedTweet) {
                                 try {
                                     await this.addTweetToStore(tweet)
@@ -279,7 +291,7 @@ export const useTweetStore = defineStore('tweetStore', {
             } catch (e) {
                 console.error("Error fetching tweets for user:", user.mid)
                 console.error("Exception:", e)
-                return null
+                throw e
             }
         },
 
@@ -393,11 +405,20 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async updateOriginalTweets(originalTweetsData: any) {
+            // Pre-fetch all unique authors in parallel
+            const newOriginals = originalTweetsData.filter(
+                (t: any) => t != null && !this.originalTweetIndex.has(t.mid)
+            )
+            if (newOriginals.length > 0) {
+                const uniqueAuthorIds = [...new Set(newOriginals.map((t: any) => t.authorId))] as string[]
+                await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+            }
+
             for (const originalTweetJson of originalTweetsData) {
                 if (originalTweetJson != null) {
                     try {
                         const originalTweet = originalTweetJson as Tweet
-                        if (!this.originalTweets.find(t => t.mid === originalTweet.mid)) {
+                        if (!this.originalTweetIndex.has(originalTweet.mid)) {
                             const author = await this.getUser(originalTweet.authorId)
                             if (author) {
                                 originalTweet.author = author
@@ -409,6 +430,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                     })
                                 }
                                 this.originalTweets.push(originalTweet)
+                                this.originalTweetIndex.set(originalTweet.mid, originalTweet)
                                 try {
                                     sessionStorage.setItem(originalTweet.mid, JSON.stringify(originalTweet))
                                 } catch (e) { /* ignore sessionStorage errors */ }
@@ -465,7 +487,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
 
                         // Check if tweet is already in cache
-                        let existingTweet = this.tweets.find(t => t.mid == tweetObject.mid)
+                        let existingTweet = this.tweetIndex.get(tweetObject.mid)
                         if (existingTweet) {
                             // Update existing tweet with pin timestamp info
                             tweetsWithPinTime.push({tweet: existingTweet, pinTimestamp})
@@ -478,7 +500,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 continue
                             }
                             // addTweetToStore may skip the tweet (e.g. missing author)
-                            const stored = this.tweets.find(t => t.mid === tweetObject.mid)
+                            const stored = this.tweetIndex.get(tweetObject.mid)
                             if (!stored) {
                                 console.warn("Pinned tweet was not added to store:", tweetObject.mid)
                                 continue
@@ -562,7 +584,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     await this.updateOriginalTweets(response.originalTweets)
                 }
 
-                // Process main tweets
+                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
+                if (tweetsData) {
+                    const uniqueAuthorIds = [...new Set(
+                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                    )] as string[]
+                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                }
+
+                // Process main tweets (authors are now in-memory cache)
                 if (tweetsData) {
                     for (const tweetJson of tweetsData) {
                         if (tweetJson != null) {
@@ -578,7 +608,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (tweet.isPrivate) {
                                     continue
                                 } else {
-                                    const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                                    const cachedTweet = this.tweetIndex.get(tweet.mid)
                                     if (!cachedTweet) {
                                         await this.addTweetToStore(tweet)
                                     }
@@ -648,7 +678,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Extract tweets from the response format (same as getTweetFeed)
                 const tweetsData = response.tweets
 
-                // Process main tweets (exactly like getTweetFeed)
+                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
+                if (tweetsData) {
+                    const uniqueAuthorIds = [...new Set(
+                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                    )] as string[]
+                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                }
+
+                // Process main tweets (authors are now in-memory cache)
                 if (tweetsData) {
                     for (const tweetJson of tweetsData) {
                         if (tweetJson != null) {
@@ -664,7 +702,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (tweet.isPrivate) {
                                     continue
                                 } else {
-                                    const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                                    const cachedTweet = this.tweetIndex.get(tweet.mid)
                                     if (!cachedTweet) {
                                         await this.addTweetToStore(tweet)
                                     }
@@ -722,7 +760,7 @@ export const useTweetStore = defineStore('tweetStore', {
             useRacing: boolean = false
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
-            let cachedTweet = this.tweets.find(e => e.mid == tweetId)
+            let cachedTweet = this.tweetIndex.get(tweetId)
             if (cachedTweet) {
                 console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
@@ -995,26 +1033,21 @@ export const useTweetStore = defineStore('tweetStore', {
 
         async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {
             // Try sessionStorage cache for faster initial display
+            // Trust the cached IP — if it's stale, the RPC call will fail and the
+            // retry loop (attempt 2) will resolve a fresh IP automatically.
             if (!forceRefresh) {
                 const cached = sessionStorage.getItem(userId)
                 if (cached) {
                     try {
                         const cachedUser = JSON.parse(cached)
                         if (cachedUser && cachedUser.mid && cachedUser.hostIds && cachedUser.providerIp) {
-                            // Validate cached IP against current resolved IP to detect stale entries
-                            const currentIp = await this.getProviderIp(userId, v4Only, false)
-                            if (currentIp && currentIp !== cachedUser.providerIp) {
-                                console.warn(`[_fetchUser] Cached IP (${cachedUser.providerIp}) differs from resolved IP (${currentIp}) for ${userId}, invalidating cache`)
-                                this._nullifyCachedIp(userId)
-                            } else {
-                                cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
-                                cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
-                                if (cachedUser.writableHostIp === undefined) {
-                                    cachedUser.writableHostIp = null
-                                }
-                                this.users.set(userId, cachedUser)
-                                return cachedUser
+                            cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
+                            cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
+                            if (cachedUser.writableHostIp === undefined) {
+                                cachedUser.writableHostIp = null
                             }
+                            this.users.set(userId, cachedUser)
+                            return cachedUser
                         }
                     } catch (e) {
                         this._nullifyCachedIp(userId)
@@ -1656,7 +1689,9 @@ export const useTweetStore = defineStore('tweetStore', {
             this._user = null
             this._followings = []
             this.tweets = []
+            this.tweetIndex.clear()
             this.originalTweets = []
+            this.originalTweetIndex.clear()
             this.users.clear()
             this.lapi.connectionPool?.clearAll()
         },
@@ -1692,6 +1727,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
             this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
+            this.tweetIndex.delete(tweetId)
             let user = await this.getUser(authorId)
             if (user) {
                 await this.loginUser?.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
@@ -1757,13 +1793,13 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Remove from tweets array
-            const parentTweet = this.tweets.find(t => t.mid === parentTweetId)
+            const parentTweet = this.tweetIndex.get(parentTweetId)
             if (parentTweet) {
                 removeCommentFromTweet(parentTweet)
             }
 
             // Also check originalTweets array in case it's displayed as a retweet
-            const originalTweet = this.originalTweets.find(t => t.mid === parentTweetId)
+            const originalTweet = this.originalTweetIndex.get(parentTweetId)
             if (originalTweet) {
                 removeCommentFromTweet(originalTweet)
             }

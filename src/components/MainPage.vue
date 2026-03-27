@@ -17,9 +17,10 @@ const retryMessage = ref('');
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
 const pageNumber = ref(0);
-const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
+const pageSize = 5; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
+let lastErrorTime = 0;
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
@@ -34,17 +35,16 @@ function debounce<T extends Function>(func: T, delay: number) {
 
 async function loadMoreTweets() {
     if (isLoading.value || !hasMoreTweets.value) return;
+    if (lastErrorTime && Date.now() - lastErrorTime < 3000) return;
 
     isLoading.value = true;
 
     try {
-        const tweetsLoaded = await Promise.race([
-            tweetStore.loadTweets(undefined, pageNumber.value, pageSize),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 6000))
-        ]);
+        const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
             loadError.value = '';
+            lastErrorTime = 0;
             if (tweetsLoaded < pageSize) {
                 hasMoreTweets.value = false;
             } else {
@@ -56,13 +56,9 @@ async function loadMoreTweets() {
             hasMoreTweets.value = false;
         }
     } catch (error) {
-        if (error instanceof Error && error.message === 'TIMEOUT') {
-            console.log('Scroll load timed out after 6s');
-            loadError.value = t('tweet.loadError', 'Loading failed, scroll to retry');
-        } else {
-            console.error('Error loading more tweets:', error);
-            loadError.value = t('tweet.loadError', 'Loading failed, scroll to retry');
-        }
+        console.error('Error loading more tweets:', error);
+        loadError.value = t('tweet.loadError', 'Loading failed, tap to retry');
+        lastErrorTime = Date.now();
     } finally {
         appendNewToDisplayed();
         isLoading.value = false;
@@ -200,7 +196,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
                 {{ retryMessage }}
             </div>
         </div>
-        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
+        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6; cursor: pointer;' @click='loadMoreTweets()'>
             {{ loadError }}
         </div>
         <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>

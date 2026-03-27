@@ -18,10 +18,11 @@ const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
 const authorId = computed(() => route.params.authorId as MimeiId);
 const pinnedTweets = ref<Tweet[]>([]);
-const pageSize = 10; // Using the same page size as MainPage
+const pageSize = 5; // Using the same page size as MainPage
 const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
+let lastErrorTime = 0; // Cooldown to prevent auto-retry loop from layout reflow
 
 onMounted(() => {
     window.addEventListener('scroll', handleScroll);
@@ -238,17 +239,17 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 
 async function loadMoreTweets() {
     if (isLoading.value || !hasMoreTweets.value) return;
+    // Cooldown after error to prevent auto-retry from layout reflow scroll events
+    if (lastErrorTime && Date.now() - lastErrorTime < 3000) return;
 
     isLoading.value = true;
 
     try {
-        const tweetsLoaded = await Promise.race([
-            tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 6000))
-        ]);
+        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
             loadError.value = '';
+            lastErrorTime = 0;
             if (tweetsLoaded <= pageSize) {
                 hasMoreTweets.value = false;
             }
@@ -258,13 +259,9 @@ async function loadMoreTweets() {
             hasMoreTweets.value = false;
         }
     } catch (error) {
-        if (error instanceof Error && error.message === 'TIMEOUT') {
-            console.log('Scroll load timed out after 6s');
-            loadError.value = t('tweet.loadError', 'Loading failed, scroll to retry');
-        } else {
-            console.error('Error loading more tweets:', error);
-            loadError.value = t('tweet.loadError', 'Loading failed, scroll to retry');
-        }
+        console.error('Error loading more tweets:', error);
+        loadError.value = t('tweet.loadError', 'Loading failed, tap to retry');
+        lastErrorTime = Date.now();
     } finally {
         appendNewToDisplayed();
         isLoading.value = false;
@@ -367,7 +364,9 @@ watch(authorId, async (nv, ov) => {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }
 
-    tweetStore.removeUser(nv);  // force reload user data from its host.
+    // Force-refresh user data from its host (keeps cache for instant display
+    // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
+    tweetStore.getUser(nv, true);
     await initialLoadTweets(nv);
     window.scrollTo(0, 0);
 }, { immediate: true });
@@ -416,7 +415,7 @@ const handleScroll = debounce(async () => {
                 {{ retryMessage }}
             </div>
         </div>
-        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
+        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6; cursor: pointer;' @click='loadMoreTweets()'>
             {{ loadError }}
         </div>
         <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center my-4 small' style='color: #8899a6;'>
