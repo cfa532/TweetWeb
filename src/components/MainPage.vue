@@ -19,7 +19,7 @@ const initialLoad = ref(true);
 const pageNumber = ref(0);
 const pageSize = 10; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
-const loadPaused = ref(false); // Paused due to repeated failures (not same as "no more tweets")
+const loadError = ref(''); // Error message to display when loading fails
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
@@ -32,13 +32,8 @@ function debounce<T extends Function>(func: T, delay: number) {
     };
 }
 
-async function loadMoreTweets(isManualRetry = false) {
-    if (isLoading.value) return; // Prevent multiple loads
-
-    // For automatic loading, stop if no more tweets or paused due to failures
-    if (!isManualRetry && (!hasMoreTweets.value || loadPaused.value)) {
-        return;
-    }
+async function loadMoreTweets() {
+    if (isLoading.value || !hasMoreTweets.value) return;
 
     isLoading.value = true;
 
@@ -49,7 +44,7 @@ async function loadMoreTweets(isManualRetry = false) {
         ]);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
-            loadPaused.value = false;
+            loadError.value = '';
             if (tweetsLoaded < pageSize) {
                 hasMoreTweets.value = false;
             } else {
@@ -57,18 +52,16 @@ async function loadMoreTweets(isManualRetry = false) {
             }
             pageNumber.value++;
         } else {
-            if (!isManualRetry) {
-                console.log('No more tweets available from backend.');
-                hasMoreTweets.value = false;
-            }
+            console.log('No more tweets available from backend.');
+            hasMoreTweets.value = false;
         }
     } catch (error) {
         if (error instanceof Error && error.message === 'TIMEOUT') {
-            console.log('Scroll load timed out after 6s — pausing auto-load');
-            loadPaused.value = true;
+            console.log('Scroll load timed out after 6s');
+            loadError.value = t('tweet.loadError', 'Loading failed, scroll to retry');
         } else {
             console.error('Error loading more tweets:', error);
-            if (!isManualRetry) hasMoreTweets.value = false;
+            loadError.value = t('tweet.loadError', 'Loading failed, scroll to retry');
         }
     } finally {
         appendNewToDisplayed();
@@ -86,7 +79,7 @@ const handleScroll = debounce(async () => {
     if (documentHeight - scrollPosition < scrollThreshold) {
         // Only load more tweets if we have more tweets available
         if (hasMoreTweets.value) {
-            await loadMoreTweets(false); // Automatic loading
+            await loadMoreTweets();
         }
     }
 }, 300); // Increased debounce delay to reduce conflicts
@@ -135,7 +128,7 @@ async function loadTweetsWithMinimum() {
 
     pageNumber.value = 0;
     hasMoreTweets.value = true;
-    loadPaused.value = false;
+    loadError.value = '';
 
     try {
         await loadMoreTweets();
@@ -206,6 +199,9 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
             <div v-if='retryMessage' class='text-muted mt-2 small'>
                 {{ retryMessage }}
             </div>
+        </div>
+        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
+            {{ loadError }}
         </div>
         <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center text-muted my-4 small'>
             {{ $t('tweet.noMorePosts') }}
