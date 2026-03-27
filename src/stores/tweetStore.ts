@@ -287,7 +287,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Cache this user's tweets to localStorage for instant display on next visit
                 this.cacheUserTweets(userId)
 
-                return tweetsData?.length || null
+                // Return 0 for an empty page (end-of-list) so callers can
+                // distinguish it from a real error (null / thrown exception).
+                return tweetsData?.length ?? null
             } catch (e) {
                 console.error("Error fetching tweets for user:", user.mid)
                 console.error("Exception:", e)
@@ -1460,16 +1462,23 @@ export const useTweetStore = defineStore('tweetStore', {
                             return null
                         }
 
-                        // Create comment object without author initially
+                        // Build a full Tweet-shaped comment object so it behaves
+                        // identically to a regular tweet (detail navigation, action bar, etc.)
                         const comment: any = {
                             mid: e.mid,
                             authorId: e.authorId,
                             author: null as User | null, // Will be loaded asynchronously
                             content: e.content,
                             timestamp: e.timestamp,
+                            // Inherit parent provider so detail view / action bar works.
+                            provider: tweet.provider,
+                            likeCount: e.favoriteCount ?? e.likeCount ?? 0,
+                            bookmarkCount: e.bookmarkCount ?? 0,
+                            commentCount: e.commentCount ?? 0,
+                            comments: [],
                             attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
                                 .map((a: MimeiFileType) => {
-                                    // comments on the same node as the tweet.
+                                    // comments are stored on the same node as the parent tweet.
                                     if (a.mid && tweet.provider) {
                                         a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
                                     }
@@ -1506,11 +1515,14 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 console.log('[loadComments] Valid comments to add:', validComments.length)
 
-                // Assign new array to ensure Vue reactivity triggers
-                if (!tweet.comments) {
-                    tweet.comments = []
-                }
-                tweet.comments = [...tweet.comments, ...validComments]
+                // Atomically replace the comments array with fresh server data.
+                // Appending causes duplicates when the same tweet is visited more than
+                // once because the cached tweet object already holds the previously
+                // loaded comments. Preserve any locally-created comments not yet
+                // returned by the server (e.g. optimistic inserts).
+                const freshMids = new Set(validComments.map((c: any) => c.mid))
+                const localOnly = (tweet.comments ?? []).filter(c => !freshMids.has(c.mid))
+                tweet.comments = [...validComments, ...localOnly]
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },

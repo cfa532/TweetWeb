@@ -130,8 +130,6 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         const minTweets = 6;
         let tweetsLoaded = 0;
         let round = 0;
-        let consecutiveFailures = 0;
-        const maxConsecutiveFailures = 2; // Allow up to 2 consecutive failures before giving up
         while (isLoading.value && round < 10) {
             // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
             const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
@@ -162,47 +160,44 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
                 }, LOAD_TIMEOUT_MS);
             });
 
-            let loadedPageSize: number;
+            let loadedPageSize: number | null;
             try {
-                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number;
-                consecutiveFailures = 0; // Reset on success
-                sessionStorage.removeItem('userPageRefreshCount'); // Clear refresh count on success
+                loadedPageSize = await Promise.race([loadPromise, timeoutPromise]) as number | null;
+                sessionStorage.removeItem('userPageRefreshCount');
             } catch (error) {
-                // Timeout already handled the refresh, this catch is for any other errors
-                // which should be extremely rare since timeout handles the refresh
+                // Timeout already handled the refresh; any other thrown error means stop.
                 console.error('Unexpected error during load:', error);
                 break;
             }
-            
-            if (loadedPageSize) {
-                tweetsLoaded += loadedPageSize;
-                round++;
-            } else {
-                console.warn("Init load failed. Cannot load tweets in round", round);
-                consecutiveFailures++;
-                
-                // Continue to next page if we haven't exceeded max failures
-                if (consecutiveFailures >= maxConsecutiveFailures) {
-                    console.warn("Too many consecutive failures, stopping initial load");
-                    break;
-                }
-                
-                // Still increment page number and round to try next page
-                pageNumber.value++;
-                round++;
-                continue;
+
+            round++;
+
+            if (loadedPageSize === null) {
+                // loadTweetsByUser returns null only when the user record cannot be
+                // resolved (e.g. user not found). Nothing to retry — stop.
+                console.warn('Could not load tweets: user not found or unrecoverable error.');
+                break;
             }
-            
-            // If fewer tweets than requested were loaded, there are no more tweets
-            if (loadedPageSize < pageSize) {
+
+            if (loadedPageSize === 0) {
+                // Server returned success but no tweets — we have reached the end of
+                // this user's timeline. Stop paging.
                 console.log('No more tweets available from backend. Page number:', pageNumber.value);
                 hasMoreTweets.value = false;
                 break;
-            } else {
-                // Load next page
-                pageNumber.value++;
-                console.log('Loaded', tweetsLoaded, 'tweets. Page number:', pageNumber.value);
             }
+
+            tweetsLoaded += loadedPageSize;
+
+            // If fewer tweets than the full page were returned there are no more pages.
+            if (loadedPageSize < pageSize) {
+                console.log('Last page reached. Total loaded:', tweetsLoaded);
+                hasMoreTweets.value = false;
+                break;
+            }
+
+            pageNumber.value++;
+            console.log('Loaded', tweetsLoaded, 'tweets so far. Next page:', pageNumber.value);
 
             if (tweetsLoaded >= minTweets) {
                 break;

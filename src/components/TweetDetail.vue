@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, TweetView, QRCoder, TweetActionBar } from "@/views";
-import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
+import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
 
@@ -604,15 +604,20 @@ function retryLoad() {
         </div>
     </div>
 
-    <!-- Show comments of the original tweet if it is a retweet -->
+    <!-- Comment list — reuses the same TweetList component as the main feed -->
     <div v-if="tweet" :class="['comment-list', 'mt-3', { 'has-comments': isRetweet ? originTweet?.comments?.length : tweet.comments?.length }]">
-        <template v-if="isRetweet">
-            <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card" />
-        </template>
-        <!-- Show comments of the tweet -->
-        <template v-else>
-            <TweetView v-for="comment in tweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card" />
-        </template>
+        <TweetList
+            v-if="isRetweet && originTweet?.comments?.length"
+            :tweets="originTweet.comments"
+            :is-comment="true"
+            :parent-tweet="originTweet"
+        />
+        <TweetList
+            v-else-if="!isRetweet && tweet.comments?.length"
+            :tweets="tweet.comments"
+            :is-comment="true"
+            :parent-tweet="tweet"
+        />
     </div>
 
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
