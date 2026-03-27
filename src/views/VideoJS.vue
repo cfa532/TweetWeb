@@ -205,7 +205,6 @@ onMounted(() => {
           showVideoError.value = false;
           failedFragments.clear();
           if (video.value) {
-            console.log('Video metadata loaded, duration:', video.value.duration);
             // Capture video dimensions to maintain space after video ends
             const videoHeight = video.value.videoHeight;
             const videoWidth = video.value.videoWidth;

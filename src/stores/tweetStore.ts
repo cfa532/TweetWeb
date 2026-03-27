@@ -3,6 +3,7 @@ import { reactive } from 'vue';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
+import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
 import i18n from '@/i18n';
 const GUEST_ID = "000000000000000000000000000"
@@ -1289,6 +1290,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * so the next fetch won't reuse a stale IP while preserving other cached data.
          */
         _nullifyCachedIp(userId: string) {
+            nodePool.invalidate(userId)
             const cached = sessionStorage.getItem(userId)
             if (cached) {
                 try {
@@ -1308,8 +1310,13 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of IP addresses (up to 2), or empty array if none found
          */
         async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
+            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, refresh), refresh);
+        },
+
+        /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
+        async _resolveProviderIps(mid: string, v4only: boolean, refresh: boolean): Promise<string[]> {
             try {
-                console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
+                console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
 
                 // Call get_provider_ips (plural) to get list of IPs
                 const params: any = {
@@ -1328,19 +1335,19 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (refresh) {
                     params.refresh = "true";
                 }
-                
+
                 const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
-                
+
                 console.log(`[getProviderIps] Raw response from get_provider_ips for ${mid}:`, ipResponse);
-                
+
                 if (!ipResponse) {
                     console.error("[getProviderIps] No response from get_provider_ips for", mid);
                     return [];
                 }
-                
+
                 // Handle the response - could be array or wrapped in data property
                 let ipList: string[] = [];
-                
+
                 if (Array.isArray(ipResponse)) {
                     ipList = ipResponse;
                 } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
@@ -1355,35 +1362,32 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error("[getProviderIps] Invalid response format from get_provider_ips:", ipResponse);
                     return [];
                 }
-                
+
                 // Filter and trim IP addresses, optionally removing IPv6 addresses
                 const ipAddresses = ipList
                     .map(ip => ip.trim())
                     .filter(ip => {
                         if (ip.length === 0) return false;
-                        
+
                         // If v4only is true, filter out IPv6 addresses
-                        if (v4only) {
-                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
-                            if (ip.includes('[') || ip.includes(']')) return false;
-                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
-                            const colonCount = (ip.match(/:/g) || []).length;
-                            if (colonCount > 1) return false;
-                        }
-                        
+                        if (ip.includes('[') || ip.includes(']')) return false;
+                        // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                        const colonCount = (ip.match(/:/g) || []).length;
+                        if (v4only && colonCount > 1) return false;
+
                         return true;
                     });
-                
+
                 if (ipAddresses.length === 0) {
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
                 }
-                
+
                 // Return first 2 IPs without testing them
                 const resultIps = ipAddresses.slice(0, 2);
                 console.log(`[getProviderIps] Returning ${resultIps.length} IP address(es) for ${mid}:`, resultIps);
                 return resultIps;
-                
+
             } catch (error) {
                 console.error("[getProviderIps] Error getting provider IPs for", mid, error);
                 return [];
