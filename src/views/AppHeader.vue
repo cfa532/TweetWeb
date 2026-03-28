@@ -68,7 +68,7 @@ onMounted(() => {
 })
 watch(userId, async (nv, ov) => {
     if (nv) {
-        user.value = await tweetStore.getUser(nv)
+        user.value = await tweetStore.getUser(nv, true)
     }
     else {
         user.value = undefined

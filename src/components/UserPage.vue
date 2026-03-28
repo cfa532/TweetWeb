@@ -100,6 +100,15 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
                             (existing as any)[key] = ft[key];
                         }
                     }
+                    // Keep provider/avatar in sync so cached pinned tweets don't keep stale hosts.
+                    if (ft.provider) existing.provider = ft.provider;
+                    if (ft.author) {
+                        if (!existing.author) existing.author = ft.author;
+                        else {
+                            if (ft.author.providerIp) existing.author.providerIp = ft.author.providerIp;
+                            if (ft.author.avatar) existing.author.avatar = ft.author.avatar;
+                        }
+                    }
                 } else {
                     pinnedTweets.value.push(ft);
                 }

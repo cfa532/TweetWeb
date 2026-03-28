@@ -452,7 +452,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async loadPinnedTweets(userId: string): Promise<Tweet[]> {
             let pinnedTweets = [] as Tweet[]
-            let user = await this.getUser(userId)
+            let user = await this.getUser(userId, true)
             if (!user)
                 return []
 
@@ -1153,8 +1153,13 @@ export const useTweetStore = defineStore('tweetStore', {
             if (user.writableHostIp === undefined) {
                 user.writableHostIp = null
             }
+            const existingUser = this.users.get(userId)
+            if (existingUser) {
+                // Preserve object identity so existing tweet/header refs receive refreshed fields.
+                Object.assign(existingUser as any, user as any)
+                return existingUser
+            }
             this.users.set(userId, user)
-            
             return user
         },
         
