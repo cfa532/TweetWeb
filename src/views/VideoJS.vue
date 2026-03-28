@@ -24,6 +24,10 @@ const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if
 const isAudio = props.media.type?.toLowerCase().includes('audio') ?? false;
 // In list/feed (typically non-autoplay), avoid showing spinner before user action.
 const isBuffering = ref(!isAudio && !!props.autoplay);
+// True while the coordinator has marked this video as primary and auto-play
+// hasn't started yet. Prevents the play overlay from flashing and keeps the
+// spinner visible between MANIFEST_PARSED and actual playback.
+const coordinatorAutoplayPending = ref(false);
 const showVideoError = ref(false); // Show error message when video fails to play
 const isMobile = isMobileBrowser(); // cached at setup time
 
@@ -55,6 +59,7 @@ const canShowPausedOverlays = computed(() => {
   return !showVideoError.value &&
     !(autoplayBlocked.value && props.autoplay) &&
     !isPlaying.value &&
+    !coordinatorAutoplayPending.value &&
     (!isBuffering.value || isMobile);
 });
 
@@ -158,17 +163,21 @@ onMounted(() => {
           isBuffering.value = true; // Show spinner when play starts, hide when actually playing
         });
         video.value.addEventListener('playing', () => {
-          isBuffering.value = false; // Video is actually playing now
+          isBuffering.value = false;
+          coordinatorAutoplayPending.value = false;
         });
         video.value.addEventListener('waiting', () => {
           isBuffering.value = true; // Video is buffering
         });
         video.value.addEventListener('canplay', () => {
-          isBuffering.value = false;
+          if (!coordinatorAutoplayPending.value) {
+            isBuffering.value = false;
+          }
         });
         video.value.addEventListener('pause', () => {
           isPlaying.value = false;
           isBuffering.value = false;
+          coordinatorAutoplayPending.value = false;
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
@@ -279,6 +288,7 @@ onMounted(() => {
         if (isInTweetList.value) {
           const onPrimaryChange: PrimaryChangeCallback = (isPrimary) => {
             if (isPrimary) {
+              coordinatorAutoplayPending.value = true;
               // Retry loading if the video previously failed
               if (showVideoError.value) {
                 showVideoError.value = false;
@@ -303,6 +313,7 @@ onMounted(() => {
               }
               if (hls) hls.startLoad(-1);
             } else {
+              coordinatorAutoplayPending.value = false;
               // Don't stop loading if the user explicitly tapped play;
               // the manifest/fragments may still be in-flight.
               if (hls && !pendingUserPlayRequest) {
@@ -417,6 +428,7 @@ function setupHLS() {
     console.error('HLS is not supported in this browser');
     showVideoError.value = true;
     isBuffering.value = false;
+    coordinatorAutoplayPending.value = false;
   }
 }
 
@@ -494,7 +506,9 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         mediaErrorRecoveryCount = 0;
         lastMediaErrorTime = 0;
         showVideoError.value = false;
-        isBuffering.value = false;
+        if (!coordinatorAutoplayPending.value) {
+          isBuffering.value = false;
+        }
         failedFragments.clear();
         if (props.autoplay || pendingUserPlayRequest) {
           pendingUserPlayRequest = false;
@@ -594,6 +608,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
                 // Show error message to user
                 showVideoError.value = true;
                 isBuffering.value = false;
+                coordinatorAutoplayPending.value = false;
                 return;
               }
 
@@ -1664,6 +1679,7 @@ function stopVideo() {
   lastHandledError = null;
   isHLSInitialized = false;
   pendingUserPlayRequest = false;
+  coordinatorAutoplayPending.value = false;
   mediaErrorRecoveryCount = 0;
   lastMediaErrorTime = 0;
   currentPlaylistType = null;
