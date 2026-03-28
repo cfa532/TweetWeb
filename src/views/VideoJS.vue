@@ -117,6 +117,7 @@ let currentPlaylistType: 'master' | 'playlist' | null = null;
 let hasTriedPlaylistFallback = false;
 let failedFragments = new Set<string>(); // Track fragments that have failed to avoid infinite loops
 const MANIFEST_PROBE_TIMEOUT_MS = 12000;
+let pendingUserPlayRequest = false;
 
 function cleanupHlsInstance() {
   if (!hls) return;
@@ -131,21 +132,6 @@ function cleanupHlsInstance() {
     console.log('Error destroying HLS instance:', e);
   }
   hls = null;
-}
-
-function clearVideoSourceForTeardown(videoElement?: HTMLVideoElement | null) {
-  if (!videoElement) return;
-  try {
-    videoElement.pause();
-  } catch (e) {
-    // no-op
-  }
-  try {
-    videoElement.removeAttribute('src');
-    videoElement.load();
-  } catch (e) {
-    console.log('Error clearing video source during teardown:', e);
-  }
 }
 
 onMounted(() => {
@@ -271,7 +257,13 @@ onMounted(() => {
         
         // Load video immediately (no delay needed)
         if (isHLS.value && !isHLSInitialized) {
-          setupHLS();
+          // In feed list with manual play, initialize HLS lazily on interaction.
+          if (props.autoplay || !isInTweetList.value) {
+            setupHLS();
+          } else {
+            isBuffering.value = false;
+            console.log('HLS.js: Deferred initialization until user play in tweet list');
+          }
         } else if (isRegularVideo.value) {
           setupRegularVideo();
         }
@@ -461,7 +453,8 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         isBuffering.value = false;
         failedFragments.clear();
         // Start playing if autoplay is enabled
-        if (props.autoplay) {
+        if (props.autoplay || pendingUserPlayRequest) {
+          pendingUserPlayRequest = false;
           videoElement.play().catch(() => {
             // Autoplay was prevented, user will need to use native controls
             showPlayOverlay.value = false; // Still hide overlay, rely on native controls
@@ -1159,6 +1152,14 @@ function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
   if (video.value) {
+    if (isHLS.value && !isHLSInitialized) {
+      // Lazy-init HLS in feed and immediately request play once manifest is ready.
+      pendingUserPlayRequest = true;
+      isBuffering.value = true;
+      showVideoError.value = false;
+      setupHLS();
+      return;
+    }
     if (isPlaying.value) {
       video.value.pause();
     } else {
@@ -1342,6 +1343,18 @@ async function handleVideoError(e: Event) {
       });
       return;
     }
+  }
+
+  // For HLS playback, let hls.js own recovery and fatal handling.
+  // Native <video> error recovery (src reset/reload) can re-touch stale blob URLs and
+  // trigger noisy ERR_FILE_NOT_FOUND in console.
+  if (isHLS.value) {
+    console.log('Ignoring native video error for HLS; recovery is handled by hls.js', {
+      tweetId: props.tweet?.mid,
+      code: error.code,
+      src: currentSrc.substring(0, 100) + '...'
+    });
+    return;
   }
   
   // Prevent handling the same error multiple times in quick succession
@@ -1574,20 +1587,20 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
 // Stop video playback and clean up resources
 function stopVideo() {
   const currentVideo = video.value;
-  if (currentVideo) {
-    // Pause the video
+  if (isHLS.value) {
+    // Keep HLS teardown minimal to avoid blob URL churn in browser console.
+    cleanupHlsInstance();
+    if (currentVideo && !currentVideo.paused) {
+      currentVideo.pause();
+      isPlaying.value = false;
+    }
+  } else if (currentVideo) {
     if (!currentVideo.paused) {
       currentVideo.pause();
       isPlaying.value = false;
     }
-
-    // Reset video to beginning
     currentVideo.currentTime = 0;
   }
-
-  // Clean up HLS instance
-  cleanupHlsInstance();
-  clearVideoSourceForTeardown(currentVideo);
 
   // Reset flags
   hasTriedSinglePlaylist = false;
@@ -1595,6 +1608,7 @@ function stopVideo() {
   isRetryingVideo = false;
   lastHandledError = null;
   isHLSInitialized = false;
+  pendingUserPlayRequest = false;
   mediaErrorRecoveryCount = 0;
   lastMediaErrorTime = 0;
   currentPlaylistType = null;
