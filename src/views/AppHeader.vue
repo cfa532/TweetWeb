@@ -7,7 +7,7 @@ import { QRCoder } from '@/views';
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const router = useRouter()
 const route = useRoute()
@@ -89,8 +89,127 @@ const goToLogin = () => {
     router.push({ name: 'account', query: { view: 'login', redirect: route.fullPath } })
 }
 
-const uploadTweet = () => {
+function isValidCloudDrivePort(port: unknown): boolean {
+    const normalizedPort = typeof port === 'string' ? Number.parseInt(port.trim(), 10) : port
+    return typeof normalizedPort === 'number'
+        && Number.isInteger(normalizedPort)
+        && normalizedPort >= 1
+        && normalizedPort <= 65535
+}
+
+async function countOriginalTweetsByUser(userId: string): Promise<number> {
+    const user = tweetStore.loginUser
+    if (!user?.client) return 0
+
+    const pageSize = 50
+    const maxPages = 20
+    let originalTweetCount = 0
+
+    for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
+        const response = await user.client.RunMApp("get_tweets_by_user", {
+            aid: tweetStore.appId,
+            ver: "last",
+            userid: userId,
+            pn: pageNumber,
+            ps: pageSize,
+            appuserid: userId,
+        })
+
+        if (response?.success !== true || !Array.isArray(response?.tweets)) {
+            break
+        }
+
+        const tweets = response.tweets.filter((tweet: any) => tweet != null)
+        if (tweets.length === 0) {
+            break
+        }
+
+        originalTweetCount += tweets.filter((tweet: any) => {
+            const hasTextContent = typeof tweet?.content === 'string' && tweet.content.trim().length > 0
+            const hasAttachment = Array.isArray(tweet?.attachments) && tweet.attachments.length > 0
+            return hasTextContent || hasAttachment
+        }).length
+        if (originalTweetCount >= 5) {
+            return originalTweetCount
+        }
+    }
+
+    return originalTweetCount
+}
+
+function openLeitherSetupInfoPage(targetWindow?: Window | null) {
+    const isChinese = locale.value?.toLowerCase().startsWith('zh')
+    const infoMessage = isChinese
+        ? `dTweet 社区由用户贡献的硬件共同支持。
+
+当用户发布的原创帖子超过 5 条时，应搭建自己的服务器并加入网络。
+
+以下说明描述了安装 Leither 的步骤。Leither 会把所有参与服务器组合成一个云服务。`
+        : `The dTweet community is supported by the hardware contributed by its users.
+
+Each user should set up its own server and join the network if more than 5 original posts are published.
+
+The following instructions describe steps to install Leither, which composes a cloud service out of all the participating servers.`
+    const pageTitle = isChinese ? 'dTweet 社区提示' : 'dTweet Community Notice'
+
+    const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${pageTitle}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; background: #f7fafc; color: #1f2937; line-height: 1.6; }
+    .card { max-width: 760px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
+    h1 { margin-top: 0; font-size: 1.35rem; }
+    p { margin: 0; white-space: pre-line; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>${pageTitle}</h1>
+    <p>${infoMessage}</p>
+  </div>
+</body>
+</html>`
+
+    const win = targetWindow || window.open('', '_blank')
+    if (!win) return
+
+    win.document.open()
+    win.document.write(html)
+    win.document.close()
+}
+
+const uploadTweet = async () => {
     closeAccountMenu()
+    const loginUser = tweetStore.loginUser
+    const hasValidCloudDrivePort = isValidCloudDrivePort(loginUser?.cloudDrivePort)
+
+    // If cloudDrivePort is valid, always navigate directly to editor.
+    if (hasValidCloudDrivePort) {
+        router.push({ name: 'post' })
+        return
+    }
+
+    const preOpenedWindow = window.open('', '_blank')
+
+    if (loginUser?.mid) {
+        try {
+            const originalTweetCount = await countOriginalTweetsByUser(loginUser.mid)
+
+            if (originalTweetCount >= 5 && !hasValidCloudDrivePort) {
+                openLeitherSetupInfoPage(preOpenedWindow)
+                return
+            }
+        } catch (error) {
+            console.error('[publish pre-check] Failed to validate original tweet threshold:', error)
+        }
+    }
+
+    if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.close()
+    }
     router.push({ name: 'post' })
 }
 
