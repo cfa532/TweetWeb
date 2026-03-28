@@ -1,8 +1,8 @@
 <script setup lang='ts'>
-import { onMounted, ref, onUnmounted, watch, computed } from 'vue';
+import { onMounted, ref, onUnmounted, watch, computed, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
-import { useRoute } from 'vue-router';
+import { useRoute, onBeforeRouteLeave } from 'vue-router';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 import { TweetView, AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
@@ -23,6 +23,47 @@ const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
+
+const USER_PAGE_SCROLL_PREFIX = 'userPageScroll:'
+
+function restoreUserPageScroll(authorId: MimeiId) {
+    const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + authorId)
+    if (raw === null) {
+        window.scrollTo(0, 0)
+        return
+    }
+    const y = parseInt(raw, 10)
+    if (Number.isNaN(y)) {
+        window.scrollTo(0, 0)
+        return
+    }
+    const apply = () => {
+        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+        window.scrollTo(0, Math.min(Math.max(0, y), maxScroll))
+    }
+    // Layout grows after tweets/images paint — retry so we don't clamp to 0.
+    nextTick(() => {
+        requestAnimationFrame(() => {
+            apply()
+            requestAnimationFrame(apply)
+        })
+        setTimeout(apply, 50)
+        setTimeout(apply, 200)
+    })
+}
+
+function saveUserPageScrollPosition() {
+    const id = authorId.value
+    if (id) {
+        sessionStorage.setItem(USER_PAGE_SCROLL_PREFIX + id, String(window.scrollY))
+    }
+}
+
+// Save while still on this route — onUnmounted runs after the next view mounts,
+// so window.scrollY is often already 0 (detail page scrolled to top).
+onBeforeRouteLeave(() => {
+    saveUserPageScrollPosition()
+})
 
 onMounted(() => {
     window.addEventListener('scroll', handleScroll);
@@ -369,7 +410,13 @@ watch(authorId, async (nv, ov) => {
     // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
     tweetStore.getUser(nv, true);
     await initialLoadTweets(nv);
-    window.scrollTo(0, 0);
+    // Scroll to top when switching to another author; otherwise restore list
+    // position (e.g. returning from tweet detail to the same profile).
+    if (ov !== undefined && nv !== ov) {
+        window.scrollTo(0, 0)
+    } else {
+        restoreUserPageScroll(nv)
+    }
 }, { immediate: true });
 
 // Debounce function (you can also use a library like lodash)
