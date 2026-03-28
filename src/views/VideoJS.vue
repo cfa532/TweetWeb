@@ -277,13 +277,32 @@ onMounted(() => {
         // Register with video playback coordinator for single-video-at-a-time in tweet list
         if (isInTweetList.value) {
           const onPrimaryChange: PrimaryChangeCallback = (isPrimary) => {
-            if (!hls) return;
             if (isPrimary) {
-              // Resume loading so the active video gets full bandwidth
-              hls.startLoad(-1);
+              // Retry loading if the video previously failed
+              if (showVideoError.value) {
+                showVideoError.value = false;
+                isBuffering.value = true;
+                cleanupHlsInstance();
+                isHLSInitialized = false;
+                videoErrorRetryCount = 0;
+                setupHLS();
+                return;
+              }
+              // Auto-init HLS when coordinator scrolls this video into view.
+              // The coordinator's own loadedmetadata listener (in setPrimary)
+              // will call play() once metadata is available.
+              if (!isHLSInitialized && isHLS.value) {
+                isBuffering.value = true;
+                setupHLS();
+                return;
+              }
+              if (hls) hls.startLoad(-1);
             } else {
-              // Stop loading fragments to free bandwidth for the primary video
-              hls.stopLoad();
+              // Don't stop loading if the user explicitly tapped play;
+              // the manifest/fragments may still be in-flight.
+              if (hls && !pendingUserPlayRequest) {
+                hls.stopLoad();
+              }
             }
           };
           registerVideo(video.value, vdiv.value, onPrimaryChange);
@@ -339,8 +358,11 @@ function setupHLS() {
 
       videoElement.addEventListener('loadedmetadata', () => {
         console.log('Feed HLS: progressive source loaded, skipping hls.js');
-        if (props.autoplay) {
-          videoElement.play().catch(() => {
+        if (props.autoplay || pendingUserPlayRequest) {
+          pendingUserPlayRequest = false;
+          videoElement.play().then(() => {
+            if (isInTweetList.value) requestPlay(video.value);
+          }).catch(() => {
             showPlayOverlay.value = false;
           });
         }
@@ -423,8 +445,8 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       abrBandWidthFactor: 0.8, // More conservative bandwidth factor
       abrBandWidthUpFactor: 0.5, // Very conservative for bandwidth increases
       abrMaxWithRealBitrate: true,
-      // Force lower quality for list view
-      startLevel: 1, // Start with second quality level (usually 480p)
+      // Start with the lowest quality for list view (safe for single-level streams)
+      startLevel: 0,
       capLevelToPlayerSize: true,
       // Smaller buffer for list view
       maxBufferLength: 15, // Reduced buffer length
@@ -487,10 +509,13 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         showVideoError.value = false;
         isBuffering.value = false;
         failedFragments.clear();
-        // Start playing if autoplay is enabled
+        // Start playing if autoplay is enabled or user tapped play
         if (props.autoplay || pendingUserPlayRequest) {
           pendingUserPlayRequest = false;
-          videoElement.play().catch(() => {
+          videoElement.play().then(() => {
+            // Inform coordinator after play succeeds (won't mute since already playing)
+            if (isInTweetList.value) requestPlay(videoElement);
+          }).catch(() => {
             // Autoplay was prevented, user will need to use native controls
             showPlayOverlay.value = false; // Still hide overlay, rely on native controls
           });
@@ -503,6 +528,15 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
 
         // For non-fatal errors, try to recover
         if (!data.fatal) {
+          // levelSwitchError: invalid level index (e.g. stream has fewer levels
+          // than startLevel). Fall back to auto level selection.
+          if (data.details === 'levelSwitchError' && hls) {
+            console.log('Level switch error, falling back to auto level selection');
+            hls.currentLevel = -1;
+            hls.startLoad();
+            return;
+          }
+
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
               console.log('Network error, attempting to recover...');
@@ -1203,9 +1237,6 @@ function handlePlayOverlayClick(event: Event) {
       pendingUserPlayRequest = true;
       isBuffering.value = true;
       showVideoError.value = false;
-      // Tell the coordinator this video is now active so it pauses all others
-      // and won't interfere during async HLS initialization.
-      requestPlay(video.value);
       setupHLS();
       return;
     }
@@ -1552,7 +1583,7 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.5,
         abrMaxWithRealBitrate: true,
-        startLevel: 1,
+        startLevel: 0,
         capLevelToPlayerSize: true,
         maxBufferLength: 15,
         maxMaxBufferLength: 300,

@@ -1,10 +1,10 @@
 /**
- * VideoPlaybackCoordinator - ensures only one video plays at a time in the tweet list.
+ * VideoPlaybackCoordinator – manages video playback in the tweet list.
  *
- * Inspired by the iOS VideoPlaybackCoordinator pattern:
  *  - Tracks all registered video instances and their visibility.
  *  - Picks the topmost sufficiently-visible video as the "primary".
- *  - Pauses every other video when the primary changes.
+ *  - All videos within the same tweet as the primary also autoplay.
+ *  - Videos in other tweets are paused.
  *  - Debounces selection during scroll to avoid rapid switching.
  */
 
@@ -100,24 +100,72 @@ function selectPrimary() {
   if (best) {
     setPrimary(best.el)
   } else {
-    // No video sufficiently visible – pause current primary and stop all loading
-    if (primaryVideo) {
-      if (!primaryVideo.paused) {
-        primaryVideo.pause()
+    // No video sufficiently visible – pause all active videos (primary + siblings)
+    for (const entry of registry.values()) {
+      if (!entry.el.paused) {
+        entry.el.pause()
       }
-      const entry = registry.get(primaryVideo)
-      entry?.onPrimaryChange?.(false)
+      entry.onPrimaryChange?.(false)
     }
     primaryVideo = null
   }
 }
 
+/** Find the .tweet-container ancestor for a registry entry */
+function getTweetContainer(entry: VideoEntry): HTMLElement | null {
+  return entry.wrapper?.closest('.tweet-container') as HTMLElement | null
+}
+
+/** Try to autoplay a video element (muted for browser autoplay policy) */
+function autoplayElement(el: HTMLVideoElement) {
+  if (!el.paused) return
+  el.muted = true
+  el.volume = 0
+  if (el.readyState >= 1) {
+    el.play().catch(() => {})
+  } else {
+    // Wait for the video to be ready, then play. The actual loading is
+    // triggered by the onPrimaryChange callback (setupHLS / startLoad),
+    // so we must NOT call el.load() here — a second load() aborts the
+    // in-progress resource selection and can cause a visible "refresh".
+    el.addEventListener(
+      'loadedmetadata',
+      () => {
+        if (primaryVideo === el || isSiblingOfPrimary(el)) {
+          el.play().catch(() => {})
+        }
+      },
+      { once: true }
+    )
+  }
+}
+
+/** Check if el is a sibling of the current primary video (same tweet) */
+function isSiblingOfPrimary(el: HTMLVideoElement): boolean {
+  if (!primaryVideo) return false
+  const primaryEntry = registry.get(primaryVideo)
+  const elEntry = registry.get(el)
+  if (!primaryEntry || !elEntry) return false
+  const container = getTweetContainer(primaryEntry)
+  return !!container && container === getTweetContainer(elEntry)
+}
+
 function setPrimary(el: HTMLVideoElement) {
   if (primaryVideo === el) return
 
-  // Pause old primary and every other playing video; notify them they lost primary
+  primaryVideo = el
+  const newEntry = registry.get(el)
+  const tweetContainer = newEntry ? getTweetContainer(newEntry) : null
+
+  // Pause / deactivate videos NOT in the same tweet; activate siblings
   for (const entry of registry.values()) {
-    if (entry.el !== el) {
+    if (entry.el === el) continue
+
+    const isSibling = tweetContainer && getTweetContainer(entry) === tweetContainer
+    if (isSibling) {
+      entry.onPrimaryChange?.(true)
+      autoplayElement(entry.el)
+    } else {
       if (!entry.el.paused) {
         entry.el.pause()
       }
@@ -125,35 +173,7 @@ function setPrimary(el: HTMLVideoElement) {
     }
   }
 
-  primaryVideo = el
-
-  // Notify the new primary
-  const newEntry = registry.get(el)
+  // Notify and start the primary itself
   newEntry?.onPrimaryChange?.(true)
-
-  // Start the new primary (muted for autoplay compatibility)
-  if (el.paused) {
-    el.muted = true
-    el.volume = 0
-    if (el.readyState >= 1) {
-      el.play().catch(() => {})
-    } else {
-      el.addEventListener(
-        'loadedmetadata',
-        () => {
-          if (primaryVideo === el) {
-            el.play().catch(() => {})
-          }
-        },
-        { once: true }
-      )
-      // Only call load() for regular video sources. For blob: URLs (hls.js
-      // MediaSource), load() restarts resource selection and breaks the
-      // MediaSource connection, causing ERR_FILE_NOT_FOUND on the blob URL.
-      const src = el.getAttribute('src') || ''
-      if (src && !src.startsWith('blob:')) {
-        el.load()
-      }
-    }
-  }
+  autoplayElement(el)
 }
