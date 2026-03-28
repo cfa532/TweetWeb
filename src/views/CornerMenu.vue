@@ -137,16 +137,16 @@ async function deleteItem() {
 <div style="width:100%; text-align: right;" @mouseenter="showMenu" @mouseleave="hideMenu">
     <a ref="dotBtn" href="#" class="dot"> &#8226;&#8226;&bull; </a>
     <div ref="shareMenu" class="menu" hidden @mouseenter="showMenu" @mouseleave="hideMenu">
-        <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">
-            <span style="text-decoration: none; font-size: smaller;">
+        <div class="item copy-item" @click.stop="copyLink">
+            <span class="menu-text">
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
             </span>
         </div>
-        <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor" style="cursor: pointer;">
-            <span style="text-decoration: none;"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
+        <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
+            <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
         </div>
-        <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem" style="cursor: pointer;">
-            <span style="text-decoration: none;"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
+        <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem">
+            <span class="menu-text"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
         </div>
     </div>
 </div>
@@ -170,32 +170,41 @@ async function deleteItem() {
 <style scoped>
 .dot {
     font-size: 15px;
-    color: grey;
+    color: gray;
     padding: 4px 8px 8px 8px;
     text-decoration: none;
 }
 .menu {
     position: fixed;
     z-index: 50;
-    background-color: whitesmoke;
-    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+    background: #fff;
+    border: 1px solid #e6ecf0;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
     min-width: 220px;
-    padding: 4px 8px;
+    padding: 0;
+    overflow: hidden;
 }
 .item {
-    border-bottom: 1px dotted;
-    padding: 10px;
-    text-align: center;
+    padding: 10px 12px;
+    text-align: left;
+    color: #4a4a4a;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border-bottom: 1px solid #eef2f4;
 }
 .item:last-child {
     border-bottom: none;
 }
+.menu-text {
+    text-decoration: none;
+}
 .clickable-item:hover {
-    background-color: #e0e0e0;
+    background: #f5f8fa;
     transition: background-color 0.2s ease;
 }
 .copy-item:hover {
-    background-color: #e0e0e0;
+    background: #f5f8fa;
     transition: background-color 0.2s ease;
 }
 .edit-overlay {
