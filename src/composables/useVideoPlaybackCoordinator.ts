@@ -4,7 +4,8 @@
  *  - Tracks all registered video instances and their visibility.
  *  - Picks the topmost sufficiently-visible video as the "primary".
  *  - Only one video plays at a time.
- *  - When the primary ends, the next sibling in the same tweet plays.
+ *  - When the primary ends, the next sibling in the same tweet plays,
+ *    then advances to the next visible video in the feed.
  *  - Debounces selection during scroll to avoid rapid switching.
  */
 
@@ -95,7 +96,7 @@ function getTweetContainer(entry: VideoEntry): HTMLElement | null {
 function selectPrimary() {
   let best: VideoEntry | null = null
   for (const entry of registry.values()) {
-    if (entry.ratio >= VISIBILITY_THRESHOLD) {
+    if (entry.ratio >= VISIBILITY_THRESHOLD && !entry.el.ended) {
       if (!best || entry.top < best.top) {
         best = entry
       }
@@ -133,6 +134,7 @@ function selectPrimary() {
 /** Try to autoplay a video element (muted for browser autoplay policy) */
 function autoplayElement(el: HTMLVideoElement) {
   if (!el.paused) return
+  if (el.ended) return
   el.muted = true
   el.volume = 0
   if (el.readyState >= 1) {
@@ -175,6 +177,10 @@ function handlePrimaryEnded() {
   const currentIndex = tweetVideos.findIndex(e => e.el === primaryVideo)
   if (currentIndex >= 0 && currentIndex + 1 < tweetVideos.length) {
     setPrimary(tweetVideos[currentIndex + 1].el)
+  } else {
+    // No more videos in this tweet — pick the next visible video in the feed.
+    // selectPrimary skips ended videos, so it will find the next candidate.
+    selectPrimary()
   }
 }
 

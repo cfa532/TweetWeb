@@ -75,35 +75,13 @@ const isInTweetList = computed(() => {
   return isInList;
 });
 
-// Hardware acceleration detection
-const supportsHardwareAcceleration = computed(() => {
-  if (!video.value) return false;
-  
-  // Check for hardware acceleration support
-  const canvas = document.createElement('canvas');
-  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-  
-  if (!gl) return false;
-  
-  // Check for hardware video decoding support
-  const videoElement = video.value;
-  
-  // Test hardware acceleration by checking if the browser supports it
-  const testVideo = document.createElement('video');
-  testVideo.style.display = 'none';
-  document.body.appendChild(testVideo);
-  
-  // Check for hardware acceleration hints
-  const hasHardwareSupport = (
-    'mediaCapabilities' in navigator ||
-    'getVideoPlaybackQuality' in videoElement ||
-    'webkitVideoPlaybackQuality' in videoElement
-  );
-  
-  document.body.removeChild(testVideo);
-  
-  return hasHardwareSupport;
-});
+// Hardware acceleration detection – cached once per page load.
+// The previous computed created a WebGL context on every evaluation, quickly
+// exhausting the browser's context limit when many VideoJS instances exist.
+const supportsHardwareAcceleration = (() => {
+  if (typeof navigator === 'undefined') return false;
+  return 'mediaCapabilities' in navigator;
+})();
 
 let hls: Hls | null = null;
 let hasTriedSinglePlaylist = false;
@@ -288,7 +266,9 @@ onMounted(() => {
         if (isInTweetList.value) {
           const onPrimaryChange: PrimaryChangeCallback = (isPrimary) => {
             if (isPrimary) {
-              coordinatorAutoplayPending.value = true;
+              // Don't set the pending flag for ended videos — the coordinator
+              // won't auto-play them, so the play overlay should show instead.
+              coordinatorAutoplayPending.value = !video.value?.ended;
               // Retry loading if the video previously failed
               if (showVideoError.value) {
                 showVideoError.value = false;
@@ -364,7 +344,7 @@ function setupHLS() {
   const videoElement = video.value;
 
       // Enable hardware acceleration if supported
-    if (supportsHardwareAcceleration.value) {
+    if (supportsHardwareAcceleration) {
       videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
       videoElement.style.willChange = 'transform'; // Optimize for animations
     }
@@ -712,7 +692,7 @@ function setupRegularVideo() {
   const videoElement = video.value;
   
   // Enable hardware acceleration if supported
-  if (supportsHardwareAcceleration.value) {
+  if (supportsHardwareAcceleration) {
     videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
     videoElement.style.willChange = 'transform'; // Optimize for animations
   }
