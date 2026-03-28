@@ -121,6 +121,7 @@ let pendingUserPlayRequest = false;
 
 function cleanupHlsInstance() {
   if (!hls) return;
+  const mediaElement = hls.media;
   try {
     hls.detachMedia();
   } catch (e) {
@@ -132,6 +133,11 @@ function cleanupHlsInstance() {
     console.log('Error destroying HLS instance:', e);
   }
   hls = null;
+  // After hls.destroy() revokes the internal blob URL, clear the video src
+  // so the browser doesn't fire ERR_FILE_NOT_FOUND on the stale blob URL.
+  if (mediaElement) {
+    mediaElement.removeAttribute('src');
+  }
 }
 
 onMounted(() => {
@@ -638,12 +644,16 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
 
     (async () => {
       for (const candidate of candidates) {
+        if (isUnmounting) return;
         const ok = await probeManifest(candidate.url, candidate.sourceName);
+        if (isUnmounting) return;
         if (ok) {
           createHLSInstance(candidate.url, candidate.sourceName);
           return;
         }
       }
+
+      if (isUnmounting) return;
 
       // Probe can fail due to transient network timing; still try direct attach once.
       const fallback = candidates[0];
@@ -1193,6 +1203,9 @@ function handlePlayOverlayClick(event: Event) {
       pendingUserPlayRequest = true;
       isBuffering.value = true;
       showVideoError.value = false;
+      // Tell the coordinator this video is now active so it pauses all others
+      // and won't interfere during async HLS initialization.
+      requestPlay(video.value);
       setupHLS();
       return;
     }
@@ -1624,12 +1637,13 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
 function stopVideo() {
   const currentVideo = video.value;
   if (isHLS.value) {
-    // Keep HLS teardown minimal to avoid blob URL churn in browser console.
     cleanupHlsInstance();
-    if (currentVideo && !currentVideo.paused) {
-      currentVideo.pause();
-      isPlaying.value = false;
+    if (currentVideo) {
+      // load() fully resets the video element, aborting any pending fetches
+      // on the now-revoked blob URL that cleanupHlsInstance just cleared.
+      currentVideo.load();
     }
+    isPlaying.value = false;
   } else if (currentVideo) {
     if (!currentVideo.paused) {
       currentVideo.pause();

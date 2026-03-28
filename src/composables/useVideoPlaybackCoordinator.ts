@@ -147,7 +147,13 @@ function setPrimary(el: HTMLVideoElement) {
         },
         { once: true }
       )
-      el.load()
+      // Only call load() for regular video sources. For blob: URLs (hls.js
+      // MediaSource), load() restarts resource selection and breaks the
+      // MediaSource connection, causing ERR_FILE_NOT_FOUND on the blob URL.
+      const src = el.getAttribute('src') || ''
+      if (src && !src.startsWith('blob:')) {
+        el.load()
+      }
     }
   }
 }
