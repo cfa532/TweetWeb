@@ -181,6 +181,10 @@ function handleFollowToggled(payload: { userId: MimeiId; isFollowing: boolean })
     }
 }
 
+function handleResolveFailed(userId: MimeiId) {
+    followingIds.value = followingIds.value.filter(id => id !== userId)
+}
+
 // Cleanup on component unmount
 import { onUnmounted } from 'vue'
 onUnmounted(() => {
@@ -200,6 +204,7 @@ onUnmounted(() => {
             :showFollowButton="isLoggedIn"
             :key="userId" 
             @follow-toggled="handleFollowToggled"
+            @resolve-failed="handleResolveFailed"
             class="user-row" 
         />
         

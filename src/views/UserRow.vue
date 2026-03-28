@@ -17,6 +17,7 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'follow-toggled', payload: { userId: MimeiId; isFollowing: boolean }): void
+  (e: 'resolve-failed', userId: MimeiId): void
 }>()
 const router = useRouter()
 const tweetStore = useTweetStore()
@@ -50,13 +51,16 @@ onMounted(async () => {
     try {
         const userData = await Promise.race([
             tweetStore.getUser(props.userId),
-            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 5000))
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 15000))
         ])
         user.value = userData || null
     } catch (error) {
         console.error('Failed to load user:', error)
     } finally {
         isLoading.value = false
+        if (!user.value) {
+            emit('resolve-failed', props.userId)
+        }
     }
 })
 
@@ -132,12 +136,7 @@ async function onToggleFollow(event: Event) {
     </button>
   </div>
 
-  <!-- Error state -->
-  <div v-else class="tweet-header d-flex align-items-start">
-    <div class="user-info flex-grow-1">
-      <span class="text-muted">{{ $t('tweet.failedLoadUser') }}</span>
-    </div>
-  </div>
+  <!-- Unresolved users are removed by the parent via @resolve-failed -->
 </template>
 <style>
 .tweet-header {
