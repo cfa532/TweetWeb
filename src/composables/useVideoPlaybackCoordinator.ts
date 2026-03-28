@@ -3,8 +3,8 @@
  *
  *  - Tracks all registered video instances and their visibility.
  *  - Picks the topmost sufficiently-visible video as the "primary".
- *  - All videos within the same tweet as the primary also autoplay.
- *  - Videos in other tweets are paused.
+ *  - Only one video plays at a time.
+ *  - When the primary ends, the next sibling in the same tweet plays.
  *  - Debounces selection during scroll to avoid rapid switching.
  */
 
@@ -48,6 +48,7 @@ export function unregisterVideo(el: HTMLVideoElement) {
     }
     registry.delete(el)
     if (primaryVideo === el) {
+      el.removeEventListener('ended', handlePrimaryEnded)
       primaryVideo = null
       scheduleSelection()
     }
@@ -86,8 +87,12 @@ function scheduleSelection() {
   debounceTimer = setTimeout(selectPrimary, DEBOUNCE_MS)
 }
 
+/** Find the .tweet-container ancestor for a registry entry */
+function getTweetContainer(entry: VideoEntry): HTMLElement | null {
+  return entry.wrapper?.closest('.tweet-container') as HTMLElement | null
+}
+
 function selectPrimary() {
-  // Find topmost video that is at least 50% visible
   let best: VideoEntry | null = null
   for (const entry of registry.values()) {
     if (entry.ratio >= VISIBILITY_THRESHOLD) {
@@ -99,8 +104,22 @@ function selectPrimary() {
 
   if (best) {
     setPrimary(best.el)
-  } else {
-    // No video sufficiently visible – pause all active videos (primary + siblings)
+  } else if (primaryVideo) {
+    // No video above the selection threshold. Apply hysteresis: keep the
+    // current primary as long as its tweet is still partially on-screen.
+    // This prevents stop/restart flicker when ratios briefly dip during scroll.
+    const primaryEntry = registry.get(primaryVideo)
+    const tweetContainer = primaryEntry ? getTweetContainer(primaryEntry) : null
+    const tweetStillVisible = tweetContainer
+      ? [...registry.values()].some(
+          e => getTweetContainer(e) === tweetContainer && e.ratio > 0
+        )
+      : primaryEntry && primaryEntry.ratio > 0
+
+    if (tweetStillVisible) return
+
+    // Tweet is fully off-screen – pause all active videos
+    primaryVideo.removeEventListener('ended', handlePrimaryEnded)
     for (const entry of registry.values()) {
       if (!entry.el.paused) {
         entry.el.pause()
@@ -109,11 +128,6 @@ function selectPrimary() {
     }
     primaryVideo = null
   }
-}
-
-/** Find the .tweet-container ancestor for a registry entry */
-function getTweetContainer(entry: VideoEntry): HTMLElement | null {
-  return entry.wrapper?.closest('.tweet-container') as HTMLElement | null
 }
 
 /** Try to autoplay a video element (muted for browser autoplay policy) */
@@ -131,7 +145,7 @@ function autoplayElement(el: HTMLVideoElement) {
     el.addEventListener(
       'loadedmetadata',
       () => {
-        if (primaryVideo === el || isSiblingOfPrimary(el)) {
+        if (primaryVideo === el) {
           el.play().catch(() => {})
         }
       },
@@ -140,32 +154,47 @@ function autoplayElement(el: HTMLVideoElement) {
   }
 }
 
-/** Check if el is a sibling of the current primary video (same tweet) */
-function isSiblingOfPrimary(el: HTMLVideoElement): boolean {
-  if (!primaryVideo) return false
-  const primaryEntry = registry.get(primaryVideo)
-  const elEntry = registry.get(el)
-  if (!primaryEntry || !elEntry) return false
-  const container = getTweetContainer(primaryEntry)
-  return !!container && container === getTweetContainer(elEntry)
+/** When the primary video ends, play the next sibling in the same tweet. */
+function handlePrimaryEnded() {
+  if (!primaryVideo) return
+  const currentEntry = registry.get(primaryVideo)
+  if (!currentEntry) return
+  const tweetContainer = getTweetContainer(currentEntry)
+  if (!tweetContainer) return
+
+  // Only advance if the tweet is still visible
+  const tweetStillVisible = [...registry.values()].some(
+    e => getTweetContainer(e) === tweetContainer && e.ratio > 0
+  )
+  if (!tweetStillVisible) return
+
+  // Gather all videos in this tweet, sorted by DOM order
+  const tweetVideos = [...registry.values()]
+    .filter(e => getTweetContainer(e) === tweetContainer)
+    .sort((a, b) => {
+      const pos = a.wrapper.compareDocumentPosition(b.wrapper)
+      return pos & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+    })
+
+  const currentIndex = tweetVideos.findIndex(e => e.el === primaryVideo)
+  if (currentIndex >= 0 && currentIndex + 1 < tweetVideos.length) {
+    setPrimary(tweetVideos[currentIndex + 1].el)
+  }
 }
 
 function setPrimary(el: HTMLVideoElement) {
   if (primaryVideo === el) return
 
+  // Clean up ended listener on old primary
+  if (primaryVideo) {
+    primaryVideo.removeEventListener('ended', handlePrimaryEnded)
+  }
+
   primaryVideo = el
-  const newEntry = registry.get(el)
-  const tweetContainer = newEntry ? getTweetContainer(newEntry) : null
 
-  // Pause / deactivate videos NOT in the same tweet; activate siblings
+  // Pause and deactivate every other video
   for (const entry of registry.values()) {
-    if (entry.el === el) continue
-
-    const isSibling = tweetContainer && getTweetContainer(entry) === tweetContainer
-    if (isSibling) {
-      entry.onPrimaryChange?.(true)
-      autoplayElement(entry.el)
-    } else {
+    if (entry.el !== el) {
       if (!entry.el.paused) {
         entry.el.pause()
       }
@@ -173,7 +202,11 @@ function setPrimary(el: HTMLVideoElement) {
     }
   }
 
-  // Notify and start the primary itself
+  // Notify and start the new primary
+  const newEntry = registry.get(el)
   newEntry?.onPrimaryChange?.(true)
   autoplayElement(el)
+
+  // When this video ends, advance to the next sibling in the same tweet
+  el.addEventListener('ended', handlePrimaryEnded, { once: true })
 }
