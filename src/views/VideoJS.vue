@@ -286,6 +286,10 @@ onMounted(() => {
                 cleanupHlsInstance();
                 isHLSInitialized = false;
                 videoErrorRetryCount = 0;
+                mediaErrorRecoveryCount = 0;
+                lastMediaErrorTime = 0;
+                hasTriedPlaylistFallback = false;
+                failedFragments.clear();
                 setupHLS();
                 return;
               }
