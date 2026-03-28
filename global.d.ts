@@ -50,6 +50,7 @@ interface Tweet {
     commentCount?: number;
 
     provider?: string;       // Hprose client handler
+    playlist?: string;       // Cached resolved HLS playlist filename (e.g. master.m3u8)
     downloadable?: boolean;
     isPrivate?: boolean;
 };
