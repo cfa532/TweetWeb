@@ -8,7 +8,8 @@ import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
     tweet: {type: Object as PropType<Tweet>, required: false},
-    autoplay: {type: Boolean, required: false},
+    // Use PropType instead of Boolean constructor so omitted prop stays undefined.
+    autoplay: {type: null as unknown as PropType<boolean | undefined>, required: false},
     addtionalItems: {type: Number, required: false},    // show PLUS sign over last item in preview grid
     mediaList: {type: Array as PropType<MimeiFileType[]>, required: false}, // All media items for gallery
     mediaIndex: {type: Number, required: false}, // Index of current media in the list
@@ -35,10 +36,43 @@ const userComponent = computed(() => {
     }
 })
 
+const isVideoComponent = computed(() => userComponent.value === VideoJS);
+
 const isMediaViewable = computed(() => {
     const mediaType = normalizeMediaType(props.media.type);
     return isImageType(mediaType) || isVideoType(mediaType) || mediaType.includes("image") || mediaType.includes("video");
     // audio excluded — it has its own inline player
+});
+
+const resolvedAutoplay = computed(() => {
+    if (props.autoplay !== undefined) {
+        return props.autoplay;
+    }
+
+    const mediaType = normalizeMediaType(props.media.type);
+    if (!(isVideoType(mediaType) || mediaType.includes("video"))) {
+        return false;
+    }
+
+    // Keep feed autoplay mobile-off, but avoid false positives on touch-capable desktops.
+    const isNarrowViewport = window.matchMedia('(max-width: 768px)').matches;
+    const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+    const isMobileLikeDevice = isNarrowViewport && (isCoarsePointer || navigator.maxTouchPoints > 0);
+    if (isMobileLikeDevice) {
+        return false;
+    }
+
+    const allMedia = props.mediaList || props.tweet?.attachments || [];
+    if (!allMedia.length) {
+        return false;
+    }
+
+    const videoItems = allMedia.filter((item: MimeiFileType) => {
+        const type = normalizeMediaType(item.type);
+        return isVideoType(type) || type.includes("video");
+    });
+
+    return videoItems.length === 1 && videoItems[0].mid === props.media.mid;
 });
 
 function handleMediaClick(event: MouseEvent) {
@@ -79,8 +113,14 @@ function handleMediaClick(event: MouseEvent) {
         @click="handleMediaClick"
     >
         <span v-if="addtionalItems" class="overlay">+{{ addtionalItems }}</span>
-        <KeepAlive>
-            <component :is="userComponent" v-bind="props"></component>
+        <component
+            v-if="isVideoComponent"
+            :is="userComponent"
+            v-bind="props"
+            :autoplay="resolvedAutoplay"
+        ></component>
+        <KeepAlive v-else>
+            <component :is="userComponent" v-bind="props" :autoplay="resolvedAutoplay"></component>
         </KeepAlive>
     </div>
 </template>

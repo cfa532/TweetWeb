@@ -321,6 +321,35 @@ function setupHLS() {
   isHLSInitialized = true;
   
   const videoElement = video.value;
+
+  // In tweet feed, prefer direct progressive playback when fileName is available.
+  // This avoids hls.js MSE/blob lifecycle for simple preview playback.
+  if (isInTweetList.value) {
+    const progressiveUrl = getHLSProgressiveSource();
+    if (progressiveUrl) {
+      console.log('Feed HLS: trying direct progressive source first:', progressiveUrl);
+      videoElement.src = progressiveUrl;
+      videoElement.load();
+
+      videoElement.addEventListener('loadedmetadata', () => {
+        console.log('Feed HLS: progressive source loaded, skipping hls.js');
+        if (props.autoplay) {
+          videoElement.play().catch(() => {
+            showPlayOverlay.value = false;
+          });
+        }
+      }, { once: true });
+
+      videoElement.addEventListener('error', () => {
+        console.log('Feed HLS: progressive source failed, falling back to hls.js');
+        videoElement.removeAttribute('src');
+        videoElement.load();
+        setupHLSWithJS(videoElement);
+      }, { once: true });
+
+      return;
+    }
+  }
   
       // Enable hardware acceleration if supported
     if (supportsHardwareAcceleration.value) {
@@ -748,6 +777,13 @@ function getHLSMasterSource(): string {
   const masterUrl = baseUrl + '/master.m3u8';
   console.log('Trying master.m3u8:', masterUrl);
   return masterUrl;
+}
+
+function getHLSProgressiveSource(): string | null {
+  const baseUrl = getBaseMediaUrl();
+  const fileName = props.media.fileName;
+  if (!fileName) return null;
+  return `${baseUrl}/${fileName}`;
 }
 
 function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {

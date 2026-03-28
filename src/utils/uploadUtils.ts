@@ -394,7 +394,6 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
     
     // Try multiple methods to detect aspect ratio
     const methods = [
-      { name: 'HTML5VideoElement', fn: () => tryHTML5VideoElement(file) },
       { name: 'FileHeaderAnalysis', fn: () => tryFileHeaderAnalysis(file) },
       { name: 'FileNameAnalysis', fn: () => tryFileNameAnalysis(file) },
       { name: 'FileExtensionAnalysis', fn: () => tryFileExtensionAnalysis(file) }
@@ -432,31 +431,7 @@ function getAspectRatioName(ratio: number): string {
   return `${ratio.toFixed(3)}:1`;
 }
 
-// Method 1: HTML5 Video Element (original method)
-async function tryHTML5VideoElement(file: File): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-
-    video.onloadedmetadata = () => {
-      window.URL.revokeObjectURL(video.src);
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
-        resolve(video.videoWidth / video.videoHeight);
-      } else {
-        reject(new Error('Invalid video dimensions'));
-      }
-    };
-
-    video.onerror = () => {
-      window.URL.revokeObjectURL(video.src);
-      reject(new Error('Video element failed to load'));
-    };
-
-    video.src = URL.createObjectURL(file);
-  });
-}
-
-// Method 2: Analyze file header for common video formats
+// Method 1: Analyze file header for common video formats
 async function tryFileHeaderAnalysis(file: File): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const reader = new FileReader();
@@ -493,7 +468,7 @@ async function tryFileHeaderAnalysis(file: File): Promise<number> {
   });
 }
 
-// Method 3: Analyze filename for common aspect ratios
+// Method 2: Analyze filename for common aspect ratios
 async function tryFileNameAnalysis(file: File): Promise<number> {
   const fileName = file.name.toLowerCase();
   
@@ -524,7 +499,7 @@ async function tryFileNameAnalysis(file: File): Promise<number> {
   throw new Error('No aspect ratio pattern found in filename');
 }
 
-// Method 4: Analyze file extension and MIME type for hints
+// Method 3: Analyze file extension and MIME type for hints
 async function tryFileExtensionAnalysis(file: File): Promise<number> {
   const fileName = file.name.toLowerCase();
   const mimeType = (file.type || '').toLowerCase();
