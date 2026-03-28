@@ -587,83 +587,75 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       });
     };
     
-    const probeManifest = (url: string, sourceName: 'master' | 'playlist'): Promise<boolean> => {
-      return new Promise((resolve) => {
-        const probeHls = new Hls(hlsConfig);
-        let settled = false;
+    const probeManifest = (url: string, sourceName: 'master' | 'playlist') => {
+      let probeHls: Hls | null = new Hls(hlsConfig);
+      let settled = false;
+      let timeoutId: number;
 
+      const cancel = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        try { probeHls?.destroy(); } catch {}
+        probeHls = null;
+      };
+
+      const promise = new Promise<boolean>((resolve) => {
         const finish = (ok: boolean) => {
           if (settled) return;
           settled = true;
-          try {
-            probeHls.destroy();
-          } catch (e) {
-            console.log(`Error destroying ${sourceName} probe HLS instance:`, e);
-          }
+          clearTimeout(timeoutId);
+          try { probeHls?.destroy(); } catch {}
+          probeHls = null;
           resolve(ok);
         };
 
-        const timeoutId = window.setTimeout(() => {
-          console.log(`HLS.js: ${sourceName} manifest probe timeout (${MANIFEST_PROBE_TIMEOUT_MS}ms)`);
-          finish(false);
-        }, MANIFEST_PROBE_TIMEOUT_MS);
+        timeoutId = window.setTimeout(() => finish(false), MANIFEST_PROBE_TIMEOUT_MS);
 
-        probeHls.on(Hls.Events.MANIFEST_PARSED, () => {
-          clearTimeout(timeoutId);
+        probeHls!.on(Hls.Events.MANIFEST_PARSED, () => {
           console.log(`HLS.js: ${sourceName} playlist loaded successfully`);
           cacheResolvedPlaylistFilename(sourceName === 'master' ? 'master.m3u8' : 'playlist.m3u8');
           finish(true);
         });
 
-        probeHls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.fatal) {
-            clearTimeout(timeoutId);
-            console.log(`${sourceName} playlist fatal error during probe:`, data);
-            finish(false);
-          }
+        probeHls!.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) finish(false);
         });
 
-        probeHls.loadSource(url);
+        probeHls!.loadSource(url);
       });
+
+      return { promise, cancel };
     };
 
-    const cached = getCachedPlaylistFilename();
-    const candidates: Array<{ url: string; sourceName: 'master' | 'playlist' }> =
-      cached === 'playlist.m3u8'
-        ? [
-            { url: playlistUrl, sourceName: 'playlist' },
-            { url: masterUrl, sourceName: 'master' }
-          ]
-        : [
-            { url: masterUrl, sourceName: 'master' },
-            { url: playlistUrl, sourceName: 'playlist' }
-          ];
-
-    if (cached) {
-      console.log(`HLS.js: Using cached playlist preference first: ${cached}`);
-    } else {
-      console.log('HLS.js: No cached playlist preference, trying master first');
-    }
-
+    // Probe both playlists in parallel — first success wins, loser is cancelled
     (async () => {
-      for (const candidate of candidates) {
-        if (isUnmounting) return;
-        const ok = await probeManifest(candidate.url, candidate.sourceName);
-        if (isUnmounting) return;
-        if (ok) {
-          createHLSInstance(candidate.url, candidate.sourceName);
-          return;
-        }
-      }
-
       if (isUnmounting) return;
 
-      // Probe can fail due to transient network timing; still try direct attach once.
-      const fallback = candidates[0];
-      console.warn(
-        `HLS.js: Manifest probes failed for both playlists; falling back to direct attach with ${fallback.sourceName}`
-      );
-      createHLSInstance(fallback.url, fallback.sourceName);
+      const masterProbe = probeManifest(masterUrl, 'master');
+      const playlistProbe = probeManifest(playlistUrl, 'playlist');
+
+      try {
+        const winner = await Promise.any([
+          masterProbe.promise.then(ok => {
+            if (!ok) throw new Error('master probe failed');
+            playlistProbe.cancel();
+            return { url: masterUrl, sourceName: 'master' as const };
+          }),
+          playlistProbe.promise.then(ok => {
+            if (!ok) throw new Error('playlist probe failed');
+            masterProbe.cancel();
+            return { url: playlistUrl, sourceName: 'playlist' as const };
+          }),
+        ]);
+
+        if (isUnmounting) return;
+        createHLSInstance(winner.url, winner.sourceName);
+      } catch {
+        if (isUnmounting) return;
+        console.warn('HLS.js: Both manifest probes failed; falling back to direct attach with master');
+        createHLSInstance(masterUrl, 'master');
+      }
     })();
 }
 
@@ -775,21 +767,13 @@ function getVideoSource(): string {
 }
 
 function getHLSSource(): string {
-  // Get the base media URL (full URL)
   const baseUrl = getBaseMediaUrl();
-  // Append the playlist filename
-  const playlistUrl = baseUrl + '/playlist.m3u8';
-  console.log('Trying playlist.m3u8:', playlistUrl);
-  return playlistUrl;
+  return baseUrl + '/playlist.m3u8';
 }
 
 function getHLSMasterSource(): string {
-  // Get the base media URL (full URL)
   const baseUrl = getBaseMediaUrl();
-  // Append the master playlist filename
-  const masterUrl = baseUrl + '/master.m3u8';
-  console.log('Trying master.m3u8:', masterUrl);
-  return masterUrl;
+  return baseUrl + '/master.m3u8';
 }
 
 function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {

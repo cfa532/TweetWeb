@@ -135,15 +135,15 @@ function autoplayElement(el: HTMLVideoElement) {
   if (!el.paused) return
   el.muted = true
   el.volume = 0
-  if (el.readyState >= 1) {
+  if (el.readyState >= 3) {
+    // HAVE_FUTURE_DATA or better — enough data to start playback
     el.play().catch(() => {})
   } else {
-    // Wait for the video to be ready, then play. The actual loading is
-    // triggered by the onPrimaryChange callback (setupHLS / startLoad),
-    // so we must NOT call el.load() here — a second load() aborts the
-    // in-progress resource selection and can cause a visible "refresh".
+    // Wait until enough data is buffered to actually play without stalling.
+    // Using 'canplay' instead of 'loadedmetadata' avoids bufferStalledError
+    // from calling play() on an empty buffer.
     el.addEventListener(
-      'loadedmetadata',
+      'canplay',
       () => {
         if (primaryVideo === el) {
           el.play().catch(() => {})
