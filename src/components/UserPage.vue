@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { useRoute, onBeforeRouteLeave } from 'vue-router';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
+import { USER_PAGE_SCROLL_PREFIX } from '@/constants/scrollRestore';
 import { TweetView, AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout } from '@/components';
@@ -23,8 +24,6 @@ const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
-
-const USER_PAGE_SCROLL_PREFIX = 'userPageScroll:'
 
 function restoreUserPageScroll(authorId: MimeiId) {
     const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + authorId)

@@ -1,6 +1,7 @@
 <script setup lang='ts'>
-import { onMounted, ref, onUnmounted, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { onMounted, ref, onUnmounted, watch, nextTick } from 'vue';
+import { useRouter, onBeforeRouteLeave } from 'vue-router';
+import { MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { TweetView, AppHeader } from '@/views';
@@ -21,6 +22,33 @@ const pageSize = 5; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
+
+function restoreMainFeedScroll() {
+    const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
+    if (raw === null) return
+    const y = parseInt(raw, 10)
+    if (Number.isNaN(y)) return
+    const apply = () => {
+        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+        window.scrollTo(0, Math.min(Math.max(0, y), maxScroll))
+    }
+    nextTick(() => {
+        requestAnimationFrame(() => {
+            apply()
+            requestAnimationFrame(apply)
+        })
+        setTimeout(apply, 50)
+        setTimeout(apply, 200)
+    })
+}
+
+function saveMainFeedScrollPosition() {
+    sessionStorage.setItem(MAIN_FEED_SCROLL_KEY, String(window.scrollY))
+}
+
+onBeforeRouteLeave(() => {
+    saveMainFeedScrollPosition()
+})
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {
@@ -97,6 +125,7 @@ onMounted(async () => {
             }
         } else {
             history.go(-1)
+            return
         }
     } else {
         // For non-WeChat browsers, automatically pass verification
@@ -110,6 +139,7 @@ onMounted(async () => {
         }
     }
     window.addEventListener('scroll', handleScroll);
+    restoreMainFeedScroll();
 });
 
 onUnmounted(() => {

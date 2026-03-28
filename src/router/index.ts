@@ -1,12 +1,42 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
+import type { RouteLocationNormalized } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
   MediaViewerModal, UserAccount
 } from "@/components"
 import { useAlertStore } from '@/stores';
+import { USER_PAGE_SCROLL_PREFIX, MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
+
+function scrollBehavior(
+  to: RouteLocationNormalized,
+  from: RouteLocationNormalized,
+  savedPosition: { left: number; top: number } | null
+) {
+  if (from.name === 'TweetDetail' && to.name === 'UserPage') {
+    const id = to.params.authorId as string | undefined
+    if (id) {
+      const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + id)
+      if (raw != null) {
+        const top = parseInt(raw, 10)
+        if (!Number.isNaN(top)) return { left: 0, top }
+      }
+    }
+  }
+  if (from.name === 'TweetDetail' && to.name === 'main') {
+    const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
+    if (raw != null) {
+      const top = parseInt(raw, 10)
+      if (!Number.isNaN(top)) return { left: 0, top }
+    }
+  }
+  if (savedPosition) return savedPosition
+  if (to.hash) return { el: to.hash, behavior: 'smooth' as const }
+  return { left: 0, top: 0 }
+}
 
 export const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior,
   routes: [
     { 
       path: '/', name: "main", component: MainPage
