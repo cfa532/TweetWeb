@@ -109,8 +109,18 @@ async function handleLogin() {
     try {
         const result = await tweetStore.login(u, p);
         if (result) {
-            activeView.value = 'profile';
             loginPassword.value = '';
+            const redirectTarget = typeof route.query.redirect === 'string' ? route.query.redirect : '';
+            if (redirectTarget && redirectTarget !== route.fullPath) {
+                await router.push(redirectTarget);
+                return;
+            }
+            // Fallback: return to previous page if available.
+            if (window.history.length > 1) {
+                router.back();
+                return;
+            }
+            activeView.value = 'profile';
         } else {
             errorMessage.value = t('auth.loginFailed');
         }

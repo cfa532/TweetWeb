@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { watch, onMounted, ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { QRCoder } from '@/views';
@@ -10,6 +10,7 @@ import { formatTimeDifference } from '@/lib';
 const { t } = useI18n();
 
 const router = useRouter()
+const route = useRoute()
 const tweetStore = useTweetStore()
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
 const isAccountMenuOpen = ref(false)
@@ -80,12 +81,12 @@ const goToAccount = () => {
 
 const goToRegister = () => {
     closeAccountMenu()
-    router.push({ name: 'account', query: { view: 'register' } })
+    router.push({ name: 'account', query: { view: 'register', redirect: route.fullPath } })
 }
 
 const goToLogin = () => {
     closeAccountMenu()
-    router.push({ name: 'account', query: { view: 'login' } })
+    router.push({ name: 'account', query: { view: 'login', redirect: route.fullPath } })
 }
 
 const uploadTweet = () => {
@@ -177,15 +178,15 @@ watch(userId, async (nv, ov) => {
                     </svg>
                 </a>
                 <div v-if="isAccountMenuOpen" class="account-dropdown">
-                    <a v-if="!isLoggedIn" href="#" class="account-dropdown-item" @click.prevent="goToRegister">{{
-                        $t('auth.register') }}</a>
                     <a v-if="!isLoggedIn" href="#" class="account-dropdown-item" @click.prevent="goToLogin">{{ $t('auth.login')
                         }}</a>
+                    <a v-if="!isLoggedIn" href="#" class="account-dropdown-item" @click.prevent="goToRegister">{{
+                        $t('auth.register') }}</a>
 
                     <template v-else>
-                        <a href="#" class="account-dropdown-item" @click.prevent="goToAccount">{{ $t('auth.account') }}</a>
                         <a href="#" class="account-dropdown-item" @click.prevent="uploadTweet">{{ $t('common.publish') }}</a>
                         <a href="#" class="account-dropdown-item" @click.prevent="openNetdisk">{{ $t('userActions.netdisk') }}</a>
+                        <a href="#" class="account-dropdown-item" @click.prevent="goToAccount">{{ $t('auth.account') }}</a>
                         <a href="#" class="account-dropdown-item" @click.prevent="logout">{{ $t('auth.logout') }}</a>
                     </template>
                 </div>
@@ -520,7 +521,7 @@ watch(userId, async (nv, ov) => {
 }
 
 .account-dropdown-item:hover {
-    background: #f5f8fa;
+    background: #ecf3f8;
 }
 
 @keyframes slideDown {

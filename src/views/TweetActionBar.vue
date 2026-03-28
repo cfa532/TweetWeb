@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { PropType } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 
 const router = useRouter();
+const route = useRoute();
 const { t } = useI18n();
 const tweetStore = useTweetStore();
 const showShareMenu = ref(false);
@@ -41,9 +42,13 @@ function onComment() {
   router.push({ name: 'post', params: { tweetId: props.tweet.mid } });
 }
 
+function redirectToLogin() {
+  router.push({ name: 'login', query: { redirect: route.fullPath } });
+}
+
 async function onRetweet() {
   if (!tweetStore.loginUser) {
-    router.push({ name: 'login' });
+    redirectToLogin();
     return;
   }
   router.push({ name: 'post', query: { retweet: props.tweet.mid } });
@@ -51,7 +56,7 @@ async function onRetweet() {
 
 async function onLike() {
   if (!tweetStore.loginUser) {
-    router.push({ name: 'login' });
+    redirectToLogin();
     return;
   }
   const original = { ...props.tweet };
@@ -70,7 +75,7 @@ async function onLike() {
 
 async function onBookmark() {
   if (!tweetStore.loginUser) {
-    router.push({ name: 'login' });
+    redirectToLogin();
     return;
   }
   const original = { ...props.tweet };
