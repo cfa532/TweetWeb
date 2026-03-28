@@ -64,7 +64,10 @@
     "tweets": "推文",
     "fans": "粉丝",
     "tweet": "推文",
-    "pinned": "置顶"
+    "pinned": "置顶",
+    "follow": "关注",
+    "unfollow": "取消关注",
+    "followActionFailed": "更新关注状态失败"
   },
   "tweet": {
     "noMorePosts": "没有更多帖子了",

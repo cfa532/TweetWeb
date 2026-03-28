@@ -64,7 +64,10 @@
     "tweets": "Tweets",
     "fans": "fans",
     "tweet": "tweet",
-    "pinned": "Pinned"
+    "pinned": "Pinned",
+    "follow": "Follow",
+    "unfollow": "Unfollow",
+    "followActionFailed": "Failed to update follow status"
   },
   "tweet": {
     "noMorePosts": "No more posts",

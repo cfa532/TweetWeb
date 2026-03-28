@@ -11,6 +11,7 @@ const route = useRoute();
 const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
 const followerIds = ref([] as MimeiId[])
+const loginFollowingIds = ref([] as MimeiId[])
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
 const currentIndex = ref(0)
@@ -26,6 +27,8 @@ const visibleUserIds = computed(() => {
 const hasMoreUsers = computed(() => {
     return currentIndex.value < followerIds.value.length
 })
+
+const isLoggedIn = computed(() => !!tweetStore.loginUser)
 
 // Load the next batch of user IDs
 const loadNextBatch = async () => {
@@ -56,6 +59,12 @@ onMounted(async () => {
     isLoading.value = true
 
     try {
+        if (tweetStore.loginUser) {
+            loginFollowingIds.value = await tweetStore.getFollowings(tweetStore.loginUser.mid)
+        } else {
+            loginFollowingIds.value = []
+        }
+
         // Load all follower IDs with 15-second timeout, refresh immediately on timeout (max 3 refreshes)
         const refreshCount = parseInt(sessionStorage.getItem('followersRefreshCount') || '0')
 
@@ -114,6 +123,12 @@ watch(() => route.params.userId, async (newUserId) => {
         isLoading.value = true
 
         try {
+            if (tweetStore.loginUser) {
+                loginFollowingIds.value = await tweetStore.getFollowings(tweetStore.loginUser.mid)
+            } else {
+                loginFollowingIds.value = []
+            }
+
             // Load followers with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
             const refreshCount = parseInt(sessionStorage.getItem('followersRefreshCount') || '0')
 
@@ -156,6 +171,15 @@ watch(() => route.params.userId, async (newUserId) => {
     }
 })
 
+function handleFollowToggled(payload: { userId: MimeiId; isFollowing: boolean }) {
+    const exists = loginFollowingIds.value.includes(payload.userId)
+    if (payload.isFollowing && !exists) {
+        loginFollowingIds.value = [...loginFollowingIds.value, payload.userId]
+    } else if (!payload.isFollowing && exists) {
+        loginFollowingIds.value = loginFollowingIds.value.filter(id => id !== payload.userId)
+    }
+}
+
 // Cleanup on component unmount
 import { onUnmounted } from 'vue'
 onUnmounted(() => {
@@ -171,7 +195,10 @@ onUnmounted(() => {
         <UserRow 
             v-for="userId in visibleUserIds" 
             :userId="userId" 
+            :isFollowing="loginFollowingIds.includes(userId)"
+            :showFollowButton="isLoggedIn"
             :key="userId" 
+            @follow-toggled="handleFollowToggled"
             class="user-row" 
         />
         

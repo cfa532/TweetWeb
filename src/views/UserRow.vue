@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue';
+import { onMounted, ref, watch, computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
+import { useAlertStore } from '@/stores/alert.store';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
@@ -11,11 +12,26 @@ const { t } = useI18n();
 const props = defineProps({ 
     userId: {type: String as PropType<MimeiId>, required: true},
     showDetail: {type: Boolean, required: false, default: true},
+    showFollowButton: {type: Boolean, required: false, default: false},
+    isFollowing: {type: Boolean, required: false, default: false},
 })
+const emit = defineEmits<{
+  (e: 'follow-toggled', payload: { userId: MimeiId; isFollowing: boolean }): void
+}>()
 const router = useRouter()
 const tweetStore = useTweetStore()
+const alertStore = useAlertStore()
 const user = ref<User | null>(null)
 const isLoading = ref(true)
+const localIsFollowing = ref(false)
+const isTogglingFollow = ref(false)
+
+const canShowFollowButton = computed(() => {
+  return props.showFollowButton &&
+    !!tweetStore.loginUser &&
+    !!user.value &&
+    user.value.mid !== tweetStore.loginUser.mid
+})
 
 // Show cached data immediately if available, otherwise load from server
 const cachedUser = tweetStore.users.get(props.userId) ||
@@ -24,6 +40,10 @@ if (cachedUser) {
     user.value = cachedUser
     isLoading.value = false
 }
+
+watch(() => props.isFollowing, (value) => {
+    localIsFollowing.value = value
+}, { immediate: true })
 
 onMounted(async () => {
     if (user.value) return // Already have cached data
@@ -43,6 +63,27 @@ onMounted(async () => {
 function openUserPage(userId: string) {
     useTweetStore().addFollowing(userId)
     router.push(`/author/${userId}`)
+}
+
+async function onToggleFollow(event: Event) {
+    event.stopPropagation()
+    if (!user.value || !tweetStore.loginUser || isTogglingFollow.value) return
+
+    const previous = localIsFollowing.value
+    localIsFollowing.value = !previous
+    isTogglingFollow.value = true
+
+    try {
+        const nextState = await tweetStore.toggleFollowing(user.value.mid)
+        localIsFollowing.value = nextState
+        emit('follow-toggled', { userId: user.value.mid, isFollowing: nextState })
+    } catch (error) {
+        localIsFollowing.value = previous
+        console.error('Failed to toggle following:', error)
+        alertStore.error(t('profile.followActionFailed'))
+    } finally {
+        isTogglingFollow.value = false
+    }
 }
 </script>
 <template>
@@ -80,6 +121,15 @@ function openUserPage(userId: string) {
         <span class="alias text-muted">{{ user.profile }}</span>
       </div>
     </div>
+    <button
+      v-if="canShowFollowButton"
+      class="follow-btn"
+      :class="{ 'is-following': localIsFollowing }"
+      :disabled="isTogglingFollow"
+      @click.stop="onToggleFollow"
+    >
+      {{ localIsFollowing ? $t('profile.unfollow') : $t('profile.follow') }}
+    </button>
   </div>
 
   <!-- Error state -->
@@ -113,6 +163,29 @@ function openUserPage(userId: string) {
 .user-info {
   line-height: 1.2;
   flex-grow: 1;
+}
+
+.follow-btn {
+  border: 1px solid #0d6efd;
+  border-radius: 999px;
+  background: transparent;
+  color: #0d6efd;
+  font-size: 0.9rem;
+  font-weight: 500;
+  min-width: 92px;
+  padding: 6px 14px;
+  line-height: 1;
+  transition: all 0.2s ease;
+}
+
+.follow-btn.is-following {
+  border-color: #dc3545;
+  color: #dc3545;
+}
+
+.follow-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .username-alias-time {

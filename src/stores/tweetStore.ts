@@ -1733,6 +1733,69 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Toggles follow/unfollow status for the target user.
+         * @param followingId The user to follow or unfollow
+         * @returns true if following after toggle, false if unfollowed
+         */
+        async toggleFollowing(followingId: MimeiId): Promise<boolean> {
+            const loginUser = this.loginUser
+            if (!loginUser?.client) {
+                throw new Error("You must be logged in to toggle following")
+            }
+
+            const ret = await loginUser.client.RunMApp("toggle_following", {
+                aid: this.appId,
+                ver: "last",
+                version: "v2",
+                followingid: followingId,
+                userid: loginUser.mid,
+            })
+
+            // Unwrap v2 response payload if wrapped by { success, data }.
+            const response = (ret?.success && ret.data) ? ret.data : ret
+            const isFollowing = typeof response?.isFollowing === "boolean"
+                ? response.isFollowing
+                : (typeof response === "boolean" ? response : undefined)
+
+            if (isFollowing === undefined) {
+                throw new Error("Invalid response from toggle_following")
+            }
+
+            const hadFollowingsCache = this._followings.length > 0
+            const wasFollowing = this._followings.includes(followingId)
+
+            if (hadFollowingsCache) {
+                if (isFollowing && !wasFollowing) {
+                    this._followings.push(followingId)
+                } else if (!isFollowing && wasFollowing) {
+                    this._followings = this._followings.filter(id => id !== followingId)
+                }
+                sessionStorage.setItem("followings", JSON.stringify(this._followings))
+            }
+
+            const targetUser = this.users.get(followingId)
+
+            if (isFollowing && !wasFollowing) {
+                if (this.loginUser) {
+                    this.loginUser.followingCount = (this.loginUser.followingCount ?? 0) + 1
+                }
+                if (targetUser) {
+                    targetUser.followersCount = (targetUser.followersCount ?? 0) + 1
+                }
+            } else if (!isFollowing && wasFollowing) {
+                if (this.loginUser) {
+                    this.loginUser.followingCount = Math.max(0, (this.loginUser.followingCount ?? 0) - 1)
+                }
+                if (targetUser) {
+                    targetUser.followersCount = Math.max(0, (targetUser.followersCount ?? 0) - 1)
+                }
+            }
+
+            sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+            return isFollowing
+        },
+
+        /**
          * Deletes a tweet from the system
          * @param tweetId The ID of the tweet to delete
          * @param authorId The ID of the tweet author

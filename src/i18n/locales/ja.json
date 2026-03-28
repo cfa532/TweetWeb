@@ -64,7 +64,10 @@
     "tweets": "ツイート",
     "fans": "フォロワー",
     "tweet": "ツイート",
-    "pinned": "ピン留め"
+    "pinned": "ピン留め",
+    "follow": "フォロー",
+    "unfollow": "フォロー解除",
+    "followActionFailed": "フォロー状態の更新に失敗しました"
   },
   "tweet": {
     "noMorePosts": "これ以上の投稿はありません",
