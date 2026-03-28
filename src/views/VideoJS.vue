@@ -366,36 +366,50 @@ function setupHLS() {
   const useNativeHLS = isSafari && nativeHLS === 'probably';
   
   if (useNativeHLS) {
-    // Simple approach: try master first, then playlist if master fails
+    const cachedFilename = getCachedPlaylistFilename();
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
-    
-    console.log('Native HLS: Trying master playlist');
-    cacheResolvedPlaylistFilename('master.m3u8');
-    videoElement.src = masterUrl;
-    videoElement.load();
-    
-    // If master fails, try playlist
-    videoElement.addEventListener('error', () => {
-      console.log('Native HLS: Master failed, trying playlist');
-      cacheResolvedPlaylistFilename('playlist.m3u8');
-      videoElement.src = playlistUrl;
+
+    if (cachedFilename) {
+      const cachedUrl = cachedFilename === 'master.m3u8' ? masterUrl : playlistUrl;
+      console.log(`Native HLS: Using cached playlist ${cachedFilename}`);
+      videoElement.src = cachedUrl;
       videoElement.load();
-      
-      // If playlist also fails, fall back to hls.js
+
       videoElement.addEventListener('error', () => {
-        console.log('Native HLS: Both playlists failed, falling back to hls.js');
-        // Clean up native attempt
+        console.log(`Native HLS: Cached ${cachedFilename} failed, falling back to hls.js`);
         videoElement.src = '';
         videoElement.load();
-        // Use hls.js as fallback
         if (Hls.isSupported()) {
           setupHLSWithJS(videoElement);
         } else {
           console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
         }
       }, { once: true });
-    }, { once: true });
+    } else {
+      console.log('Native HLS: Trying master playlist');
+      cacheResolvedPlaylistFilename('master.m3u8');
+      videoElement.src = masterUrl;
+      videoElement.load();
+
+      videoElement.addEventListener('error', () => {
+        console.log('Native HLS: Master failed, trying playlist');
+        cacheResolvedPlaylistFilename('playlist.m3u8');
+        videoElement.src = playlistUrl;
+        videoElement.load();
+
+        videoElement.addEventListener('error', () => {
+          console.log('Native HLS: Both playlists failed, falling back to hls.js');
+          videoElement.src = '';
+          videoElement.load();
+          if (Hls.isSupported()) {
+            setupHLSWithJS(videoElement);
+          } else {
+            console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
+          }
+        }, { once: true });
+      }, { once: true });
+    }
   } else if (Hls.isSupported()) {
     // Use hls.js for all non-Safari browsers or when native HLS is not available
     setupHLSWithJS(videoElement);
@@ -637,35 +651,43 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       return { promise, cancel };
     };
 
-    // Probe both playlists in parallel — first success wins, loser is cancelled
-    (async () => {
-      if (isUnmounting) return;
-
-      const masterProbe = probeManifest(masterUrl, 'master');
-      const playlistProbe = probeManifest(playlistUrl, 'playlist');
-
-      try {
-        const winner = await Promise.any([
-          masterProbe.promise.then(ok => {
-            if (!ok) throw new Error('master probe failed');
-            playlistProbe.cancel();
-            return { url: masterUrl, sourceName: 'master' as const };
-          }),
-          playlistProbe.promise.then(ok => {
-            if (!ok) throw new Error('playlist probe failed');
-            masterProbe.cancel();
-            return { url: playlistUrl, sourceName: 'playlist' as const };
-          }),
-        ]);
-
+    const cachedFilename = getCachedPlaylistFilename();
+    if (cachedFilename) {
+      const cachedUrl = cachedFilename === 'master.m3u8' ? masterUrl : playlistUrl;
+      const sourceName = cachedFilename === 'master.m3u8' ? 'master' : 'playlist';
+      console.log(`HLS.js: Using cached playlist ${cachedFilename}`);
+      createHLSInstance(cachedUrl, sourceName);
+    } else {
+      // Probe both playlists in parallel — first success wins, loser is cancelled
+      (async () => {
         if (isUnmounting) return;
-        createHLSInstance(winner.url, winner.sourceName);
-      } catch {
-        if (isUnmounting) return;
-        console.warn('HLS.js: Both manifest probes failed; falling back to direct attach with master');
-        createHLSInstance(masterUrl, 'master');
-      }
-    })();
+
+        const masterProbe = probeManifest(masterUrl, 'master');
+        const playlistProbe = probeManifest(playlistUrl, 'playlist');
+
+        try {
+          const winner = await Promise.any([
+            masterProbe.promise.then(ok => {
+              if (!ok) throw new Error('master probe failed');
+              playlistProbe.cancel();
+              return { url: masterUrl, sourceName: 'master' as const };
+            }),
+            playlistProbe.promise.then(ok => {
+              if (!ok) throw new Error('playlist probe failed');
+              masterProbe.cancel();
+              return { url: playlistUrl, sourceName: 'playlist' as const };
+            }),
+          ]);
+
+          if (isUnmounting) return;
+          createHLSInstance(winner.url, winner.sourceName);
+        } catch {
+          if (isUnmounting) return;
+          console.warn('HLS.js: Both manifest probes failed; falling back to direct attach with master');
+          createHLSInstance(masterUrl, 'master');
+        }
+      })();
+    }
 }
 
 // Setup regular video playback (non-HLS)
@@ -786,22 +808,19 @@ function getHLSMasterSource(): string {
 }
 
 function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {
-  const cached = props.tweet?.playlist;
+  const cached = props.media.playlist;
   if (cached === 'master.m3u8' || cached === 'playlist.m3u8') {
-    console.log(`[HLS Playlist Cache] HIT for tweet ${props.tweet?.mid ?? 'unknown'}: ${cached}`);
+    console.log(`[HLS Playlist Cache] HIT for media ${props.media.mid}: ${cached}`);
     return cached;
   }
-  if (props.tweet?.mid) {
-    console.log(`[HLS Playlist Cache] MISS for tweet ${props.tweet.mid}`);
-  }
+  console.log(`[HLS Playlist Cache] MISS for media ${props.media.mid}`);
   return null;
 }
 
 function cacheResolvedPlaylistFilename(fileName: 'master.m3u8' | 'playlist.m3u8') {
-  if (!props.tweet) return;
-  if (props.tweet.playlist !== fileName) {
-    props.tweet.playlist = fileName;
-    console.log(`[HLS Playlist Cache] STORE for tweet ${props.tweet.mid}: ${fileName}`);
+  if (props.media.playlist !== fileName) {
+    props.media.playlist = fileName;
+    console.log(`[HLS Playlist Cache] STORE for media ${props.media.mid}: ${fileName}`);
   }
 }
 
