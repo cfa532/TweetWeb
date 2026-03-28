@@ -50,6 +50,13 @@ const isScrolling = ref(false);
 // Show native controls on desktop in detail view, hide elsewhere
 const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value)
 
+const canShowPausedOverlays = computed(() => {
+  return !showVideoError.value &&
+    !(autoplayBlocked.value && props.autoplay) &&
+    !isPlaying.value &&
+    (!isBuffering.value || isMobile);
+});
+
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
@@ -1141,6 +1148,12 @@ function handlePlayOverlayClick(event: Event) {
   }
 }
 
+function handleFullscreenOverlayClick(event: Event) {
+  event.stopPropagation();
+  event.preventDefault();
+  requestFullscreen();
+}
+
 function checkVideoOrientation() {
   const videoElement = video.value;
   if (videoElement && (videoElement.videoWidth < videoElement.videoHeight)) {
@@ -1557,8 +1570,8 @@ function stopVideo() {
         <div class="buffering-spinner"></div>
       </div>
 
-      <!-- Centered play button in detail view (shown when paused; on mobile also shown while buffering) -->
-      <div v-if="!isInTweetList && !isPlaying && (!isBuffering || isMobile)"
+      <!-- Centered play button shown whenever video is paused/not playing -->
+      <div v-if="canShowPausedOverlays"
            class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
@@ -1568,6 +1581,20 @@ function stopVideo() {
           </svg>
         </div>
       </div>
+
+      <!-- Fullscreen shortcut for tweet feed when video is paused/not playing -->
+      <button
+        v-if="isInTweetList && canShowPausedOverlays"
+        class="fullscreen-overlay-button"
+        type="button"
+        aria-label="Enter fullscreen"
+        @click="handleFullscreenOverlayClick"
+        @touchend.prevent="handleFullscreenOverlayClick"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        </svg>
+      </button>
       
       <div 
         class="video-tap-handler"
@@ -1917,6 +1944,52 @@ function stopVideo() {
   width: 40px;
   height: 40px;
   margin-left: 4px; /* optical center for play triangle */
+}
+
+.fullscreen-overlay-button {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 16;
+  transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+.fullscreen-overlay-button:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: scale(1.05);
+}
+
+.fullscreen-overlay-button:active {
+  transform: scale(0.95);
+}
+
+.fullscreen-overlay-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Desktop: keep fullscreen button hidden until hover/focus */
+@media (hover: hover) and (pointer: fine) {
+  .fullscreen-overlay-button {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .video-wrapper:hover .fullscreen-overlay-button,
+  .fullscreen-overlay-button:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* Responsive video in detail view - adapts to screen width and height */
