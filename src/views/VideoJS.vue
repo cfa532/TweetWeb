@@ -509,10 +509,11 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
               hls?.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
-              // bufferStalledError is normal during initial loading — HLS.js
-              // keeps buffering on its own. Calling recoverMediaError() here
-              // resets the MediaSource and causes a visible "refresh."
-              if (data.details === 'bufferStalledError') {
+              // Buffer stall/nudge errors are handled internally by HLS.js
+              // (it continues buffering or nudges currentTime). Calling
+              // recoverMediaError() on top resets the MediaSource and
+              // causes a visible video restart.
+              if (data.details === 'bufferStalledError' || data.details === 'bufferNudgeOnStall') {
                 return;
               }
 
