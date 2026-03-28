@@ -2,7 +2,8 @@
  * VideoPlaybackCoordinator – manages video playback in the tweet list.
  *
  *  - Tracks all registered video instances and their visibility.
- *  - Picks the topmost sufficiently-visible video as the "primary".
+ *  - Picks the video closest to the scroll edge (topmost when scrolling
+ *    down, bottommost when scrolling up) as the "primary".
  *  - Only one video plays at a time.
  *  - When the primary ends, the next sibling in the same tweet plays,
  *    then advances to the next visible video in the feed.
@@ -31,6 +32,18 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 const VISIBILITY_THRESHOLD = 0.5
 const DEBOUNCE_MS = 200
+
+// Track scroll direction so selectPrimary can pick the video the user is
+// scrolling toward: topmost when scrolling down, bottommost when scrolling up.
+let scrollDirection: 'down' | 'up' = 'down'
+let lastScrollY = 0
+if (typeof window !== 'undefined') {
+  window.addEventListener('scroll', () => {
+    const y = window.scrollY
+    if (y !== lastScrollY) scrollDirection = y > lastScrollY ? 'down' : 'up'
+    lastScrollY = y
+  }, { passive: true })
+}
 
 /** Register a video with the coordinator. Call from onMounted. */
 export function registerVideo(el: HTMLVideoElement, wrapper: HTMLElement, onPrimaryChange?: PrimaryChangeCallback) {
@@ -97,7 +110,9 @@ function selectPrimary() {
   let best: VideoEntry | null = null
   for (const entry of registry.values()) {
     if (entry.ratio >= VISIBILITY_THRESHOLD && !entry.el.ended) {
-      if (!best || entry.top < best.top) {
+      if (!best) {
+        best = entry
+      } else if (scrollDirection === 'down' ? entry.top < best.top : entry.top > best.top) {
         best = entry
       }
     }
