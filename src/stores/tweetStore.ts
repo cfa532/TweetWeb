@@ -90,6 +90,58 @@ export const useTweetStore = defineStore('tweetStore', {
                 return await this.getTweetFeed(this.loginUser!, pageNumber, pageSize)
             }
         },
+
+        /**
+         * Clear user/provider caches so next user fetch resolves a fresh provider IP.
+         */
+        _invalidateUserProviderCache(userId: MimeiId) {
+            this.users.delete(userId)
+            this._nullifyCachedIp(userId)
+        },
+
+        /**
+         * Resolve a user for a retry attempt, optionally forcing refresh on first attempt.
+         */
+        async _getUserForProviderRetryAttempt(
+            userId: MimeiId,
+            attempt: number,
+            refreshOnFirstAttempt: boolean = false
+        ): Promise<User | undefined> {
+            const shouldRefreshProvider = attempt > 1 || refreshOnFirstAttempt
+            if (shouldRefreshProvider) {
+                this._invalidateUserProviderCache(userId)
+            }
+            return this.getUser(userId, shouldRefreshProvider)
+        },
+
+        /**
+         * Load follower/following IDs with one retry that refreshes provider IP.
+         */
+        async _loadSortedUserList(
+            userId: MimeiId,
+            rpcName: "get_followers_sorted" | "get_followings_sorted"
+        ): Promise<MimeiId[]> {
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt)
+                if (!user) return []
+
+                try {
+                    const list = await user.client.RunMApp(rpcName, {
+                        aid: this.appId,
+                        ver: "last",
+                        userid: userId
+                    })
+                    return list
+                        .sort((a: any, b: any) => b["value"] - a["value"])
+                        .slice(0, 50)
+                        .map((e: any) => e["field"])
+                } catch (error) {
+                    console.error(`[${rpcName}] Failed for ${userId} attempt ${attempt}/2:`, error)
+                    if (attempt === 1) continue
+                }
+            }
+            return []
+        },
         /**
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
@@ -209,92 +261,116 @@ export const useTweetStore = defineStore('tweetStore', {
             pageNumber: number = 0,
             pageSize: number = 10
         ): Promise<number | null> {
-            let user = await this.getUser(userId)
-            if (!user)
-                return null
+            const params = {
+                aid: this.appId,
+                ver: "last",
+                userid: userId,
+                pn: pageNumber,
+                ps: pageSize,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+            }
 
-            try {
-                const params = {
-                    aid: this.appId,
-                    ver: "last",
-                    userid: user.mid,
-                    pn: pageNumber,
-                    ps: pageSize,
-                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                }
+            let lastError: unknown = null
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                // The first retry should not reuse stale session/provider caches.
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt)
 
-                console.log("Fetching tweets for user", user.mid, "page:", pageNumber, "size:", pageSize)
-                const response = await user.client.RunMApp("get_tweets_by_user", params)
-                console.log("Tweets response:", response)
-
-                // Check success status first
-                const success = response?.success
-                if (success !== true) {
-                    const errorMessage = response?.message || "Unknown error occurred"
-                    console.error("Tweets loading failed for user", user.mid, ":", errorMessage)
-                    console.error("Response:", response)
+                if (!user) {
                     return null
                 }
 
-                // Extract tweets and originalTweets from the new response format
-                const tweetsData = response.tweets
-                const originalTweetsData = response.originalTweets
+                params.userid = user.mid
 
-                // Check for potential backend issue: retweets without original tweets
-                if (tweetsData && tweetsData.length > 0) {
-                    const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
-                    const originalTweetsCount = originalTweetsData?.length || 0
-                    if (retweetCount > 0 && originalTweetsCount === 0) {
-                        console.warn(`[loadTweetsByUser] ⚠️ BACKEND ISSUE DETECTED:
+                try {
+                    console.log("Fetching tweets for user", user.mid, "page:", pageNumber, "size:", pageSize, "attempt:", attempt)
+                    const response = await user.client.RunMApp("get_tweets_by_user", params)
+                    console.log("Tweets response:", response)
+
+                    // Check success status first
+                    const success = response?.success
+                    if (success !== true) {
+                        const errorMessage = response?.message || "Unknown error occurred"
+                        console.error("Tweets loading failed for user", user.mid, ":", errorMessage)
+                        console.error("Response:", response)
+
+                        if (attempt === 1) {
+                            console.warn(`[loadTweetsByUser] Initial attempt failed for ${user.mid}; retrying with refreshed provider IP`)
+                            continue
+                        }
+                        return null
+                    }
+
+                    // Extract tweets and originalTweets from the new response format
+                    const tweetsData = response.tweets
+                    const originalTweetsData = response.originalTweets
+
+                    // Check for potential backend issue: retweets without original tweets
+                    if (tweetsData && tweetsData.length > 0) {
+                        const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
+                        const originalTweetsCount = originalTweetsData?.length || 0
+                        if (retweetCount > 0 && originalTweetsCount === 0) {
+                            console.warn(`[loadTweetsByUser] ⚠️ BACKEND ISSUE DETECTED:
   Backend returned ${retweetCount} retweet(s) but 0 original tweets
   This will cause retweets to be skipped if originals cannot be fetched individually
   User: ${user.mid}, Page: ${pageNumber}`)
-                    } else if (retweetCount > originalTweetsCount) {
-                        console.warn(`[loadTweetsByUser] ⚠️ Potential backend issue:
+                        } else if (retweetCount > originalTweetsCount) {
+                            console.warn(`[loadTweetsByUser] ⚠️ Potential backend issue:
   Backend returned ${retweetCount} retweet(s) but only ${originalTweetsCount} original tweet(s)
   Some retweets may be skipped if their originals are missing`)
+                        }
                     }
-                }
 
-                // Cache original tweets first (same as getTweetFeed)
-                if (originalTweetsData) {
-                    await this.updateOriginalTweets(originalTweetsData)
-                }
+                    // Cache original tweets first (same as getTweetFeed)
+                    if (originalTweetsData) {
+                        await this.updateOriginalTweets(originalTweetsData)
+                    }
 
-                // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
-                if (tweetsData) {
-                    const uniqueAuthorIds = [...new Set(
-                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                    )] as string[]
-                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
-                }
+                    // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
+                    if (tweetsData) {
+                        const uniqueAuthorIds = [...new Set(
+                            tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                        )] as string[]
+                        await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                    }
 
-                if (tweetsData) {
-                    for (const tweetJson of tweetsData) {
-                        if (tweetJson != null) {
-                            const tweet = tweetJson as Tweet
-                            const cachedTweet = this.tweetIndex.get(tweet.mid)
-                            if (!cachedTweet) {
-                                try {
-                                    await this.addTweetToStore(tweet)
-                                } catch (error) {
-                                    console.error("Error processing tweet:", tweet.mid, error)
+                    if (tweetsData) {
+                        for (const tweetJson of tweetsData) {
+                            if (tweetJson != null) {
+                                const tweet = tweetJson as Tweet
+                                const cachedTweet = this.tweetIndex.get(tweet.mid)
+                                if (!cachedTweet) {
+                                    try {
+                                        await this.addTweetToStore(tweet)
+                                    } catch (error) {
+                                        console.error("Error processing tweet:", tweet.mid, error)
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                // Cache this user's tweets to localStorage for instant display on next visit
-                this.cacheUserTweets(userId)
 
-                // Return 0 for an empty page (end-of-list) so callers can
-                // distinguish it from a real error (null / thrown exception).
-                return tweetsData?.length ?? null
-            } catch (e) {
-                console.error("Error fetching tweets for user:", user.mid)
-                console.error("Exception:", e)
-                throw e
+                    // Cache this user's tweets to localStorage for instant display on next visit
+                    this.cacheUserTweets(userId)
+
+                    // Return 0 for an empty page (end-of-list) so callers can
+                    // distinguish it from a real error (null / thrown exception).
+                    return tweetsData?.length ?? null
+                } catch (e) {
+                    lastError = e
+                    console.error("Error fetching tweets for user:", user.mid, "attempt:", attempt)
+                    console.error("Exception:", e)
+
+                    if (attempt === 1) {
+                        console.warn(`[loadTweetsByUser] Initial attempt threw for ${user.mid}; retrying with refreshed provider IP`)
+                        continue
+                    }
+                }
             }
+
+            if (lastError) {
+                throw lastError
+            }
+            return null
         },
 
         /**
@@ -451,37 +527,58 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of pinned tweets
          */
         async loadPinnedTweets(userId: string): Promise<Tweet[]> {
-            let pinnedTweets = [] as Tweet[]
-            let user = await this.getUser(userId, true)
-            if (!user)
-                return []
-
             const params = {
                 aid: this.appId,
                 ver: "last",
                 userid: userId,
                 appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
             }
-            let pinned = await user.client.RunMApp("get_pinned_tweets", params)
-            console.log("Pinned tweets", pinned)
-            
-            // Validate that pinned is an array
-            if (!Array.isArray(pinned)) {
-                console.warn("Pinned tweets response is not an array:", typeof pinned, pinned)
-                return []
+
+            let pinnedTweets = [] as Tweet[]
+            let pinned: any[] = []
+
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt, true)
+
+                if (!user) {
+                    return []
+                }
+
+                try {
+                    pinned = await user.client.RunMApp("get_pinned_tweets", params)
+                    console.log("Pinned tweets", pinned, "attempt:", attempt)
+
+                    // Validate that pinned is an array
+                    if (!Array.isArray(pinned)) {
+                        console.warn("Pinned tweets response is not an array:", typeof pinned, pinned)
+                        if (attempt === 1) {
+                            console.warn(`[loadPinnedTweets] Initial attempt failed for ${user.mid}; retrying with refreshed provider IP`)
+                            continue
+                        }
+                        return []
+                    }
+                    break
+                } catch (error) {
+                    console.error("Error loading pinned tweets for user:", user.mid, "attempt:", attempt, error)
+                    if (attempt === 1) {
+                        console.warn(`[loadPinnedTweets] Initial attempt threw for ${user.mid}; retrying with refreshed provider IP`)
+                        continue
+                    }
+                    return []
+                }
             }
-            
+
             if (pinned.length > 0) {
                 // Create an array to store tweets with their pin timestamps for sorting
                 const tweetsWithPinTime: Array<{tweet: Tweet, pinTimestamp: number}> = []
-                
+
                 for (const e of pinned) {
                     try {
                         const tweetObject = e.tweet
                         const pinTimestamp = e.timestamp ? Number(e.timestamp) : 0
-                        
+
                         console.log("Processing pinned tweet:", tweetObject.mid, "pinned at:", pinTimestamp)
-                        
+
                         // Validate tweet object
                         if (!tweetObject || !tweetObject.mid) {
                             console.warn("Invalid tweet object:", tweetObject)
@@ -1168,8 +1265,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param userId The user ID to remove
          */
         removeUser(userId: MimeiId) {
-            this.users.delete(userId)
-            this._nullifyCachedIp(userId)
+            this._invalidateUserProviderCache(userId)
         },
 
         /**
@@ -1578,8 +1674,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     // Force refresh to bypass cache and get fresh IP (like iOS does)
                     // Clear any cached user data before retry to force fresh IP resolution
                     if (attempt > 0) {
-                        this.removeUser(userId)
-                        this._nullifyCachedIp(userId)
+                        this._invalidateUserProviderCache(userId)
                     }
                     let user = await this.getUser(userId, true)
                     console.log(`[login] getUser returned:`, user ? `user with providerIp: ${user.providerIp}` : 'null')
@@ -1718,11 +1813,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of follower user IDs
          */
         async getFollowers(userId: MimeiId) {
-            let user = await this.getUser(userId)
-            if (!user)
-                return []
-            let list = await user.client.RunMApp("get_followers_sorted", {aid: this.appId, ver: "last", userid: userId})
-            return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
+            return await this._loadSortedUserList(userId, "get_followers_sorted")
         },
         /**
          * Gets the list of users that a specific user is following
@@ -1730,11 +1821,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of following user IDs
          */
         async getFollowings(userId: MimeiId) {
-            let user = await this.getUser(userId)
-            if (!user)
-                return []
-            let list = await user.client.RunMApp("get_followings_sorted", {aid: this.appId, ver: "last", userid: userId})
-            return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
+            return await this._loadSortedUserList(userId, "get_followings_sorted")
         },
 
         /**
