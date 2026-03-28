@@ -30,7 +30,13 @@ const registry = new Map<HTMLVideoElement, VideoEntry>()
 let primaryVideo: HTMLVideoElement | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-const VISIBILITY_THRESHOLD = 0.5
+/**
+ * Minimum intersection ratio to count as a candidate. Keep this low so stacked
+ * grid cells (e.g. two videos in the right column) still compete: the upper
+ * slot often stays below 50% visible while the lower is already >50%, which
+ * wrongly excluded the top video and let the bottom one become primary.
+ */
+const MIN_INTERSECTION_RATIO = 0.01
 const DEBOUNCE_MS = 200
 
 // Track scroll direction so selectPrimary can pick the video the user is
@@ -106,22 +112,37 @@ function getTweetContainer(entry: VideoEntry): HTMLElement | null {
   return entry.wrapper?.closest('.tweet-container') as HTMLElement | null
 }
 
+/** Earlier in DOM / reading order wins when geometry is ambiguous (subpixel ties). */
+function isBeforeInDocumentOrder(a: VideoEntry, b: VideoEntry): boolean {
+  const pos = a.wrapper.compareDocumentPosition(b.wrapper)
+  return Boolean(pos & Node.DOCUMENT_POSITION_FOLLOWING)
+}
+
 function selectPrimary() {
   let best: VideoEntry | null = null
   for (const entry of registry.values()) {
-    if (entry.ratio >= VISIBILITY_THRESHOLD && !entry.el.ended) {
-      if (!best) {
-        best = entry
-      } else if (scrollDirection === 'down' ? entry.top < best.top : entry.top > best.top) {
-        best = entry
-      }
+    if (entry.ratio < MIN_INTERSECTION_RATIO || entry.el.ended) {
+      continue
+    }
+    if (!best) {
+      best = entry
+      continue
+    }
+    const preferEntry =
+      scrollDirection === 'down'
+        ? entry.top < best.top - 1e-3 ||
+          (Math.abs(entry.top - best.top) <= 1e-3 && isBeforeInDocumentOrder(entry, best))
+        : entry.top > best.top + 1e-3 ||
+          (Math.abs(entry.top - best.top) <= 1e-3 && isBeforeInDocumentOrder(best, entry))
+    if (preferEntry) {
+      best = entry
     }
   }
 
   if (best) {
     setPrimary(best.el)
   } else if (primaryVideo) {
-    // No video above the selection threshold. Apply hysteresis: keep the
+    // No video meets MIN_INTERSECTION_RATIO. Apply hysteresis: keep the
     // current primary as long as its tweet is still partially on-screen.
     // This prevents stop/restart flicker when ratios briefly dip during scroll.
     const primaryEntry = registry.get(primaryVideo)
