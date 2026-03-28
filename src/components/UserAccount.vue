@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore, useAlertStore } from '@/stores';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import AvatarCropper from '@/views/AvatarCropper.vue';
 
 const { t } = useI18n();
 
 const router = useRouter();
+const route = useRoute();
 const tweetStore = useTweetStore();
 const alertStore = useAlertStore();
 const defaultAvatar = import.meta.env.VITE_APP_LOGO;
@@ -48,10 +49,24 @@ const user = computed(() => tweetStore.loginUser);
 const isLoggedIn = computed(() => !!user.value);
 
 onMounted(() => {
+    const requestedView = route.query.view;
+    if (!isLoggedIn.value && (requestedView === 'login' || requestedView === 'register')) {
+        activeView.value = requestedView;
+        return;
+    }
     if (isLoggedIn.value) {
         activeView.value = 'profile';
     }
 });
+
+watch(
+    () => route.query.view,
+    (requestedView) => {
+        if (!isLoggedIn.value && (requestedView === 'login' || requestedView === 'register')) {
+            activeView.value = requestedView;
+        }
+    }
+);
 
 function populateEditFields() {
     if (user.value) {

@@ -3,7 +3,7 @@ import { watch, onMounted, ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
-import { QRCoder, UserActions } from '@/views';
+import { QRCoder } from '@/views';
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
 
@@ -12,6 +12,8 @@ const { t } = useI18n();
 const router = useRouter()
 const tweetStore = useTweetStore()
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
+const isAccountMenuOpen = ref(false)
+let accountMenuCloseTimer: ReturnType<typeof setTimeout> | null = null
 const qrSize = 100
 const props = defineProps({
     userId: { type: String, required: false },
@@ -43,6 +45,64 @@ const openPlayStore = () => {
 
 const openInBrowser = (url: string) => {
     window.open(url, '_blank')
+}
+
+const openAccountMenu = () => {
+    if (accountMenuCloseTimer) {
+        clearTimeout(accountMenuCloseTimer)
+        accountMenuCloseTimer = null
+    }
+    isAccountMenuOpen.value = true
+}
+
+const closeAccountMenu = () => {
+    if (accountMenuCloseTimer) {
+        clearTimeout(accountMenuCloseTimer)
+        accountMenuCloseTimer = null
+    }
+    isAccountMenuOpen.value = false
+}
+
+const scheduleCloseAccountMenu = () => {
+    if (accountMenuCloseTimer) {
+        clearTimeout(accountMenuCloseTimer)
+    }
+    accountMenuCloseTimer = setTimeout(() => {
+        isAccountMenuOpen.value = false
+        accountMenuCloseTimer = null
+    }, 120)
+}
+
+const goToAccount = () => {
+    closeAccountMenu()
+    router.push({ name: 'account' })
+}
+
+const goToRegister = () => {
+    closeAccountMenu()
+    router.push({ name: 'account', query: { view: 'register' } })
+}
+
+const goToLogin = () => {
+    closeAccountMenu()
+    router.push({ name: 'account', query: { view: 'login' } })
+}
+
+const uploadTweet = () => {
+    closeAccountMenu()
+    router.push({ name: 'post' })
+}
+
+const openNetdisk = () => {
+    closeAccountMenu()
+    router.push({ name: 'netdisk' })
+}
+
+const logout = () => {
+    closeAccountMenu()
+    tweetStore.logout()
+    sessionStorage.setItem('isBot', 'No')
+    location.reload()
 }
 
 const startDirectDownload = async () => {
@@ -104,17 +164,32 @@ watch(userId, async (nv, ov) => {
                     <a href="http://tweet.fireshare.us">HTTP://tweet.fireshare.us</a>
                 </div>
             </div>
-            <a href="#" class="account-btn" @click.prevent="router.push('/account')"
-                :title="isLoggedIn ? $t('auth.account') : $t('auth.login')">
-                <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
-                    class="account-avatar rounded-circle"
-                    @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
-                <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                    <circle cx="12" cy="7" r="4"></circle>
-                </svg>
-            </a>
+            <div class="account-menu-wrapper" @mouseenter="openAccountMenu" @mouseleave="scheduleCloseAccountMenu">
+                <a href="#" class="account-btn" @click.prevent="isAccountMenuOpen = !isAccountMenuOpen"
+                    :title="isLoggedIn ? $t('auth.account') : $t('auth.login')">
+                    <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
+                        class="account-avatar rounded-circle"
+                        @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </a>
+                <div v-if="isAccountMenuOpen" class="account-dropdown">
+                    <a v-if="!isLoggedIn" href="#" class="account-dropdown-item" @click.prevent="goToRegister">{{
+                        $t('auth.register') }}</a>
+                    <a v-if="!isLoggedIn" href="#" class="account-dropdown-item" @click.prevent="goToLogin">{{ $t('auth.login')
+                        }}</a>
+
+                    <template v-else>
+                        <a href="#" class="account-dropdown-item" @click.prevent="goToAccount">{{ $t('auth.account') }}</a>
+                        <a href="#" class="account-dropdown-item" @click.prevent="uploadTweet">{{ $t('common.publish') }}</a>
+                        <a href="#" class="account-dropdown-item" @click.prevent="openNetdisk">{{ $t('userActions.netdisk') }}</a>
+                        <a href="#" class="account-dropdown-item" @click.prevent="logout">{{ $t('auth.logout') }}</a>
+                    </template>
+                </div>
+            </div>
         </div>
         <!-- Followers and Friends Links -->
         <div v-if="user" class="user-actions">
@@ -125,7 +200,6 @@ watch(userId, async (nv, ov) => {
                     user.followingCount }} {{ $t('profile.following') }}</a>
                 <a href="#"  class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
             </div>
-            <UserActions></UserActions>
         </div>
     </div>
     
@@ -225,13 +299,6 @@ watch(userId, async (nv, ov) => {
 
 .links a:hover {
     text-decoration: underline;
-}
-
-/* UserActions takes the remaining 20% */
-:deep(UserActions) {
-    width: 20%;
-    flex-shrink: 0;
-    text-align: right;
 }
 
 /* New styles for the link container */
@@ -418,20 +485,42 @@ watch(userId, async (nv, ov) => {
     background-color: transparent !important;
 }
 
-.account-btn img,
-.account-btn svg {
-    transition: transform 0.2s ease;
-}
-
-.account-btn:hover img,
-.account-btn:hover svg {
-    transform: scale(1.25);
-}
-
 .account-avatar {
     width: 32px;
     height: 32px;
     object-fit: cover;
+}
+
+.account-menu-wrapper {
+    position: relative;
+    flex-shrink: 0;
+    padding-bottom: 2px;
+    margin-bottom: -2px;
+}
+
+.account-dropdown {
+    position: absolute;
+    top: calc(100% - 2px);
+    right: 10px;
+    min-width: 170px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    border: 1px solid #e6ecf0;
+    z-index: 30;
+    overflow: hidden;
+}
+
+.account-dropdown-item {
+    display: block;
+    padding: 10px 12px;
+    color: #4a4a4a;
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.account-dropdown-item:hover {
+    background: #f5f8fa;
 }
 
 @keyframes slideDown {
