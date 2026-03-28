@@ -22,7 +22,8 @@ const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
 const isAudio = props.media.type?.toLowerCase().includes('audio') ?? false;
-const isBuffering = ref(!isAudio); // Show spinner for video until ready; audio renders naturally
+// In list/feed (typically non-autoplay), avoid showing spinner before user action.
+const isBuffering = ref(!isAudio && !!props.autoplay);
 const showVideoError = ref(false); // Show error message when video fails to play
 const isMobile = isMobileBrowser(); // cached at setup time
 
@@ -107,6 +108,7 @@ let isRetryingVideo = false;
 let lastHandledError: { code: number; src: string; timestamp: number } | null = null;
 const ERROR_HANDLING_COOLDOWN = 3000; // 3 seconds cooldown between handling same error
 let isHLSInitialized = false; // Prevent multiple HLS initializations
+let isUnmounting = false;
 let mediaErrorRecoveryCount = 0;
 const MAX_MEDIA_ERROR_RECOVERIES = 3;
 let lastMediaErrorTime = 0;
@@ -114,8 +116,40 @@ const MEDIA_ERROR_COOLDOWN = 2000; // 2 seconds cooldown between media error rec
 let currentPlaylistType: 'master' | 'playlist' | null = null;
 let hasTriedPlaylistFallback = false;
 let failedFragments = new Set<string>(); // Track fragments that have failed to avoid infinite loops
+const MANIFEST_PROBE_TIMEOUT_MS = 12000;
+
+function cleanupHlsInstance() {
+  if (!hls) return;
+  try {
+    hls.detachMedia();
+  } catch (e) {
+    console.log('Error detaching HLS media:', e);
+  }
+  try {
+    hls.destroy();
+  } catch (e) {
+    console.log('Error destroying HLS instance:', e);
+  }
+  hls = null;
+}
+
+function clearVideoSourceForTeardown(videoElement?: HTMLVideoElement | null) {
+  if (!videoElement) return;
+  try {
+    videoElement.pause();
+  } catch (e) {
+    // no-op
+  }
+  try {
+    videoElement.removeAttribute('src');
+    videoElement.load();
+  } catch (e) {
+    console.log('Error clearing video source during teardown:', e);
+  }
+}
 
 onMounted(() => {
+  isUnmounting = false;
   vdiv.value.hidden = false;
   
     // Setup video element immediately
@@ -269,12 +303,17 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  isUnmounting = true;
   // Clean up event listeners
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('fullscreenchange', handleFullscreenChange);
   document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
   document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+
+  if (video.value) {
+    video.value.removeEventListener('error', handleVideoError);
+  }
   
   // Unregister from video playback coordinator
   if (video.value) {
@@ -310,12 +349,14 @@ function setupHLS() {
     const playlistUrl = getHLSSource();
     
     console.log('Native HLS: Trying master playlist');
+    cacheResolvedPlaylistFilename('master.m3u8');
     videoElement.src = masterUrl;
     videoElement.load();
     
     // If master fails, try playlist
     videoElement.addEventListener('error', () => {
       console.log('Native HLS: Master failed, trying playlist');
+      cacheResolvedPlaylistFilename('playlist.m3u8');
       videoElement.src = playlistUrl;
       videoElement.load();
       
@@ -338,6 +379,8 @@ function setupHLS() {
     setupHLSWithJS(videoElement);
   } else {
     console.error('HLS is not supported in this browser');
+    showVideoError.value = true;
+    isBuffering.value = false;
   }
 }
 
@@ -397,14 +440,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
     // Helper function to create and attach HLS instance
     const createHLSInstance = (url: string, sourceName: string) => {
       // Clean up any existing HLS instance
-      if (hls) {
-        try {
-          hls.destroy();
-        } catch (e) {
-          console.log('Error destroying existing HLS instance:', e);
-        }
-        hls = null;
-      }
+      cleanupHlsInstance();
       
       // Create new HLS instance
       console.log(`HLS.js: Creating instance with ${sourceName} playlist`);
@@ -417,10 +453,12 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         console.log(`HLS.js: ${sourceName} playlist manifest parsed successfully`);
         // Track which playlist type we're using
         currentPlaylistType = sourceName as 'master' | 'playlist';
+        cacheResolvedPlaylistFilename(sourceName === 'master' ? 'master.m3u8' : 'playlist.m3u8');
         // Reset media error recovery counter on successful manifest parse
         mediaErrorRecoveryCount = 0;
         lastMediaErrorTime = 0;
         showVideoError.value = false;
+        isBuffering.value = false;
         failedFragments.clear();
         // Start playing if autoplay is enabled
         if (props.autoplay) {
@@ -481,14 +519,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
                   hasTriedPlaylistFallback = true;
 
                   // Destroy current HLS instance
-                  if (hls) {
-                    try {
-                      hls.destroy();
-                      hls = null;
-                    } catch (e) {
-                      console.log('Error destroying HLS instance:', e);
-                    }
-                  }
+                  cleanupHlsInstance();
 
                   // Reset counters for new attempt
                   mediaErrorRecoveryCount = 0;
@@ -504,8 +535,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
                 console.error('All recovery attempts exhausted, stopping playback');
                 if (hls) {
                   console.log('Destroying HLS instance to stop error loop');
-                  hls.destroy();
-                  hls = null;
+                  cleanupHlsInstance();
                 }
                 // Show error message to user
                 showVideoError.value = true;
@@ -526,84 +556,80 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       });
     };
     
-    // Try master playlist first
-    console.log('HLS.js: Trying master playlist first:', masterUrl);
-    const testMasterHls = new Hls(hlsConfig);
-    
-    const masterManifestPromise = new Promise<'master' | 'failed'>((resolve) => {
-      testMasterHls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log('HLS.js: Master playlist loaded successfully');
-        // Clean up test instance
-        try {
-          testMasterHls.destroy();
-        } catch (e) {
-          console.log('Error destroying test master HLS instance:', e);
-        }
-        // Create final instance with master
-        createHLSInstance(masterUrl, 'master');
-        resolve('master');
-      });
-      
-      testMasterHls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          console.log('Master playlist fatal error:', data);
-          // Clean up test instance
+    const probeManifest = (url: string, sourceName: 'master' | 'playlist'): Promise<boolean> => {
+      return new Promise((resolve) => {
+        const probeHls = new Hls(hlsConfig);
+        let settled = false;
+
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
           try {
-            testMasterHls.destroy();
+            probeHls.destroy();
           } catch (e) {
-            console.log('Error destroying test master HLS instance:', e);
+            console.log(`Error destroying ${sourceName} probe HLS instance:`, e);
           }
-          resolve('failed');
-        } else {
-          // Non-fatal errors can recover, wait for manifest
-          console.log('Master playlist non-fatal error:', data);
-        }
-      });
-    });
-    
-    testMasterHls.loadSource(masterUrl);
-    
-    // If master fails, try playlist
-    masterManifestPromise.then((result) => {
-      if (result === 'failed') {
-        console.log('HLS.js: Master playlist failed, trying playlist:', playlistUrl);
-        const testPlaylistHls = new Hls(hlsConfig);
-        
-        const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
-          testPlaylistHls.on(Hls.Events.MANIFEST_PARSED, () => {
-            console.log('HLS.js: Playlist loaded successfully');
-            // Clean up test instance
-            try {
-              testPlaylistHls.destroy();
-            } catch (e) {
-              console.log('Error destroying test playlist HLS instance:', e);
-            }
-            // Create final instance with playlist
-            createHLSInstance(playlistUrl, 'playlist');
-            resolve('playlist');
-          });
-          
-          testPlaylistHls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              console.log('Playlist fatal error:', data);
-              // Clean up test instance
-              try {
-                testPlaylistHls.destroy();
-              } catch (e) {
-                console.log('Error destroying test playlist HLS instance:', e);
-              }
-              console.error('HLS.js: Both master and playlist failed, cannot play HLS video');
-              resolve('failed');
-            } else {
-              // Non-fatal errors can recover, wait for manifest
-              console.log('Playlist non-fatal error:', data);
-            }
-          });
+          resolve(ok);
+        };
+
+        const timeoutId = window.setTimeout(() => {
+          console.log(`HLS.js: ${sourceName} manifest probe timeout (${MANIFEST_PROBE_TIMEOUT_MS}ms)`);
+          finish(false);
+        }, MANIFEST_PROBE_TIMEOUT_MS);
+
+        probeHls.on(Hls.Events.MANIFEST_PARSED, () => {
+          clearTimeout(timeoutId);
+          console.log(`HLS.js: ${sourceName} playlist loaded successfully`);
+          cacheResolvedPlaylistFilename(sourceName === 'master' ? 'master.m3u8' : 'playlist.m3u8');
+          finish(true);
         });
-        
-        testPlaylistHls.loadSource(playlistUrl);
+
+        probeHls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            clearTimeout(timeoutId);
+            console.log(`${sourceName} playlist fatal error during probe:`, data);
+            finish(false);
+          }
+        });
+
+        probeHls.loadSource(url);
+      });
+    };
+
+    const cached = getCachedPlaylistFilename();
+    const candidates: Array<{ url: string; sourceName: 'master' | 'playlist' }> =
+      cached === 'playlist.m3u8'
+        ? [
+            { url: playlistUrl, sourceName: 'playlist' },
+            { url: masterUrl, sourceName: 'master' }
+          ]
+        : [
+            { url: masterUrl, sourceName: 'master' },
+            { url: playlistUrl, sourceName: 'playlist' }
+          ];
+
+    if (cached) {
+      console.log(`HLS.js: Using cached playlist preference first: ${cached}`);
+    } else {
+      console.log('HLS.js: No cached playlist preference, trying master first');
+    }
+
+    (async () => {
+      for (const candidate of candidates) {
+        const ok = await probeManifest(candidate.url, candidate.sourceName);
+        if (ok) {
+          createHLSInstance(candidate.url, candidate.sourceName);
+          return;
+        }
       }
-    });
+
+      // Probe can fail due to transient network timing; still try direct attach once.
+      const fallback = candidates[0];
+      console.warn(
+        `HLS.js: Manifest probes failed for both playlists; falling back to direct attach with ${fallback.sourceName}`
+      );
+      createHLSInstance(fallback.url, fallback.sourceName);
+    })();
 }
 
 // Setup regular video playback (non-HLS)
@@ -729,6 +755,26 @@ function getHLSMasterSource(): string {
   const masterUrl = baseUrl + '/master.m3u8';
   console.log('Trying master.m3u8:', masterUrl);
   return masterUrl;
+}
+
+function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {
+  const cached = props.tweet?.playlist;
+  if (cached === 'master.m3u8' || cached === 'playlist.m3u8') {
+    console.log(`[HLS Playlist Cache] HIT for tweet ${props.tweet?.mid ?? 'unknown'}: ${cached}`);
+    return cached;
+  }
+  if (props.tweet?.mid) {
+    console.log(`[HLS Playlist Cache] MISS for tweet ${props.tweet.mid}`);
+  }
+  return null;
+}
+
+function cacheResolvedPlaylistFilename(fileName: 'master.m3u8' | 'playlist.m3u8') {
+  if (!props.tweet) return;
+  if (props.tweet.playlist !== fileName) {
+    props.tweet.playlist = fileName;
+    console.log(`[HLS Playlist Cache] STORE for tweet ${props.tweet.mid}: ${fileName}`);
+  }
 }
 
 function getBaseMediaUrl(): string {
@@ -1279,6 +1325,24 @@ async function handleVideoError(e: Event) {
   
   const currentSrc = videoElement.src || '';
   const now = Date.now();
+  const isBlobSource = currentSrc.startsWith('blob:');
+
+  // HLS uses blob: media source internally; those URLs can become invalid during teardown/re-attach.
+  // Treat that as expected lifecycle behavior and avoid showing a false playback error.
+  if (isHLS.value && isBlobSource) {
+    const isDetached = !document.contains(videoElement);
+    const hlsAttachedToThisElement = !!hls && hls.media === videoElement;
+    if (isUnmounting || isDetached || !hlsAttachedToThisElement) {
+      console.log('Ignoring expected HLS blob error during cleanup/re-attach:', {
+        tweetId: props.tweet?.mid,
+        src: currentSrc.substring(0, 100) + '...',
+        isUnmounting,
+        isDetached,
+        hlsAttachedToThisElement
+      });
+      return;
+    }
+  }
   
   // Prevent handling the same error multiple times in quick succession
   if (lastHandledError && 
@@ -1292,6 +1356,9 @@ async function handleVideoError(e: Event) {
   lastHandledError = { code: error.code, src: currentSrc, timestamp: now };
   
   console.log('Video error:', {
+    tweetId: props.tweet?.mid,
+    fileName: props.media.fileName,
+    mediaType: props.media.type,
     code: error.code,
     message: error.message,
     src: currentSrc.substring(0, 100) + '...',
@@ -1305,9 +1372,13 @@ async function handleVideoError(e: Event) {
   if (error.code === error.MEDIA_ERR_SRC_NOT_SUPPORTED) {
     if (isHLS.value) {
       console.error('HLS video format not supported, cannot play');
+      showVideoError.value = true;
+      isBuffering.value = false;
       return;
     }
     console.log('Video format not supported');
+    showVideoError.value = true;
+    isBuffering.value = false;
     return;
   }
   
@@ -1346,6 +1417,8 @@ async function handleVideoError(e: Event) {
       if (isHLS.value) {
         console.error('HLS video failed after retries, cannot play');
       }
+      showVideoError.value = true;
+      isBuffering.value = false;
     }
     return;
   }
@@ -1376,6 +1449,8 @@ async function handleVideoError(e: Event) {
       if (isHLS.value) {
         console.error('HLS video decode failed, cannot play');
       }
+      showVideoError.value = true;
+      isBuffering.value = false;
     }
     return;
   }
@@ -1398,12 +1473,7 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
     console.log(`HLS.js fatal error retry attempt ${videoErrorRetryCount}/${MAX_VIDEO_ERROR_RETRIES} for ${sourceName}`);
     
     // Destroy current HLS instance
-    try {
-      hls.destroy();
-      hls = null;
-    } catch (e) {
-      console.log('Error destroying HLS instance:', e);
-    }
+    cleanupHlsInstance();
     
     // Wait before retrying
     await new Promise(resolve => setTimeout(resolve, 1000 * videoErrorRetryCount));
@@ -1497,35 +1567,27 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
     }
   } else {
     console.error('HLS.js: Max retries reached, cannot play HLS video');
-    if (hls) {
-      try {
-        hls.destroy();
-        hls = null;
-      } catch (e) {
-        console.log('Error destroying HLS instance:', e);
-      }
-    }
+    cleanupHlsInstance();
   }
 }
 
 // Stop video playback and clean up resources
 function stopVideo() {
-  if (video.value) {
+  const currentVideo = video.value;
+  if (currentVideo) {
     // Pause the video
-    if (!video.value.paused) {
-      video.value.pause();
+    if (!currentVideo.paused) {
+      currentVideo.pause();
       isPlaying.value = false;
     }
 
     // Reset video to beginning
-    video.value.currentTime = 0;
+    currentVideo.currentTime = 0;
   }
 
   // Clean up HLS instance
-  if (hls) {
-    hls.destroy();
-    hls = null;
-  }
+  cleanupHlsInstance();
+  clearVideoSourceForTeardown(currentVideo);
 
   // Reset flags
   hasTriedSinglePlaylist = false;
