@@ -478,15 +478,12 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         showVideoError.value = false;
         isBuffering.value = false;
         failedFragments.clear();
-        // Start playing if autoplay is enabled or user tapped play
         if (props.autoplay || pendingUserPlayRequest) {
           pendingUserPlayRequest = false;
           videoElement.play().then(() => {
-            // Inform coordinator after play succeeds (won't mute since already playing)
             if (isInTweetList.value) requestPlay(videoElement);
           }).catch(() => {
-            // Autoplay was prevented, user will need to use native controls
-            showPlayOverlay.value = false; // Still hide overlay, rely on native controls
+            showPlayOverlay.value = false;
           });
         }
       });
@@ -512,6 +509,13 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
               hls?.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
+              // bufferStalledError is normal during initial loading — HLS.js
+              // keeps buffering on its own. Calling recoverMediaError() here
+              // resets the MediaSource and causes a visible "refresh."
+              if (data.details === 'bufferStalledError') {
+                return;
+              }
+
               // For fragment parsing errors, track and recover to skip to next segment
               // This allows playback to continue even with some corrupted/incompatible segments (like iOS does)
               if (data.details === 'fragParsingError') {

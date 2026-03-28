@@ -135,15 +135,11 @@ function autoplayElement(el: HTMLVideoElement) {
   if (!el.paused) return
   el.muted = true
   el.volume = 0
-  if (el.readyState >= 3) {
-    // HAVE_FUTURE_DATA or better — enough data to start playback
+  if (el.readyState >= 1) {
     el.play().catch(() => {})
   } else {
-    // Wait until enough data is buffered to actually play without stalling.
-    // Using 'canplay' instead of 'loadedmetadata' avoids bufferStalledError
-    // from calling play() on an empty buffer.
     el.addEventListener(
-      'canplay',
+      'loadedmetadata',
       () => {
         if (primaryVideo === el) {
           el.play().catch(() => {})
