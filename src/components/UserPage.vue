@@ -2,7 +2,7 @@
 import { onMounted, ref, onUnmounted, watch, computed, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
-import { useRoute, onBeforeRouteLeave } from 'vue-router';
+import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 import { USER_PAGE_SCROLL_PREFIX } from '@/constants/scrollRestore';
 import { TweetView, AppHeader } from '@/views';
@@ -17,6 +17,7 @@ const retryMessage = ref('');
 const pageNumber = ref(0);
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
+const router = useRouter();
 const authorId = computed(() => route.params.authorId as MimeiId);
 const pinnedTweets = ref<Tweet[]>([]);
 const pageSize = 5; // Using the same page size as MainPage
@@ -55,6 +56,67 @@ function saveUserPageScrollPosition() {
     const id = authorId.value
     if (id) {
         sessionStorage.setItem(USER_PAGE_SCROLL_PREFIX + id, String(window.scrollY))
+    }
+}
+
+const SCROLL_TWEET_MAX_PAGES = 40
+
+async function clearScrollTweetQuery() {
+    const q = { ...route.query } as Record<string, string | string[]>
+    delete q.scrollTweet
+    await router.replace({ path: route.path, query: q })
+}
+
+function findTweetScrollTarget(tweetId: string): HTMLElement | null {
+    const esc =
+        typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+            ? CSS.escape(tweetId)
+            : tweetId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    const byData = document.querySelector(`[data-tweet-mid="${esc}"]`)
+    if (byData instanceof HTMLElement) return byData
+    return document.getElementById(tweetId)
+}
+
+/** Scroll to a tweet card on the profile (TweetView: data-tweet-mid + id on card-body). */
+async function tryScrollToTweet(tweetId: MimeiId) {
+    const attempt = () => {
+        const el = findTweetScrollTarget(tweetId)
+        if (!el) return false
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return true
+    }
+    const tryAfterPaint = async () => {
+        await nextTick()
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+        return attempt()
+    }
+    if (await tryAfterPaint()) {
+        await clearScrollTweetQuery()
+        return
+    }
+    let pages = 0
+    while (hasMoreTweets.value && pages < SCROLL_TWEET_MAX_PAGES) {
+        pages++
+        await loadMoreTweets()
+        if (await tryAfterPaint()) {
+            await clearScrollTweetQuery()
+            return
+        }
+    }
+    await clearScrollTweetQuery()
+}
+
+async function maybeScrollOrRestoreProfile(nv: MimeiId, ov: MimeiId | undefined) {
+    const raw = route.query.scrollTweet
+    const tid = raw === undefined || raw === null ? undefined : Array.isArray(raw) ? raw[0] : raw
+    if (tid) {
+        await tryScrollToTweet(tid as MimeiId)
+        return
+    }
+    if (ov !== undefined && nv !== ov) {
+        window.scrollTo(0, 0)
+    } else {
+        restoreUserPageScroll(nv)
     }
 }
 
@@ -291,7 +353,8 @@ async function loadMoreTweets() {
         const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
 
         if (tweetsLoaded && tweetsLoaded > 0) {
-            if (tweetsLoaded <= pageSize) {
+            // A full page means there may be another page; only a short page is the end.
+            if (tweetsLoaded < pageSize) {
                 hasMoreTweets.value = false;
             }
             pageNumber.value++;
@@ -409,14 +472,21 @@ watch(authorId, async (nv, ov) => {
     // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
     tweetStore.getUser(nv, true);
     await initialLoadTweets(nv);
-    // Scroll to top when switching to another author; otherwise restore list
-    // position (e.g. returning from tweet detail to the same profile).
-    if (ov !== undefined && nv !== ov) {
-        window.scrollTo(0, 0)
-    } else {
-        restoreUserPageScroll(nv)
-    }
+    // Deep link to a tweet, or restore list position / scroll top on author switch
+    await maybeScrollOrRestoreProfile(nv, ov)
 }, { immediate: true });
+
+onBeforeRouteUpdate(async (to, from) => {
+    const raw = to.query.scrollTweet
+    const tid = raw === undefined || raw === null ? undefined : Array.isArray(raw) ? raw[0] : raw
+    if (!tid) return
+    // Author change is handled by the authorId watch after tweets load
+    if (to.params.authorId !== from.params.authorId) return
+    while (isLoading.value) {
+        await new Promise((r) => setTimeout(r, 40))
+    }
+    await tryScrollToTweet(tid as MimeiId)
+});
 
 // Debounce function (you can also use a library like lodash)
 function debounce<T extends Function>(func: T, delay: number) {

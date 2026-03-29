@@ -332,7 +332,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div class='card tweet-container'>
+  <div class='card tweet-container' :data-tweet-mid='props.tweet.mid'>
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -545,6 +545,8 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 /* TweetView-specific styles - scoped to .tweet-container to prevent affecting other views */
 .tweet-container {
   overflow: hidden;
+  /* Profile deep links: scrollIntoView clears fixed AppHeader overlap */
+  scroll-margin-top: 52px;
 }
 .quoted-tweet {
   margin: 8px 12px 8px 56px;

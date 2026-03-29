@@ -22,6 +22,15 @@ function openUserPage(userId: string) {
   router.push(`/author/${userId}`);
 }
 
+function openUserPageToTweet(userId: string, tweetId: string) {
+  tweetStore.addFollowing(userId);
+  router.push({
+    name: 'UserPage',
+    params: { authorId: userId },
+    query: { scrollTweet: tweetId },
+  });
+}
+
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -35,7 +44,8 @@ function excerptFromTweet(t: Tweet): string | null {
   return plain.length ? plain : null;
 }
 
-const carouselTexts = ref<string[]>([]);
+/** Excerpts paired with tweet ids for the rotating strip (tap opens profile at that tweet). */
+const carouselItems = ref<{ excerpt: string; tweetId: string }[]>([]);
 const currentIdx = ref(0);
 /** After mount / author change: strip appears only after this is true (3s delay on first paint). */
 const stripReady = ref(false);
@@ -52,10 +62,10 @@ function clearCarouselTicker() {
 function startCarouselTicker() {
   clearCarouselTicker();
   ticker = window.setInterval(() => {
-    const n = carouselTexts.value.length;
+    const n = carouselItems.value.length;
     if (n <= 1) return;
     currentIdx.value = (currentIdx.value + 1) % n;
-  }, 6000);
+  }, 5000);
 }
 
 function scheduleStripReveal(delayMs: number) {
@@ -83,14 +93,14 @@ function rebuildCarousel() {
   const sorted = [...merged.values()].sort(
     (a, b) => Number(b.timestamp) - Number(a.timestamp)
   );
-  const texts: string[] = [];
+  const items: { excerpt: string; tweetId: string }[] = [];
   for (const t of sorted) {
     if (exclude && t.mid === exclude) continue;
     const ex = excerptFromTweet(t);
-    if (ex) texts.push(ex);
+    if (ex) items.push({ excerpt: ex, tweetId: t.mid });
   }
-  carouselTexts.value = texts;
-  if (currentIdx.value >= texts.length) currentIdx.value = 0;
+  carouselItems.value = items;
+  if (currentIdx.value >= items.length) currentIdx.value = 0;
 }
 
 async function loadPeerTweets() {
@@ -172,20 +182,20 @@ watch(
       </div>
     </div>
     <div
-      v-if='stripReady && carouselTexts.length'
+      v-if='stripReady && carouselItems.length'
       class='author-carousel-outer'
       role='button'
       tabindex='0'
-      @click.stop='openUserPage(author.mid)'
-      @keydown.enter.prevent.stop='openUserPage(author.mid)'
+      @click.stop='openUserPageToTweet(author.mid, carouselItems[currentIdx].tweetId)'
+      @keydown.enter.prevent.stop='openUserPageToTweet(author.mid, carouselItems[currentIdx].tweetId)'
     >
       <Transition name='carousel-spin' mode='out-in'>
         <div
           :key='currentIdx'
           class='author-carousel-slide small'
-          :title='carouselTexts[currentIdx]'
+          :title='carouselItems[currentIdx].excerpt'
         >
-          <span class='author-carousel-text'>{{ carouselTexts[currentIdx] }}</span>
+          <span class='author-carousel-text'>{{ carouselItems[currentIdx].excerpt }}</span>
         </div>
       </Transition>
     </div>

@@ -12,7 +12,18 @@ function scrollBehavior(
   from: RouteLocationNormalized,
   savedPosition: { left: number; top: number } | null
 ) {
+  // Stripping scrollTweet after scrollIntoView must not jump back to top (default behavior).
+  if (to.name === 'UserPage' && from.name === 'UserPage') {
+    const had = from.query.scrollTweet
+    const has = to.query.scrollTweet
+    const sameAuthor = to.params.authorId === from.params.authorId
+    if (sameAuthor && had && !has) {
+      return false
+    }
+  }
   if (from.name === 'TweetDetail' && to.name === 'UserPage') {
+    // Deep link from detail carousel: scroll position is resolved in UserPage via #id / scrollIntoView
+    if (to.query.scrollTweet) return { left: 0, top: 0 }
     const id = to.params.authorId as string | undefined
     if (id) {
       const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + id)
