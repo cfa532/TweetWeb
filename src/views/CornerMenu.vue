@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // share menu or other right click items
-import { ref, nextTick, computed } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
 import { useI18n } from 'vue-i18n';
@@ -9,8 +9,9 @@ import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
 const { t } = useI18n()
-const shareMenu = ref()
-const dotBtn = ref()
+const shareMenu = ref<HTMLElement | null>(null)
+const dotBtn = ref<HTMLElement | null>(null)
+const isMenuOpen = ref(false)
 const canDelete = ref(false)
 const canEdit = ref(false)
 const showEditor = ref(false)
@@ -31,16 +32,9 @@ const displayMid = computed(() => {
   return `${start}...${end}`
 })
 
-function showMenu() {
-    // Position menu using fixed positioning to avoid overflow clipping
-    const rect = dotBtn.value.getBoundingClientRect()
-    shareMenu.value.style.top = rect.bottom + 'px'
-    shareMenu.value.style.left = Math.max(0, rect.right - 220) + 'px'
-    shareMenu.value.hidden = false
-
-    // Show delete button if:
-    // 1. User is the tweet/comment author, OR
-    // 2. It's a comment and user is the parent tweet author
+function updateMenuPermissions() {
+    canDelete.value = false
+    canEdit.value = false
     if (tweetStore.loginUser && props.tweet) {
         const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
@@ -53,10 +47,49 @@ function showMenu() {
         }
     }
 }
-function hideMenu() {
-    if (shareMenu.value)
-        shareMenu.value.hidden = true
+
+function positionMenu() {
+    if (!dotBtn.value || !shareMenu.value) return
+    const rect = dotBtn.value.getBoundingClientRect()
+    shareMenu.value.style.top = `${rect.bottom}px`
+    shareMenu.value.style.left = `${Math.max(8, rect.right - 220)}px`
 }
+
+function openMenu() {
+    updateMenuPermissions()
+    isMenuOpen.value = true
+    requestAnimationFrame(() => positionMenu())
+}
+
+function closeMenu() {
+    isMenuOpen.value = false
+}
+
+function toggleMenu(e: Event) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (isMenuOpen.value) {
+        closeMenu()
+    } else {
+        openMenu()
+    }
+}
+
+function onViewportChange() {
+    if (isMenuOpen.value) {
+        positionMenu()
+    }
+}
+
+onMounted(() => {
+    window.addEventListener('resize', onViewportChange)
+    window.addEventListener('scroll', onViewportChange, true)
+})
+
+onUnmounted(() => {
+    window.removeEventListener('resize', onViewportChange)
+    window.removeEventListener('scroll', onViewportChange, true)
+})
 function copyLink() {
     console.log(window.location.href);
     const input = document.createElement("input");
@@ -68,12 +101,12 @@ function copyLink() {
     input.select();
     document.execCommand('copy');
     document.body.removeChild(input);
-    shareMenu.value.hidden = true
+    closeMenu()
 }
 
 function openEditor() {
   if (!props.tweet) return
-  shareMenu.value.hidden = true
+  closeMenu()
   editContent.value = props.tweet.content || ''
   showEditor.value = true
 }
@@ -91,12 +124,11 @@ async function submitEdit() {
 
 async function deleteItem() {
   if (!props.tweet || !tweetStore.loginUser) {
-    shareMenu.value.hidden = true
+    closeMenu()
     return
   }
   
-  // Close the menu immediately
-  shareMenu.value.hidden = true
+  closeMenu()
   
   if (props.isComment && props.parentTweet) {
     // Delete comment - requires comment author OR parent tweet author
@@ -134,9 +166,24 @@ async function deleteItem() {
 </script>
 
 <template>
-<div style="width:100%; text-align: right;" @mouseenter="showMenu" @mouseleave="hideMenu">
-    <a ref="dotBtn" href="#" class="dot"> &#8226;&#8226;&bull; </a>
-    <div ref="shareMenu" class="menu" hidden @mouseenter="showMenu" @mouseleave="hideMenu">
+<div class="corner-menu-root" style="width:100%; text-align: right;">
+    <button
+        ref="dotBtn"
+        type="button"
+        class="dot"
+        :aria-expanded="isMenuOpen"
+        aria-haspopup="true"
+        @click="toggleMenu"
+    >
+        &#8226;&#8226;&bull;
+    </button>
+    <div v-if="isMenuOpen" class="menu-backdrop" @click="closeMenu" />
+    <div
+        v-show="isMenuOpen"
+        ref="shareMenu"
+        class="menu"
+        @click.stop
+    >
         <div class="item copy-item" @click.stop="copyLink">
             <span class="menu-text">
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
@@ -168,15 +215,47 @@ async function deleteItem() {
 </template>
 
 <style scoped>
+.corner-menu-root {
+    position: relative;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+}
+
 .dot {
     font-size: 15px;
     color: gray;
-    padding: 4px 8px 8px 8px;
+    margin: 0;
+    padding: 0;
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
     text-decoration: none;
 }
+
+.dot:hover,
+.dot:focus-visible {
+    background: rgba(0, 0, 0, 0.06);
+    outline: none;
+}
+
+.menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+}
+
 .menu {
     position: fixed;
-    z-index: 50;
+    z-index: 100;
     background: #fff;
     border: 1px solid #e6ecf0;
     border-radius: 8px;

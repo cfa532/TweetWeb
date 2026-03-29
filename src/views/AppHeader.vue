@@ -3,7 +3,6 @@ import { watch, onMounted, ref, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
-import { QRCoder } from '@/views';
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
 import { marked } from 'marked'
@@ -18,7 +17,6 @@ const tweetStore = useTweetStore()
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
 const isAccountMenuOpen = ref(false)
 let accountMenuCloseTimer: ReturnType<typeof setTimeout> | null = null
-const qrSize = 100
 const props = defineProps({
     userId: { type: String, required: false },
 })
@@ -301,14 +299,24 @@ watch(userId, async (nv, ov) => {
                     <a href="http://tweet.fireshare.us">HTTP://tweet.fireshare.us</a>
                 </div>
             </div>
-            <div class="account-menu-wrapper" @mouseenter="openAccountMenu" @mouseleave="scheduleCloseAccountMenu">
-                <a href="#" class="account-btn" @click.prevent="isAccountMenuOpen = !isAccountMenuOpen"
-                    :title="isLoggedIn ? $t('auth.account') : $t('auth.login')">
+            <div
+                class="account-menu-wrapper"
+                @mouseenter="openAccountMenu"
+                @mouseleave="scheduleCloseAccountMenu"
+            >
+                <a
+                    href="#"
+                    class="account-btn"
+                    @click.prevent="isAccountMenuOpen = !isAccountMenuOpen"
+                    :title="isLoggedIn ? $t('auth.account') : $t('auth.login')"
+                    :aria-expanded="isAccountMenuOpen"
+                    aria-haspopup="true"
+                >
                     <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
                         class="account-avatar rounded-circle"
                         @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
-                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="account-icon-fallback">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                         <circle cx="12" cy="7" r="4"></circle>
                     </svg>
@@ -475,7 +483,7 @@ watch(userId, async (nv, ov) => {
     }
 
     .header-row {
-        min-height: 50px;
+        min-height: 56px;
     }
 }
 
@@ -610,11 +618,18 @@ watch(userId, async (nv, ov) => {
 
 .account-btn {
     color: #ccd0d4;
-    padding: 4px 20px 8px 10px;
+    box-sizing: border-box;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0 8px 0 0;
     text-decoration: none;
     flex-shrink: 0;
-    display: flex;
+    display: inline-flex;
     align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 .account-btn:hover {
@@ -623,9 +638,15 @@ watch(userId, async (nv, ov) => {
 }
 
 .account-avatar {
-    width: 32px;
+    width: 32x;
     height: 32px;
     object-fit: cover;
+}
+
+.account-icon-fallback {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
 }
 
 .account-menu-wrapper {
