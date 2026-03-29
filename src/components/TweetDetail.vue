@@ -545,11 +545,14 @@ function retryLoad() {
     </div>
 
     <div v-if="tweet" class="card mb-1">
-        <div class="card-header d-flex align-items-center">
-            <DetailHeader v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
-                :is-retweet="isRetweet" :by="tweet.author.username">
+        <div class="card-header d-flex align-items-stretch">
+            <DetailHeader class="w-100" v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
+                :is-retweet="isRetweet" :by="tweet.author.username"
+                :exclude-tweet-id="tweet.originalTweet?.mid">
             </DetailHeader>
-            <DetailHeader v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
+            <DetailHeader class="w-100" v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"
+                :exclude-tweet-id="tweet.mid">
+            </DetailHeader>
         </div>
         
         <div v-if="isRetweet" class="card-body" id="content">
@@ -1029,8 +1032,8 @@ function retryLoad() {
     background: #5a67d8;
     color: #ffffff;
     border: none;
-    border-radius: 25px;
-    padding: 12px 28px;
+    border-radius: 999px;
+    padding: 6px 24px;
     font-size: 1rem;
     font-weight: 500;
     cursor: pointer;
@@ -1068,7 +1071,7 @@ function retryLoad() {
 @media (max-width: 768px) {
     .download-button {
         font-size: 0.9rem;
-        padding: 10px 24px;
+        padding: 5px 20px;
     }
 
     .download-text {
