@@ -50,15 +50,42 @@ onBeforeRouteLeave(() => {
     saveMainFeedScrollPosition()
 })
 
-// Debounce function (you can also use a library like lodash)
-function debounce<T extends Function>(func: T, delay: number) {
-    let timeout: any;
-    return function(this: any, ...args: any[]) { // Explicitly define 'this' type
-        clearTimeout(timeout);
-        timeout = setTimeout(() => {
-            func.apply(this, args);
-        }, delay);
-    };
+function isNearBottom(threshold = scrollThreshold) {
+    const scrollBottom = window.innerHeight + window.scrollY;
+    const docHeight = document.documentElement.scrollHeight;
+    return docHeight - scrollBottom <= threshold;
+}
+
+/** After a page loads, the scroll position does not change — no scroll event fires. Chain loads while the user is still near the bottom. */
+function scheduleLoadMoreIfStillNearBottom() {
+    void (async () => {
+        await nextTick();
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        if (isLoading.value || !hasMoreTweets.value) return;
+        if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+        if (!isNearBottom()) return;
+        await loadMoreTweets();
+    })();
+}
+
+const loadMoreSentinel = ref<HTMLElement | null>(null);
+let loadMoreObserver: IntersectionObserver | null = null;
+
+function setupLoadMoreObserver() {
+    loadMoreObserver?.disconnect();
+    const el = loadMoreSentinel.value;
+    if (!el) return;
+    loadMoreObserver = new IntersectionObserver(
+        (entries) => {
+            if (!entries[0]?.isIntersecting) return;
+            if (isLoading.value || !hasMoreTweets.value) return;
+            if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+            void loadMoreTweets();
+        },
+        { root: null, rootMargin: '0px 0px 320px 0px', threshold: 0 },
+    );
+    loadMoreObserver.observe(el);
 }
 
 async function loadMoreTweets() {
@@ -88,22 +115,9 @@ async function loadMoreTweets() {
     } finally {
         appendNewToDisplayed();
         isLoading.value = false;
+        scheduleLoadMoreIfStillNearBottom();
     }
 }
-
-const handleScroll = debounce(async () => {
-    if (isLoading.value) return;
-    if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
-
-    const scrollPosition = window.innerHeight + window.scrollY;
-    const documentHeight = document.documentElement.scrollHeight;
-
-    if (documentHeight - scrollPosition < scrollThreshold) {
-        if (hasMoreTweets.value) {
-            await loadMoreTweets();
-        }
-    }
-}, 300);
 
 onMounted(async () => {
     // Guest user: redirect to the default user's profile page
@@ -138,12 +152,12 @@ onMounted(async () => {
             appendNewToDisplayed();
         }
     }
-    window.addEventListener('scroll', handleScroll);
+    nextTick(() => setupLoadMoreObserver());
     restoreMainFeedScroll();
 });
 
 onUnmounted(() => {
-    window.removeEventListener('scroll', handleScroll);
+    loadMoreObserver?.disconnect();
 });
 
 async function loadTweetsWithMinimum() {
@@ -208,6 +222,8 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
     ).length;
     pendingCount.value = count;
 });
+
+watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: 'post' });
 </script>
 
 <template>
@@ -217,9 +233,16 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
             {{ $t('tweet.showNewTweets', pendingCount) }}
         </div>
         <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid' />
-        <div v-if='isLoading' class='d-flex flex-column align-items-center my-3'>
+        <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
+        <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
+            <LoadingSpinner size="sm" />
+            <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
+            <div v-else class="small text-muted">{{ retryMessage }}</div>
+        </div>
+        <div v-else-if='isLoading' class='d-flex flex-column align-items-center justify-content-center gap-2 my-4 py-3 tweet-list-load-more'>
             <LoadingSpinner />
-            <div v-if='retryMessage' class='text-muted mt-2 small'>
+            <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
+            <div v-if='retryMessage' class='text-muted small'>
                 {{ retryMessage }}
             </div>
         </div>
@@ -243,5 +266,27 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
 }
 .new-tweets-banner:hover {
     background-color: #f5f8fa;
+}
+
+.load-more-sentinel {
+    width: 100%;
+    height: 1px;
+    pointer-events: none;
+}
+
+.tweet-feed-loading-fixed {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1040;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    background: rgba(255, 255, 255, 0.92);
+    border-top: 1px solid #e6ecf0;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.06);
 }
 </style>
