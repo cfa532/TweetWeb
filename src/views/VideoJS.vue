@@ -75,6 +75,31 @@ const isInTweetList = computed(() => {
   return isInList;
 });
 
+const timeRemainingText = ref('0:00');
+
+const showFeedTimeRemaining = computed(
+  () =>
+    isInTweetList.value &&
+    isPlaying.value &&
+    !isAudio &&
+    !showVideoError.value,
+);
+
+function updateTimeRemaining() {
+  const el = video.value;
+  if (!el) return;
+  const d = el.duration;
+  const t = el.currentTime;
+  if (!Number.isFinite(d) || d <= 0) {
+    timeRemainingText.value = '0:00';
+    return;
+  }
+  const remaining = Math.max(0, d - t);
+  const minutes = Math.floor(remaining / 60);
+  const seconds = Math.floor(remaining % 60);
+  timeRemainingText.value = `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 // Hardware acceleration detection – cached once per page load.
 // The previous computed created a WebGL context on every evaluation, quickly
 // exhausting the browser's context limit when many VideoJS instances exist.
@@ -139,11 +164,14 @@ onMounted(() => {
           isPlaying.value = true;
           showPlayOverlay.value = false;
           isBuffering.value = true; // Show spinner when play starts, hide when actually playing
+          updateTimeRemaining();
         });
         video.value.addEventListener('playing', () => {
           isBuffering.value = false;
           coordinatorAutoplayPending.value = false;
+          updateTimeRemaining();
         });
+        video.value.addEventListener('timeupdate', updateTimeRemaining);
         video.value.addEventListener('waiting', () => {
           isBuffering.value = true; // Video is buffering
         });
@@ -237,6 +265,7 @@ onMounted(() => {
                 video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
               }
             }
+            updateTimeRemaining();
           }
         }, { once: true });
         
@@ -326,6 +355,7 @@ onUnmounted(() => {
 
   if (video.value) {
     video.value.removeEventListener('error', handleVideoError);
+    video.value.removeEventListener('timeupdate', updateTimeRemaining);
   }
   
   // Unregister from video playback coordinator
@@ -1751,6 +1781,14 @@ function stopVideo() {
           Your browser does not support the video tag.
         </video>
       </div>
+
+      <div
+        v-if="showFeedTimeRemaining"
+        class="feed-video-time-remaining"
+        aria-hidden="true"
+      >
+        {{ timeRemainingText }}
+      </div>
     </div>
     <p class="video-filename">
       {{ media.fileName }}
@@ -2103,6 +2141,22 @@ function stopVideo() {
 .fullscreen-overlay-button svg {
   width: 18px;
   height: 18px;
+}
+
+.feed-video-time-remaining {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 18;
+  pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 8px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 999px;
 }
 
 /* Desktop: keep fullscreen button hidden until hover/focus */
