@@ -4,7 +4,7 @@ import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
-import { registerVideo, unregisterVideo, requestPlay, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
+import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -523,9 +523,11 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         failedFragments.clear();
         if (props.autoplay || pendingUserPlayRequest) {
           pendingUserPlayRequest = false;
-          videoElement.play().then(() => {
-            if (isInTweetList.value) requestPlay(videoElement);
-          }).catch(() => {
+          if (isInTweetList.value) {
+            if (!isCoordinatorPrimary(videoElement)) return;
+            requestPlay(videoElement);
+          }
+          videoElement.play().catch(() => {
             showPlayOverlay.value = false;
           });
         }
@@ -742,7 +744,7 @@ function setupRegularVideo() {
   // Add canplay event and start playing if autoplay is enabled
   videoElement.addEventListener('canplay', () => {
     // Video can start playing
-    if (props.autoplay) {
+    if (props.autoplay && !isInTweetList.value) {
       videoElement.play().catch(() => {
         // Autoplay was prevented, user will need to use native controls
         showPlayOverlay.value = false; // Still hide overlay, rely on native controls
@@ -751,7 +753,7 @@ function setupRegularVideo() {
   }, { once: true });
   
   // Try to play immediately if autoplay is enabled
-  if (props.autoplay) {
+  if (props.autoplay && !isInTweetList.value) {
     videoElement.play().catch(() => {
       // Will retry when canplay event fires
     });
@@ -923,7 +925,7 @@ function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
       }, { once: true });
       
       // Try to play the video
-      if (props.autoplay) {
+      if (props.autoplay && !isInTweetList.value) {
         videoElement.play().catch(error => {
           console.log('Autoplay failed for progressive video:', error);
         });
@@ -1629,7 +1631,12 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
         // Reset media error recovery counter on successful retry
         mediaErrorRecoveryCount = 0;
         lastMediaErrorTime = 0;
-        if (props.autoplay) {
+        if (props.autoplay || pendingUserPlayRequest) {
+          pendingUserPlayRequest = false;
+          if (isInTweetList.value) {
+            if (!isCoordinatorPrimary(videoElement)) return;
+            requestPlay(videoElement);
+          }
           videoElement.play().catch(() => {
             showPlayOverlay.value = false;
           });
@@ -1765,7 +1772,7 @@ function stopVideo() {
           ref="video"
           class="video"
           :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
-          :autoplay=props.autoplay
+          :autoplay="props.autoplay && !isInTweetList"
           :controls="showControls"
           :controlslist="showControls ? controls : undefined"
           preload="auto"

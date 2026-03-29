@@ -1,7 +1,8 @@
 /**
  * VideoPlaybackCoordinator – manages video playback in the tweet list.
  *
- *  - Tracks all registered video instances and their visibility.
+ *  - Tracks all registered video instances and their visibility (≥50% of the
+ *    wrapper in view = visible; less = not eligible to play / primary is paused).
  *  - Picks the video closest to the scroll edge (topmost when scrolling
  *    down, bottommost when scrolling up) as the "primary".
  *  - Only one video plays at a time.
@@ -30,13 +31,8 @@ const registry = new Map<HTMLVideoElement, VideoEntry>()
 let primaryVideo: HTMLVideoElement | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-/**
- * Minimum intersection ratio to count as a candidate. Keep this low so stacked
- * grid cells (e.g. two videos in the right column) still compete: the upper
- * slot often stays below 50% visible while the lower is already >50%, which
- * wrongly excluded the top video and let the bottom one become primary.
- */
-const MIN_INTERSECTION_RATIO = 0.01
+/** At least this fraction of the video wrapper must be in the viewport to count as visible (play / stay primary). */
+const MIN_VISIBLE_RATIO = 0.5
 const DEBOUNCE_MS = 200
 
 // Track scroll direction so selectPrimary can pick the video the user is
@@ -80,6 +76,11 @@ export function requestPlay(el: HTMLVideoElement) {
   setPrimary(el)
 }
 
+/** True if this element is the single feed primary (avoids stale HLS/autoplay callbacks starting a demoted video). */
+export function isCoordinatorPrimary(el: HTMLVideoElement): boolean {
+  return primaryVideo === el
+}
+
 // --- internals ---
 
 const observers = new Map<HTMLVideoElement, IntersectionObserver>()
@@ -92,6 +93,17 @@ function setupObserver(el: HTMLVideoElement, wrapper: HTMLElement) {
         if (reg) {
           reg.ratio = entry.intersectionRatio
           reg.top = entry.boundingClientRect.top
+        }
+      }
+      // Pause as soon as the primary drops below half visible; clear primary so a
+      // quick scroll back re-runs full setPrimary and autoplay resumes correctly.
+      if (el === primaryVideo) {
+        const reg = registry.get(el)
+        if (reg && reg.ratio < MIN_VISIBLE_RATIO && !el.ended) {
+          if (!el.paused) el.pause()
+          primaryVideo.removeEventListener('ended', handlePrimaryEnded)
+          primaryVideo = null
+          reg.onPrimaryChange?.(false)
         }
       }
       scheduleSelection()
@@ -121,7 +133,7 @@ function isBeforeInDocumentOrder(a: VideoEntry, b: VideoEntry): boolean {
 function selectPrimary() {
   let best: VideoEntry | null = null
   for (const entry of registry.values()) {
-    if (entry.ratio < MIN_INTERSECTION_RATIO || entry.el.ended) {
+    if (entry.ratio < MIN_VISIBLE_RATIO || entry.el.ended) {
       continue
     }
     if (!best) {
@@ -142,20 +154,7 @@ function selectPrimary() {
   if (best) {
     setPrimary(best.el)
   } else if (primaryVideo) {
-    // No video meets MIN_INTERSECTION_RATIO. Apply hysteresis: keep the
-    // current primary as long as its tweet is still partially on-screen.
-    // This prevents stop/restart flicker when ratios briefly dip during scroll.
-    const primaryEntry = registry.get(primaryVideo)
-    const tweetContainer = primaryEntry ? getTweetContainer(primaryEntry) : null
-    const tweetStillVisible = tweetContainer
-      ? [...registry.values()].some(
-          e => getTweetContainer(e) === tweetContainer && e.ratio > 0
-        )
-      : primaryEntry && primaryEntry.ratio > 0
-
-    if (tweetStillVisible) return
-
-    // Tweet is fully off-screen – pause all active videos
+    // No video is at least half visible – pause all and clear primary.
     primaryVideo.removeEventListener('ended', handlePrimaryEnded)
     for (const entry of registry.values()) {
       if (!entry.el.paused) {
@@ -198,7 +197,7 @@ function handlePrimaryEnded() {
 
   // Only advance if the tweet is still visible
   const tweetStillVisible = [...registry.values()].some(
-    e => getTweetContainer(e) === tweetContainer && e.ratio > 0
+    e => getTweetContainer(e) === tweetContainer && e.ratio >= MIN_VISIBLE_RATIO
   )
   if (!tweetStillVisible) return
 
