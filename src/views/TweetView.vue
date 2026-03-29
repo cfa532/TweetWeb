@@ -23,10 +23,11 @@ const originalTweet = ref<Tweet | null>();
 const isRetweet = ref(false);
 const retweetedBy = ref<string | undefined>(undefined);
 const currentTweet = ref(props.tweet);
-const isContentClipped = ref(false);
 
 const MAX_LINES = 10;
 const MAX_CHARS_CHINESE = 300;
+/** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
+const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
 
 onMounted(async () => {
   if (currentTweet.value.originalTweetId) {
@@ -112,27 +113,35 @@ function linkify(text: string) {
   return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
 
-const processedContent = computed(() => {
+const tweetContentProcessing = computed(() => {
   if (!displayedTweet.value.content) {
-    return '';
+    return { html: '', clipped: false };
   }
 
   const linkedText = linkify(displayedTweet.value.content);
-  const isChinese = /[\u4e00-\u9fa5]/.test(linkedText); // Basic check for Chinese characters
+  const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
 
-  if ((isChinese && linkedText.length > MAX_CHARS_CHINESE) || (!isChinese && linkedText.split('\n').length > MAX_LINES)) {
-    isContentClipped.value = true;
-    if (isChinese) {
-      return linkedText.substring(0, MAX_CHARS_CHINESE) + '...';
-    } else {
-      const lines = linkedText.split('\n');
-      return lines.slice(0, MAX_LINES).join('\n') + '...';
-    }
-  } else {
-    isContentClipped.value = false;
-    return linkedText;
+  const clipped =
+    (isChinese && linkedText.length > MAX_CHARS_CHINESE) ||
+    (!isChinese && linkedText.split('\n').length > MAX_LINES);
+
+  if (!clipped) {
+    return { html: linkedText, clipped: false };
   }
+
+  const html = isChinese
+    ? linkedText.substring(0, MAX_CHARS_CHINESE)
+    : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
+  return { html, clipped: true };
 });
+
+const truncatedContentHtml = computed(() => tweetContentProcessing.value.html);
+const isContentClipped = computed(() => tweetContentProcessing.value.clipped);
+const contentClampMaxHeight = computed(() =>
+  isContentClipped.value
+    ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
+    : 'none',
+);
 
 // iOS MediaGrid algorithm implementation
 const gridAspectRatio = computed(() => {
@@ -354,7 +363,14 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       />
     </div>
     <div class='card-body' :id="props.tweet.mid">
-      <p v-if='displayedTweet.content' class='card-text' v-html='processedContent' @click='onTextClick'></p>
+      <div
+        v-if='displayedTweet.content'
+        class='tweet-content-wrapper'
+        @click='onTextClick'
+      >
+        <p class='tweet-content-clamp' v-html='truncatedContentHtml'></p>
+        <span v-if='isContentClipped' class='tweet-content-more'>{{ t('tweet.showMore') }}</span>
+      </div>
       <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
         <div v-if='mediaAttachments.length === 1' class='single-attachment'>
@@ -941,21 +957,31 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   padding: 0;
 }
 
-.card-text {
+.tweet-content-wrapper {
   text-align: left;
   font-size: medium;
-  white-space: pre-wrap;
-  padding: 4px 0 0 8px;
-  overflow: hidden;
+  padding: 4px 12px 0 8px;
   cursor: pointer;
-  display: -webkit-box;
-  -webkit-line-clamp: v-bind('isContentClipped ? MAX_LINES : undefined');
-  -webkit-box-orient: vertical;
 }
 
-.card-text a {
+.tweet-content-clamp {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow: hidden;
+  line-height: v-bind('CONTENT_CLAMP_LINE_HEIGHT');
+  max-height: v-bind(contentClampMaxHeight);
+}
+
+.tweet-content-clamp a {
   color: blue;
   text-decoration: underline;
+}
+
+.tweet-content-more {
+  color: blue;
+  text-decoration: none;
+  white-space: nowrap;
+  margin-left: 0.25em;
 }
 
 .icon-item {

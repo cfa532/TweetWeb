@@ -95,7 +95,8 @@
     "bookmark": "Bookmark",
     "share": "Share",
     "copyLink": "Copy link",
-    "linkCopied": "Link copied!"
+    "linkCopied": "Link copied!",
+    "showMore": "show more"
   },
   "time": {
     "secondsAgo": "{n} seconds ago",

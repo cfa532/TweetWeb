@@ -95,7 +95,8 @@
     "bookmark": "收藏",
     "share": "分享",
     "copyLink": "复制链接",
-    "linkCopied": "链接已复制!"
+    "linkCopied": "链接已复制!",
+    "showMore": "更多"
   },
   "time": {
     "secondsAgo": "{n}秒前",

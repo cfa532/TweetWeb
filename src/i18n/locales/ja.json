@@ -95,7 +95,8 @@
     "bookmark": "ブックマーク",
     "share": "共有",
     "copyLink": "リンクをコピー",
-    "linkCopied": "リンクをコピーしました!"
+    "linkCopied": "リンクをコピーしました!",
+    "showMore": "もっと見る"
   },
   "time": {
     "secondsAgo": "{n}秒前",
