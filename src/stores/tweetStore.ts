@@ -6,7 +6,31 @@ import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
 import i18n from '@/i18n';
+
 const GUEST_ID = "000000000000000000000000000"
+
+/** Comma-separated ids from `VITE_DEFAULT_FOLLOWINGS` (guest seed + post-register auto-follow). */
+function defaultFollowingIdsFromEnv(): string[] {
+    const raw = import.meta.env.VITE_DEFAULT_FOLLOWINGS as string | undefined
+    if (!raw || !String(raw).trim()) return []
+    return String(raw)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+}
+
+/** v2 register response: { success, data?: { user } } or { success, user } */
+function parseRegisteredUserMid(ret: any): string | undefined {
+    if (!ret) return undefined
+    const success = ret.success === true || ret.success === 1
+    if (!success) return undefined
+    const body = ret.data != null && typeof ret.data === 'object' ? ret.data : ret
+    const u = body.user
+    if (u && typeof u === 'object' && typeof u.mid === 'string' && u.mid.length > 0) {
+        return u.mid
+    }
+    return undefined
+}
 const TWEET_COUNT = 5
 
 export const useTweetStore = defineStore('tweetStore', {
@@ -53,7 +77,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (sessionStorage.getItem("followings")) {
                 state._followings = JSON.parse(sessionStorage.getItem("followings")!)
             } else {
-                state._followings = import.meta.env.VITE_DEFAULT_FOLLOWINGS.split(",")
+                state._followings = defaultFollowingIdsFromEnv()
                 sessionStorage.setItem("followings", JSON.stringify(state._followings))
             }
             return state._followings
@@ -2661,7 +2685,50 @@ export const useTweetStore = defineStore('tweetStore', {
                 const msg = ret?.["message"] || "Registration failed"
                 throw new Error(msg)
             }
+            const registeredMid = parseRegisteredUserMid(ret)
+            if (registeredMid) {
+                void this._autoFollowDefaultUsersAfterRegister(registeredMid)
+            } else {
+                console.warn("[register] No user.mid in registration response; skipping default followings auto-follow")
+            }
             return true
+        },
+
+        /**
+         * After successful registration, follow `VITE_DEFAULT_FOLLOWINGS` as the new account (matches iOS registerUser background task).
+         */
+        _autoFollowDefaultUsersAfterRegister(registeredUserId: MimeiId) {
+            void (async () => {
+                const ids = defaultFollowingIdsFromEnv()
+                for (const followingId of ids) {
+                    try {
+                        const target = await this.getUser(followingId)
+                        if (!target) {
+                            console.warn(`[register:autoFollow] User not found, skip: ${followingId}`)
+                            continue
+                        }
+                        const toggled = await this.lapi.client.RunMApp("toggle_following", {
+                            aid: this.appId,
+                            ver: "last",
+                            version: "v2",
+                            followingid: followingId,
+                            userid: registeredUserId,
+                        })
+                        const response = (toggled?.success && toggled.data) ? toggled.data : toggled
+                        const isFollowing =
+                            typeof response?.isFollowing === "boolean"
+                                ? response.isFollowing
+                                : typeof response === "boolean"
+                                  ? response
+                                  : undefined
+                        if (isFollowing !== true) {
+                            console.warn(`[register:autoFollow] Unexpected toggle result for ${followingId}`, toggled)
+                        }
+                    } catch (e) {
+                        console.warn(`[register:autoFollow] Failed for ${followingId}`, e)
+                    }
+                }
+            })()
         },
 
         /**
