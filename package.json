@@ -21,6 +21,7 @@
     "axios": "^1.8.4",
     "bootstrap": "^5.3.3",
     "hls.js": "^1.6.5",
+    "marked": "^17.0.5",
     "pinia": "^2.1.7",
     "qrcode.vue": "^3.6.0",
     "tus-js-client": "^4.3.1",

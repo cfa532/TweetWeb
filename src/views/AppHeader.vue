@@ -6,6 +6,9 @@ import { useTweetStore } from "@/stores";
 import { QRCoder } from '@/views';
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
+import { marked } from 'marked'
+import leitherSetupNoticeEn from '@/content/leither-setup-notice.en.md?raw'
+import leitherSetupNoticeZh from '@/content/leither-setup-notice.zh.md?raw'
 
 const { t, locale } = useI18n();
 
@@ -137,20 +140,32 @@ async function countOriginalTweetsByUser(userId: string): Promise<number> {
     return originalTweetCount
 }
 
+/** Parse markdown: first `# heading` line is the page title; the rest is rendered as HTML. */
+function parseMarkdownNotice(raw: string): { title: string; htmlBody: string } {
+    const normalized = raw.replace(/\r\n/g, '\n').trimStart()
+    const h1Match = normalized.match(/^#\s+(.+?)\s*$/m)
+    if (!h1Match) {
+        return { title: 'Notice', htmlBody: marked.parse(normalized) as string }
+    }
+    const title = h1Match[1].trim()
+    const blockStart = normalized.indexOf(h1Match[0])
+    const afterHeading = normalized.slice(blockStart + h1Match[0].length).replace(/^\n+/, '')
+    return { title, htmlBody: marked.parse(afterHeading) as string }
+}
+
+function escapeHtmlForNotice(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+}
+
 function openLeitherSetupInfoPage(targetWindow?: Window | null) {
     const isChinese = locale.value?.toLowerCase().startsWith('zh')
-    const infoMessage = isChinese
-        ? `dTweet 社区由用户贡献的硬件共同支持。
-
-当用户发布的原创帖子超过 5 条时，应搭建自己的服务器并加入网络。
-
-以下说明描述了安装 Leither 的步骤。Leither 会把所有参与服务器组合成一个云服务。`
-        : `The dTweet community is supported by the hardware contributed by its users.
-
-Each user should set up its own server and join the network if more than 5 original posts are published.
-
-The following instructions describe steps to install Leither, which composes a cloud service out of all the participating servers.`
-    const pageTitle = isChinese ? 'dTweet 社区提示' : 'dTweet Community Notice'
+    const raw = isChinese ? leitherSetupNoticeZh : leitherSetupNoticeEn
+    const { title, htmlBody } = parseMarkdownNotice(raw)
+    const pageTitle = escapeHtmlForNotice(title)
 
     const html = `<!doctype html>
 <html>
@@ -162,13 +177,15 @@ The following instructions describe steps to install Leither, which composes a c
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; background: #f7fafc; color: #1f2937; line-height: 1.6; }
     .card { max-width: 760px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
     h1 { margin-top: 0; font-size: 1.35rem; }
-    p { margin: 0; white-space: pre-line; }
+    .notice-body p { margin: 0 0 1em; }
+    .notice-body p:last-child { margin-bottom: 0; }
+    .notice-body ul, .notice-body ol { margin: 0 0 1em; padding-left: 1.6em; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>${pageTitle}</h1>
-    <p>${infoMessage}</p>
+    <div class="notice-body">${htmlBody}</div>
   </div>
 </body>
 </html>`
