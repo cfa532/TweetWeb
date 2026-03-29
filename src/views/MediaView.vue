@@ -150,9 +150,23 @@ function handleMediaClick(event: MouseEvent) {
 .grid-item .container {
     width: 100% !important;
     height: 100% !important;
+    max-height: none !important;
     display: block !important;
     margin: 0 !important;
     padding: 0 !important;
+}
+
+/*
+ * Single-attachment tile: .media-attachments sets height via aspect-ratio. Base .container has
+ * max-height: 80vh so the inner box stays short while .single-attachment is full height → black band.
+ */
+.media-attachments .single-attachment > .container {
+    max-height: none !important;
+    height: 100% !important;
+}
+
+.media-attachments .single-attachment > .container video {
+    max-height: none !important;
 }
 
 .clickable-media {

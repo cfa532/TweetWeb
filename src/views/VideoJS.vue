@@ -31,13 +31,6 @@ const coordinatorAutoplayPending = ref(false);
 const showVideoError = ref(false); // Show error message when video fails to play
 const isMobile = isMobileBrowser(); // cached at setup time
 
-// Pre-size video wrapper using attachment's aspect ratio to avoid black-screen flash
-const videoWrapperStyle = computed(() => {
-  const ar = props.media.aspectRatio;
-  if (ar && ar > 0) return { aspectRatio: String(ar) };
-  return {};
-});
-
 // Touch handling for mobile scroll detection
 const touchStartX = ref(0);
 const touchStartY = ref(0);
@@ -73,6 +66,15 @@ const isInTweetList = computed(() => {
   const tweetContainer = vdiv.value?.closest('.tweet-container');
   const isInList = tweetContainer && !tweetContainer.closest('.card-body')?.closest('.comment');
   return isInList;
+});
+
+// Pre-size wrapper in detail/modal; in feed, .media-attachments already sets aspect-ratio — a second
+// ratio here letterboxes (black band) under the video.
+const videoWrapperStyle = computed(() => {
+  if (isInTweetList.value) return {};
+  const ar = props.media.aspectRatio;
+  if (ar && ar > 0) return { aspectRatio: String(ar) };
+  return {};
 });
 
 const timeRemainingText = ref('0:00');
@@ -230,9 +232,8 @@ onMounted(() => {
           }
           
           // Keep video at the end, don't reset to beginning
-          // This maintains the video container space
-          if (video.value) {
-            // Ensure video maintains its dimensions
+          // This maintains the video container space (detail only; feed uses cover + outer aspect box)
+          if (video.value && !isInTweetList.value) {
             video.value.style.minHeight = video.value.offsetHeight + 'px';
           }
           // Don't show overlay if autoplay is enabled (use native controls)
@@ -253,16 +254,16 @@ onMounted(() => {
           showVideoError.value = false;
           failedFragments.clear();
           if (video.value) {
-            // Capture video dimensions to maintain space after video ends
-            const videoHeight = video.value.videoHeight;
-            const videoWidth = video.value.videoWidth;
-            if (videoHeight > 0 && videoWidth > 0) {
-              // Calculate aspect ratio and set min-height based on width
-              const aspectRatio = videoHeight / videoWidth;
-              const containerWidth = video.value.offsetWidth || video.value.clientWidth;
-              if (containerWidth > 0) {
-                const calculatedHeight = containerWidth * aspectRatio;
-                video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
+            if (!isInTweetList.value) {
+              const videoHeight = video.value.videoHeight;
+              const videoWidth = video.value.videoWidth;
+              if (videoHeight > 0 && videoWidth > 0) {
+                const aspectRatio = videoHeight / videoWidth;
+                const containerWidth = video.value.offsetWidth || video.value.clientWidth;
+                if (containerWidth > 0) {
+                  const calculatedHeight = containerWidth * aspectRatio;
+                  video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
+                }
               }
             }
             updateTimeRemaining();
@@ -1790,9 +1791,6 @@ function stopVideo() {
         {{ timeRemainingText }}
       </div>
     </div>
-    <p class="video-filename">
-      {{ media.fileName }}
-    </p>
   </div>
 </template>
 
@@ -1801,10 +1799,7 @@ function stopVideo() {
   width: 100%;
   max-width: 100%;
   max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  display: block;
 }
 
 .video-wrapper {
@@ -1838,6 +1833,34 @@ function stopVideo() {
   margin: 0 auto;
 }
 
+/*
+ * Feed tiles: .media-attachments sets height via aspect-ratio. max-height:80vh on container/wrapper/video
+ * caps the player shorter than that cell → solid black band under the video.
+ */
+.video-container.tweet-list,
+.video-container.tweet-list .video-wrapper {
+  max-height: none !important;
+  height: 100% !important;
+}
+
+.video-container.tweet-list .video-wrapper {
+  display: block !important;
+}
+
+.video-container.tweet-list .video,
+.video-container.tweet-list .video.video-portrait {
+  max-height: none !important;
+  object-fit: cover !important;
+  object-position: center !important;
+}
+
+.video-container.tweet-list .video.video-portrait {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: unset !important;
+  margin: 0 !important;
+}
+
 /* Grid items - force video to fill container */
 .grid-item .video-container,
 .media-attachments .grid-item .video-container {
@@ -1849,16 +1872,6 @@ function stopVideo() {
   position: relative !important;
   overflow: hidden !important;
   background-color: #000 !important;
-}
-
-/* Hide filename in grid context */
-.grid-item .video-filename,
-.media-attachments .grid-item .video-filename {
-  display: none !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  height: 0 !important;
-  visibility: hidden !important;
 }
 
 .grid-item .video-wrapper,
@@ -1897,13 +1910,6 @@ function stopVideo() {
   padding: 0 !important;
   vertical-align: middle !important;
   line-height: 0 !important;
-}
-
-.video-filename {
-  margin-top: 5px;
-  font-size: small;
-  color: darkslategray;
-  padding-left: 1%;
 }
 
 /* Ensure video controls are accessible on mobile */
