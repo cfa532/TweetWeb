@@ -16,6 +16,8 @@ const canDelete = ref(false)
 const canEdit = ref(false)
 const showEditor = ref(false)
 const editContent = ref('')
+/** Ignore synthetic click right after touchend so we don't toggle twice (open then close). */
+let suppressDotClickFromTouch = false
 const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false},
     parentTweet: {type: Object as PropType<Tweet>, required: false},
@@ -65,13 +67,37 @@ function closeMenu() {
     isMenuOpen.value = false
 }
 
-function toggleMenu(e: Event) {
-    e.preventDefault()
-    e.stopPropagation()
+function toggleMenu(e?: Event) {
+    if (e?.type === 'click' && suppressDotClickFromTouch) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+    }
+    e?.preventDefault()
+    e?.stopPropagation()
     if (isMenuOpen.value) {
         closeMenu()
     } else {
         openMenu()
+    }
+}
+
+/** Mobile: open/close on touchend; .prevent stops synthetic click (Vue registers non-passive). */
+function onDotTouchEnd(e: TouchEvent) {
+    e.stopPropagation()
+    suppressDotClickFromTouch = true
+    toggleMenu()
+    window.setTimeout(() => {
+        suppressDotClickFromTouch = false
+    }, 450)
+}
+
+function onDotPointerDown(e: PointerEvent) {
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return
+    try {
+        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+        /* setPointerCapture may throw if target disconnected */
     }
 }
 
@@ -173,7 +199,9 @@ async function deleteItem() {
         class="dot"
         :aria-expanded="isMenuOpen"
         aria-haspopup="true"
-        @click="toggleMenu"
+        @pointerdown="onDotPointerDown"
+        @touchend.stop.prevent="onDotTouchEnd"
+        @click.stop.prevent="toggleMenu"
     >
         &#8226;&#8226;&bull;
     </button>
@@ -239,6 +267,8 @@ async function deleteItem() {
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     text-decoration: none;
+    position: relative;
+    z-index: 1;
 }
 
 .dot:hover,

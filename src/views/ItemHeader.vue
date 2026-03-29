@@ -108,6 +108,9 @@ function openDetailView() {
 .corner-menu-container {
   height: 100%;
   display: flex;
+  /* Above flex siblings so mobile hit-testing targets the menu, not the card header */
+  position: relative;
+  z-index: 2;
 }
 
 .avatar {
