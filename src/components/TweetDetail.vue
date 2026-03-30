@@ -649,10 +649,9 @@ function retryLoad() {
 
 <style scoped>
 .quoted-tweet {
-    margin: 8px 12px 8px 56px;
-    padding: 0;
+    margin: 8px 0 8px 56px;
     border: 1px solid #e6ecf0;
-    border-radius: 12px;
+    border-radius: 8px;
     overflow: hidden;
 }
 

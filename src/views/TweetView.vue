@@ -341,7 +341,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div class='card tweet-container' :data-tweet-mid='props.tweet.mid'>
+  <div :class="['tweet-container', isQuoted ? '' : 'card']" :data-tweet-mid='props.tweet.mid'>
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -565,7 +565,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   scroll-margin-top: 52px;
 }
 .quoted-tweet {
-  margin: 8px 12px 8px 56px;
+  margin: 8px 0 8px 56px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;
