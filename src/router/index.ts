@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory, createWebHistory, createMemoryHisto
 import type { RouteLocationNormalized } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
-  MediaViewerModal, UserAccount
+  MediaViewerModal, UserAccount, LeitherSetupNotice
 } from "@/components"
 import { useAlertStore } from '@/stores';
 import { USER_PAGE_SCROLL_PREFIX, MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
@@ -156,6 +156,11 @@ export const router = createRouter({
       path: '/install',
       name: "install",
       component: DownloadPage,
+    },
+    {
+      path: '/leither-setup-notice',
+      name: 'leitherSetupNotice',
+      component: LeitherSetupNotice,
     },
     {
       // for user sending message to App contact.

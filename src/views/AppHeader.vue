@@ -1,15 +1,9 @@
 <script lang="ts" setup>
 import { watch, onMounted, ref, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
-import { marked } from 'marked'
-import leitherSetupNoticeEn from '@/content/leither-setup-notice.en.md?raw'
-import leitherSetupNoticeZh from '@/content/leither-setup-notice.zh.md?raw'
-
-const { t, locale } = useI18n();
 
 const router = useRouter()
 const route = useRoute()
@@ -138,64 +132,6 @@ async function countOriginalTweetsByUser(userId: string): Promise<number> {
     return originalTweetCount
 }
 
-/** Parse markdown: first `# heading` line is the page title; the rest is rendered as HTML. */
-function parseMarkdownNotice(raw: string): { title: string; htmlBody: string } {
-    const normalized = raw.replace(/\r\n/g, '\n').trimStart()
-    const h1Match = normalized.match(/^#\s+(.+?)\s*$/m)
-    if (!h1Match) {
-        return { title: 'Notice', htmlBody: marked.parse(normalized) as string }
-    }
-    const title = h1Match[1].trim()
-    const blockStart = normalized.indexOf(h1Match[0])
-    const afterHeading = normalized.slice(blockStart + h1Match[0].length).replace(/^\n+/, '')
-    return { title, htmlBody: marked.parse(afterHeading) as string }
-}
-
-function escapeHtmlForNotice(s: string): string {
-    return s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-}
-
-function openLeitherSetupInfoPage(targetWindow?: Window | null) {
-    const isChinese = locale.value?.toLowerCase().startsWith('zh')
-    const raw = isChinese ? leitherSetupNoticeZh : leitherSetupNoticeEn
-    const { title, htmlBody } = parseMarkdownNotice(raw)
-    const pageTitle = escapeHtmlForNotice(title)
-
-    const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${pageTitle}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; background: #f7fafc; color: #1f2937; line-height: 1.6; }
-    .card { max-width: 760px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.06); }
-    h1 { margin-top: 0; font-size: 1.35rem; }
-    .notice-body p { margin: 0 0 1em; }
-    .notice-body p:last-child { margin-bottom: 0; }
-    .notice-body ul, .notice-body ol { margin: 0 0 1em; padding-left: 1.6em; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>${pageTitle}</h1>
-    <div class="notice-body">${htmlBody}</div>
-  </div>
-</body>
-</html>`
-
-    const win = targetWindow || window.open('', '_blank')
-    if (!win) return
-
-    win.document.open()
-    win.document.write(html)
-    win.document.close()
-}
-
 const uploadTweet = async () => {
     closeAccountMenu()
     const loginUser = tweetStore.loginUser
@@ -207,14 +143,12 @@ const uploadTweet = async () => {
         return
     }
 
-    const preOpenedWindow = window.open('', '_blank')
-
     if (loginUser?.mid) {
         try {
             const originalTweetCount = await countOriginalTweetsByUser(loginUser.mid)
 
             if (originalTweetCount >= 5 && !hasValidCloudDrivePort) {
-                openLeitherSetupInfoPage(preOpenedWindow)
+                router.push({ name: 'leitherSetupNotice' })
                 return
             }
         } catch (error) {
@@ -222,9 +156,6 @@ const uploadTweet = async () => {
         }
     }
 
-    if (preOpenedWindow && !preOpenedWindow.closed) {
-        preOpenedWindow.close()
-    }
     router.push({ name: 'post' })
 }
 
