@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, computed } from 'vue';
 import type { PropType } from 'vue'
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { useTweetStore } from '@/stores';
 import { useI18n } from 'vue-i18n';
@@ -20,6 +20,7 @@ const props = defineProps({
     isComment: {type: Boolean, required: false, default: false}
 })
 const router = useRouter()
+const route = useRoute()
 const tweetStore = useTweetStore()
 
 function openUserPage(userId: string) {
@@ -30,12 +31,49 @@ function openUserPage(userId: string) {
 }
 function openDetailView() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
-    /**
-     * Try to open a comment as Tweet detail page. The comment is stored with the tweet,
-     * so it cannot be find by the authorId of the comment. Have to seach for the commentId (tweetId)
-    */
     const authorId = props.tweet?.author?.mid || props.tweet?.authorId;
-    router.push(`/tweet/${props.tweet?.mid}${authorId ? '/' + authorId : ''}`);
+    const basePath = `/tweet/${props.tweet?.mid}${authorId ? '/' + authorId : ''}`;
+
+    if (props.isComment) {
+      const parentTweetId = props.parentTweet?.mid;
+      const parentAuthorId = props.parentTweet?.author?.mid;
+
+      if (!parentTweetId) {
+        // Fallback to current detail route when parent tweet prop is unavailable
+        const fallbackParentId = route.params.tweetId as string;
+        const fallbackAuthorId = route.params.authorId as string | undefined;
+        const navigationMeta = {
+          fromComment: true,
+          parentTweetId: fallbackParentId,
+          parentAuthorId: fallbackAuthorId,
+        };
+        sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
+        const queryParams = new URLSearchParams({
+          fromComment: 'true',
+          parentTweetId: fallbackParentId,
+          ...(fallbackAuthorId && { parentAuthorId: fallbackAuthorId }),
+        });
+        router.push(`${basePath}?${queryParams.toString()}`);
+      } else {
+        const navigationMeta = {
+          fromComment: true,
+          parentTweetId: parentTweetId,
+          parentAuthorId: parentAuthorId,
+        };
+        sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
+        const queryParams = new URLSearchParams({
+          fromComment: 'true',
+          parentTweetId: parentTweetId,
+          ...(parentAuthorId && { parentAuthorId }),
+        });
+        router.push(`${basePath}?${queryParams.toString()}`);
+      }
+      return;
+    }
+
+    // Clear comment-navigation metadata for regular tweet navigation
+    sessionStorage.removeItem('navigationMeta');
+    router.push(basePath);
 };
 
 </script>

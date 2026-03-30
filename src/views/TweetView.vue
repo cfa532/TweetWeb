@@ -115,10 +115,23 @@ function linkify(text: string) {
 
 const tweetContentProcessing = computed(() => {
   if (!displayedTweet.value.content) {
-    return { html: '', clipped: false };
+    return { html: '', clipped: false, useHeightClamp: false };
   }
 
-  const linkedText = linkify(displayedTweet.value.content);
+  // Some providers encode line breaks as `<br>` tags; normalize to `\n`
+  // so the same truncation algorithm works for both tweets and comments.
+  const normalizedContent = displayedTweet.value.content
+    // Match `<br>`, `<br/>`, and `<br ...>` (with attributes) safely.
+    .replace(/<br\b[^>]*\/?>/gi, '\n')
+    // Paragraph / block separators (best-effort) to keep line counting consistent.
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    // Remove any remaining HTML tags so truncation never cuts through markup.
+    .replace(/<[^>]+>/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+
+  const linkedText = linkify(normalizedContent);
   const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
 
   const clipped =
@@ -126,7 +139,7 @@ const tweetContentProcessing = computed(() => {
     (!isChinese && linkedText.split('\n').length > MAX_LINES);
 
   if (!clipped) {
-    return { html: linkedText, clipped: false };
+    return { html: linkedText, clipped: false, useHeightClamp: false };
   }
 
   let html = isChinese
@@ -137,13 +150,19 @@ const tweetContentProcessing = computed(() => {
     const trimmed = html.replace(/\S+$/, '');
     if (trimmed.length > 0) html = trimmed;
   }
-  return { html: html.trimEnd() + ` <span class="tweet-content-more">${t('tweet.showMore')}...</span>`, clipped: true };
+  return {
+    html: html.trimEnd() + `<span class="tweet-content-more">${t('tweet.showMore')}...</span>`,
+    clipped: true,
+    // For Chinese we already truncate by character count; extra height clamping can hide `showMore`.
+    useHeightClamp: !isChinese,
+  };
 });
 
 const truncatedContentHtml = computed(() => tweetContentProcessing.value.html);
 const isContentClipped = computed(() => tweetContentProcessing.value.clipped);
+const useContentHeightClamp = computed(() => tweetContentProcessing.value.useHeightClamp);
 const contentClampMaxHeight = computed(() =>
-  isContentClipped.value
+  (isContentClipped.value && useContentHeightClamp.value)
     ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
     : 'none',
 );
@@ -569,7 +588,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   scroll-margin-top: 52px;
 }
 .quoted-tweet {
-  margin: 8px 0 8px 56px;
+  margin: 8px 0 8px 32px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;

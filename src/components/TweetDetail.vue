@@ -296,6 +296,52 @@ function linkify(text: string) {
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
 
+// Keep the same truncation behavior as `src/views/TweetView.vue`
+const MAX_LINES = 10;
+const MAX_CHARS_CHINESE = 300;
+const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
+
+function truncateTweetContent(content: string) {
+    // Normalize `<br>` tags into real newlines so line-based truncation matches `TweetView.vue`.
+    const normalizedContent = content
+        // Match `<br>`, `<br/>`, and `<br ...>` (with attributes) safely.
+        .replace(/<br\b[^>]*\/?>/gi, '\n')
+        // Paragraph / block separators (best-effort) to keep line counting consistent.
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        // Remove any remaining HTML tags so truncation never cuts through markup.
+        .replace(/<[^>]+>/g, '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+    const linkedText = linkify(normalizedContent);
+    const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
+
+    const clipped =
+        (isChinese && linkedText.length > MAX_CHARS_CHINESE) ||
+        (!isChinese && linkedText.split('\n').length > MAX_LINES);
+
+    if (!clipped) {
+        return { html: linkedText, clipped: false, useHeightClamp: false };
+    }
+
+    let html = isChinese
+        ? linkedText.substring(0, MAX_CHARS_CHINESE)
+        : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
+
+    // If truncation cut mid-word, trim back to the last word boundary
+    if (isChinese && html.length < linkedText.length && /\S$/.test(html) && /\S/.test(linkedText[html.length] ?? ' ')) {
+        const trimmed = html.replace(/\S+$/, '');
+        if (trimmed.length > 0) html = trimmed;
+    }
+
+    return {
+        html: html.trimEnd() + `<span class="tweet-content-more">${t('tweet.showMore')}...</span>`,
+        clipped: true,
+        // For Chinese we already truncate by character count; extra height clamping can hide `showMore`.
+        useHeightClamp: !isChinese,
+    };
+}
+
 // Download prompt functions
 function openDownloadModal() {
     showDownloadModal.value = true
@@ -557,6 +603,18 @@ const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
 const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
 const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
+const truncatedTweetContent = computed(() => {
+    const content = tweet.value?.content;
+    if (!content) return { html: '', clipped: false, useHeightClamp: false };
+    return truncateTweetContent(content);
+});
+
+const truncatedOriginTweetContent = computed(() => {
+    const content = originTweet.value?.content;
+    if (!content) return { html: '', clipped: false, useHeightClamp: false };
+    return truncateTweetContent(content);
+});
+
 function goBack() {
     if (parentTweetId.value && parentAuthorId.value) {
         router.push(`/tweet/${parentTweetId.value}/${parentAuthorId.value}`);
@@ -615,7 +673,18 @@ function retryLoad() {
         
         <div v-if="isRetweet" class="card-body" id="content">
 
-            <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
+            <p
+                v-if="originTweet.content"
+                class="card-text"
+                v-html="isFromComment ? truncatedOriginTweetContent.html : linkify(originTweet.content)"
+                :style="isFromComment ? {
+                    lineHeight: CONTENT_CLAMP_LINE_HEIGHT,
+                    maxHeight: (truncatedOriginTweetContent.clipped && truncatedOriginTweetContent.useHeightClamp)
+                        ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
+                        : 'none',
+                    overflow: 'hidden',
+                } : undefined"
+            ></p>
 
             <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -636,7 +705,11 @@ function retryLoad() {
             <TweetActionBar :tweet="originTweet" @updated="(t) => originTweet = t" />
         </div>
         <div v-else class="card-body">
-            <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
+            <p
+                v-if="tweet.content"
+                class="card-text"
+                v-html="linkify(tweet.content)"
+            ></p>
 
             <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -715,7 +788,7 @@ function retryLoad() {
 
 <style scoped>
 .quoted-tweet {
-    margin: 8px 0 8px 56px;
+    margin: 8px 0 8px 32px;
     border: 1px solid #e6ecf0;
     border-radius: 8px;
     overflow: hidden;
@@ -784,6 +857,12 @@ function retryLoad() {
     font-size: medium;
     white-space: pre-wrap;
     padding: 0px 8px;
+}
+.card-text :deep(.tweet-content-more) {
+    color: var(--bs-link-color, blue);
+    text-decoration: none;
+    white-space: nowrap;
+    margin-left: 0.25em;
 }
 .card-text a {
     color: blue;
@@ -1032,11 +1111,13 @@ function retryLoad() {
     cursor: pointer;
     display: inline-block;
     font-weight: 500;
-    color: #333;
+    color: #ccd0d4;
 }
 
 .back-button:hover {
-    opacity: 0.7;
+    color: #ccd0d4;
+    text-decoration: underline;
+    opacity: 1;
 }
 
 .document-attachments {
