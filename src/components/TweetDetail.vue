@@ -3,8 +3,8 @@ import { ref, onMounted, watch, computed, nextTick, triggerRef } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
-import { MediaView, DetailHeader, TweetView, QRCoder, TweetActionBar } from "@/views";
-import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
+import { MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
+import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
 
@@ -27,6 +27,57 @@ const hasLoadAttempted = ref(false)
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
+
+// Draggable button state
+const btnPos = ref({ x: 0, y: 0 })
+const btnInitialized = ref(false)
+const isDragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+const dragMoved = ref(false)
+
+function initBtnPos() {
+    if (btnInitialized.value) return
+    btnPos.value = { x: window.innerWidth / 2, y: window.innerHeight - 60 }
+    btnInitialized.value = true
+}
+
+function onDragStart(e: MouseEvent | TouchEvent) {
+    initBtnPos()
+    isDragging.value = true
+    dragMoved.value = false
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+    dragOffset.value = { x: clientX - btnPos.value.x, y: clientY - btnPos.value.y }
+    e.preventDefault()
+    window.addEventListener('mousemove', onWindowDragMove)
+    window.addEventListener('mouseup', onWindowDragEnd)
+    window.addEventListener('touchmove', onWindowDragMove, { passive: false })
+    window.addEventListener('touchend', onWindowDragEnd)
+}
+
+function onWindowDragMove(e: MouseEvent | TouchEvent) {
+    if (!isDragging.value) return
+    const clientX = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX
+    const clientY = 'touches' in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY
+    btnPos.value = {
+        x: clientX - dragOffset.value.x,
+        y: clientY - dragOffset.value.y,
+    }
+    dragMoved.value = true
+    e.preventDefault()
+}
+
+function onWindowDragEnd() {
+    if (!isDragging.value) return
+    isDragging.value = false
+    window.removeEventListener('mousemove', onWindowDragMove)
+    window.removeEventListener('mouseup', onWindowDragEnd)
+    window.removeEventListener('touchmove', onWindowDragMove)
+    window.removeEventListener('touchend', onWindowDragEnd)
+    if (!dragMoved.value) {
+        openDownloadModal()
+    }
+}
 
 
 onMounted(async () => {
@@ -638,8 +689,15 @@ function retryLoad() {
     />
 
     <!-- Download Button -->
-    <div v-if="showDownloadPrompt" class="download-button-container">
-        <button class="download-button" @click="openDownloadModal">
+    <div
+        v-if="showDownloadPrompt"
+        class="download-button-container"
+        :class="{ dragging: isDragging }"
+        :style="btnInitialized ? { left: btnPos.x + 'px', top: btnPos.y + 'px', transform: 'translate(-50%, -50%)' } : {}"
+        @mousedown="onDragStart"
+        @touchstart="onDragStart"
+    >
+        <button class="download-button">
             <img src="/src/ic_splash.png" alt="App Icon" class="download-icon" />
             <span class="download-text">{{ $t('download.downloadApp') }}</span>
         </button>
@@ -1025,14 +1083,18 @@ function retryLoad() {
 /* Download Button Styles */
 .download-button-container {
     position: fixed;
-    bottom: 20px;
-    left: 0;
-    width: 100%;
-    max-width: 900px;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 1000;
-    display: flex;
-    justify-content: center;
-    pointer-events: none;
+    width: fit-content;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+.download-button-container.dragging {
+    cursor: grabbing;
 }
 
 .download-button {
@@ -1043,14 +1105,13 @@ function retryLoad() {
     padding: 6px 24px;
     font-size: 1rem;
     font-weight: 500;
-    cursor: pointer;
+    cursor: inherit;
     box-shadow: 0 4px 12px rgba(90, 103, 216, 0.4);
     transition: background 0.2s ease, box-shadow 0.2s ease;
     white-space: nowrap;
     display: flex;
     align-items: center;
     gap: 8px;
-    pointer-events: auto;
 }
 
 .download-icon {
