@@ -1,10 +1,13 @@
 <script setup lang='ts'>
 // --- Imports and Store Setup ---
 import { ref, computed, onMounted, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
 import { EmptyState } from '@/components';
+
+const { t } = useI18n();
 
 // --- State and Store References ---
 const route = useRoute();
@@ -59,7 +62,7 @@ const loadDirectory = async (path = '') => {
     parentPath.value = data.parentPath;
   } catch (err: any) {
     console.error('Failed to load directory:', err);
-    error.value = err.message || 'Failed to load directory';
+    error.value = err.message || t('netdisk.loadFailed');
   } finally {
     loading.value = false;
   }
@@ -100,7 +103,7 @@ const shareFile = async (file: FileSystemItem) => {
     showShareDialog.value = true;
   } catch (error) {
     console.error('Error sharing file:', error);
-    alert('Failed to share file. Please try again.');
+    alert(t('netdisk.shareFailed'));
   } finally {
     isSharing.value = false;
   }
@@ -116,7 +119,7 @@ const shareDirectory = async (file: FileSystemItem) => {
     showShareDialog.value = true;
   } catch (error) {
     console.error('Error sharing directory:', error);
-    alert('Failed to share directory. Please try again.');
+    alert(t('netdisk.shareDirFailed'));
   } finally {
     isSharing.value = false;
   }
@@ -124,7 +127,7 @@ const shareDirectory = async (file: FileSystemItem) => {
 // Copy the share URL to clipboard
 const copyShareUrl = () => {
   navigator.clipboard.writeText(shareUrl.value)
-    .then(() => alert('URL copied to clipboard!'))
+    .then(() => alert(t('netdisk.urlCopied')))
     .catch(err => console.error('Failed to copy URL:', err));
 };
 // Close the share dialog
@@ -136,7 +139,7 @@ const closeShareDialog = () => {
 // --- Utility Functions ---
 // Format file size in human-readable form
 const formatFileSize = (bytes: number) => {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) return '0 ' + t('size.bytes');
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -178,18 +181,18 @@ function goHome() {
   <div class='netdisk-container'>
     <!-- Breadcrumb navigation -->
     <div class='breadcrumb'>
-      <span @click='navigateTo("")' class='breadcrumb-link'>Root</span>
+      <span @click='navigateTo("")' class='breadcrumb-link'>{{ $t('netdisk.root') }}</span>
       <template v-for='(part, index) in pathParts' :key='index'>
         / <span @click='navigateTo(pathParts.slice(0, index + 1).join("/"))' class='breadcrumb-link'>{{ part }}</span>
       </template>
       <span class="breadcrumb-separator" v-if="pathParts.length > 0">|</span>
-      <span @click='uploadFile' class='breadcrumb-link home-link'>Upload</span>
-      <span @click='goHome' class='breadcrumb-link home-link'>Home</span>
+      <span @click='uploadFile' class='breadcrumb-link home-link'>{{ $t('netdisk.upload') }}</span>
+      <span @click='goHome' class='breadcrumb-link home-link'>{{ $t('netdisk.home') }}</span>
     </div>
 
     <!-- Loading indicator -->
     <div v-if='loading' class='loading'>
-      Loading...
+      {{ $t('common.loading') }}
     </div>
 
     <!-- Error message -->
@@ -201,9 +204,9 @@ function goHome() {
     <table v-if='!loading && !error && files.length > 0' class='file-list'>
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Size</th>
-          <th>Actions</th>
+          <th>{{ $t('netdisk.name') }}</th>
+          <th>{{ $t('netdisk.size') }}</th>
+          <th>{{ $t('netdisk.actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -232,19 +235,19 @@ function goHome() {
           <td class='file-size'>{{ item.isDirectory ? '-' : formatFileSize(item.size) }}</td>
           <td class='file-actions'>
             <template v-if='!item.isDirectory'>
-              <button @click.stop='downloadFile(item)' class='action-button' title="Download">
+              <button @click.stop='downloadFile(item)' class='action-button' :title="$t('netdisk.download')">
                 <span class='action-icon'>⬇️</span>
               </button>
-              <button @click.stop='viewFile(item)' class='action-button' title="View">
+              <button @click.stop='viewFile(item)' class='action-button' :title="$t('netdisk.view')">
                 <span class='action-icon'>▶️</span>
               </button>
-              <button @click.stop='shareFile(item)' class='action-button' :disabled="isSharing" title="Share">
+              <button @click.stop='shareFile(item)' class='action-button' :disabled="isSharing" :title="$t('common.share')">
                 <span v-if="isSharing && selectedFile?.path === item.path" class="loading-spinner"></span>
                 <span v-else class='action-icon'>🔗</span>
               </button>
             </template>
             <template v-else>
-              <button @click.stop='shareDirectory(item)' class='action-button' :disabled="isSharing" title="Share">
+              <button @click.stop='shareDirectory(item)' class='action-button' :disabled="isSharing" :title="$t('common.share')">
                 <span v-if="isSharing && selectedFile?.path === item.path" class="loading-spinner"></span>
                 <span v-else class='action-icon'>🔗</span>
               </button>
@@ -256,18 +259,18 @@ function goHome() {
 
     <!-- No files message -->
     <div v-if='!loading && !error && files.length === 0' class='no-files'>
-      <EmptyState message="This directory is empty" icon="📁" />
+      <EmptyState :message="$t('netdisk.emptyDirectory')" icon="📁" />
     </div>
 
     <!-- Share dialog -->
     <div v-if='showShareDialog' class='share-dialog'>
       <div class='share-dialog-content'>
-        <h3>Share {{ selectedFile?.name }}</h3>
-        <p>File URL:</p>
+        <h3>{{ $t('netdisk.shareFile', { name: selectedFile?.name }) }}</h3>
+        <p>{{ $t('netdisk.fileUrl') }}</p>
         <input type='text' readonly :value='shareUrl' @click='($event.target as HTMLInputElement).select()' />
         <div class='share-actions'>
-          <button @click='copyShareUrl'>Copy</button>
-          <button @click='closeShareDialog'>Close</button>
+          <button @click='copyShareUrl'>{{ $t('common.copy') }}</button>
+          <button @click='closeShareDialog'>{{ $t('common.close') }}</button>
         </div>
       </div>
     </div>

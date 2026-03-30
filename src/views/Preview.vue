@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 const emit = defineEmits(["fileCanceled", "dragStart", "dragOver", "dragLeave", "drop", "dragEnd"])
 const props = defineProps({
     src: {type: File, required: true},
@@ -9,6 +9,15 @@ const props = defineProps({
 })
 const imageUrl = ref("")
 const caption = ref("")
+const activeObjectUrl = ref<string | null>(null)
+
+function revokeActiveObjectUrl() {
+    if (activeObjectUrl.value) {
+        URL.revokeObjectURL(activeObjectUrl.value)
+        activeObjectUrl.value = null
+    }
+}
+
 onMounted(()=>{
     // src file may not be image
     console.log("progress=", props.progress)
@@ -18,6 +27,9 @@ watch(()=>props.src, (newVal, oldVal)=>{
     if (newVal !== oldVal) {
         thumbnail()
     }
+})
+onUnmounted(() => {
+    revokeActiveObjectUrl()
 })
 function cancel() {
     emit("fileCanceled")
@@ -45,112 +57,21 @@ function onDragEnd(e: DragEvent) {
     emit("dragEnd")
 }
 async function thumbnail() {
+    revokeActiveObjectUrl()
     const fileType = props.src.type || '';
     if (fileType.includes("image")) {
-        imageUrl.value = URL.createObjectURL(props.src)
+        const objectUrl = URL.createObjectURL(props.src)
+        activeObjectUrl.value = objectUrl
+        imageUrl.value = objectUrl
         caption.value = props.src.name
     } else if (fileType.includes("video")) {
-        // For videos, create a proper thumbnail from the first frame
         try {
-            const videoUrl = URL.createObjectURL(props.src);
-            const video = document.createElement("video");
-            video.preload = "metadata";
-            video.muted = true;
-            video.playsInline = true;
-            video.src = videoUrl;
-            
-            await new Promise<void>((resolve, reject) => {
-                video.onloadedmetadata = () => resolve();
-                video.onerror = () => reject(new Error('Failed to load video'));
-                
-                // Timeout after 5 seconds
-                setTimeout(() => reject(new Error('Video loading timeout')), 5000);
-            });
-            
-            // Seek to 1 second or 10% of video duration (whichever is smaller)
-            const seekTime = Math.min(1, video.duration * 0.1);
-            video.currentTime = seekTime;
-            
-            await new Promise<void>((resolve) => {
-                video.onseeked = () => resolve();
-            });
-            
-            // Create canvas that fills the entire container (120x130)
-            const canvas = document.createElement("canvas");
-            const containerWidth = 120;
-            const containerHeight = 130;
-            canvas.width = containerWidth;
-            canvas.height = containerHeight;
-
-            const ctx = canvas.getContext("2d")!;
-
-            // Calculate scaling to fill container while maintaining aspect ratio (like object-fit: cover)
-            const videoAspect = video.videoWidth / video.videoHeight;
-            const containerAspect = containerWidth / containerHeight;
-            
-            let drawWidth, drawHeight, offsetX, offsetY;
-
-            if (videoAspect > containerAspect) {
-                // Video is wider than container - fit to height and crop sides
-                drawHeight = containerHeight;
-                drawWidth = drawHeight * videoAspect;
-                offsetX = (containerWidth - drawWidth) / 2;
-                offsetY = 0;
-            } else {
-                // Video is taller than container - fit to width and crop top/bottom
-                drawWidth = containerWidth;
-                drawHeight = drawWidth / videoAspect;
-                offsetX = 0;
-                offsetY = (containerHeight - drawHeight) / 2;
-            }
-            
-            // Draw video centered and cropped to fill container
-            ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
-            
-            // Add a play icon overlay to indicate it's a video (bottom-right corner)
-            const iconSize = Math.min(canvas.width, canvas.height) * 0.20;
-            const padding = iconSize * 0.3; // Small padding from edges
-            const centerX = canvas.width - iconSize - padding;
-            const centerY = canvas.height - iconSize - padding;
-            
-            // Draw semi-transparent circle
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, iconSize, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Draw play triangle
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.beginPath();
-            const triangleSize = iconSize * 0.6;
-            ctx.moveTo(centerX - triangleSize * 0.3, centerY - triangleSize * 0.5);
-            ctx.lineTo(centerX - triangleSize * 0.3, centerY + triangleSize * 0.5);
-            ctx.lineTo(centerX + triangleSize * 0.6, centerY);
-            ctx.closePath();
-            ctx.fill();
-            
-            imageUrl.value = canvas.toDataURL("image/png");
-            caption.value = props.src.name;
-            
-            // Clean up
-            URL.revokeObjectURL(videoUrl);
+            imageUrl.value = await createVideoThumbnail(props.src)
         } catch (error) {
-            console.error('Error creating video thumbnail:', error);
-            // Fallback to placeholder icon
-            const canvas = document.createElement("canvas");
-            let ctx = canvas.getContext("2d")!;
-            canvas.width = 120;
-            canvas.height = 130;
-            ctx.fillStyle = '#333';
-            ctx.fillRect(0, 0, 120, 130);
-            ctx.fillStyle = '#fff';
-            ctx.font = '48px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🎥', 60, 65);
-            imageUrl.value = canvas.toDataURL("image/png");
-            caption.value = props.src.name;
+            console.warn("Failed to generate video thumbnail, using placeholder:", error)
+            imageUrl.value = createVideoPlaceholder()
         }
+        caption.value = props.src.name;
     } else {
         // everything else, draw avatar with file extension
         const canvas = document.createElement("canvas");
@@ -167,6 +88,126 @@ async function thumbnail() {
         imageUrl.value = canvas.toDataURL("image/png");
         caption.value = props.src.name
     }
+}
+
+function drawVideoFrameToCanvas(video: HTMLVideoElement): string {
+    if (!video.videoWidth || !video.videoHeight) {
+        throw new Error("Video metadata is unavailable")
+    }
+
+    const canvas = document.createElement("canvas")
+    const ctx = canvas.getContext("2d")
+    if (!ctx) {
+        throw new Error("Failed to create canvas context")
+    }
+
+    canvas.width = 120
+    canvas.height = 130
+
+    // Draw with a "cover" strategy so thumbnail layout matches preview box.
+    const scale = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight)
+    const drawWidth = video.videoWidth * scale
+    const drawHeight = video.videoHeight * scale
+    const offsetX = (canvas.width - drawWidth) / 2
+    const offsetY = (canvas.height - drawHeight) / 2
+
+    ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight)
+    return canvas.toDataURL("image/png")
+}
+
+function createVideoThumbnail(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const objectUrl = URL.createObjectURL(file)
+        const video = document.createElement("video")
+        let settled = false
+
+        const finalize = (result?: string, error?: unknown) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timeoutId)
+            video.removeEventListener("loadedmetadata", onLoadedMetadata)
+            video.removeEventListener("loadeddata", onLoadedData)
+            video.removeEventListener("seeked", onSeeked)
+            video.removeEventListener("error", onError)
+            video.pause()
+            video.removeAttribute("src")
+            video.load()
+            URL.revokeObjectURL(objectUrl)
+
+            if (error) {
+                reject(error)
+                return
+            }
+            resolve(result as string)
+        }
+
+        const capture = () => {
+            try {
+                const dataUrl = drawVideoFrameToCanvas(video)
+                finalize(dataUrl)
+            } catch (error) {
+                finalize(undefined, error)
+            }
+        }
+
+        const onLoadedMetadata = () => {
+            if (!Number.isFinite(video.duration) || video.duration <= 0.15) {
+                capture()
+                return
+            }
+            const targetTime = Math.min(Math.max(video.duration * 0.1, 0.1), video.duration - 0.05)
+            try {
+                video.currentTime = targetTime
+            } catch {
+                capture()
+            }
+        }
+
+        const onLoadedData = () => {
+            // Some browsers never fire seeked for tiny clips; ensure we can still capture.
+            if (!Number.isFinite(video.duration) || video.duration <= 0.15) {
+                capture()
+            }
+        }
+
+        const onSeeked = () => {
+            capture()
+        }
+
+        const onError = () => {
+            finalize(undefined, new Error("Video failed to load"))
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            finalize(undefined, new Error("Video thumbnail generation timed out"))
+        }, 5000)
+
+        video.preload = "metadata"
+        video.muted = true
+        video.playsInline = true
+        video.src = objectUrl
+        video.addEventListener("loadedmetadata", onLoadedMetadata)
+        video.addEventListener("loadeddata", onLoadedData)
+        video.addEventListener("seeked", onSeeked)
+        video.addEventListener("error", onError)
+    })
+}
+
+function createVideoPlaceholder(): string {
+    const canvas = document.createElement("canvas")
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return ""
+
+    canvas.width = 120
+    canvas.height = 130
+    ctx.fillStyle = "#111"
+    ctx.fillRect(0, 0, 120, 130)
+    ctx.fillStyle = "#fff"
+    ctx.font = "bold 18px sans-serif"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText("VIDEO", 60, 60)
+    return canvas.toDataURL("image/png")
 }
 </script>
 

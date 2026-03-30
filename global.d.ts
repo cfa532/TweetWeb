@@ -72,6 +72,7 @@ interface MimeiFileType {
     fileName?: string
     timestamp: string | number
     aspectRatio?: number    // for video files
+    playlist?: string       // Cached resolved HLS playlist filename (e.g. master.m3u8)
 
     // not saved in Mimei DB, for display only. The value is assigned from Tweet's downloadable
     // upload render the attachment.

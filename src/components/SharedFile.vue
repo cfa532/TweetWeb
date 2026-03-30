@@ -1,9 +1,12 @@
 <script setup lang='ts'>
 import { ref, computed, onMounted, reactive } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import axios from 'axios';
 import { useTweetStore } from '@/stores';
 import { EmptyState } from '@/components';
+
+const { t } = useI18n();
 
 // Constants
 const FILE_SIZE_THRESHOLD = 50 * 1024 * 1024; // 50MB - use arrayBuffer for files smaller than this
@@ -57,7 +60,7 @@ const filteredDirectoryContents = computed(() =>
 
 // Utility function to format file sizes in human-readable form
 const formatFileSize = (bytes: number) => {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) return '0 ' + t('size.bytes');
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -76,7 +79,7 @@ const formatSpeed = (bytesPerSecond: number) => {
 
 // Utility function to format estimated time remaining
 const formatETA = (seconds: number) => {
-  if (!isFinite(seconds) || seconds < 0) return 'calculating...';
+  if (!isFinite(seconds) || seconds < 0) return t('netdisk.calculating');
   if (seconds < 60) return `${Math.ceil(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.ceil(seconds % 60);
@@ -216,8 +219,8 @@ const viewFile = async (file: FileSystemItem) => {
     progress.show = true;
     progress.operation = 'Loading';
     progress.value = 0;
-    progress.speed = 'calculating...';
-    progress.eta = 'calculating...';
+    progress.speed = t('netdisk.calculating');
+    progress.eta = t('netdisk.calculating');
     const blob = await processFileWithProgress(file.url, {
       fileSize: file.size,
       onProgress: (value, speed, eta) => {
@@ -454,7 +457,7 @@ onMounted(() => {
       <div class='progress-label'>
         {{ progress.operation }} file: {{ progress.value }}% 
         <span class='progress-details'>
-          ({{ progress.speed }} • {{ progress.eta }} remaining)
+          ({{ progress.speed }} • {{ progress.eta }} {{ $t('netdisk.remaining') }})
         </span>
       </div>
       <div class='progress-bar'>
@@ -477,9 +480,9 @@ onMounted(() => {
     <table v-if='!loading && !error && filteredDirectoryContents.length > 0' class='file-list'>
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Size</th>
-          <th>Actions</th>
+          <th>{{ $t('netdisk.name') }}</th>
+          <th>{{ $t('netdisk.size') }}</th>
+          <th>{{ $t('netdisk.actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -519,7 +522,7 @@ onMounted(() => {
 
     <!-- No files message -->
     <div v-if='!loading && !error && filteredDirectoryContents.length === 0' class='no-files'>
-      <EmptyState message="This directory is empty" icon="📁" />
+      <EmptyState :message="$t('netdisk.emptyDirectory')" icon="📁" />
     </div>
   </div>
 </template>

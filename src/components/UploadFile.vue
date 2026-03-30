@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loading, Preview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import * as tus from 'tus-js-client';
 
+const { t } = useI18n();
 const router = useRouter();
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
@@ -76,7 +78,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
         }
 
         if (file.size > sliceSize * 400) {
-            reject(new Error('Max file size exceeded (4GB)'));
+            reject(new Error(t('netdisk.maxFileSize')));
             return;
         }
 
@@ -98,7 +100,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
             },
             onError: (error) => {
                 console.error('Upload failed:', error);
-                let errorMessage = 'Upload failed';
+                let errorMessage = t('netdisk.uploadFailed');
                 if (error.message) {
                     console.log('Full error message:', error.message);
                     const responseTextMatch = error.message.match(/response text: ([^,]+)/);
@@ -201,7 +203,7 @@ async function onSubmit() {
     loading.value = true
     try {
         if (filesUpload.value.length < 1) {
-            alertStore.error('Please select at least one file')
+            alertStore.error(t('netdisk.selectFiles'))
             loading.value = false
             return
         }
@@ -226,7 +228,7 @@ async function onSubmit() {
         filesUpload.value = []
         uploadProgress.length = 0; // Clear the upload progress array
         uploads.value.length = 0; // Clear the uploads array
-        alertStore.success(`Files uploaded successfully: ${results.map(r => r.name).join(', ')}`)
+        alertStore.success(t('netdisk.uploadSuccess', { names: results.map(r => r.name).join(', ') }))
     } catch (err) {
         // something wrong uploading files, abort
         console.error('onSubmit err:', err)
@@ -316,27 +318,26 @@ function removeFile(f: File) {
 
 <template>
 
-    <div class="row justify-content-start align-items-start mt-2">
-        <div class="col-sm-12 col-md-8 col-lg-6" style="background-color:aliceblue;">
+    <div style="background-color:aliceblue;">
             <div class="card-header d-flex align-items-center">
                 <input v-model="isResumableUpload" type="checkbox" checked>&nbsp;Enable resumable uploads</input>
-                <span @click='router.push({name: "netdisk"})' class='breadcrumb-link'>Netdisk</span>
-                <span @click='router.push({name: "main"})' class='breadcrumb-link'>Home</span>
+                <span @click='router.push({name: "netdisk"})' class='breadcrumb-link'>{{ $t('userActions.netdisk') }}</span>
+                <span @click='router.push({name: "main"})' class='breadcrumb-link'>{{ $t('netdisk.home') }}</span>
             </div>
             <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
                 <div class="input-container">
-                    <textarea ref="textArea" v-model="textValue" placeholder="Add a description for your files..."
+                    <textarea ref="textArea" v-model="textValue" :placeholder="$t('netdisk.descriptionPlaceholder')"
                         class="input-textarea"></textarea>
                     <div ref="dropHere" hidden class="drop-here">
-                        <p>DROP FILES HERE</p>
+                        <p>{{ $t('editor.dropHere') }}</p>
                     </div>
                 </div>
                 <form @submit.prevent="onSubmit" enctype="multipart/form-data" @paste.prevent="onSelect"
                     class="form-container">
                     <input ref="selectFiles" @change="onSelect" type="file" hidden multiple />
                     <div class="button-container">
-                        <button class="btn" @click.prevent="selectFiles.click()">Choose Files</button>
-                        <button class="btn" type="submit">Upload</button>
+                        <button class="btn" @click.prevent="selectFiles.click()">{{ $t('netdisk.chooseFiles') }}</button>
+                        <button class="btn" type="submit">{{ $t('netdisk.upload') }}</button>
                     </div>
                     <Loading :visible="loading" />
                 </form>
@@ -347,13 +348,12 @@ function removeFile(f: File) {
                         v-bind:progress="uploadProgress[index]"></Preview>
                     <div class="file-controls"
                         v-if="isResumableUpload && uploadProgress[index] > 0 && uploadProgress[index] < 100">
-                        <button class="btn-small" @click="pauseUpload(index)">Pause</button>
-                        <button class="btn-small" @click="resumeUpload(index)">Resume</button>
+                        <button class="btn-small" @click="pauseUpload(index)">{{ $t('netdisk.pause') }}</button>
+                        <button class="btn-small" @click="resumeUpload(index)">{{ $t('netdisk.resume') }}</button>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
 </template>
 
 <style scoped>

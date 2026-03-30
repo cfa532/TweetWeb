@@ -1,6 +1,7 @@
 <script setup lang='ts'>
 import { ref, reactive, onMounted, computed } from 'vue'
-import { Loading, Preview, ItemHeader, CidPreview } from '@/views'
+import { useI18n } from 'vue-i18n'
+import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import IconLink from '@/components/icons/IconLink.vue'
@@ -23,6 +24,7 @@ function getAspectRatioDisplayName(ratio: number): string {
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
+const { t } = useI18n();
 const emit = defineEmits(['uploaded', 'hide'])
 const route = useRoute()
 const router = useRouter()
@@ -42,6 +44,7 @@ const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
+const isQuoting = ref(false)    // whether to also post as a quote tweet (comment mode only)
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
@@ -332,7 +335,7 @@ async function onSubmit() {
   
   // Check if user is logged in (matches iOS behavior)
   if (!tweetStore.loginUser) {
-    useAlertStore().error('Please log in to post a tweet')
+    useAlertStore().error(t('editor.loginToPost'))
     return
   }
   
@@ -390,12 +393,12 @@ async function onSubmit() {
     const targetTweetId = tweetId.value as MimeiId
     console.log('[TWEET-SUBMIT] Calling tweetStore.uploadTweet...', { targetTweetId });
     const result = await tweetStore.uploadTweet(tweet, targetTweetId)
-    
+
     // Check if tweet upload was successful
     console.log('[TWEET-SUBMIT] Tweet upload result:', result);
     if (result) {
       console.log('[TWEET-SUBMIT] Tweet upload successful!');
-      useAlertStore().success("Tweet uploaded successfully!")
+      useAlertStore().success(t('editor.tweetUploaded'))
       submitFailed.value = false
 
       // Clear form only on success
@@ -404,39 +407,43 @@ async function onSubmit() {
       filesUpload.value = []
       mmFiles.value = []
       noResample.value = false
-      
-      // If this was a comment (tweetId exists), navigate back to parent tweet's detail view
+
+      // Fetch parent tweet once — used for both quote tweet and navigation
+      let parentTweet = null
       if (targetTweetId) {
         try {
-          const parentTweet = await tweetStore.getTweet(targetTweetId)
-          if (parentTweet && parentTweet.author) {
-            console.log('[TWEET-SUBMIT] Navigating back to parent tweet:', targetTweetId, parentTweet.author.mid)
-            router.push({ 
-              name: 'TweetDetail', 
-              params: { 
-                tweetId: targetTweetId, 
-                authorId: parentTweet.author.mid 
-              } 
-            })
-          } else {
-            // Fallback: navigate to parent tweet without authorId
-            console.log('[TWEET-SUBMIT] Parent tweet not found, navigating without authorId')
-            router.push({ 
-              name: 'TweetDetail', 
-              params: { 
-                tweetId: targetTweetId 
-              } 
-            })
+          parentTweet = await tweetStore.getTweet(targetTweetId)
+        } catch (e) {
+          console.warn('[TWEET-SUBMIT] Could not fetch parent tweet:', e)
+        }
+      }
+
+      // If quoting, also publish as a standalone quote tweet
+      if (targetTweetId && isQuoting.value && parentTweet) {
+        try {
+          console.log('[TWEET-SUBMIT] Posting quote tweet...')
+          const quoteTweet = {
+            ...tweet,
+            originalTweetId: targetTweetId,
+            originalAuthorId: parentTweet.authorId,
+            timestamp: Date.now(),
           }
-        } catch (error) {
-          console.error('[TWEET-SUBMIT] Error fetching parent tweet for navigation:', error)
-          // Fallback: navigate to parent tweet without authorId
-          router.push({ 
-            name: 'TweetDetail', 
-            params: { 
-              tweetId: targetTweetId 
-            } 
-          })
+          const quoteMid = await tweetStore.uploadTweet(quoteTweet, undefined)
+          if (quoteMid) {
+            console.log('[TWEET-SUBMIT] Quote tweet posted, updating retweet count:', quoteMid)
+            await tweetStore.updateRetweetCount(parentTweet, quoteMid)
+          }
+        } catch (quoteError) {
+          console.warn('[TWEET-SUBMIT] Quote tweet upload failed (comment still posted):', quoteError)
+        }
+      }
+
+      // Navigate back or emit success
+      if (targetTweetId) {
+        if (parentTweet?.author) {
+          router.push({ name: 'TweetDetail', params: { tweetId: targetTweetId, authorId: parentTweet.author.mid } })
+        } else {
+          router.push({ name: 'TweetDetail', params: { tweetId: targetTweetId } })
         }
       } else {
         // This was a new tweet, emit success event
@@ -687,13 +694,13 @@ async function onSelect(e: Event) {
       totalSize += file.size;
 
       if (totalSize > MAX_UPLOAD_SIZE) {
-        useAlertStore().error("Total upload size exceeds 4GB limit.");
+        useAlertStore().error(t('editor.uploadSizeExceeds'));
         return; // Stop adding files
       }
 
       // Assign content if neither title nor content is set
       if (!tweetTitle.value && !txtConent.value) {
-        txtConent.value = file.name;
+        txtConent.value = file.name.replace(/\.[^.]+$/, '');
       }
 
       // Remove duplication and add files to the upload list
@@ -741,9 +748,13 @@ function removeFile(f: File) {
   filesUpload.value.splice(i, 1)
 }
 
-function logout() {
-  tweetStore.logout();
-  location.reload()
+function goBack() {
+  router.back()
+}
+
+function openUserPage() {
+  tweetStore.addFollowing(author.mid)
+  router.push(`/author/${author.mid}`)
 }
 
 const handleCids = (ids: MimeiFileType[]) => {
@@ -752,7 +763,7 @@ const handleCids = (ids: MimeiFileType[]) => {
   if (ids.length > 0) {
     divAttach.value.hidden = false
     if (!tweetTitle.value && !txtConent.value) {
-      txtConent.value = ids[0].fileName;
+      txtConent.value = ids[0].fileName?.replace(/\.[^.]+$/, '') || '';
     }
   }
 };
@@ -823,39 +834,48 @@ function handleDragEnd() {
 <template>
   <CidModal :isVisible="showCidModal" @save="handleCids" @cancel="cancelCidsModal" />
 
-  <div class='row justify-content-start align-items-start'>
-    <div class='col-sm-12 col-md-10 col-lg-8' style='background-color:aliceblue;'>
-      <div class='card-header d-flex align-items-center'>
-        <ItemHeader :author='author'></ItemHeader>
-        <button class='logout' @click.prevent='logout'>Logout</button>
+  <div style='background-color:aliceblue;'>
+      <div class='editor-header'>
+        <img :src='author.avatar' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer'>
+        <div class='editor-author' @click='openUserPage' style='cursor:pointer'>
+          <div class='fw-bold'>{{ author.name }}</div>
+          <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>
+        </div>
+        <div class='cancel-btn' @click='goBack'>
+          <font-awesome-icon icon="circle-xmark" size="xl" />
+        </div>
       </div>
-      <div class='modal-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
+      <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
-          <input type='text' placeholder='Title...' v-model='tweetTitle' class='input-caption' />
+          <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
-          <textarea ref='textArea' v-model='txtConent' placeholder='Input......' class='input-textarea'></textarea>
+          <textarea ref='textArea' v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
           <div ref='dropHere' hidden class='drop-here'>
-            <p>DROP HERE</p>
+            <p>{{ $t('editor.dropHere') }}</p>
           </div>
         </div>
         <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
           <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
           <div class='button-container'>
             <span>
-              <button class='btn' @click.prevent='selectFiles.click()'>Files</button>&nbsp;
+              <button class='btn' @click.prevent='selectFiles.click()'>{{ $t('editor.files') }}</button>&nbsp;
               <label class="bottom-btn" @click.prevent="openModal">
                 <IconLink />
               </label>
             </span>
             <span>
               <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>&nbsp;
-              <label for='downloadable-checkbox'>Downloadable</label>&nbsp;&nbsp;&nbsp;
+              <label for='downloadable-checkbox'>{{ $t('editor.downloadable') }}</label>&nbsp;&nbsp;&nbsp;
               <input type='checkbox' v-model='isPrivate' id='private-checkbox'>&nbsp;
-              <label for='private-checkbox'>Private</label>&nbsp;&nbsp;&nbsp;
+              <label for='private-checkbox'>{{ $t('editor.private') }}</label>&nbsp;&nbsp;&nbsp;
               <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
-              <label for='noresample-checkbox' title='Preserve original video quality without resampling (larger file size)'>Preserve Quality</label>&nbsp;&nbsp;&nbsp;
-              <button class='btn' type='submit'>{{ submitFailed ? 'Re-submit' : 'Submit' }}</button>
+              <label for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">{{ $t('editor.preserveQuality') }}</label>&nbsp;&nbsp;&nbsp;
+              <template v-if='tweetId'>
+                <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>&nbsp;
+                <label for='quoting-checkbox'>{{ $t('editor.quoteTweet') }}</label>&nbsp;&nbsp;&nbsp;
+              </template>
+              <button class='btn' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
             </span>
           </div>
           <Loading :visible='loading' />
@@ -880,7 +900,6 @@ function handleDragEnd() {
           :src="m.fileName as string" />
       </div>
     </div>
-  </div>
 </template>
 
 <style scoped>
@@ -890,20 +909,32 @@ function handleDragEnd() {
   margin: 8px 8px 8px 8px;
 }
 
-.card-header {
-  margin-left: 10px;
+.editor-header {
   display: flex;
   align-items: center;
+  padding: 8px 10px;
 }
 
-.logout {
-  border-radius: 5px;
-  border: 1px solid rgb(143, 139, 139);
-  padding: 3px 10px;
-  margin-left: auto;
+.editor-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-right: 8px;
 }
 
-.modal-content {
+.editor-author {
+  flex: 1;
+}
+
+.cancel-btn {
+  cursor: pointer;
+  color: #e0245e;
+  padding: 4px;
+  margin-right: 6px;
+}
+
+.editor-content {
   width: 100%;
   position: relative;
   display: flex;
@@ -911,7 +942,7 @@ function handleDragEnd() {
   border-radius: 10px;
   background-color: #ebf0f3;
   border: 1px solid #888;
-  margin: 10px 0 0 10px;
+  margin: 10px 0 0 0;
   flex-direction: column;
   flex: 1;
 }

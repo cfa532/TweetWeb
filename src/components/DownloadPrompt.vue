@@ -1,19 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-// Localization for download prompt
-const downloadText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载APP获得最佳体验'
-    } else if (language.startsWith('ja')) {
-        return 'ネイティブアプリで最高の体験を'
-    } else {
-        return '下载APP获得最佳体验'
-    }
-})
-
 // Props
 const props = defineProps<{
     show: boolean
@@ -34,7 +21,7 @@ const handleClick = () => {
     <div v-if="show" class="download-prompt" @click="handleClick">
         <div class="prompt-content">
             <div class="prompt-text">
-                <p>{{ downloadText }} ⬇️</p>
+                <p>{{ $t('download.downloadApp') }} ⬇️</p>
             </div>
         </div>
     </div>

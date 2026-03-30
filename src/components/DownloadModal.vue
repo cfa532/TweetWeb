@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { QRCoder } from '@/views';
+
+const { t } = useI18n();
 
 // Props
 const props = defineProps<{
@@ -47,43 +50,6 @@ onUnmounted(() => {
     }
 })
 
-// Localization
-const downloadingText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载中...'
-    } else if (language.startsWith('ja')) {
-        return 'ダウンロード中...'
-    } else {
-        return 'Downloading...'
-    }
-})
-
-const apkText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '用浏览器下载安卓版apk'
-    } else if (language.startsWith('ja')) {
-        return 'ブラウザでAndroid APKをダウンロード'
-    } else {
-        return 'Download Android APK with browser'
-    }
-})
-
-const downloadMessage = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载APP以获得更好的体验'
-    } else if (language.startsWith('ja')) {
-        return 'より良い体験のためにアプリをダウンロード'
-    } else {
-        return 'Download app for better experience'
-    }
-})
-
 const downloadPageUrl = computed(() => {
     return `${window.location.origin}/apk`
 })
@@ -100,7 +66,7 @@ const downloadPageUrl = computed(() => {
                 <div class="countdown-circle">
                     {{ countdown }}
                 </div>
-                <h5 class="modal-title">{{ downloadMessage }}</h5>
+                <h5 class="modal-title">{{ $t('download.downloadApp') }}</h5>
             </div>
             <div class="modal-body">
                 <div class="platform-options">
@@ -110,8 +76,8 @@ const downloadPageUrl = computed(() => {
                             <QRCoder :url="downloadPageUrl" :size="qrSize" :logoSize="20" :disableModal="true"></QRCoder>
                         </div>
                         <div class="platform-info">
-                            <p v-if="isDownloading">{{ downloadingText }}</p>
-                            <a v-else href="#" @click.prevent="emit('openBrowser', downloadPageUrl)" class="browser-link">{{ apkText }}</a>
+                            <p v-if="isDownloading">{{ $t('download.downloading') }}</p>
+                            <a v-else href="#" @click.prevent="emit('openBrowser', downloadPageUrl)" class="browser-link">{{ $t('download.downloadApk') }}</a>
                         </div>
                         <div v-if="isDownloading" class="download-spinner">
                             <span class="spinner-border spinner-border-sm" role="status"></span>

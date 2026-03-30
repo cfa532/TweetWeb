@@ -4,6 +4,7 @@ import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
+import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -21,16 +22,14 @@ const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
 const isAudio = props.media.type?.toLowerCase().includes('audio') ?? false;
-const isBuffering = ref(!isAudio); // Show spinner for video until ready; audio renders naturally
+// In list/feed (typically non-autoplay), avoid showing spinner before user action.
+const isBuffering = ref(!isAudio && !!props.autoplay);
+// True while the coordinator has marked this video as primary and auto-play
+// hasn't started yet. Prevents the play overlay from flashing and keeps the
+// spinner visible between MANIFEST_PARSED and actual playback.
+const coordinatorAutoplayPending = ref(false);
 const showVideoError = ref(false); // Show error message when video fails to play
 const isMobile = isMobileBrowser(); // cached at setup time
-
-// Pre-size video wrapper using attachment's aspect ratio to avoid black-screen flash
-const videoWrapperStyle = computed(() => {
-  const ar = props.media.aspectRatio;
-  if (ar && ar > 0) return { aspectRatio: String(ar) };
-  return {};
-});
 
 // Touch handling for mobile scroll detection
 const touchStartX = ref(0);
@@ -49,6 +48,14 @@ const isScrolling = ref(false);
 // Show native controls on desktop in detail view, hide elsewhere
 const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value)
 
+const canShowPausedOverlays = computed(() => {
+  return !showVideoError.value &&
+    !(autoplayBlocked.value && props.autoplay) &&
+    !isPlaying.value &&
+    !coordinatorAutoplayPending.value &&
+    (!isBuffering.value || isMobile);
+});
+
 const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
@@ -61,45 +68,57 @@ const isInTweetList = computed(() => {
   return isInList;
 });
 
-// Hardware acceleration detection
-const supportsHardwareAcceleration = computed(() => {
-  if (!video.value) return false;
-  
-  // Check for hardware acceleration support
-  const canvas = document.createElement('canvas');
-  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-  
-  if (!gl) return false;
-  
-  // Check for hardware video decoding support
-  const videoElement = video.value;
-  
-  // Test hardware acceleration by checking if the browser supports it
-  const testVideo = document.createElement('video');
-  testVideo.style.display = 'none';
-  document.body.appendChild(testVideo);
-  
-  // Check for hardware acceleration hints
-  const hasHardwareSupport = (
-    'mediaCapabilities' in navigator ||
-    'getVideoPlaybackQuality' in videoElement ||
-    'webkitVideoPlaybackQuality' in videoElement
-  );
-  
-  document.body.removeChild(testVideo);
-  
-  return hasHardwareSupport;
+// Pre-size wrapper in detail/modal; in feed, .media-attachments already sets aspect-ratio — a second
+// ratio here letterboxes (black band) under the video.
+const videoWrapperStyle = computed(() => {
+  if (isInTweetList.value) return {};
+  const ar = props.media.aspectRatio;
+  if (ar && ar > 0) return { aspectRatio: String(ar) };
+  return {};
 });
+
+const timeRemainingText = ref('0:00');
+
+const showFeedTimeRemaining = computed(
+  () =>
+    isInTweetList.value &&
+    isPlaying.value &&
+    !isAudio &&
+    !showVideoError.value,
+);
+
+function updateTimeRemaining() {
+  const el = video.value;
+  if (!el) return;
+  const d = el.duration;
+  const t = el.currentTime;
+  if (!Number.isFinite(d) || d <= 0) {
+    timeRemainingText.value = '0:00';
+    return;
+  }
+  const remaining = Math.max(0, d - t);
+  const minutes = Math.floor(remaining / 60);
+  const seconds = Math.floor(remaining % 60);
+  timeRemainingText.value = `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Hardware acceleration detection – cached once per page load.
+// The previous computed created a WebGL context on every evaluation, quickly
+// exhausting the browser's context limit when many VideoJS instances exist.
+const supportsHardwareAcceleration = (() => {
+  if (typeof navigator === 'undefined') return false;
+  return 'mediaCapabilities' in navigator;
+})();
 
 let hls: Hls | null = null;
 let hasTriedSinglePlaylist = false;
-let intersectionObserver: IntersectionObserver | null = null;
 let videoErrorRetryCount = 0;
 const MAX_VIDEO_ERROR_RETRIES = 2;
 let isRetryingVideo = false;
 let lastHandledError: { code: number; src: string; timestamp: number } | null = null;
 const ERROR_HANDLING_COOLDOWN = 3000; // 3 seconds cooldown between handling same error
 let isHLSInitialized = false; // Prevent multiple HLS initializations
+let isUnmounting = false;
 let mediaErrorRecoveryCount = 0;
 const MAX_MEDIA_ERROR_RECOVERIES = 3;
 let lastMediaErrorTime = 0;
@@ -107,8 +126,32 @@ const MEDIA_ERROR_COOLDOWN = 2000; // 2 seconds cooldown between media error rec
 let currentPlaylistType: 'master' | 'playlist' | null = null;
 let hasTriedPlaylistFallback = false;
 let failedFragments = new Set<string>(); // Track fragments that have failed to avoid infinite loops
+const MANIFEST_PROBE_TIMEOUT_MS = 12000;
+let pendingUserPlayRequest = false;
+
+function cleanupHlsInstance() {
+  if (!hls) return;
+  const mediaElement = hls.media;
+  try {
+    hls.detachMedia();
+  } catch (e) {
+    console.log('Error detaching HLS media:', e);
+  }
+  try {
+    hls.destroy();
+  } catch (e) {
+    console.log('Error destroying HLS instance:', e);
+  }
+  hls = null;
+  // After hls.destroy() revokes the internal blob URL, clear the video src
+  // so the browser doesn't fire ERR_FILE_NOT_FOUND on the stale blob URL.
+  if (mediaElement) {
+    mediaElement.removeAttribute('src');
+  }
+}
 
 onMounted(() => {
+  isUnmounting = false;
   vdiv.value.hidden = false;
   
     // Setup video element immediately
@@ -123,19 +166,26 @@ onMounted(() => {
           isPlaying.value = true;
           showPlayOverlay.value = false;
           isBuffering.value = true; // Show spinner when play starts, hide when actually playing
+          updateTimeRemaining();
         });
         video.value.addEventListener('playing', () => {
-          isBuffering.value = false; // Video is actually playing now
+          isBuffering.value = false;
+          coordinatorAutoplayPending.value = false;
+          updateTimeRemaining();
         });
+        video.value.addEventListener('timeupdate', updateTimeRemaining);
         video.value.addEventListener('waiting', () => {
           isBuffering.value = true; // Video is buffering
         });
         video.value.addEventListener('canplay', () => {
-          isBuffering.value = false;
+          if (!coordinatorAutoplayPending.value) {
+            isBuffering.value = false;
+          }
         });
         video.value.addEventListener('pause', () => {
           isPlaying.value = false;
           isBuffering.value = false;
+          coordinatorAutoplayPending.value = false;
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
@@ -182,9 +232,8 @@ onMounted(() => {
           }
           
           // Keep video at the end, don't reset to beginning
-          // This maintains the video container space
-          if (video.value) {
-            // Ensure video maintains its dimensions
+          // This maintains the video container space (detail only; feed uses cover + outer aspect box)
+          if (video.value && !isInTweetList.value) {
             video.value.style.minHeight = video.value.offsetHeight + 'px';
           }
           // Don't show overlay if autoplay is enabled (use native controls)
@@ -205,19 +254,19 @@ onMounted(() => {
           showVideoError.value = false;
           failedFragments.clear();
           if (video.value) {
-            console.log('Video metadata loaded, duration:', video.value.duration);
-            // Capture video dimensions to maintain space after video ends
-            const videoHeight = video.value.videoHeight;
-            const videoWidth = video.value.videoWidth;
-            if (videoHeight > 0 && videoWidth > 0) {
-              // Calculate aspect ratio and set min-height based on width
-              const aspectRatio = videoHeight / videoWidth;
-              const containerWidth = video.value.offsetWidth || video.value.clientWidth;
-              if (containerWidth > 0) {
-                const calculatedHeight = containerWidth * aspectRatio;
-                video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
+            if (!isInTweetList.value) {
+              const videoHeight = video.value.videoHeight;
+              const videoWidth = video.value.videoWidth;
+              if (videoHeight > 0 && videoWidth > 0) {
+                const aspectRatio = videoHeight / videoWidth;
+                const containerWidth = video.value.offsetWidth || video.value.clientWidth;
+                if (containerWidth > 0) {
+                  const calculatedHeight = containerWidth * aspectRatio;
+                  video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
+                }
               }
             }
+            updateTimeRemaining();
           }
         }, { once: true });
         
@@ -231,14 +280,58 @@ onMounted(() => {
         
         // Load video immediately (no delay needed)
         if (isHLS.value && !isHLSInitialized) {
-          setupHLS();
+          if (!isInTweetList.value) {
+            // Detail view: initialize immediately
+            setupHLS();
+          } else {
+            // Feed: always defer to the coordinator so only one video loads
+            // at a time. The coordinator's onPrimaryChange(true) triggers setupHLS.
+            isBuffering.value = false;
+          }
         } else if (isRegularVideo.value) {
           setupRegularVideo();
         }
         
-        // Set up intersection observer for autoplay in tweet list
+        // Register with video playback coordinator for single-video-at-a-time in tweet list
         if (isInTweetList.value) {
-          setupIntersectionObserver();
+          const onPrimaryChange: PrimaryChangeCallback = (isPrimary) => {
+            if (isPrimary) {
+              // Don't set the pending flag for ended videos — the coordinator
+              // won't auto-play them, so the play overlay should show instead.
+              coordinatorAutoplayPending.value = !video.value?.ended;
+              // Retry loading if the video previously failed
+              if (showVideoError.value) {
+                showVideoError.value = false;
+                isBuffering.value = true;
+                cleanupHlsInstance();
+                isHLSInitialized = false;
+                videoErrorRetryCount = 0;
+                mediaErrorRecoveryCount = 0;
+                lastMediaErrorTime = 0;
+                hasTriedPlaylistFallback = false;
+                failedFragments.clear();
+                setupHLS();
+                return;
+              }
+              // Auto-init HLS when coordinator scrolls this video into view.
+              // The coordinator's own loadedmetadata listener (in setPrimary)
+              // will call play() once metadata is available.
+              if (!isHLSInitialized && isHLS.value) {
+                isBuffering.value = true;
+                setupHLS();
+                return;
+              }
+              if (hls) hls.startLoad(-1);
+            } else {
+              coordinatorAutoplayPending.value = false;
+              // Don't stop loading if the user explicitly tapped play;
+              // the manifest/fragments may still be in-flight.
+              if (hls && !pendingUserPlayRequest) {
+                hls.stopLoad();
+              }
+            }
+          };
+          registerVideo(video.value, vdiv.value, onPrimaryChange);
         }
       }
   
@@ -253,17 +346,22 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  isUnmounting = true;
   // Clean up event listeners
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('fullscreenchange', handleFullscreenChange);
   document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
   document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+
+  if (video.value) {
+    video.value.removeEventListener('error', handleVideoError);
+    video.value.removeEventListener('timeupdate', updateTimeRemaining);
+  }
   
-  // Clean up intersection observer
-  if (intersectionObserver) {
-    intersectionObserver.disconnect();
-    intersectionObserver = null;
+  // Unregister from video playback coordinator
+  if (video.value) {
+    unregisterVideo(video.value);
   }
   
   // Stop video and clean up HLS
@@ -275,9 +373,9 @@ function setupHLS() {
   isHLSInitialized = true;
   
   const videoElement = video.value;
-  
+
       // Enable hardware acceleration if supported
-    if (supportsHardwareAcceleration.value) {
+    if (supportsHardwareAcceleration) {
       videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
       videoElement.style.willChange = 'transform'; // Optimize for animations
     }
@@ -290,39 +388,58 @@ function setupHLS() {
   const useNativeHLS = isSafari && nativeHLS === 'probably';
   
   if (useNativeHLS) {
-    // Simple approach: try master first, then playlist if master fails
+    const cachedFilename = getCachedPlaylistFilename();
     const masterUrl = getHLSMasterSource();
     const playlistUrl = getHLSSource();
-    
-    console.log('Native HLS: Trying master playlist');
-    videoElement.src = masterUrl;
-    videoElement.load();
-    
-    // If master fails, try playlist
-    videoElement.addEventListener('error', () => {
-      console.log('Native HLS: Master failed, trying playlist');
-      videoElement.src = playlistUrl;
+
+    if (cachedFilename) {
+      const cachedUrl = cachedFilename === 'master.m3u8' ? masterUrl : playlistUrl;
+      console.log(`Native HLS: Using cached playlist ${cachedFilename}`);
+      videoElement.src = cachedUrl;
       videoElement.load();
-      
-      // If playlist also fails, fall back to hls.js
+
       videoElement.addEventListener('error', () => {
-        console.log('Native HLS: Both playlists failed, falling back to hls.js');
-        // Clean up native attempt
+        console.log(`Native HLS: Cached ${cachedFilename} failed, falling back to hls.js`);
         videoElement.src = '';
         videoElement.load();
-        // Use hls.js as fallback
         if (Hls.isSupported()) {
           setupHLSWithJS(videoElement);
         } else {
           console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
         }
       }, { once: true });
-    }, { once: true });
+    } else {
+      console.log('Native HLS: Trying master playlist');
+      cacheResolvedPlaylistFilename('master.m3u8');
+      videoElement.src = masterUrl;
+      videoElement.load();
+
+      videoElement.addEventListener('error', () => {
+        console.log('Native HLS: Master failed, trying playlist');
+        cacheResolvedPlaylistFilename('playlist.m3u8');
+        videoElement.src = playlistUrl;
+        videoElement.load();
+
+        videoElement.addEventListener('error', () => {
+          console.log('Native HLS: Both playlists failed, falling back to hls.js');
+          videoElement.src = '';
+          videoElement.load();
+          if (Hls.isSupported()) {
+            setupHLSWithJS(videoElement);
+          } else {
+            console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
+          }
+        }, { once: true });
+      }, { once: true });
+    }
   } else if (Hls.isSupported()) {
     // Use hls.js for all non-Safari browsers or when native HLS is not available
     setupHLSWithJS(videoElement);
   } else {
     console.error('HLS is not supported in this browser');
+    showVideoError.value = true;
+    isBuffering.value = false;
+    coordinatorAutoplayPending.value = false;
   }
 }
 
@@ -338,8 +455,8 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       abrBandWidthFactor: 0.8, // More conservative bandwidth factor
       abrBandWidthUpFactor: 0.5, // Very conservative for bandwidth increases
       abrMaxWithRealBitrate: true,
-      // Force lower quality for list view
-      startLevel: 1, // Start with second quality level (usually 480p)
+      // Start with the lowest quality for list view (safe for single-level streams)
+      startLevel: 0,
       capLevelToPlayerSize: true,
       // Smaller buffer for list view
       maxBufferLength: 15, // Reduced buffer length
@@ -382,14 +499,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
     // Helper function to create and attach HLS instance
     const createHLSInstance = (url: string, sourceName: string) => {
       // Clean up any existing HLS instance
-      if (hls) {
-        try {
-          hls.destroy();
-        } catch (e) {
-          console.log('Error destroying existing HLS instance:', e);
-        }
-        hls = null;
-      }
+      cleanupHlsInstance();
       
       // Create new HLS instance
       console.log(`HLS.js: Creating instance with ${sourceName} playlist`);
@@ -402,16 +512,23 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
         console.log(`HLS.js: ${sourceName} playlist manifest parsed successfully`);
         // Track which playlist type we're using
         currentPlaylistType = sourceName as 'master' | 'playlist';
+        cacheResolvedPlaylistFilename(sourceName === 'master' ? 'master.m3u8' : 'playlist.m3u8');
         // Reset media error recovery counter on successful manifest parse
         mediaErrorRecoveryCount = 0;
         lastMediaErrorTime = 0;
         showVideoError.value = false;
+        if (!coordinatorAutoplayPending.value) {
+          isBuffering.value = false;
+        }
         failedFragments.clear();
-        // Start playing if autoplay is enabled
-        if (props.autoplay) {
+        if (props.autoplay || pendingUserPlayRequest) {
+          pendingUserPlayRequest = false;
+          if (isInTweetList.value) {
+            if (!isCoordinatorPrimary(videoElement)) return;
+            requestPlay(videoElement);
+          }
           videoElement.play().catch(() => {
-            // Autoplay was prevented, user will need to use native controls
-            showPlayOverlay.value = false; // Still hide overlay, rely on native controls
+            showPlayOverlay.value = false;
           });
         }
       });
@@ -422,12 +539,29 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
 
         // For non-fatal errors, try to recover
         if (!data.fatal) {
+          // levelSwitchError: invalid level index (e.g. stream has fewer levels
+          // than startLevel). Fall back to auto level selection.
+          if (data.details === 'levelSwitchError' && hls) {
+            console.log('Level switch error, falling back to auto level selection');
+            hls.currentLevel = -1;
+            hls.startLoad();
+            return;
+          }
+
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
               console.log('Network error, attempting to recover...');
               hls?.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
+              // Buffer stall/nudge errors are handled internally by HLS.js
+              // (it continues buffering or nudges currentTime). Calling
+              // recoverMediaError() on top resets the MediaSource and
+              // causes a visible video restart.
+              if (data.details === 'bufferStalledError' || data.details === 'bufferNudgeOnStall') {
+                return;
+              }
+
               // For fragment parsing errors, track and recover to skip to next segment
               // This allows playback to continue even with some corrupted/incompatible segments (like iOS does)
               if (data.details === 'fragParsingError') {
@@ -466,14 +600,7 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
                   hasTriedPlaylistFallback = true;
 
                   // Destroy current HLS instance
-                  if (hls) {
-                    try {
-                      hls.destroy();
-                      hls = null;
-                    } catch (e) {
-                      console.log('Error destroying HLS instance:', e);
-                    }
-                  }
+                  cleanupHlsInstance();
 
                   // Reset counters for new attempt
                   mediaErrorRecoveryCount = 0;
@@ -489,12 +616,12 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
                 console.error('All recovery attempts exhausted, stopping playback');
                 if (hls) {
                   console.log('Destroying HLS instance to stop error loop');
-                  hls.destroy();
-                  hls = null;
+                  cleanupHlsInstance();
                 }
                 // Show error message to user
                 showVideoError.value = true;
                 isBuffering.value = false;
+                coordinatorAutoplayPending.value = false;
                 return;
               }
 
@@ -511,84 +638,84 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
       });
     };
     
-    // Try master playlist first
-    console.log('HLS.js: Trying master playlist first:', masterUrl);
-    const testMasterHls = new Hls(hlsConfig);
-    
-    const masterManifestPromise = new Promise<'master' | 'failed'>((resolve) => {
-      testMasterHls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log('HLS.js: Master playlist loaded successfully');
-        // Clean up test instance
-        try {
-          testMasterHls.destroy();
-        } catch (e) {
-          console.log('Error destroying test master HLS instance:', e);
-        }
-        // Create final instance with master
-        createHLSInstance(masterUrl, 'master');
-        resolve('master');
-      });
-      
-      testMasterHls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          console.log('Master playlist fatal error:', data);
-          // Clean up test instance
-          try {
-            testMasterHls.destroy();
-          } catch (e) {
-            console.log('Error destroying test master HLS instance:', e);
-          }
-          resolve('failed');
-        } else {
-          // Non-fatal errors can recover, wait for manifest
-          console.log('Master playlist non-fatal error:', data);
-        }
-      });
-    });
-    
-    testMasterHls.loadSource(masterUrl);
-    
-    // If master fails, try playlist
-    masterManifestPromise.then((result) => {
-      if (result === 'failed') {
-        console.log('HLS.js: Master playlist failed, trying playlist:', playlistUrl);
-        const testPlaylistHls = new Hls(hlsConfig);
-        
-        const playlistManifestPromise = new Promise<'playlist' | 'failed'>((resolve) => {
-          testPlaylistHls.on(Hls.Events.MANIFEST_PARSED, () => {
-            console.log('HLS.js: Playlist loaded successfully');
-            // Clean up test instance
-            try {
-              testPlaylistHls.destroy();
-            } catch (e) {
-              console.log('Error destroying test playlist HLS instance:', e);
-            }
-            // Create final instance with playlist
-            createHLSInstance(playlistUrl, 'playlist');
-            resolve('playlist');
-          });
-          
-          testPlaylistHls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              console.log('Playlist fatal error:', data);
-              // Clean up test instance
-              try {
-                testPlaylistHls.destroy();
-              } catch (e) {
-                console.log('Error destroying test playlist HLS instance:', e);
-              }
-              console.error('HLS.js: Both master and playlist failed, cannot play HLS video');
-              resolve('failed');
-            } else {
-              // Non-fatal errors can recover, wait for manifest
-              console.log('Playlist non-fatal error:', data);
-            }
-          });
+    const probeManifest = (url: string, sourceName: 'master' | 'playlist') => {
+      let probeHls: Hls | null = new Hls(hlsConfig);
+      let settled = false;
+      let timeoutId: number;
+
+      const cancel = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        try { probeHls?.destroy(); } catch {}
+        probeHls = null;
+      };
+
+      const promise = new Promise<boolean>((resolve) => {
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          try { probeHls?.destroy(); } catch {}
+          probeHls = null;
+          resolve(ok);
+        };
+
+        timeoutId = window.setTimeout(() => finish(false), MANIFEST_PROBE_TIMEOUT_MS);
+
+        probeHls!.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log(`HLS.js: ${sourceName} playlist loaded successfully`);
+          cacheResolvedPlaylistFilename(sourceName === 'master' ? 'master.m3u8' : 'playlist.m3u8');
+          finish(true);
         });
-        
-        testPlaylistHls.loadSource(playlistUrl);
-      }
-    });
+
+        probeHls!.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) finish(false);
+        });
+
+        probeHls!.loadSource(url);
+      });
+
+      return { promise, cancel };
+    };
+
+    const cachedFilename = getCachedPlaylistFilename();
+    if (cachedFilename) {
+      const cachedUrl = cachedFilename === 'master.m3u8' ? masterUrl : playlistUrl;
+      const sourceName = cachedFilename === 'master.m3u8' ? 'master' : 'playlist';
+      console.log(`HLS.js: Using cached playlist ${cachedFilename}`);
+      createHLSInstance(cachedUrl, sourceName);
+    } else {
+      // Probe both playlists in parallel — first success wins, loser is cancelled
+      (async () => {
+        if (isUnmounting) return;
+
+        const masterProbe = probeManifest(masterUrl, 'master');
+        const playlistProbe = probeManifest(playlistUrl, 'playlist');
+
+        try {
+          const winner = await Promise.any([
+            masterProbe.promise.then(ok => {
+              if (!ok) throw new Error('master probe failed');
+              playlistProbe.cancel();
+              return { url: masterUrl, sourceName: 'master' as const };
+            }),
+            playlistProbe.promise.then(ok => {
+              if (!ok) throw new Error('playlist probe failed');
+              masterProbe.cancel();
+              return { url: playlistUrl, sourceName: 'playlist' as const };
+            }),
+          ]);
+
+          if (isUnmounting) return;
+          createHLSInstance(winner.url, winner.sourceName);
+        } catch {
+          if (isUnmounting) return;
+          console.warn('HLS.js: Both manifest probes failed; falling back to direct attach with master');
+          createHLSInstance(masterUrl, 'master');
+        }
+      })();
+    }
 }
 
 // Setup regular video playback (non-HLS)
@@ -598,7 +725,7 @@ function setupRegularVideo() {
   const videoElement = video.value;
   
   // Enable hardware acceleration if supported
-  if (supportsHardwareAcceleration.value) {
+  if (supportsHardwareAcceleration) {
     videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
     videoElement.style.willChange = 'transform'; // Optimize for animations
   }
@@ -617,7 +744,7 @@ function setupRegularVideo() {
   // Add canplay event and start playing if autoplay is enabled
   videoElement.addEventListener('canplay', () => {
     // Video can start playing
-    if (props.autoplay) {
+    if (props.autoplay && !isInTweetList.value) {
       videoElement.play().catch(() => {
         // Autoplay was prevented, user will need to use native controls
         showPlayOverlay.value = false; // Still hide overlay, rely on native controls
@@ -626,7 +753,7 @@ function setupRegularVideo() {
   }, { once: true });
   
   // Try to play immediately if autoplay is enabled
-  if (props.autoplay) {
+  if (props.autoplay && !isInTweetList.value) {
     videoElement.play().catch(() => {
       // Will retry when canplay event fires
     });
@@ -699,21 +826,30 @@ function getVideoSource(): string {
 }
 
 function getHLSSource(): string {
-  // Get the base media URL (full URL)
   const baseUrl = getBaseMediaUrl();
-  // Append the playlist filename
-  const playlistUrl = baseUrl + '/playlist.m3u8';
-  console.log('Trying playlist.m3u8:', playlistUrl);
-  return playlistUrl;
+  return baseUrl + '/playlist.m3u8';
 }
 
 function getHLSMasterSource(): string {
-  // Get the base media URL (full URL)
   const baseUrl = getBaseMediaUrl();
-  // Append the master playlist filename
-  const masterUrl = baseUrl + '/master.m3u8';
-  console.log('Trying master.m3u8:', masterUrl);
-  return masterUrl;
+  return baseUrl + '/master.m3u8';
+}
+
+function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {
+  const cached = props.media.playlist;
+  if (cached === 'master.m3u8' || cached === 'playlist.m3u8') {
+    console.log(`[HLS Playlist Cache] HIT for media ${props.media.mid}: ${cached}`);
+    return cached;
+  }
+  console.log(`[HLS Playlist Cache] MISS for media ${props.media.mid}`);
+  return null;
+}
+
+function cacheResolvedPlaylistFilename(fileName: 'master.m3u8' | 'playlist.m3u8') {
+  if (props.media.playlist !== fileName) {
+    props.media.playlist = fileName;
+    console.log(`[HLS Playlist Cache] STORE for media ${props.media.mid}: ${fileName}`);
+  }
 }
 
 function getBaseMediaUrl(): string {
@@ -789,7 +925,7 @@ function fallbackToProgressiveVideo(videoElement: HTMLVideoElement) {
       }, { once: true });
       
       // Try to play the video
-      if (props.autoplay) {
+      if (props.autoplay && !isInTweetList.value) {
         videoElement.play().catch(error => {
           console.log('Autoplay failed for progressive video:', error);
         });
@@ -1018,13 +1154,10 @@ function handleVideoTap(event: Event) {
       });
     }
 
-    // Stop all other videos on the page
-    const allVideos = document.querySelectorAll('video');
-    allVideos.forEach(v => {
-      if (v !== video.value && !v.paused) {
-        v.pause();
-      }
-    });
+    // Tell coordinator this is now the active video (pauses all others)
+    if (video.value) {
+      requestPlay(video.value);
+    }
 
     return;
   } else {
@@ -1101,6 +1234,14 @@ function handlePlayOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
   if (video.value) {
+    if (isHLS.value && !isHLSInitialized) {
+      // Lazy-init HLS in feed and immediately request play once manifest is ready.
+      pendingUserPlayRequest = true;
+      isBuffering.value = true;
+      showVideoError.value = false;
+      setupHLS();
+      return;
+    }
     if (isPlaying.value) {
       video.value.pause();
     } else {
@@ -1125,21 +1266,21 @@ function handlePlayOverlayClick(event: Event) {
         video.value.currentTime = 0;
       }
 
-      // Stop all other videos on the page
-      const allVideos = document.querySelectorAll('video');
-      allVideos.forEach(v => {
-        if (v !== video.value && !v.paused) {
-          v.pause();
-        }
-      });
+      // Tell coordinator this is now the active video (pauses all others)
+      requestPlay(video.value);
 
       video.value.play().catch(() => {
-        // If autoplay fails, try muted
         video.value.muted = true;
         video.value.play().catch(() => {});
       });
     }
   }
+}
+
+function handleFullscreenOverlayClick(event: Event) {
+  event.stopPropagation();
+  event.preventDefault();
+  requestFullscreen();
 }
 
 function checkVideoOrientation() {
@@ -1256,69 +1397,6 @@ function handleFullscreenChange() {
   }
 }
 
-// Set up intersection observer for autoplay in tweet list
-function setupIntersectionObserver() {
-  if (!video.value || !vdiv.value) return;
-  
-  // Add click handler to enable autoplay on first user interaction
-  const enableAutoplay = () => {
-    if (video.value) {
-      video.value.muted = true;
-      video.value.volume = 0;
-      video.value.play().catch(() => {});
-    }
-    document.removeEventListener('touchstart', enableAutoplay);
-    document.removeEventListener('click', enableAutoplay);
-  };
-  
-  document.addEventListener('touchstart', enableAutoplay, { once: true });
-  document.addEventListener('click', enableAutoplay, { once: true });
-  
-  intersectionObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        // Video is visible - start muted autoplay
-        if (video.value && video.value.paused) {
-          // Ensure video is muted for mobile compatibility
-          video.value.muted = true;
-          video.value.volume = 0;
-          
-          // Ensure video is loaded before playing
-          if (video.value.readyState >= 1) {
-            // Metadata is loaded, can play
-            video.value.play().catch(() => {
-              // If fails, show play button overlay instead
-              showPlayOverlay.value = true;
-            });
-          } else {
-            // Metadata not loaded yet, wait for it
-            const onLoadedMetadata = () => {
-              if (video.value) {
-                video.value.play().catch(() => {
-                  showPlayOverlay.value = true;
-                });
-              }
-            };
-            video.value.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-            video.value.load(); // Force load if not already loading
-          }
-        }
-      } else {
-        // Video is not visible - pause it
-        if (video.value && !video.value.paused) {
-          video.value.pause();
-        }
-        // Hide play overlay when not visible
-        showPlayOverlay.value = false;
-      }
-    });
-  }, {
-    threshold: 0.5, // Video must be 50% visible
-    rootMargin: '0px'
-  });
-  
-  intersectionObserver.observe(vdiv.value);
-}
 
 // Handle video element errors with retry mechanism
 async function handleVideoError(e: Event) {
@@ -1330,6 +1408,36 @@ async function handleVideoError(e: Event) {
   
   const currentSrc = videoElement.src || '';
   const now = Date.now();
+  const isBlobSource = currentSrc.startsWith('blob:');
+
+  // HLS uses blob: media source internally; those URLs can become invalid during teardown/re-attach.
+  // Treat that as expected lifecycle behavior and avoid showing a false playback error.
+  if (isHLS.value && isBlobSource) {
+    const isDetached = !document.contains(videoElement);
+    const hlsAttachedToThisElement = !!hls && hls.media === videoElement;
+    if (isUnmounting || isDetached || !hlsAttachedToThisElement) {
+      console.log('Ignoring expected HLS blob error during cleanup/re-attach:', {
+        tweetId: props.tweet?.mid,
+        src: currentSrc.substring(0, 100) + '...',
+        isUnmounting,
+        isDetached,
+        hlsAttachedToThisElement
+      });
+      return;
+    }
+  }
+
+  // For HLS playback, let hls.js own recovery and fatal handling.
+  // Native <video> error recovery (src reset/reload) can re-touch stale blob URLs and
+  // trigger noisy ERR_FILE_NOT_FOUND in console.
+  if (isHLS.value) {
+    console.log('Ignoring native video error for HLS; recovery is handled by hls.js', {
+      tweetId: props.tweet?.mid,
+      code: error.code,
+      src: currentSrc.substring(0, 100) + '...'
+    });
+    return;
+  }
   
   // Prevent handling the same error multiple times in quick succession
   if (lastHandledError && 
@@ -1343,6 +1451,9 @@ async function handleVideoError(e: Event) {
   lastHandledError = { code: error.code, src: currentSrc, timestamp: now };
   
   console.log('Video error:', {
+    tweetId: props.tweet?.mid,
+    fileName: props.media.fileName,
+    mediaType: props.media.type,
     code: error.code,
     message: error.message,
     src: currentSrc.substring(0, 100) + '...',
@@ -1356,9 +1467,13 @@ async function handleVideoError(e: Event) {
   if (error.code === error.MEDIA_ERR_SRC_NOT_SUPPORTED) {
     if (isHLS.value) {
       console.error('HLS video format not supported, cannot play');
+      showVideoError.value = true;
+      isBuffering.value = false;
       return;
     }
     console.log('Video format not supported');
+    showVideoError.value = true;
+    isBuffering.value = false;
     return;
   }
   
@@ -1397,6 +1512,8 @@ async function handleVideoError(e: Event) {
       if (isHLS.value) {
         console.error('HLS video failed after retries, cannot play');
       }
+      showVideoError.value = true;
+      isBuffering.value = false;
     }
     return;
   }
@@ -1427,6 +1544,8 @@ async function handleVideoError(e: Event) {
       if (isHLS.value) {
         console.error('HLS video decode failed, cannot play');
       }
+      showVideoError.value = true;
+      isBuffering.value = false;
     }
     return;
   }
@@ -1449,12 +1568,7 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
     console.log(`HLS.js fatal error retry attempt ${videoErrorRetryCount}/${MAX_VIDEO_ERROR_RETRIES} for ${sourceName}`);
     
     // Destroy current HLS instance
-    try {
-      hls.destroy();
-      hls = null;
-    } catch (e) {
-      console.log('Error destroying HLS instance:', e);
-    }
+    cleanupHlsInstance();
     
     // Wait before retrying
     await new Promise(resolve => setTimeout(resolve, 1000 * videoErrorRetryCount));
@@ -1471,7 +1585,7 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.5,
         abrMaxWithRealBitrate: true,
-        startLevel: 1,
+        startLevel: 0,
         capLevelToPlayerSize: true,
         maxBufferLength: 15,
         maxMaxBufferLength: 300,
@@ -1517,7 +1631,12 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
         // Reset media error recovery counter on successful retry
         mediaErrorRecoveryCount = 0;
         lastMediaErrorTime = 0;
-        if (props.autoplay) {
+        if (props.autoplay || pendingUserPlayRequest) {
+          pendingUserPlayRequest = false;
+          if (isInTweetList.value) {
+            if (!isCoordinatorPrimary(videoElement)) return;
+            requestPlay(videoElement);
+          }
           videoElement.play().catch(() => {
             showPlayOverlay.value = false;
           });
@@ -1548,34 +1667,27 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
     }
   } else {
     console.error('HLS.js: Max retries reached, cannot play HLS video');
-    if (hls) {
-      try {
-        hls.destroy();
-        hls = null;
-      } catch (e) {
-        console.log('Error destroying HLS instance:', e);
-      }
-    }
+    cleanupHlsInstance();
   }
 }
 
 // Stop video playback and clean up resources
 function stopVideo() {
-  if (video.value) {
-    // Pause the video
-    if (!video.value.paused) {
-      video.value.pause();
+  const currentVideo = video.value;
+  if (isHLS.value) {
+    cleanupHlsInstance();
+    if (currentVideo) {
+      // load() fully resets the video element, aborting any pending fetches
+      // on the now-revoked blob URL that cleanupHlsInstance just cleared.
+      currentVideo.load();
+    }
+    isPlaying.value = false;
+  } else if (currentVideo) {
+    if (!currentVideo.paused) {
+      currentVideo.pause();
       isPlaying.value = false;
     }
-
-    // Reset video to beginning
-    video.value.currentTime = 0;
-  }
-
-  // Clean up HLS instance
-  if (hls) {
-    hls.destroy();
-    hls = null;
+    currentVideo.currentTime = 0;
   }
 
   // Reset flags
@@ -1584,6 +1696,8 @@ function stopVideo() {
   isRetryingVideo = false;
   lastHandledError = null;
   isHLSInitialized = false;
+  pendingUserPlayRequest = false;
+  coordinatorAutoplayPending.value = false;
   mediaErrorRecoveryCount = 0;
   lastMediaErrorTime = 0;
   currentPlaylistType = null;
@@ -1621,8 +1735,8 @@ function stopVideo() {
         <div class="buffering-spinner"></div>
       </div>
 
-      <!-- Centered play button in detail view (shown when paused; on mobile also shown while buffering) -->
-      <div v-if="!isInTweetList && !isPlaying && (!isBuffering || isMobile)"
+      <!-- Centered play button shown whenever video is paused/not playing -->
+      <div v-if="canShowPausedOverlays"
            class="play-overlay"
            @click="handlePlayOverlayClick"
            @touchend.prevent="handlePlayOverlayClick">
@@ -1632,6 +1746,20 @@ function stopVideo() {
           </svg>
         </div>
       </div>
+
+      <!-- Fullscreen shortcut for tweet feed when video is paused/not playing -->
+      <button
+        v-if="isInTweetList && canShowPausedOverlays"
+        class="fullscreen-overlay-button"
+        type="button"
+        aria-label="Enter fullscreen"
+        @click="handleFullscreenOverlayClick"
+        @touchend.prevent="handleFullscreenOverlayClick"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        </svg>
+      </button>
       
       <div 
         class="video-tap-handler"
@@ -1644,7 +1772,7 @@ function stopVideo() {
           ref="video"
           class="video"
           :class="{'video-portrait': isPortrait, 'hardware-accelerated': supportsHardwareAcceleration}"
-          :autoplay=props.autoplay
+          :autoplay="props.autoplay && !isInTweetList"
           :controls="showControls"
           :controlslist="showControls ? controls : undefined"
           preload="auto"
@@ -1661,10 +1789,15 @@ function stopVideo() {
           Your browser does not support the video tag.
         </video>
       </div>
+
+      <div
+        v-if="showFeedTimeRemaining"
+        class="feed-video-time-remaining"
+        aria-hidden="true"
+      >
+        {{ timeRemainingText }}
+      </div>
     </div>
-    <p class="video-filename">
-      {{ media.fileName }}
-    </p>
   </div>
 </template>
 
@@ -1673,10 +1806,7 @@ function stopVideo() {
   width: 100%;
   max-width: 100%;
   max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  display: block;
 }
 
 .video-wrapper {
@@ -1710,6 +1840,34 @@ function stopVideo() {
   margin: 0 auto;
 }
 
+/*
+ * Feed tiles: .media-attachments sets height via aspect-ratio. max-height:80vh on container/wrapper/video
+ * caps the player shorter than that cell → solid black band under the video.
+ */
+.video-container.tweet-list,
+.video-container.tweet-list .video-wrapper {
+  max-height: none !important;
+  height: 100% !important;
+}
+
+.video-container.tweet-list .video-wrapper {
+  display: block !important;
+}
+
+.video-container.tweet-list .video,
+.video-container.tweet-list .video.video-portrait {
+  max-height: none !important;
+  object-fit: cover !important;
+  object-position: center !important;
+}
+
+.video-container.tweet-list .video.video-portrait {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: unset !important;
+  margin: 0 !important;
+}
+
 /* Grid items - force video to fill container */
 .grid-item .video-container,
 .media-attachments .grid-item .video-container {
@@ -1721,16 +1879,6 @@ function stopVideo() {
   position: relative !important;
   overflow: hidden !important;
   background-color: #000 !important;
-}
-
-/* Hide filename in grid context */
-.grid-item .video-filename,
-.media-attachments .grid-item .video-filename {
-  display: none !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  height: 0 !important;
-  visibility: hidden !important;
 }
 
 .grid-item .video-wrapper,
@@ -1769,13 +1917,6 @@ function stopVideo() {
   padding: 0 !important;
   vertical-align: middle !important;
   line-height: 0 !important;
-}
-
-.video-filename {
-  margin-top: 5px;
-  font-size: small;
-  color: darkslategray;
-  padding-left: 1%;
 }
 
 /* Ensure video controls are accessible on mobile */
@@ -1981,6 +2122,68 @@ function stopVideo() {
   width: 40px;
   height: 40px;
   margin-left: 4px; /* optical center for play triangle */
+}
+
+.fullscreen-overlay-button {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 16;
+  transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+.fullscreen-overlay-button:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: scale(1.05);
+}
+
+.fullscreen-overlay-button:active {
+  transform: scale(0.95);
+}
+
+.fullscreen-overlay-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.feed-video-time-remaining {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 18;
+  pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 8px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 999px;
+}
+
+/* Desktop: keep fullscreen button hidden until hover/focus */
+@media (hover: hover) and (pointer: fine) {
+  .fullscreen-overlay-button {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .video-wrapper:hover .fullscreen-overlay-button,
+  .fullscreen-overlay-button:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* Responsive video in detail view - adapts to screen width and height */

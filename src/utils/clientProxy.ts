@@ -57,18 +57,25 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
           let client;
           try {
             client = await connectionPool.getConnection(ip);
-            
+
             // CRITICAL: Apply custom timeout to the real client before calling method
-            if (customTimeout !== 10000) {
-              console.log(`[POOLED-CLIENT] Applying timeout ${customTimeout}ms to client for ${ip}`);
-              (client as any).timeout = customTimeout;
-            }
-            
+            (client as any).timeout = customTimeout;
+
             // Get the method from the actual client
             const method = (client as any)[prop];
             if (typeof method === 'function') {
-              // Call the method and await its result
-              return await method.apply(client, args);
+              // Race the RPC call against a timeout to guarantee connection release
+              // even if the underlying hprose call hangs indefinitely
+              const timeoutMs = customTimeout + 2000; // grace period beyond client timeout
+              const result = await Promise.race([
+                method.apply(client, args),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error(
+                    `Pooled call ${String(prop)} to ${ip} timed out after ${timeoutMs}ms`
+                  )), timeoutMs)
+                )
+              ]);
+              return result;
             }
             // If it's a property, return it
             return method;

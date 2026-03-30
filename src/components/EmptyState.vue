@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
+
 interface Props {
   message?: string
   icon?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  message: 'No items found',
   icon: '📁'
 })
 </script>
@@ -13,7 +16,7 @@ const props = withDefaults(defineProps<Props>(), {
 <template>
   <div class="empty-state">
     <div class="empty-icon">{{ icon }}</div>
-    <p class="empty-message">{{ message }}</p>
+    <p class="empty-message">{{ message || t('empty.noItems') }}</p>
   </div>
 </template>
 
