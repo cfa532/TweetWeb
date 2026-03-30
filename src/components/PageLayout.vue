@@ -7,9 +7,8 @@
 <style>
 .page-layout {
   width: 100%;
-  max-width: 900px;
   margin: 0;
-  background-color: aliceblue;
+  background-color: #1a1a2e;
   overflow-x: hidden; /* Prevent horizontal overflow */
   box-sizing: border-box;
 }

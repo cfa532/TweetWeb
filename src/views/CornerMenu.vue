@@ -1,12 +1,23 @@
 <script setup lang="ts">
 // share menu or other right click items
-import { ref, nextTick, computed } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { useTweetStore } from '@/stores';
+import { useAlertStore } from '@/stores/alert.store';
+import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
-const shareMenu = ref()
-const btnDelete = ref()
+const alertStore = useAlertStore()
+const { t } = useI18n()
+const shareMenu = ref<HTMLElement | null>(null)
+const dotBtn = ref<HTMLElement | null>(null)
+const isMenuOpen = ref(false)
+const canDelete = ref(false)
+const canEdit = ref(false)
+const showEditor = ref(false)
+const editContent = ref('')
+/** Ignore synthetic click right after touchend so we don't toggle twice (open then close). */
+let suppressDotClickFromTouch = false
 const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false},
     parentTweet: {type: Object as PropType<Tweet>, required: false},
@@ -23,40 +34,88 @@ const displayMid = computed(() => {
   return `${start}...${end}`
 })
 
-function showMenu() {
-    shareMenu.value.hidden = false
-    
-    // Show delete button if:
-    // 1. User is the tweet/comment author, OR
-    // 2. It's a comment and user is the parent tweet author
+function updateMenuPermissions() {
+    canDelete.value = false
+    canEdit.value = false
     if (tweetStore.loginUser && props.tweet) {
         const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
-        
+
         if (isTweetAuthor || isParentTweetAuthor) {
-            btnDelete.value.hidden = false
+            canDelete.value = true
+        }
+        if (isTweetAuthor) {
+            canEdit.value = true
         }
     }
-    
-    // toggle right menu on and off
-    setTimeout(() => {
-        window.onclick = function (e: MouseEvent) {
-            // Don't interfere with video player interactions
-            const target = e.target as HTMLElement;
-            if (target && (target.tagName === 'VIDEO' || target.closest('video') ||
-                          target.classList.contains('video-js') || target.closest('.video-js'))) {
-                return; // Let video player handle this click
-            }
-
-            if (shareMenu.value && !shareMenu.value.contains(e.target as Node)) {
-                shareMenu.value.hidden = true
-                setTimeout(()=>{
-                    window.onclick = null
-                }, 100)
-            }
-        }
-    }, 100)
 }
+
+function positionMenu() {
+    if (!dotBtn.value || !shareMenu.value) return
+    const rect = dotBtn.value.getBoundingClientRect()
+    shareMenu.value.style.top = `${rect.bottom}px`
+    shareMenu.value.style.left = `${Math.max(8, rect.right - 220)}px`
+}
+
+function openMenu() {
+    updateMenuPermissions()
+    isMenuOpen.value = true
+    requestAnimationFrame(() => positionMenu())
+}
+
+function closeMenu() {
+    isMenuOpen.value = false
+}
+
+function toggleMenu(e?: Event) {
+    if (e?.type === 'click' && suppressDotClickFromTouch) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+    }
+    e?.preventDefault()
+    e?.stopPropagation()
+    if (isMenuOpen.value) {
+        closeMenu()
+    } else {
+        openMenu()
+    }
+}
+
+/** Mobile: open/close on touchend; .prevent stops synthetic click (Vue registers non-passive). */
+function onDotTouchEnd(e: TouchEvent) {
+    e.stopPropagation()
+    suppressDotClickFromTouch = true
+    toggleMenu()
+    window.setTimeout(() => {
+        suppressDotClickFromTouch = false
+    }, 450)
+}
+
+function onDotPointerDown(e: PointerEvent) {
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return
+    try {
+        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+        /* setPointerCapture may throw if target disconnected */
+    }
+}
+
+function onViewportChange() {
+    if (isMenuOpen.value) {
+        positionMenu()
+    }
+}
+
+onMounted(() => {
+    window.addEventListener('resize', onViewportChange)
+    window.addEventListener('scroll', onViewportChange, true)
+})
+
+onUnmounted(() => {
+    window.removeEventListener('resize', onViewportChange)
+    window.removeEventListener('scroll', onViewportChange, true)
+})
 function copyLink() {
     console.log(window.location.href);
     const input = document.createElement("input");
@@ -68,17 +127,34 @@ function copyLink() {
     input.select();
     document.execCommand('copy');
     document.body.removeChild(input);
-    shareMenu.value.hidden = true
+    closeMenu()
+}
+
+function openEditor() {
+  if (!props.tweet) return
+  closeMenu()
+  editContent.value = props.tweet.content || ''
+  showEditor.value = true
+}
+
+async function submitEdit() {
+  if (!props.tweet || !tweetStore.loginUser) return
+  try {
+    await tweetStore.updateTweet(props.tweet.mid, editContent.value)
+    props.tweet.content = editContent.value
+    showEditor.value = false
+  } catch (error: any) {
+    alertStore.error(error.message || t('tweet.failedUpdateTweet'))
+  }
 }
 
 async function deleteItem() {
   if (!props.tweet || !tweetStore.loginUser) {
-    shareMenu.value.hidden = true
+    closeMenu()
     return
   }
   
-  // Close the menu immediately
-  shareMenu.value.hidden = true
+  closeMenu()
   
   if (props.isComment && props.parentTweet) {
     // Delete comment - requires comment author OR parent tweet author
@@ -116,49 +192,186 @@ async function deleteItem() {
 </script>
 
 <template>
-<div style=" width:100%; position: relative; text-align: right;">
-    <a href="#" @click.stop.prevent="showMenu" class="dot"> &#8226;&#8226;&bull; </a>
-    <div ref="shareMenu" class="menu" hidden>
-        <div class="item copy-item" @click.stop="copyLink" style="cursor: pointer;">
-            <span style="text-decoration: none; font-size: smaller;">
+<div class="corner-menu-root" style="width:100%; text-align: right;">
+    <button
+        ref="dotBtn"
+        type="button"
+        class="dot"
+        :aria-expanded="isMenuOpen"
+        aria-haspopup="true"
+        @pointerdown="onDotPointerDown"
+        @touchend.stop.prevent="onDotTouchEnd"
+        @click.stop.prevent="toggleMenu"
+    >
+        &#8226;&#8226;&bull;
+    </button>
+    <div v-if="isMenuOpen" class="menu-backdrop" @click="closeMenu" />
+    <div
+        v-show="isMenuOpen"
+        ref="shareMenu"
+        class="menu"
+        @click.stop
+    >
+        <div class="item copy-item" @click.stop="copyLink">
+            <span class="menu-text">
                 <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
             </span>
         </div>
-        <div ref="btnDelete" class="item clickable-item" @click.stop="deleteItem" hidden style="cursor: pointer;">
-            <span style="text-decoration: none;">Delete</span>
+        <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
+            <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
+        </div>
+        <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem">
+            <span class="menu-text"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div v-if="showEditor" class="edit-overlay" @click.self="showEditor = false">
+    <div class="edit-modal" @click.stop>
+        <div class="edit-header">
+            <span>{{ $t('tweet.editTweet') }}</span>
+            <a href="#" @click.prevent="showEditor = false" style="color: grey; text-decoration: none;">&times;</a>
+        </div>
+        <textarea v-model="editContent" class="edit-textarea" rows="6"></textarea>
+        <div class="edit-actions">
+            <button class="btn-cancel" @click="showEditor = false">{{ $t('common.cancel') }}</button>
+            <button class="btn-submit" @click="submitEdit">{{ $t('common.save') }}</button>
         </div>
     </div>
 </div>
 </template>
 
 <style scoped>
+.corner-menu-root {
+    position: relative;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+}
+
 .dot {
     font-size: 15px;
-    color: grey;
-    padding: 4px 10px 8px 10px;
+    color: gray;
+    margin: 0;
+    padding: 0;
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
     text-decoration: none;
+    position: relative;
+    z-index: 1;
 }
+
+.dot:hover,
+.dot:focus-visible {
+    background: rgba(0, 0, 0, 0.06);
+    outline: none;
+}
+
+.menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+}
+
 .menu {
-    position: absolute;
-    top: 5px;
-    right: 0px;
-    z-index: 20;
-    background-color: whitesmoke;
-    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+    position: fixed;
+    z-index: 100;
+    background: #fff;
+    border: 1px solid #e6ecf0;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
     min-width: 220px;
-    padding: 4px 8px;
+    padding: 0;
+    overflow: hidden;
 }
 .item {
-    border-bottom: 1px dotted;
-    padding: 10px;
-    text-align: center;
+    padding: 10px 12px;
+    text-align: left;
+    color: #4a4a4a;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border-bottom: 1px solid #eef2f4;
+}
+.item:last-child {
+    border-bottom: none;
+}
+.menu-text {
+    text-decoration: none;
 }
 .clickable-item:hover {
-    background-color: #e0e0e0;
+    background: #f5f8fa;
     transition: background-color 0.2s ease;
 }
 .copy-item:hover {
-    background-color: #e0e0e0;
+    background: #f5f8fa;
     transition: background-color 0.2s ease;
 }
+.edit-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.edit-modal {
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.edit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: bold;
+    margin-bottom: 12px;
+    font-size: 16px;
+}
+.edit-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 14px;
+    resize: vertical;
+    font-family: inherit;
+}
+.edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+.btn-cancel {
+    padding: 6px 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+}
+.btn-cancel:hover { background: #f0f0f0; }
+.btn-submit {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    background: #1da1f2;
+    color: white;
+    cursor: pointer;
+}
+.btn-submit:hover { background: #1a91da; }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useAlertStore } from '@/stores';
+import { useI18n } from 'vue-i18n';
 import { watch, ref } from 'vue';
 import { getVideoAspectRatio, getImageAspectRatio, getMediaType as getMediaTypeFromUtils } from '@/utils/uploadUtils';
 import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib';
@@ -17,6 +18,7 @@ function getAspectRatioDisplayName(ratio: number): string {
   return `${ratio.toFixed(3)}:1`;
 }
 
+const { t } = useI18n();
 const emit = defineEmits(['save', 'cancel']);
 const props = defineProps<{
     isVisible: boolean;
@@ -138,7 +140,7 @@ const emitSelectFiles = () => {
         emit('save', selectedFiles.value);
     } else {
         // Optionally, provide user feedback that all 'mid' fields must be filled.
-        useAlertStore().error('Please fill in all the Cid fields before saving.');
+        useAlertStore().error(t('cid.fillCidFields'));
     }
 };
 const cancel = () => {
@@ -174,40 +176,40 @@ watch(() => props.isVisible, (isVisible) => {
                 <div class="file-fields">
                     <div class="field-row">
                         <div class="field-group full-width">
-                            <label>File Name</label>
+                            <label>{{ $t('cid.fileName') }}</label>
                             <input type="text" v-model="file.fileName" />
                         </div>
                     </div>
                     
                     <div class="field-row">
                         <div class="field-group" v-if="file.aspectRatio">
-                            <label>Aspect Ratio</label>
+                            <label>{{ $t('cid.aspectRatio') }}</label>
                             <input type="number" :value="file.aspectRatio ? file.aspectRatio.toFixed(2) : ''" @input="updateAspectRatio(file, $event)" step="0.01" />
                         </div>
                         <div class="field-group">
-                            <label>Type</label>
+                            <label>{{ $t('cid.type') }}</label>
                             <select v-model="file.type">
-                                <option value="hls_video">HLS Video</option>
-                                <option value="video">Video</option>
-                                <option value="Image">Image</option>
-                                <option value="Audio">Audio</option>
-                                <option value="Unknown">Unknown</option>
+                                <option value="hls_video">{{ $t('cid.hlsVideo') }}</option>
+                                <option value="video">{{ $t('cid.video') }}</option>
+                                <option value="Image">{{ $t('cid.image') }}</option>
+                                <option value="Audio">{{ $t('cid.audio') }}</option>
+                                <option value="Unknown">{{ $t('cid.unknown') }}</option>
                             </select>
                         </div>
                     </div>
                     
                     <div class="field-row">
                         <div class="field-group full-width">
-                            <label>CID</label>
-                            <input type="text" v-model="file.mid" placeholder="Enter CID" />
+                            <label>{{ $t('cid.cidLabel') }}</label>
+                            <input type="text" v-model="file.mid" :placeholder="$t('cid.enterCid')" />
                         </div>
                     </div>
                 </div>
             </div>
             <div class="button-group">
-                <button @click="selectFile" class="add-button">Add mimei</button>
-                <button @click="emitSelectFiles" class="save-button">Save</button>
-                <button @click="cancel" class="cancel-button">Cancel</button>
+                <button @click="selectFile" class="add-button">{{ $t('cid.addMimei') }}</button>
+                <button @click="emitSelectFiles" class="save-button">{{ $t('common.save') }}</button>
+                <button @click="cancel" class="cancel-button">{{ $t('common.cancel') }}</button>
             </div>
         </div>
     </div>

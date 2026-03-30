@@ -1,12 +1,53 @@
 import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
+import type { RouteLocationNormalized } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
-  MediaViewerModal
+  MediaViewerModal, UserAccount
 } from "@/components"
 import { useAlertStore } from '@/stores';
+import { USER_PAGE_SCROLL_PREFIX, MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
+
+function scrollBehavior(
+  to: RouteLocationNormalized,
+  from: RouteLocationNormalized,
+  savedPosition: { left: number; top: number } | null
+) {
+  // Stripping scrollTweet after scrollIntoView must not jump back to top (default behavior).
+  if (to.name === 'UserPage' && from.name === 'UserPage') {
+    const had = from.query.scrollTweet
+    const has = to.query.scrollTweet
+    const sameAuthor = to.params.authorId === from.params.authorId
+    if (sameAuthor && had && !has) {
+      return false
+    }
+  }
+  if (from.name === 'TweetDetail' && to.name === 'UserPage') {
+    // Deep link from detail carousel: scroll position is resolved in UserPage via #id / scrollIntoView
+    if (to.query.scrollTweet) return { left: 0, top: 0 }
+    const id = to.params.authorId as string | undefined
+    if (id) {
+      const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + id)
+      if (raw != null) {
+        const top = parseInt(raw, 10)
+        if (!Number.isNaN(top)) return { left: 0, top }
+      }
+    }
+  }
+  if (from.name === 'TweetDetail' && to.name === 'main') {
+    const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
+    if (raw != null) {
+      const top = parseInt(raw, 10)
+      if (!Number.isNaN(top)) return { left: 0, top }
+    }
+  }
+  if (savedPosition) return savedPosition
+  if (to.hash) return { el: to.hash, behavior: 'smooth' as const }
+  return { left: 0, top: 0 }
+}
 
 export const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior,
   routes: [
     { 
       path: '/', name: "main", component: MainPage
@@ -33,6 +74,7 @@ export const router = createRouter({
       component: Login,
       props: (route) => ({ redirect: route.query.redirect || '/' })
     },
+    { path: '/account', name: "account", component: UserAccount },
     { path: '/ips', name: "IPs", component: IPs },
     {
       path: '/post/:tweetId?', name: "post", component: AddPost,

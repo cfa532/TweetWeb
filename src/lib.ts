@@ -1,3 +1,5 @@
+import i18n from './i18n'
+
 // Global Constants
 export const v4Only = true;
 
@@ -51,33 +53,33 @@ export function isAudioType(type: string | undefined): boolean {
 }
 
 function formatTimeDifference(t: number) {
-    const now = Date.now(); // Current timestamp in milliseconds
-    const diffInMilliseconds = now - t; // Difference in milliseconds
+    const tr = i18n.global.t
 
-    // Convert milliseconds to various units
+    const now = Date.now();
+    const diffInMilliseconds = now - t;
+
     const diffInSeconds = Math.floor(diffInMilliseconds / 1000);
     const diffInMinutes = Math.floor(diffInSeconds / 60);
     const diffInHours = Math.floor(diffInMinutes / 60);
     const diffInDays = Math.floor(diffInHours / 24);
     const diffInWeeks = Math.floor(diffInDays / 7);
-    const diffInMonths = Math.floor(diffInDays / 30.44); // Average days in a month
-    const diffInYears = Math.floor(diffInDays / 365.25); // Average days in a year accounting for leap years
+    const diffInMonths = Math.floor(diffInDays / 30.44);
+    const diffInYears = Math.floor(diffInDays / 365.25);
 
-    // Determine the appropriate unit to display
     if (diffInSeconds < 60) {
-        return `${diffInSeconds} seconds ago`;
+        return tr('time.secondsAgo', { n: diffInSeconds });
     } else if (diffInMinutes < 60) {
-        return `${diffInMinutes+1} minutes ago`;
+        return tr('time.minutesAgo', { n: diffInMinutes + 1 });
     } else if (diffInHours < 24) {
-        return `${diffInHours+1} hours ago`;
+        return tr('time.hoursAgo', { n: diffInHours + 1 });
     } else if (diffInDays < 7) {
-        return `${diffInDays+1} days ago`;
+        return tr('time.daysAgo', { n: diffInDays + 1 });
     } else if (diffInWeeks < 4) {
-        return `${diffInWeeks+1} weeks ago`;
+        return tr('time.weeksAgo', { n: diffInWeeks + 1 });
     } else if (diffInMonths < 12) {
-        return `${diffInMonths+1} months ago`;
+        return tr('time.monthsAgo', { n: diffInMonths + 1 });
     } else {
-        return `${diffInYears+1} years ago`;
+        return tr('time.yearsAgo', { n: diffInYears + 1 });
     }
 }
 

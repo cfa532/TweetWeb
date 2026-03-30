@@ -12,5 +12,3 @@ Leither runs on port 4800 by default. The recommended port for dTweet community 
 
 3. Enter the installation directory of Leither, run the following command to synchronize the server app of dTweet onto your server.
     ./Leither mimei sync heWgeGkeBX2gaENbIBS_Iy1mdTS
-
-4. 

@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import { AppHeader, UserRow } from "@/views";
 import { LoadingSpinner, PageLayout } from "@/components";
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 
+const { t } = useI18n();
 const route = useRoute();
 const userId = route.params.userId as MimeiId
 const tweetStore = useTweetStore()
 const followingIds = ref([] as MimeiId[])
+const loginFollowingIds = ref([] as MimeiId[])
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
 const currentIndex = ref(0)
@@ -25,6 +28,8 @@ const visibleUserIds = computed(() => {
 const hasMoreUsers = computed(() => {
     return currentIndex.value < followingIds.value.length
 })
+
+const isLoggedIn = computed(() => !!tweetStore.loginUser)
 
 // Load the next batch of user IDs
 const loadNextBatch = async () => {
@@ -55,6 +60,12 @@ onMounted(async () => {
     isLoading.value = true
 
     try {
+        if (tweetStore.loginUser) {
+            loginFollowingIds.value = await tweetStore.getFollowings(tweetStore.loginUser.mid)
+        } else {
+            loginFollowingIds.value = []
+        }
+
         // Load all following IDs with timeout, refresh immediately on timeout (max attempts)
         const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
 
@@ -113,6 +124,12 @@ watch(() => route.params.userId, async (newUserId) => {
         isLoading.value = true
 
         try {
+            if (tweetStore.loginUser) {
+                loginFollowingIds.value = await tweetStore.getFollowings(tweetStore.loginUser.mid)
+            } else {
+                loginFollowingIds.value = []
+            }
+
             // Load followings with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
             const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
 
@@ -155,6 +172,19 @@ watch(() => route.params.userId, async (newUserId) => {
     }
 })
 
+function handleFollowToggled(payload: { userId: MimeiId; isFollowing: boolean }) {
+    const exists = loginFollowingIds.value.includes(payload.userId)
+    if (payload.isFollowing && !exists) {
+        loginFollowingIds.value = [...loginFollowingIds.value, payload.userId]
+    } else if (!payload.isFollowing && exists) {
+        loginFollowingIds.value = loginFollowingIds.value.filter(id => id !== payload.userId)
+    }
+}
+
+function handleResolveFailed(userId: MimeiId) {
+    followingIds.value = followingIds.value.filter(id => id !== userId)
+}
+
 // Cleanup on component unmount
 import { onUnmounted } from 'vue'
 onUnmounted(() => {
@@ -163,14 +193,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <PageLayout width="normal">
+    <PageLayout>
         <AppHeader :userId="userId"/>
 
         <div ref="containerRef" class="users-container">
         <UserRow 
             v-for="userId in visibleUserIds" 
             :userId="userId" 
+            :isFollowing="loginFollowingIds.includes(userId)"
+            :showFollowButton="isLoggedIn"
             :key="userId" 
+            @follow-toggled="handleFollowToggled"
+            @resolve-failed="handleResolveFailed"
             class="user-row" 
         />
         
@@ -186,12 +220,12 @@ onUnmounted(() => {
         
         <!-- End of list indicator -->
         <div v-if="!hasMoreUsers && visibleUserIds.length > 0" class="text-center text-muted my-3">
-            <small>No more users to load</small>
+            <small>{{ $t('tweet.noMoreUsers') }}</small>
         </div>
         
         <!-- Empty state -->
         <div v-if="!isLoading && followingIds.length === 0" class="text-center text-muted my-3">
-            <small>No users found</small>
+            <small>{{ $t('tweet.noUsersFound') }}</small>
         </div>
     </div>
     </PageLayout>

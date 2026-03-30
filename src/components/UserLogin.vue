@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Form, Field } from 'vee-validate';
 import * as Yup from 'yup';
 import { useTweetStore } from '@/stores';
 import { useRouter } from "vue-router";
 import { useAlertStore } from '@/stores';
+
+const { t } = useI18n();
 
 const router = useRouter();
 const alertStore = useAlertStore();
@@ -40,7 +43,7 @@ async function onSubmit(values: any) {
     
     // Validate fields are not empty (like iOS version)
     if (!usernameValue || !passwordValue) {
-        errorMessage.value = 'Username & password are required.';
+        errorMessage.value = t('auth.usernamePasswordRequired');
         isLoading.value = false;
         return;
     }
@@ -53,11 +56,11 @@ async function onSubmit(values: any) {
         } else {
             // Error message should be handled by tweetStore via alertStore
             // But we can also show it inline for better UX
-            errorMessage.value = 'Login failed. Please check your credentials.';
+            errorMessage.value = t('auth.loginFailed');
         }
     } catch (error: any) {
         console.error("Login error:", error);
-        errorMessage.value = error?.message || 'Login failed. Please try again.';
+        errorMessage.value = error?.message || t('auth.loginFailed');
     } finally {
         isLoading.value = false;
     }
@@ -66,13 +69,13 @@ async function onSubmit(values: any) {
 </script>
 
 <template>
-<div class="col-sm-12 col-md-8 col-lg-6" >
+<div>
     <div class="card m-3">
-        <h4 class="card-header">Login</h4>
+        <h4 class="card-header">{{ $t('auth.login') }}</h4>
         <div class="card-body">
             <Form @submit="onSubmit" :validation-schema="schema" v-slot="{ errors, isSubmitting }">
                 <div class="form-group" style="margin-top: 0px;">
-                    <label>Username</label>
+                    <label>{{ $t('auth.username') }}</label>
                     <Field 
                         name="username" 
                         type="text" 
@@ -84,7 +87,7 @@ async function onSubmit(values: any) {
                     <div class="invalid-feedback">{{ errors.username }}</div>
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
+                    <label>{{ $t('auth.password') }}</label>
                     <Field 
                         name="password" 
                         type="password" 
@@ -106,7 +109,7 @@ async function onSubmit(values: any) {
                         :disabled="!canSubmit || isSubmitting || isLoading"
                     >
                         <span v-show="isSubmitting || isLoading" class="spinner-border spinner-border-sm mr-1"></span>
-                        {{ (isSubmitting || isLoading) ? 'Logging in...' : 'Login' }}
+                        {{ (isSubmitting || isLoading) ? $t('auth.loggingIn') : $t('auth.login') }}
                     </button>
                 </div>
             </Form>

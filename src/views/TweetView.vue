@@ -1,11 +1,13 @@
 <script setup lang='ts'>
 import { onMounted, ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { MediaView, ItemHeader } from '@/views';
+import { MediaView, ItemHeader, TweetActionBar } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
 
+const { t } = useI18n();
 const tweetStore = useTweetStore()
 const router = useRouter()
 const route = useRoute()
@@ -21,17 +23,21 @@ const originalTweet = ref<Tweet | null>();
 const isRetweet = ref(false);
 const retweetedBy = ref<string | undefined>(undefined);
 const currentTweet = ref(props.tweet);
-const isContentClipped = ref(false);
 
 const MAX_LINES = 10;
 const MAX_CHARS_CHINESE = 300;
+/** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
+const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
 
 onMounted(async () => {
   if (currentTweet.value.originalTweetId) {
-    originalTweet.value = await tweetStore.fetchTweet(
-      currentTweet.value.originalTweetId,
-      currentTweet.value.originalAuthorId
-    );
+    // Use already-loaded originalTweet (e.g. from pinned tweet cache) if available,
+    // otherwise fetch it from the store/network
+    originalTweet.value = currentTweet.value.originalTweet
+      || await tweetStore.fetchTweet(
+        currentTweet.value.originalTweetId,
+        currentTweet.value.originalAuthorId
+      );
 
     if (originalTweet.value) {
       if (!currentTweet.value.content && !currentTweet.value.attachments) {
@@ -49,7 +55,8 @@ const displayedTweet = computed(() => {
 
 function openDetailView() {
     sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
-    const basePath = `/tweet/${displayedTweet.value.mid}/${displayedTweet.value.author.mid}`;
+    const authorId = displayedTweet.value.author?.mid || displayedTweet.value.authorId;
+    const basePath = `/tweet/${displayedTweet.value.mid}${authorId ? '/' + authorId : ''}`;
 
     if (props.isComment) {
         // Use props.parentTweet for correct parent information
@@ -106,27 +113,59 @@ function linkify(text: string) {
   return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
 
-const processedContent = computed(() => {
+const tweetContentProcessing = computed(() => {
   if (!displayedTweet.value.content) {
-    return '';
+    return { html: '', clipped: false, useHeightClamp: false };
   }
 
-  const linkedText = linkify(displayedTweet.value.content);
-  const isChinese = /[\u4e00-\u9fa5]/.test(linkedText); // Basic check for Chinese characters
+  // Some providers encode line breaks as `<br>` tags; normalize to `\n`
+  // so the same truncation algorithm works for both tweets and comments.
+  const normalizedContent = displayedTweet.value.content
+    // Match `<br>`, `<br/>`, and `<br ...>` (with attributes) safely.
+    .replace(/<br\b[^>]*\/?>/gi, '\n')
+    // Paragraph / block separators (best-effort) to keep line counting consistent.
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    // Remove any remaining HTML tags so truncation never cuts through markup.
+    .replace(/<[^>]+>/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
 
-  if ((isChinese && linkedText.length > MAX_CHARS_CHINESE) || (!isChinese && linkedText.split('\n').length > MAX_LINES)) {
-    isContentClipped.value = true;
-    if (isChinese) {
-      return linkedText.substring(0, MAX_CHARS_CHINESE) + '...';
-    } else {
-      const lines = linkedText.split('\n');
-      return lines.slice(0, MAX_LINES).join('\n') + '...';
-    }
-  } else {
-    isContentClipped.value = false;
-    return linkedText;
+  const linkedText = linkify(normalizedContent);
+  const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
+
+  const clipped =
+    (isChinese && linkedText.length > MAX_CHARS_CHINESE) ||
+    (!isChinese && linkedText.split('\n').length > MAX_LINES);
+
+  if (!clipped) {
+    return { html: linkedText, clipped: false, useHeightClamp: false };
   }
+
+  let html = isChinese
+    ? linkedText.substring(0, MAX_CHARS_CHINESE)
+    : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
+  // If truncation cut mid-word, trim back to the last word boundary
+  if (isChinese && html.length < linkedText.length && /\S$/.test(html) && /\S/.test(linkedText[html.length] ?? ' ')) {
+    const trimmed = html.replace(/\S+$/, '');
+    if (trimmed.length > 0) html = trimmed;
+  }
+  return {
+    html: html.trimEnd() + `<span class="tweet-content-more">${t('tweet.showMore')}...</span>`,
+    clipped: true,
+    // For Chinese we already truncate by character count; extra height clamping can hide `showMore`.
+    useHeightClamp: !isChinese,
+  };
 });
+
+const truncatedContentHtml = computed(() => tweetContentProcessing.value.html);
+const isContentClipped = computed(() => tweetContentProcessing.value.clipped);
+const useContentHeightClamp = computed(() => tweetContentProcessing.value.useHeightClamp);
+const contentClampMaxHeight = computed(() =>
+  (isContentClipped.value && useContentHeightClamp.value)
+    ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
+    : 'none',
+);
 
 // iOS MediaGrid algorithm implementation
 const gridAspectRatio = computed(() => {
@@ -209,7 +248,7 @@ const documentAttachments = computed(() => {
 
 // Format file size in human-readable form
 function formatFileSize(bytes: number | undefined): string {
-  if (!bytes || bytes === 0) return '0 Bytes';
+  if (!bytes || bytes === 0) return '0 ' + t('size.bytes');
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -326,7 +365,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div class='card tweet-container'>
+  <div :class="['tweet-container', isQuoted ? '' : 'card']" :data-tweet-mid='props.tweet.mid'>
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -348,7 +387,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       />
     </div>
     <div class='card-body' :id="props.tweet.mid">
-      <p v-if='displayedTweet.content' class='card-text' v-html='processedContent' @click='onTextClick'></p>
+      <div
+        v-if='displayedTweet.content'
+        class='tweet-content-wrapper'
+        @click='onTextClick'
+      >
+        <p class='tweet-content-clamp' v-html='truncatedContentHtml'></p>
+      </div>
       <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
         <div v-if='mediaAttachments.length === 1' class='single-attachment'>
@@ -522,11 +567,16 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           @click='handleDocumentClick($event, doc)'
         >
           <span class='document-icon'>📄</span>
-          <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+          <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
           <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
         </div>
       </div>
+      <!-- Embedded original tweet for quote tweets -->
+      <blockquote v-if="!isRetweet && !isQuoted && originalTweet" class="quoted-tweet">
+        <TweetView :tweet="originalTweet" :is-quoted="true" />
+      </blockquote>
     </div>
+    <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="(t) => currentTweet = t" />
   </div>
 </template>
 
@@ -534,13 +584,21 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 /* TweetView-specific styles - scoped to .tweet-container to prevent affecting other views */
 .tweet-container {
   overflow: hidden;
-  max-height: 80vh;
+  /* Profile deep links: scrollIntoView clears fixed AppHeader overlap */
+  scroll-margin-top: 52px;
+}
+.quoted-tweet {
+  margin: 8px 0 8px 32px;
+  padding: 0;
+  border: 1px solid #e6ecf0;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 /* Remove card styling on mobile for flush layout */
 @media (max-width: 575px) {
   .tweet-container.card {
-    margin: 0 0 15px 0; /* Keep bottom margin for spacing between tweets */
+    margin: 0 0 1px 0; /* Keep bottom margin for spacing between tweets */
     border: none;
     border-radius: 0;
   }
@@ -593,6 +651,8 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #000;
   min-width: 0;
   min-height: 0;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 /* Ensure MediaView container fills the grid item */
@@ -682,7 +742,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-2-portrait {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -696,7 +756,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-2-landscape {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -710,7 +770,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-2-mixed {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -729,7 +789,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-all-portrait {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -744,7 +804,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-all-portrait .grid-item-golden-right .grid-item {
@@ -756,7 +816,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-all-landscape {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -771,7 +831,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-height: 0;
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-all-landscape .grid-item-golden-bottom .grid-item {
@@ -783,7 +843,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-first-portrait {
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -798,7 +858,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-first-portrait .grid-item-right-stacked .grid-item {
@@ -810,7 +870,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .grid-3-first-landscape {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   height: 100%;
   width: 100%;
 }
@@ -825,7 +885,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-height: 0;
   display: flex;
   flex-direction: row;
-  gap: 2px;
+  gap: 1px;
 }
 
 .grid-3-first-landscape .grid-item-bottom-two .grid-item {
@@ -893,10 +953,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .single-attachment :deep(.video-wrapper),
 .single-attachment :deep(.video) {
   position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
   width: 100% !important;
   height: 100% !important;
   object-fit: cover !important;
@@ -908,7 +967,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 
 .card {
   width: 100%;
-  margin: 0 0 15px 0;
+  margin: 0 0 1px 0;
 }
 .card-header {
   margin: 0;
@@ -921,21 +980,31 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   padding: 0;
 }
 
-.card-text {
+.tweet-content-wrapper {
   text-align: left;
   font-size: medium;
-  white-space: pre-wrap;
-  padding: 4px 0 0 8px;
-  overflow: hidden;
+  padding: 4px 12px 0 8px;
   cursor: pointer;
-  display: -webkit-box;
-  -webkit-line-clamp: v-bind('isContentClipped ? MAX_LINES : undefined');
-  -webkit-box-orient: vertical;
 }
 
-.card-text a {
-  color: blue;
+.tweet-content-clamp {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow: hidden;
+  line-height: v-bind('CONTENT_CLAMP_LINE_HEIGHT');
+  max-height: v-bind(contentClampMaxHeight);
+}
+
+.tweet-content-clamp :deep(a) {
+  color: var(--bs-link-color, blue);
   text-decoration: underline;
+}
+
+.tweet-content-clamp :deep(.tweet-content-more) {
+  color: var(--bs-link-color, blue);
+  text-decoration: none;
+  white-space: nowrap;
+  margin-left: 0.25em;
 }
 
 .icon-item {

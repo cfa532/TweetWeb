@@ -12,5 +12,6 @@ import { Alert } from './views';
 <style scoped>
 .container-fluid {
     padding: 0px;
+    max-width: 600px;
 }
 </style>

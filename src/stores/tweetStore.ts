@@ -3,14 +3,42 @@ import { reactive } from 'vue';
 import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
+import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
+import i18n from '@/i18n';
+
 const GUEST_ID = "000000000000000000000000000"
-const TWEET_COUNT = 30
+
+/** Comma-separated ids from `VITE_DEFAULT_FOLLOWINGS` (guest seed + post-register auto-follow). */
+function defaultFollowingIdsFromEnv(): string[] {
+    const raw = import.meta.env.VITE_DEFAULT_FOLLOWINGS as string | undefined
+    if (!raw || !String(raw).trim()) return []
+    return String(raw)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+}
+
+/** v2 register response: { success, data?: { user } } or { success, user } */
+function parseRegisteredUserMid(ret: any): string | undefined {
+    if (!ret) return undefined
+    const success = ret.success === true || ret.success === 1
+    if (!success) return undefined
+    const body = ret.data != null && typeof ret.data === 'object' ? ret.data : ret
+    const u = body.user
+    if (u && typeof u === 'object' && typeof u.mid === 'string' && u.mid.length > 0) {
+        return u.mid
+    }
+    return undefined
+}
+const TWEET_COUNT = 5
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
-        tweets: [] as Tweet[],      // tweets 
+        tweets: [] as Tweet[],      // tweets
+        tweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         originalTweets: [] as Tweet[],
+        originalTweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         users: new Map<MimeiId, User>(),
         _followings: [] as MimeiId[],
         lapi: useLeitherStore(),
@@ -18,7 +46,8 @@ export const useTweetStore = defineStore('tweetStore', {
         installApk: import.meta.env.VITE_APP_PKG,
         _user: null as User | null,      // login user data
         healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(), // Cache health check results
-        healthCheckInProgress: new Map<string, Promise<boolean>>() // Track ongoing health checks
+        healthCheckInProgress: new Map<string, Promise<boolean>>(), // Track ongoing health checks
+        _pendingUserFetches: new Map<string, Promise<User | undefined>>() // Deduplicate concurrent getUser calls
     }),
     getters: {
         /**
@@ -48,7 +77,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (sessionStorage.getItem("followings")) {
                 state._followings = JSON.parse(sessionStorage.getItem("followings")!)
             } else {
-                state._followings = import.meta.env.VITE_DEFAULT_FOLLOWINGS.split(",")
+                state._followings = defaultFollowingIdsFromEnv()
                 sessionStorage.setItem("followings", JSON.stringify(state._followings))
             }
             return state._followings
@@ -85,6 +114,58 @@ export const useTweetStore = defineStore('tweetStore', {
                 return await this.getTweetFeed(this.loginUser!, pageNumber, pageSize)
             }
         },
+
+        /**
+         * Clear user/provider caches so next user fetch resolves a fresh provider IP.
+         */
+        _invalidateUserProviderCache(userId: MimeiId) {
+            this.users.delete(userId)
+            this._nullifyCachedIp(userId)
+        },
+
+        /**
+         * Resolve a user for a retry attempt, optionally forcing refresh on first attempt.
+         */
+        async _getUserForProviderRetryAttempt(
+            userId: MimeiId,
+            attempt: number,
+            refreshOnFirstAttempt: boolean = false
+        ): Promise<User | undefined> {
+            const shouldRefreshProvider = attempt > 1 || refreshOnFirstAttempt
+            if (shouldRefreshProvider) {
+                this._invalidateUserProviderCache(userId)
+            }
+            return this.getUser(userId, shouldRefreshProvider)
+        },
+
+        /**
+         * Load follower/following IDs with one retry that refreshes provider IP.
+         */
+        async _loadSortedUserList(
+            userId: MimeiId,
+            rpcName: "get_followers_sorted" | "get_followings_sorted"
+        ): Promise<MimeiId[]> {
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt)
+                if (!user) return []
+
+                try {
+                    const list = await user.client.RunMApp(rpcName, {
+                        aid: this.appId,
+                        ver: "last",
+                        userid: userId
+                    })
+                    return list
+                        .sort((a: any, b: any) => b["value"] - a["value"])
+                        .slice(0, 50)
+                        .map((e: any) => e["field"])
+                } catch (error) {
+                    console.error(`[${rpcName}] Failed for ${userId} attempt ${attempt}/2:`, error)
+                    if (attempt === 1) continue
+                }
+            }
+            return []
+        },
         /**
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
@@ -92,10 +173,11 @@ export const useTweetStore = defineStore('tweetStore', {
         async addTweetToStore(tweet: Tweet) {
             try {
                 // skip tweet that is in this.tweets already.
-                if (this.tweets.find(e => e.mid == tweet.mid))
+                if (this.tweetIndex.has(tweet.mid))
                     return
-                
-                let author = await this.getUser(tweet.authorId)
+
+                // Use pre-resolved author if caller already set it, otherwise fetch
+                let author = tweet.author || await this.getUser(tweet.authorId)
                 if (!author) {
                     console.warn("Author not found for tweet:", tweet.mid, "authorId:", tweet.authorId)
                     return
@@ -104,6 +186,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.comments = []     // load comments only on detail page
                 tweet.author = author
                 tweet.provider = author.providerIp
+                // Map server field name to web field name
+                if (tweet.likeCount === undefined && (tweet as any).favoriteCount !== undefined) {
+                    tweet.likeCount = (tweet as any).favoriteCount
+                }
                 
                 if (tweet.attachments) {
                     tweet.attachments = tweet.attachments.map(e => {
@@ -140,7 +226,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 if (tweet.originalTweetId) {
                     try {
-                        const originalTweet = this.originalTweets.find(t => t.mid == tweet.originalTweetId)
+                        const originalTweet = this.originalTweetIndex.get(tweet.originalTweetId)
                         if (originalTweet) {
                             tweet.originalTweet = originalTweet
                         } else {
@@ -159,14 +245,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (!tweet.originalTweet) {
                             console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
   Retweet ID: ${tweet.mid}
-  Original Tweet ID: ${tweet.originalTweetId}
-  Original Author ID: ${tweet.originalAuthorId}
-  Possible causes: 
-    - Original tweet was deleted
-    - Original tweet is private/restricted
-    - Backend failed to include original tweet in response
-    - Network/provider node is unreachable
-  Note: This reduces visible tweet count and may affect pagination`)
+  Original Tweet ID: ${tweet.originalTweetId}`)
                             return
                         }
                     } catch (error) {
@@ -174,7 +253,6 @@ export const useTweetStore = defineStore('tweetStore', {
   Retweet ID: ${tweet.mid}
   Original Tweet ID: ${tweet.originalTweetId}
   Error:`, error)
-                        // Skip this tweet if original tweet cannot be fetched
                         console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
                         return
                     }
@@ -188,6 +266,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 
                 this.tweets.push(tweet);
+                this.tweetIndex.set(tweet.mid, tweet);
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -206,91 +285,257 @@ export const useTweetStore = defineStore('tweetStore', {
             pageNumber: number = 0,
             pageSize: number = 10
         ): Promise<number | null> {
-            let user = await this.getUser(userId)
-            if (!user)
-                return null
+            const params = {
+                aid: this.appId,
+                ver: "last",
+                userid: userId,
+                pn: pageNumber,
+                ps: pageSize,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+            }
 
-            try {
-                const params = {
-                    aid: this.appId,
-                    ver: "last",
-                    userid: user.mid,
-                    pn: pageNumber,
-                    ps: pageSize,
-                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                }
+            let lastError: unknown = null
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                // The first retry should not reuse stale session/provider caches.
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt)
 
-                console.log("Fetching tweets for user", user.mid, "page:", pageNumber, "size:", pageSize)
-                const response = await user.client.RunMApp("get_tweets_by_user", params)
-                console.log("Tweets response:", response)
-
-                // Check success status first
-                const success = response?.success
-                if (success !== true) {
-                    const errorMessage = response?.message || "Unknown error occurred"
-                    console.error("Tweets loading failed for user", user.mid, ":", errorMessage)
-                    console.error("Response:", response)
+                if (!user) {
                     return null
                 }
 
-                // Extract tweets and originalTweets from the new response format
-                const tweetsData = response.tweets
-                const originalTweetsData = response.originalTweets
+                params.userid = user.mid
 
-                // Check for potential backend issue: retweets without original tweets
-                if (tweetsData && tweetsData.length > 0) {
-                    const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
-                    const originalTweetsCount = originalTweetsData?.length || 0
-                    if (retweetCount > 0 && originalTweetsCount === 0) {
-                        console.warn(`[loadTweetsByUser] ⚠️ BACKEND ISSUE DETECTED:
+                try {
+                    console.log("Fetching tweets for user", user.mid, "page:", pageNumber, "size:", pageSize, "attempt:", attempt)
+                    const response = await user.client.RunMApp("get_tweets_by_user", params)
+                    console.log("Tweets response:", response)
+
+                    // Check success status first
+                    const success = response?.success
+                    if (success !== true) {
+                        const errorMessage = response?.message || "Unknown error occurred"
+                        console.error("Tweets loading failed for user", user.mid, ":", errorMessage)
+                        console.error("Response:", response)
+
+                        if (attempt === 1) {
+                            console.warn(`[loadTweetsByUser] Initial attempt failed for ${user.mid}; retrying with refreshed provider IP`)
+                            continue
+                        }
+                        return null
+                    }
+
+                    // Extract tweets and originalTweets from the new response format
+                    const tweetsData = response.tweets
+                    const originalTweetsData = response.originalTweets
+
+                    // Check for potential backend issue: retweets without original tweets
+                    if (tweetsData && tweetsData.length > 0) {
+                        const retweetCount = tweetsData.filter((t: any) => t?.originalTweetId).length
+                        const originalTweetsCount = originalTweetsData?.length || 0
+                        if (retweetCount > 0 && originalTweetsCount === 0) {
+                            console.warn(`[loadTweetsByUser] ⚠️ BACKEND ISSUE DETECTED:
   Backend returned ${retweetCount} retweet(s) but 0 original tweets
   This will cause retweets to be skipped if originals cannot be fetched individually
   User: ${user.mid}, Page: ${pageNumber}`)
-                    } else if (retweetCount > originalTweetsCount) {
-                        console.warn(`[loadTweetsByUser] ⚠️ Potential backend issue:
+                        } else if (retweetCount > originalTweetsCount) {
+                            console.warn(`[loadTweetsByUser] ⚠️ Potential backend issue:
   Backend returned ${retweetCount} retweet(s) but only ${originalTweetsCount} original tweet(s)
   Some retweets may be skipped if their originals are missing`)
+                        }
                     }
-                }
 
-                // Cache original tweets first (same as getTweetFeed)
-                if (originalTweetsData) {
-                    await this.updateOriginalTweets(originalTweetsData)
-                }
+                    // Cache original tweets first (same as getTweetFeed)
+                    if (originalTweetsData) {
+                        await this.updateOriginalTweets(originalTweetsData)
+                    }
 
-                if (tweetsData) {
-                    for (const tweetJson of tweetsData) {
-                        if (tweetJson != null) {
-                            const tweet = tweetJson as Tweet
-                            const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
-                            if (!cachedTweet) {
-                                try {
-                                    await this.addTweetToStore(tweet)
-                                } catch (error) {
-                                    console.error("Error processing tweet:", tweet.mid, error)
+                    // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
+                    if (tweetsData) {
+                        const uniqueAuthorIds = [...new Set(
+                            tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                        )] as string[]
+                        await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                    }
+
+                    if (tweetsData) {
+                        for (const tweetJson of tweetsData) {
+                            if (tweetJson != null) {
+                                const tweet = tweetJson as Tweet
+                                const cachedTweet = this.tweetIndex.get(tweet.mid)
+                                if (!cachedTweet) {
+                                    try {
+                                        await this.addTweetToStore(tweet)
+                                    } catch (error) {
+                                        console.error("Error processing tweet:", tweet.mid, error)
+                                    }
                                 }
                             }
                         }
                     }
+
+                    // Cache this user's tweets to localStorage for instant display on next visit
+                    this.cacheUserTweets(userId)
+
+                    // Return 0 for an empty page (end-of-list) so callers can
+                    // distinguish it from a real error (null / thrown exception).
+                    return tweetsData?.length ?? null
+                } catch (e) {
+                    lastError = e
+                    console.error("Error fetching tweets for user:", user.mid, "attempt:", attempt)
+                    console.error("Exception:", e)
+
+                    if (attempt === 1) {
+                        console.warn(`[loadTweetsByUser] Initial attempt threw for ${user.mid}; retrying with refreshed provider IP`)
+                        continue
+                    }
                 }
-                return tweetsData?.length || null
+            }
+
+            if (lastError) {
+                throw lastError
+            }
+            return null
+        },
+
+        /**
+         * Cache a user's tweets to localStorage for instant display on next visit
+         */
+        cacheUserTweets(userId: string) {
+            try {
+                const userTweets = this.tweets
+                    .filter(t => t.authorId === userId)
+                    .map(t => {
+                        // Strip non-serializable fields (client, etc.)
+                        const { author, originalTweet, comments, ...rest } = t
+                        const cached: any = { ...rest }
+                        if (author) {
+                            const { client, ...authorRest } = author as any
+                            cached.author = authorRest
+                        }
+                        if (originalTweet) {
+                            const { author: origAuthor, comments: origComments, ...origRest } = originalTweet
+                            cached.originalTweet = { ...origRest }
+                            if (origAuthor) {
+                                const { client, ...origAuthorRest } = origAuthor as any
+                                cached.originalTweet.author = origAuthorRest
+                            }
+                        }
+                        return cached
+                    })
+                    .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+                localStorage.setItem(`tweets_${userId}`, JSON.stringify(userTweets))
             } catch (e) {
-                console.error("Error fetching tweets for user:", user.mid)
-                console.error("Exception:", e)
-                return null
+                console.warn("Failed to cache user tweets to localStorage:", e)
+            }
+        },
+
+        /**
+         * Load cached tweets for a user from localStorage
+         * Returns tweets with author.client restored
+         */
+        getCachedUserTweets(userId: string): Tweet[] {
+            try {
+                const cached = localStorage.getItem(`tweets_${userId}`)
+                if (!cached) return []
+                const tweets = JSON.parse(cached) as Tweet[]
+                for (const t of tweets) {
+                    if (t.author?.providerIp) {
+                        t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
+                    }
+                    if (t.originalTweet?.author?.providerIp) {
+                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                    }
+                    t.comments = []
+                }
+                return tweets
+            } catch (e) {
+                console.warn("Failed to load cached user tweets:", e)
+                return []
+            }
+        },
+
+        /**
+         * Cache pinned tweets for a user to localStorage
+         */
+        cachePinnedTweets(userId: string, tweets: Tweet[]) {
+            try {
+                const serializable = tweets.map(t => {
+                    const { author, originalTweet, comments, ...rest } = t
+                    const cached: any = { ...rest }
+                    if (author) {
+                        const { client, ...authorRest } = author as any
+                        cached.author = authorRest
+                    }
+                    if (originalTweet) {
+                        const { author: origAuthor, comments: origComments, ...origRest } = originalTweet
+                        cached.originalTweet = { ...origRest }
+                        if (origAuthor) {
+                            const { client, ...origAuthorRest } = origAuthor as any
+                            cached.originalTweet.author = origAuthorRest
+                        }
+                    }
+                    return cached
+                })
+                localStorage.setItem(`pinned_${userId}`, JSON.stringify(serializable))
+            } catch (e) {
+                console.warn("Failed to cache pinned tweets:", e)
+            }
+        },
+
+        /**
+         * Load cached pinned tweets from localStorage
+         */
+        getCachedPinnedTweets(userId: string): Tweet[] {
+            try {
+                const cached = localStorage.getItem(`pinned_${userId}`)
+                if (!cached) return []
+                const tweets = JSON.parse(cached) as Tweet[]
+                for (const t of tweets) {
+                    if (t.author?.providerIp) {
+                        t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
+                    }
+                    if (t.originalTweet?.author?.providerIp) {
+                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                    }
+                    t.comments = []
+                }
+                return tweets
+            } catch (e) {
+                console.warn("Failed to load cached pinned tweets:", e)
+                return []
             }
         },
 
         async updateOriginalTweets(originalTweetsData: any) {
+            // Pre-fetch all unique authors in parallel
+            const newOriginals = originalTweetsData.filter(
+                (t: any) => t != null && !this.originalTweetIndex.has(t.mid)
+            )
+            if (newOriginals.length > 0) {
+                const uniqueAuthorIds = [...new Set(newOriginals.map((t: any) => t.authorId))] as string[]
+                await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+            }
+
             for (const originalTweetJson of originalTweetsData) {
                 if (originalTweetJson != null) {
                     try {
                         const originalTweet = originalTweetJson as Tweet
-                        if (!this.originalTweets.find(t => t.mid === originalTweet.mid)) {
+                        if (!this.originalTweetIndex.has(originalTweet.mid)) {
                             const author = await this.getUser(originalTweet.authorId)
                             if (author) {
                                 originalTweet.author = author
+                                originalTweet.provider = author.providerIp
+                                if (originalTweet.attachments) {
+                                    originalTweet.attachments.forEach((e: MimeiFileType) => {
+                                        e.mid = this.getMediaUrl(e.mid, "http://" + author.providerIp)
+                                        e.downloadable = originalTweet.downloadable
+                                    })
+                                }
                                 this.originalTweets.push(originalTweet)
+                                this.originalTweetIndex.set(originalTweet.mid, originalTweet)
+                                try {
+                                    sessionStorage.setItem(originalTweet.mid, JSON.stringify(originalTweet))
+                                } catch (e) { /* ignore sessionStorage errors */ }
                             }
                         }
                     } catch (e) {
@@ -306,37 +551,58 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of pinned tweets
          */
         async loadPinnedTweets(userId: string): Promise<Tweet[]> {
-            let pinnedTweets = [] as Tweet[]
-            let user = await this.getUser(userId)
-            if (!user)
-                return []
-
             const params = {
                 aid: this.appId,
                 ver: "last",
                 userid: userId,
                 appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
             }
-            let pinned = await user.client.RunMApp("get_pinned_tweets", params)
-            console.log("Pinned tweets", pinned)
-            
-            // Validate that pinned is an array
-            if (!Array.isArray(pinned)) {
-                console.warn("Pinned tweets response is not an array:", typeof pinned, pinned)
-                return []
+
+            let pinnedTweets = [] as Tweet[]
+            let pinned: any[] = []
+
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt, true)
+
+                if (!user) {
+                    return []
+                }
+
+                try {
+                    pinned = await user.client.RunMApp("get_pinned_tweets", params)
+                    console.log("Pinned tweets", pinned, "attempt:", attempt)
+
+                    // Validate that pinned is an array
+                    if (!Array.isArray(pinned)) {
+                        console.warn("Pinned tweets response is not an array:", typeof pinned, pinned)
+                        if (attempt === 1) {
+                            console.warn(`[loadPinnedTweets] Initial attempt failed for ${user.mid}; retrying with refreshed provider IP`)
+                            continue
+                        }
+                        return []
+                    }
+                    break
+                } catch (error) {
+                    console.error("Error loading pinned tweets for user:", user.mid, "attempt:", attempt, error)
+                    if (attempt === 1) {
+                        console.warn(`[loadPinnedTweets] Initial attempt threw for ${user.mid}; retrying with refreshed provider IP`)
+                        continue
+                    }
+                    return []
+                }
             }
-            
+
             if (pinned.length > 0) {
                 // Create an array to store tweets with their pin timestamps for sorting
                 const tweetsWithPinTime: Array<{tweet: Tweet, pinTimestamp: number}> = []
-                
+
                 for (const e of pinned) {
                     try {
                         const tweetObject = e.tweet
                         const pinTimestamp = e.timestamp ? Number(e.timestamp) : 0
-                        
+
                         console.log("Processing pinned tweet:", tweetObject.mid, "pinned at:", pinTimestamp)
-                        
+
                         // Validate tweet object
                         if (!tweetObject || !tweetObject.mid) {
                             console.warn("Invalid tweet object:", tweetObject)
@@ -344,31 +610,25 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
 
                         // Check if tweet is already in cache
-                        let existingTweet = this.tweets.find(t => t.mid == tweetObject.mid)
+                        let existingTweet = this.tweetIndex.get(tweetObject.mid)
                         if (existingTweet) {
                             // Update existing tweet with pin timestamp info
                             tweetsWithPinTime.push({tweet: existingTweet, pinTimestamp})
                         } else {
-                            // Ensure the tweet has a proper author object
-                            if (!tweetObject.author || typeof tweetObject.author !== 'object') {
-                                try {
-                                    // Try to get the author from the tweet's authorId
-                                    const author = await this.getUser(tweetObject.authorId)
-                                    if (author) {
-                                        tweetObject.author = author
-                                    } else {
-                                        console.warn("Could not fetch author for pinned tweet:", tweetObject.mid)
-                                        continue
-                                    }
-                                } catch (error) {
-                                    console.error("Error fetching author for pinned tweet:", tweetObject.mid, error)
-                                    continue
-                                }
+                            // Process through addTweetToStore so media URLs are constructed
+                            try {
+                                await this.addTweetToStore(tweetObject)
+                            } catch (error) {
+                                console.error("Error adding pinned tweet to store:", tweetObject.mid, error)
+                                continue
                             }
-                            
-                            // Add new tweet to cache and pinned list
-                            this.tweets.push(tweetObject)
-                            tweetsWithPinTime.push({tweet: tweetObject, pinTimestamp})
+                            // addTweetToStore may skip the tweet (e.g. missing author)
+                            const stored = this.tweetIndex.get(tweetObject.mid)
+                            if (!stored) {
+                                console.warn("Pinned tweet was not added to store:", tweetObject.mid)
+                                continue
+                            }
+                            tweetsWithPinTime.push({tweet: stored, pinTimestamp})
                             console.log("Successfully added pinned tweet to cache:", tweetObject.mid)
                         }
                     } catch (error) {
@@ -447,7 +707,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     await this.updateOriginalTweets(response.originalTweets)
                 }
 
-                // Process main tweets
+                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
+                if (tweetsData) {
+                    const uniqueAuthorIds = [...new Set(
+                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                    )] as string[]
+                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                }
+
+                // Process main tweets (authors are now in-memory cache)
                 if (tweetsData) {
                     for (const tweetJson of tweetsData) {
                         if (tweetJson != null) {
@@ -463,7 +731,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (tweet.isPrivate) {
                                     continue
                                 } else {
-                                    const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                                    const cachedTweet = this.tweetIndex.get(tweet.mid)
                                     if (!cachedTweet) {
                                         await this.addTweetToStore(tweet)
                                     }
@@ -533,7 +801,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Extract tweets from the response format (same as getTweetFeed)
                 const tweetsData = response.tweets
 
-                // Process main tweets (exactly like getTweetFeed)
+                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
+                if (tweetsData) {
+                    const uniqueAuthorIds = [...new Set(
+                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+                    )] as string[]
+                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                }
+
+                // Process main tweets (authors are now in-memory cache)
                 if (tweetsData) {
                     for (const tweetJson of tweetsData) {
                         if (tweetJson != null) {
@@ -549,7 +825,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (tweet.isPrivate) {
                                     continue
                                 } else {
-                                    const cachedTweet = this.tweets.find(t => t.mid === tweet.mid)
+                                    const cachedTweet = this.tweetIndex.get(tweet.mid)
                                     if (!cachedTweet) {
                                         await this.addTweetToStore(tweet)
                                     }
@@ -607,7 +883,7 @@ export const useTweetStore = defineStore('tweetStore', {
             useRacing: boolean = false
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
-            let cachedTweet = this.tweets.find(e => e.mid == tweetId)
+            let cachedTweet = this.tweetIndex.get(tweetId)
             if (cachedTweet) {
                 console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
@@ -626,110 +902,78 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (useRacing: ${useRacing})`)
-            // Get IP address of the provider of this tweet
+            console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (authorId: ${authorId}, useRacing: ${useRacing})`)
             let author: any, providerClient: any, providerIp: any, tweetInDB: any
-            if (authorId && !useRacing) {
-                // Use authorId only when NOT racing (for faster racing, skip this branch)
+
+            if (authorId) {
+                // Step 1: resolve author to get their node, then use refresh_tweet
+                console.log('[fetchTweet] Resolving author node for tweet:', tweetId)
                 author = await this.getUser(authorId)
-                if (!author)
-                    return null
-                providerIp = author?.providerIp
-                providerClient = author?.client
-                // With authodId, we can get most up to date tweet record.
-                tweetInDB = await providerClient.RunMApp("refresh_tweet", {
-                    aid: this.lapi.appId,
-                    ver: "last",
-                    tweetid: tweetId,
-                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                    userid: authorId,     // author of the tweet
-                    hostid: author?.hostIds?.[0],
-                })
-            } else {
+                if (author && author.providerIp) {
+                    providerIp = author.providerIp
+                    providerClient = author.client
+                    console.log('[fetchTweet TIMING] Fetching via author node:', providerIp, new Date().toISOString())
+                    tweetInDB = await providerClient.RunMApp("refresh_tweet", {
+                        aid: this.lapi.appId,
+                        ver: "last",
+                        tweetid: tweetId,
+                        appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                        userid: authorId,
+                        hostid: author?.hostIds?.[0],
+                    })
+                    if (tweetInDB) {
+                        console.log('[fetchTweet TIMING] ✅ Author-based fetch succeeded:', new Date().toISOString())
+                    } else {
+                        console.log('[fetchTweet] Author node returned null for tweet:', tweetId)
+                    }
+                }
+            }
+
+            if (!tweetInDB) {
+                // Step 2: no authorId, or author-based fetch failed — resolve provider IP from tweetId.
+                // Use get_tweet WITHOUT version:"v3" here, because v3 requires userid and returns null without it.
+                // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
+                console.log('[fetchTweet TIMING] Resolving provider IP for tweet:', tweetId, new Date().toISOString())
                 if (useRacing) {
-                    // TweetDetail page: Try author-based approach first (more reliable), then race
-                    if (authorId) {
-                        console.log('[fetchTweet] Trying author-based approach first for tweet:', tweetId)
-                        author = await this.getUser(authorId)
-                        if (author && author.providerIp) {
-                            providerIp = author.providerIp
-                            providerClient = author.client
-
-                            console.log('[fetchTweet TIMING] Trying author node:', providerIp, new Date().toISOString())
-                            try {
-                                tweetInDB = await providerClient.RunMApp("get_tweet", {
-                                    aid: this.lapi.appId,
-                                    ver: "last",
-                                    version: "v3",
-                                    tweetid: tweetId,
-                                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
-                                })
-
-                                if (tweetInDB) {
-                                    console.log('[fetchTweet TIMING] ✅ Author-based approach succeeded:', new Date().toISOString())
-                                } else {
-                                    console.log('[fetchTweet] Author-based approach returned null, falling back to racing')
-                                    // Reset for racing fallback
-                                    author = null
-                                    providerIp = null
-                                    providerClient = null
-                                }
-                            } catch (error) {
-                                console.warn('[fetchTweet] Author-based approach failed, falling back to racing:', error)
-                                // Reset for racing fallback
-                                author = null
-                                providerIp = null
-                                providerClient = null
-                            }
-                        }
-                    }
-
-                    // If author-based approach didn't work, use racing
-                    if (!tweetInDB) {
-                        console.log('[fetchTweet TIMING] Starting race for tweet:', tweetId, new Date().toISOString())
-                        const providerIps = await this.getProviderIps(tweetId)
-                        if (providerIps.length === 0)
-                            return null
-
-                        // Race the API calls with multiple IPs
-                        const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
-                            return await client.RunMApp("get_tweet", {
-                                aid: this.lapi.appId,
-                                ver: "last",
-                                version: "v3",
-                                tweetid: tweetId,
-                                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
-                            })
+                    const providerIps = await this.getProviderIps(tweetId)
+                    if (providerIps.length === 0)
+                        return null
+                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                        return await client.RunMApp("get_tweet", {
+                            aid: this.lapi.appId,
+                            ver: "last",
+                            tweetid: tweetId,
+                            appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                         })
-
-                        if (!raceResult) {
-                            console.error("[fetchTweet] All provider IPs failed for tweet", tweetId);
-                            return null;
-                        }
-
-                        tweetInDB = raceResult.result;
-                        providerIp = raceResult.ip;
-                        providerClient = await this.lapi.getClient(providerIp);
-                        console.log('[fetchTweet TIMING] ✅ Tweet data received from race:', new Date().toISOString());
+                    })
+                    if (!raceResult) {
+                        console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
+                        return null
                     }
+                    tweetInDB = raceResult.result
+                    providerIp = raceResult.ip
+                    providerClient = await this.lapi.getClient(providerIp)
+                    console.log('[fetchTweet TIMING] ✅ Tweet data received from race:', new Date().toISOString())
                 } else {
-                    // Normal flow: Get single provider IP (old behavior)
                     providerIp = await this.getProviderIp(tweetId)
                     if (!providerIp)
                         return null
                     providerClient = await this.lapi.getClient(providerIp)
-                    // Get tweet data from Tweet App Mimei. Its definition is different from this app.
                     tweetInDB = await providerClient.RunMApp("get_tweet", {
                         aid: this.lapi.appId,
                         ver: "last",
-                        version: "v3",
                         tweetid: tweetId,
                         appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                     })
                 }
             }
             console.log("Get tweet from db", tweetInDB, providerIp, author)
-            if (!tweetInDB || !Array.isArray(tweetInDB) || tweetInDB.length === 0)
+            if (!tweetInDB)
+                return null
+            // Normalize to array: refresh_tweet (authorId path) returns array; pre-v3 get_tweet returns single object
+            if (!Array.isArray(tweetInDB))
+                tweetInDB = [tweetInDB]
+            if (tweetInDB.length === 0)
                 return null
 
             // Extract tweet data from array response (v3 format)
@@ -772,7 +1016,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 originalTweetId: tweetData.originalTweetId,
                 originalAuthorId: tweetData.originalAuthorId,
                 provider: providerIp,
-                likeCount: tweetData.likeCount,
+                likeCount: tweetData.favoriteCount ?? tweetData.likeCount,
                 bookmarkCount: tweetData.bookmarkCount,
                 commentCount: tweetData.commentCount,
             }
@@ -795,7 +1039,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     originalTweetId: originalTweetData.originalTweetId,
                     originalAuthorId: originalTweetData.originalAuthorId,
                     provider: providerIp,
-                    likeCount: originalTweetData.likeCount,
+                    likeCount: originalTweetData.favoriteCount ?? originalTweetData.likeCount,
                     bookmarkCount: originalTweetData.bookmarkCount,
                     commentCount: originalTweetData.commentCount,
                 }
@@ -809,8 +1053,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (author && tweet) {
                     tweet.author = author
                     authorLoadSuccess = true
-                    // Update media URLs with correct author provider IP
-                    if (tweet.attachments) {
+                    // Only update media URLs if author's provider IP differs from initial one
+                    if (tweet.attachments && author.providerIp && author.providerIp !== providerIp) {
                         tweet.attachments.forEach((e: MimeiFileType) => {
                             e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + author.providerIp)
                         })
@@ -828,8 +1072,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.getUser(originalTweetData.authorId).then(originalAuthor => {
                     if (originalAuthor && tweet.originalTweet) {
                         tweet.originalTweet.author = originalAuthor
-                        // Update media URLs with correct author provider IP
-                        if (tweet.originalTweet.attachments) {
+                        // Only update media URLs if author's provider IP differs from initial one
+                        if (tweet.originalTweet.attachments && originalAuthor.providerIp && originalAuthor.providerIp !== providerIp) {
                             tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
                                 e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + originalAuthor.providerIp)
                             })
@@ -863,25 +1107,66 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
+            // Deduplicate concurrent fetches for the same user
+            if (!forceRefresh) {
+                const pending = this._pendingUserFetches.get(userId)
+                if (pending) return pending
+            }
+
+            const fetchPromise = this._fetchUser(userId, forceRefresh)
+            this._pendingUserFetches.set(userId, fetchPromise)
+            try {
+                return await fetchPromise
+            } finally {
+                this._pendingUserFetches.delete(userId)
+            }
+        },
+
+        async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {
+            // Try sessionStorage cache for faster initial display
+            // Trust the cached IP — if it's stale, the RPC call will fail and the
+            // retry loop (attempt 2) will resolve a fresh IP automatically.
+            if (!forceRefresh) {
+                const cached = sessionStorage.getItem(userId)
+                if (cached) {
+                    try {
+                        const cachedUser = JSON.parse(cached)
+                        if (cachedUser && cachedUser.mid && cachedUser.hostIds && cachedUser.providerIp) {
+                            cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
+                            cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
+                            if (cachedUser.writableHostIp === undefined) {
+                                cachedUser.writableHostIp = null
+                            }
+                            this.users.set(userId, cachedUser)
+                            return cachedUser
+                        }
+                    } catch (e) {
+                        this._nullifyCachedIp(userId)
+                    }
+                }
+            }
+
             // Try to get user with up to 2 attempts total
             let providerIp: string | null = null
             let user: any = null
             let providerClient: any = null
-
-            // First check if there are any provider IPs available at all
-            const availableIps = await this.getProviderIps(userId)
-            if (availableIps.length === 0) {
-                console.warn(`No provider IPs available for user ${userId} - user may not exist or be unreachable`)
-                return undefined
-            }
+            let failedIp: string | null = null
 
             for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
-                    providerIp = await this.getProviderIp(userId)
+                    // Force server to refresh its IP cache when forceRefresh (login) or on retry to avoid stale IPs
+                    providerIp = await this.getProviderIp(userId, v4Only, forceRefresh || attempt > 1)
                     if (!providerIp) {
                         console.warn(`No provider found for user ${userId}, attempt ${attempt}/2`)
                         if (attempt === 2) return undefined
                         continue
+                    }
+
+                    // Skip retry if refreshed IP is the same as the one that already failed
+                    if (attempt > 1 && providerIp === failedIp) {
+                        console.warn(`[_fetchUser] Refreshed IP for ${userId} is the same stale IP (${providerIp}), giving up`)
+                        this._nullifyCachedIp(userId)
+                        return undefined
                     }
 
                     providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
@@ -906,7 +1191,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 // Other server error, may retry
                                 console.log(`get_user server error for user ${userId}, attempt ${attempt}/2:`, user.message)
                                 user = null;
-                                if (attempt === 2) return undefined
+                                failedIp = providerIp
+                                if (attempt === 2) {
+                                    this._nullifyCachedIp(userId)
+                                    return undefined
+                                }
                                 continue
                             }
                         }
@@ -922,13 +1211,19 @@ export const useTweetStore = defineStore('tweetStore', {
                 } catch (error) {
                     console.error(`get_user attempt ${attempt}/2 failed for user ${userId}:`, error)
                     user = null
-                    if (attempt === 2) return undefined
+                    failedIp = providerIp
+                    if (attempt === 2) {
+                        this._nullifyCachedIp(userId)
+                        return undefined
+                    }
                 }
             }
 
             // Validate user object
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
                 console.error(`get_user returned invalid User object for user ${userId} after 2 attempts:`, user)
+                // Clear stale sessionStorage cache so next call doesn't reuse the bad IP
+                this._nullifyCachedIp(userId)
                 return undefined
             }
             
@@ -947,8 +1242,13 @@ export const useTweetStore = defineStore('tweetStore', {
             if (user.writableHostIp === undefined) {
                 user.writableHostIp = null
             }
+            const existingUser = this.users.get(userId)
+            if (existingUser) {
+                // Preserve object identity so existing tweet/header refs receive refreshed fields.
+                Object.assign(existingUser as any, user as any)
+                return existingUser
+            }
             this.users.set(userId, user)
-            
             return user
         },
         
@@ -957,8 +1257,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param userId The user ID to remove
          */
         removeUser(userId: MimeiId) {
-            this.users.delete(userId)
-            sessionStorage.removeItem(userId)
+            this._invalidateUserProviderCache(userId)
         },
 
         /**
@@ -1109,9 +1408,27 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns A single IP address, or null if none found
          */
-        async getProviderIp(mid: string, v4only: boolean = v4Only): Promise<string | null> {
-            const ips = await this.getProviderIps(mid, v4only);
+        async getProviderIp(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string | null> {
+            const ips = await this.getProviderIps(mid, v4only, refresh);
             return ips.length > 0 ? ips[0] : null;
+        },
+
+        /**
+         * Nullify the providerIp in the sessionStorage cache for a user,
+         * so the next fetch won't reuse a stale IP while preserving other cached data.
+         */
+        _nullifyCachedIp(userId: string) {
+            nodePool.invalidate(userId)
+            const cached = sessionStorage.getItem(userId)
+            if (cached) {
+                try {
+                    const cachedUser = JSON.parse(cached)
+                    cachedUser.providerIp = null
+                    sessionStorage.setItem(userId, JSON.stringify(cachedUser))
+                } catch (e) {
+                    sessionStorage.removeItem(userId)
+                }
+            }
         },
 
         /**
@@ -1120,10 +1437,15 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
          * @returns Array of IP addresses (up to 2), or empty array if none found
          */
-        async getProviderIps(mid: string, v4only: boolean = v4Only): Promise<string[]> {
+        async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
+            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, refresh), refresh);
+        },
+
+        /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
+        async _resolveProviderIps(mid: string, v4only: boolean, refresh: boolean): Promise<string[]> {
             try {
-                console.log(`[getProviderIps] Getting provider IPs for ${mid} (v4only: ${v4only})...`);
-                
+                console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
+
                 // Call get_provider_ips (plural) to get list of IPs
                 const params: any = {
                     aid: this.lapi.appId,
@@ -1131,24 +1453,29 @@ export const useTweetStore = defineStore('tweetStore', {
                     version: "v2",
                     mid: mid,
                 };
-                
+
                 // Only add v4only parameter if true
                 if (v4only) {
                     params.v4only = "true";
                 }
-                
+
+                // Force server to bypass its IP cache and return fresh IPs
+                if (refresh) {
+                    params.refresh = "true";
+                }
+
                 const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
-                
+
                 console.log(`[getProviderIps] Raw response from get_provider_ips for ${mid}:`, ipResponse);
-                
+
                 if (!ipResponse) {
                     console.error("[getProviderIps] No response from get_provider_ips for", mid);
                     return [];
                 }
-                
+
                 // Handle the response - could be array or wrapped in data property
                 let ipList: string[] = [];
-                
+
                 if (Array.isArray(ipResponse)) {
                     ipList = ipResponse;
                 } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
@@ -1163,35 +1490,32 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error("[getProviderIps] Invalid response format from get_provider_ips:", ipResponse);
                     return [];
                 }
-                
+
                 // Filter and trim IP addresses, optionally removing IPv6 addresses
                 const ipAddresses = ipList
                     .map(ip => ip.trim())
                     .filter(ip => {
                         if (ip.length === 0) return false;
-                        
+
                         // If v4only is true, filter out IPv6 addresses
-                        if (v4only) {
-                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
-                            if (ip.includes('[') || ip.includes(']')) return false;
-                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
-                            const colonCount = (ip.match(/:/g) || []).length;
-                            if (colonCount > 1) return false;
-                        }
-                        
+                        if (ip.includes('[') || ip.includes(']')) return false;
+                        // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                        const colonCount = (ip.match(/:/g) || []).length;
+                        if (v4only && colonCount > 1) return false;
+
                         return true;
                     });
-                
+
                 if (ipAddresses.length === 0) {
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
                 }
-                
+
                 // Return first 2 IPs without testing them
                 const resultIps = ipAddresses.slice(0, 2);
                 console.log(`[getProviderIps] Returning ${resultIps.length} IP address(es) for ${mid}:`, resultIps);
                 return resultIps;
-                
+
             } catch (error) {
                 console.error("[getProviderIps] Error getting provider IPs for", mid, error);
                 return [];
@@ -1203,7 +1527,11 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweet The tweet to load comments for
          */
         async loadComments(tweet: Tweet) {
-            if (!tweet || !tweet.provider) return
+            if (!tweet || !tweet.provider) {
+                console.warn('[loadComments] Skipping: no tweet or provider', tweet?.mid, tweet?.provider)
+                return
+            }
+            console.log('[loadComments] Loading comments for tweet:', tweet.mid, 'provider:', tweet.provider)
             let client = await this.lapi.getClient(tweet.provider)
             let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
@@ -1213,7 +1541,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 pn: 0,
                 ps: 20
             }) as any[]
-            
+
+            console.log('[loadComments] API returned:', comments?.length ?? 0, 'comments', comments)
+
             // comment type is a different Tweet type from the definition in this app
             if (comments) {
                 // Create comment objects without authors first, then load authors asynchronously
@@ -1225,27 +1555,38 @@ export const useTweetStore = defineStore('tweetStore', {
                             return null
                         }
 
-                        // Create reactive comment object without author initially
-                        const comment: any = reactive({
+                        // Build a full Tweet-shaped comment object so it behaves
+                        // identically to a regular tweet (detail navigation, action bar, etc.)
+                        const comment: any = {
                             mid: e.mid,
                             authorId: e.authorId,
                             author: null as User | null, // Will be loaded asynchronously
                             content: e.content,
                             timestamp: e.timestamp,
+                            // Inherit parent provider so detail view / action bar works.
+                            provider: tweet.provider,
+                            likeCount: e.favoriteCount ?? e.likeCount ?? 0,
+                            bookmarkCount: e.bookmarkCount ?? 0,
+                            commentCount: e.commentCount ?? 0,
+                            comments: [],
                             attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
                                 .map((a: MimeiFileType) => {
-                                    // comments on the same node as the tweet.
+                                    // comments are stored on the same node as the parent tweet.
                                     if (a.mid && tweet.provider) {
                                         a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
                                     }
                                     return a
                                 }),
-                        })
+                        }
 
-                        // Load author asynchronously
+                        // Load author asynchronously — update through the reactive
+                        // tweet.comments proxy so Vue detects the change.
                         this.getUser(e.authorId).then(author => {
-                            if (author && comment) {
-                                comment.author = author
+                            if (author && tweet.comments) {
+                                const reactiveComment = tweet.comments.find(c => c.mid === e.mid)
+                                if (reactiveComment) {
+                                    reactiveComment.author = author
+                                }
                             }
                         }).catch(error => {
                             // Only log errors for non-timeout cases to reduce noise
@@ -1265,10 +1606,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 const commentObjects = await Promise.all(commentPromises)
                 const validComments = commentObjects.filter((c): c is NonNullable<typeof c> => c !== null)
 
-                // Add all comments to the tweet
-                if (tweet.comments) {
-                    tweet.comments.push(...validComments)
-                }
+                console.log('[loadComments] Valid comments to add:', validComments.length)
+
+                // Atomically replace the comments array with fresh server data.
+                // Appending causes duplicates when the same tweet is visited more than
+                // once because the cached tweet object already holds the previously
+                // loaded comments. Preserve any locally-created comments not yet
+                // returned by the server (e.g. optimistic inserts).
+                const freshMids = new Set(validComments.map((c: any) => c.mid))
+                const localOnly = (tweet.comments ?? []).filter(c => !freshMids.has(c.mid))
+                tweet.comments = [...validComments, ...localOnly]
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },
@@ -1319,8 +1666,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     // Force refresh to bypass cache and get fresh IP (like iOS does)
                     // Clear any cached user data before retry to force fresh IP resolution
                     if (attempt > 0) {
-                        this.removeUser(userId)
-                        sessionStorage.removeItem(userId)
+                        this._invalidateUserProviderCache(userId)
                     }
                     let user = await this.getUser(userId, true)
                     console.log(`[login] getUser returned:`, user ? `user with providerIp: ${user.providerIp}` : 'null')
@@ -1404,7 +1750,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         this._user = user
                         this.addFollowing(userId)
                         console.log(`[login] Login flow completed successfully for ${username}`);
-                        useAlertStore().success("Login successful!")
+                        useAlertStore().success(i18n.global.t("auth.loginSuccessful"))
                         return user
                     } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)
@@ -1444,7 +1790,14 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         logout() {
             sessionStorage.clear()
-            this.$reset
+            this._user = null
+            this._followings = []
+            this.tweets = []
+            this.tweetIndex.clear()
+            this.originalTweets = []
+            this.originalTweetIndex.clear()
+            this.users.clear()
+            this.lapi.connectionPool?.clearAll()
         },
         /**
          * Gets the list of followers for a specific user
@@ -1452,11 +1805,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of follower user IDs
          */
         async getFollowers(userId: MimeiId) {
-            let user = await this.getUser(userId)
-            if (!user)
-                return []
-            let list = await user.client.RunMApp("get_followers_sorted", {aid: this.appId, ver: "last", userid: userId})
-            return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
+            return await this._loadSortedUserList(userId, "get_followers_sorted")
         },
         /**
          * Gets the list of users that a specific user is following
@@ -1464,11 +1813,70 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of following user IDs
          */
         async getFollowings(userId: MimeiId) {
-            let user = await this.getUser(userId)
-            if (!user)
-                return []
-            let list = await user.client.RunMApp("get_followings_sorted", {aid: this.appId, ver: "last", userid: userId})
-            return list.sort((a: any, b: any) => b["value"] - a["value"]).slice(0, 50).map((e: any) => e["field"])
+            return await this._loadSortedUserList(userId, "get_followings_sorted")
+        },
+
+        /**
+         * Toggles follow/unfollow status for the target user.
+         * @param followingId The user to follow or unfollow
+         * @returns true if following after toggle, false if unfollowed
+         */
+        async toggleFollowing(followingId: MimeiId): Promise<boolean> {
+            const loginUser = this.loginUser
+            if (!loginUser?.client) {
+                throw new Error("You must be logged in to toggle following")
+            }
+
+            const ret = await loginUser.client.RunMApp("toggle_following", {
+                aid: this.appId,
+                ver: "last",
+                version: "v2",
+                followingid: followingId,
+                userid: loginUser.mid,
+            })
+
+            // Unwrap v2 response payload if wrapped by { success, data }.
+            const response = (ret?.success && ret.data) ? ret.data : ret
+            const isFollowing = typeof response?.isFollowing === "boolean"
+                ? response.isFollowing
+                : (typeof response === "boolean" ? response : undefined)
+
+            if (isFollowing === undefined) {
+                throw new Error("Invalid response from toggle_following")
+            }
+
+            const hadFollowingsCache = this._followings.length > 0
+            const wasFollowing = this._followings.includes(followingId)
+
+            if (hadFollowingsCache) {
+                if (isFollowing && !wasFollowing) {
+                    this._followings.push(followingId)
+                } else if (!isFollowing && wasFollowing) {
+                    this._followings = this._followings.filter(id => id !== followingId)
+                }
+                sessionStorage.setItem("followings", JSON.stringify(this._followings))
+            }
+
+            const targetUser = this.users.get(followingId)
+
+            if (isFollowing && !wasFollowing) {
+                if (this.loginUser) {
+                    this.loginUser.followingCount = (this.loginUser.followingCount ?? 0) + 1
+                }
+                if (targetUser) {
+                    targetUser.followersCount = (targetUser.followersCount ?? 0) + 1
+                }
+            } else if (!isFollowing && wasFollowing) {
+                if (this.loginUser) {
+                    this.loginUser.followingCount = Math.max(0, (this.loginUser.followingCount ?? 0) - 1)
+                }
+                if (targetUser) {
+                    targetUser.followersCount = Math.max(0, (targetUser.followersCount ?? 0) - 1)
+                }
+            }
+
+            sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+            return isFollowing
         },
 
         /**
@@ -1478,6 +1886,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
             this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
+            this.tweetIndex.delete(tweetId)
             let user = await this.getUser(authorId)
             if (user) {
                 await this.loginUser?.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
@@ -1543,13 +1952,13 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Remove from tweets array
-            const parentTweet = this.tweets.find(t => t.mid === parentTweetId)
+            const parentTweet = this.tweetIndex.get(parentTweetId)
             if (parentTweet) {
                 removeCommentFromTweet(parentTweet)
             }
 
             // Also check originalTweets array in case it's displayed as a retweet
-            const originalTweet = this.originalTweets.find(t => t.mid === parentTweetId)
+            const originalTweet = this.originalTweetIndex.get(parentTweetId)
             if (originalTweet) {
                 removeCommentFromTweet(originalTweet)
             }
@@ -1573,7 +1982,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweetId if none, a new tweet is created, otherwise a comment added to the tweetId
          * @returns a mid of the uploaded object
          */
-        async uploadTweet(tweet: any, tweetId: MimeiId) {
+        async uploadTweet(tweet: any, tweetId?: MimeiId) {
             console.log('[TWEET-STORE] Starting uploadTweet...');
             console.log('[TWEET-STORE] Tweet data:', {
                 authorId: tweet.authorId,
@@ -1689,6 +2098,61 @@ export const useTweetStore = defineStore('tweetStore', {
             return ret.mid
         },
         /**
+         * Registers a quote tweet on the original tweet's node (increments retweet count).
+         * Mirrors iOS updateRetweetCount — calls RunMApp("retweet_added") on the original
+         * tweet author's client.
+         */
+        async updateRetweetCount(originalTweet: Tweet, retweetId: MimeiId): Promise<void> {
+            const client = (originalTweet.author as any)?.client ?? this.loginUser?.client
+            if (!client) {
+                console.warn('[updateRetweetCount] No client available')
+                return
+            }
+            try {
+                await client.RunMApp("retweet_added", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    appuserid: this.loginUser?.mid,
+                    retweetid: retweetId,
+                    tweetid: originalTweet.mid,
+                    authorid: originalTweet.authorId,
+                })
+                console.log('[updateRetweetCount] ✅ Retweet count updated for:', originalTweet.mid)
+            } catch (error) {
+                console.warn('[updateRetweetCount] Failed to update retweet count:', error)
+            }
+        },
+        /**
+         * Updates an existing tweet's content
+         * @param tweet The full tweet object with modified content
+         * @returns The mid of the updated tweet
+         */
+        async updateTweet(tweetId: MimeiId, content: string) {
+            if (!this.loginUser) {
+                throw new Error('Not authorized to edit this tweet')
+            }
+            try {
+                const ret = await this.loginUser.client.RunMApp("update_tweet",
+                    {aid: this.appId, ver: "last",
+                        appuserid: this.loginUser.mid,
+                        tweetid: tweetId,
+                        content: content})
+                if (!ret || !ret.success) {
+                    throw new Error(ret?.message || 'Failed to update tweet')
+                }
+                // Update local tweet in store
+                const idx = this.tweets.findIndex(t => t.mid === tweetId)
+                if (idx !== -1) {
+                    this.tweets[idx].content = content
+                }
+                return ret.mid
+            } catch (error) {
+                console.error('[TWEET-STORE] Update tweet failed:', error)
+                throw error
+            }
+        },
+        /**
          * Upload App upgrade package file.
          * @param cid IPFS id of the install package
          * @param mini If true, upload as mini package
@@ -1790,28 +2254,66 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweetId The ID of the tweet to toggle like for
          * @returns The updated tweet object
          */
-        async toggleFavorite(tweetId: MimeiId) {
-            var ret = await this.loginUser?.client.RunMApp("toggle_favorite", {
-                aid: this.appId, ver: "last", appuserid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
-            })
-            var tweet = this.tweets.find(e => e.mid == tweetId)
-            tweet!.likeCount = ret["count"]
-            localStorage.setItem(tweetId, JSON.stringify(tweet))
-            return tweet
+        async toggleFavorite(tweet: Tweet) {
+            if (!tweet.author?.client) throw new Error('Author client not available for toggle_favorite')
+            const client = tweet.author.client
+            const originalTimeout = client.timeout
+            client.timeout = 30000
+            try {
+                var ret = await client.RunMApp("toggle_favorite", {
+                    aid: this.appId, ver: "last", version: "v2", appuserid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
+                })
+                return this._applyServerTweet(tweet, ret)
+            } finally {
+                client!.timeout = originalTimeout
+            }
         },
         /**
          * Toggles the bookmark status of a tweet
-         * @param tweetId The ID of the tweet to toggle bookmark for
+         * @param tweet The tweet to toggle bookmark for
          * @returns The updated tweet object
          */
-        async toggleBookmark(tweetId: MimeiId) {
-            var ret = await this.loginUser?.client.RunMApp("toggle_bookmark", {
-                aid: this.appId, ver: "last", userid: this.loginUser?.mid, tweetid: tweetId, authorid: this.tweets.find(e => e.mid == tweetId)?.authorId, userhostid: this.loginUser?.hostIds?.[0]
-            })
-            var tweet = this.tweets.find(e => e.mid == tweetId)
-            tweet!.bookmarkCount = ret["count"]
-            localStorage.setItem(tweetId, JSON.stringify(tweet))
-            return tweet
+        async toggleBookmark(tweet: Tweet) {
+            if (!tweet.author?.client) throw new Error('Author client not available for toggle_bookmark')
+            const client = tweet.author.client
+            const originalTimeout = client.timeout
+            client.timeout = 30000
+            try {
+                var ret = await client.RunMApp("toggle_bookmark", {
+                    aid: this.appId, ver: "last", version: "v2", userid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
+                })
+                return this._applyServerTweet(tweet, ret)
+            } finally {
+                client!.timeout = originalTimeout
+            }
+        },
+        _applyServerTweet(tweet: Tweet, ret: any): Tweet {
+            console.log('[_applyServerTweet] ret:', JSON.stringify(ret))
+            // Unwrap v2 response: if ret has data field, use it
+            const response = (ret?.success && ret.data) ? ret.data : ret
+            if (response?.success && response.tweet) {
+                const s = response.tweet
+                const updated = { ...tweet,
+                    likeCount: s.favoriteCount ?? tweet.likeCount,
+                    bookmarkCount: s.bookmarkCount ?? tweet.bookmarkCount,
+                    commentCount: s.commentCount ?? tweet.commentCount,
+                    retweetCount: s.retweetCount ?? tweet.retweetCount,
+                }
+                const idx = this.tweets.findIndex(e => e.mid == tweet.mid)
+                if (idx >= 0) {
+                    Object.assign(this.tweets[idx], updated)
+                }
+                localStorage.setItem(tweet.mid, JSON.stringify(updated))
+
+                // Update login user from server response (like Android's appUser.from)
+                if (response.user && this.loginUser) {
+                    Object.assign(this.loginUser, response.user)
+                    sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+                }
+
+                return updated
+            }
+            return { ...tweet }
         },
 
         /**
@@ -2135,6 +2637,334 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param address full ip address with port
          * @returns IP without port
          */
+        /**
+         * Registers a new user account (matches iOS registerUser)
+         */
+        async register(
+            username: string,
+            password: string,
+            alias?: string,
+            profile?: string,
+            hostId?: string,
+            cloudDrivePort: number = 0
+        ): Promise<boolean> {
+            const userObj: any = {
+                mid: "",
+                username: username,
+                password: password,
+                name: alias || "",
+                profile: profile || "",
+                cloudDrivePort: cloudDrivePort,
+                timestamp: Date.now(),
+            }
+            if (hostId && hostId.trim()) {
+                userObj.hostIds = [hostId.trim()]
+            }
+
+            const originalTimeout = this.lapi.client.timeout
+            this.lapi.client.timeout = 15000
+            let ret
+            try {
+                ret = await this.lapi.client.RunMApp("register", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    user: JSON.stringify(userObj)
+                })
+            } finally {
+                this.lapi.client.timeout = originalTimeout
+            }
+
+            if (!ret || !ret["success"]) {
+                const msg = ret?.["message"] || "Registration failed"
+                throw new Error(msg)
+            }
+            const registeredMid = parseRegisteredUserMid(ret)
+            if (registeredMid) {
+                void this._autoFollowDefaultUsersAfterRegister(registeredMid)
+            } else {
+                console.warn("[register] No user.mid in registration response; skipping default followings auto-follow")
+            }
+            return true
+        },
+
+        /**
+         * After successful registration, follow `VITE_DEFAULT_FOLLOWINGS` as the new account (matches iOS registerUser background task).
+         */
+        _autoFollowDefaultUsersAfterRegister(registeredUserId: MimeiId) {
+            void (async () => {
+                const ids = defaultFollowingIdsFromEnv()
+                for (const followingId of ids) {
+                    try {
+                        const target = await this.getUser(followingId)
+                        if (!target) {
+                            console.warn(`[register:autoFollow] User not found, skip: ${followingId}`)
+                            continue
+                        }
+                        const toggled = await this.lapi.client.RunMApp("toggle_following", {
+                            aid: this.appId,
+                            ver: "last",
+                            version: "v2",
+                            followingid: followingId,
+                            userid: registeredUserId,
+                        })
+                        const response = (toggled?.success && toggled.data) ? toggled.data : toggled
+                        const isFollowing =
+                            typeof response?.isFollowing === "boolean"
+                                ? response.isFollowing
+                                : typeof response === "boolean"
+                                  ? response
+                                  : undefined
+                        if (isFollowing !== true) {
+                            console.warn(`[register:autoFollow] Unexpected toggle result for ${followingId}`, toggled)
+                        }
+                    } catch (e) {
+                        console.warn(`[register:autoFollow] Failed for ${followingId}`, e)
+                    }
+                }
+            })()
+        },
+
+        /**
+         * Updates the current user's profile data (matches iOS updateUserCore)
+         */
+        async updateProfile(updates: {
+            name?: string,
+            profile?: string,
+            password?: string,
+            hostId?: string,
+            cloudDrivePort?: number,
+            domainToShare?: string,
+        }): Promise<boolean> {
+            const user = this.loginUser
+            if (!user) throw new Error("Not logged in")
+
+            const userObj: any = {
+                mid: user.mid,
+                username: user.username,
+                name: updates.name ?? user.name ?? "",
+                profile: updates.profile ?? user.profile ?? "",
+                timestamp: typeof user.timestamp === 'number' ? user.timestamp : Date.now(),
+                cloudDrivePort: updates.cloudDrivePort ?? user.cloudDrivePort ?? 0,
+            }
+            if (updates.password) {
+                userObj.password = updates.password
+            }
+            // hostId: use provided value if non-empty, otherwise preserve existing
+            if (updates.hostId !== undefined && updates.hostId.trim()) {
+                userObj.hostIds = [updates.hostId.trim()]
+            } else {
+                userObj.hostIds = user.hostIds || []
+            }
+            // domainToShare: if explicitly provided (even empty string to clear), use it
+            if (updates.domainToShare !== undefined) {
+                const trimmed = updates.domainToShare.trim()
+                if (trimmed) userObj.domainToShare = trimmed
+            }
+
+            const originalTimeout = user.client.timeout
+            user.client.timeout = 15000
+            let ret
+            try {
+                ret = await user.client.RunMApp("set_author_core_data", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    user: JSON.stringify(userObj)
+                })
+            } finally {
+                user.client.timeout = originalTimeout
+            }
+
+            if (!ret) throw new Error("Profile update failed")
+            if (ret["success"] === false) {
+                throw new Error(ret["message"] || "Profile update failed")
+            }
+
+            // Update local state
+            if (updates.name !== undefined) user.name = updates.name
+            if (updates.profile !== undefined) user.profile = updates.profile
+            if (updates.cloudDrivePort !== undefined) user.cloudDrivePort = updates.cloudDrivePort
+            if (updates.hostId !== undefined && updates.hostId.trim()) {
+                user.hostIds = [updates.hostId.trim()]
+            }
+            this._user = user
+            sessionStorage.setItem("user", JSON.stringify(user))
+
+            return true
+        },
+
+        /**
+         * Uploads avatar image to IPFS and sets it as user avatar (matches iOS ProfileEditView.swift)
+         * @param blob The cropped avatar image blob
+         * @returns The confirmed avatar MimeiId
+         */
+        async setUserAvatar(blob: Blob): Promise<string> {
+            const user = this.loginUser
+            if (!user) throw new Error("Not logged in")
+
+            const providerIp = user.providerIp
+            if (!providerIp) throw new Error("Provider IP not available")
+
+            // Convert blob to ArrayBuffer and upload via upload_ipfs
+            const arrayBuffer = await blob.arrayBuffer()
+            const uint8Data = new Uint8Array(arrayBuffer)
+            const chunkSize = 1024 * 1024
+            let offset = 0
+            let fsid: string | null = null
+
+            const uploadClient = await this.lapi.connectionPool.getConnection(providerIp)
+
+            try {
+                uploadClient.timeout = 60000
+
+                while (offset < uint8Data.length) {
+                    const end = Math.min(offset + chunkSize, uint8Data.length)
+                    const chunk = uint8Data.slice(offset, end)
+
+                    const request: any = {
+                        aid: this.appId,
+                        ver: 'last',
+                        version: 'v2',
+                        offset: offset
+                    }
+                    if (fsid) request.fsid = fsid
+
+                    const response = await uploadClient.RunMApp('upload_ipfs', request, [chunk])
+
+                    if (response && typeof response === 'object') {
+                        if (response.success === false) throw new Error(response.message || 'Upload failed')
+                        if (response.success === true && response.data) {
+                            fsid = response.data
+                            offset = end
+                        } else {
+                            throw new Error(`Invalid response: ${JSON.stringify(response)}`)
+                        }
+                    } else if (typeof response === 'string') {
+                        fsid = response
+                        offset = end
+                    } else {
+                        throw new Error(`Unexpected response type: ${typeof response}`)
+                    }
+                }
+
+                if (!fsid) throw new Error('No file ID returned')
+
+                // Finalize upload
+                const finalResponse = await uploadClient.RunMApp('upload_ipfs', {
+                    aid: this.appId,
+                    ver: 'last',
+                    version: 'v2',
+                    offset: offset,
+                    fsid: fsid,
+                    finished: 'true'
+                })
+
+                let cid: string | null = null
+                if (finalResponse && typeof finalResponse === 'object') {
+                    if (finalResponse.success === true && finalResponse.data) cid = finalResponse.data
+                    else if (finalResponse.cid) cid = finalResponse.cid
+                } else if (typeof finalResponse === 'string') {
+                    cid = finalResponse
+                }
+
+                if (!cid) throw new Error('No CID returned from finalization')
+
+                // Set user avatar on server (matches iOS HproseInstance.setUserAvatar)
+                const originalTimeout = user.client.timeout
+                user.client.timeout = 15000
+                let confirmedAvatar: string
+                try {
+                    const ret = await user.client.RunMApp("set_user_avatar", {
+                        aid: this.appId,
+                        ver: "last",
+                        version: "v2",
+                        userid: user.mid,
+                        avatar: cid
+                    })
+
+                    if (ret && typeof ret === 'object') {
+                        confirmedAvatar = ret.data || ret.avatar || cid
+                    } else if (typeof ret === 'string') {
+                        confirmedAvatar = ret
+                    } else {
+                        confirmedAvatar = cid
+                    }
+                } finally {
+                    user.client.timeout = originalTimeout
+                }
+
+                // Update local state with new object to trigger reactivity
+                const updatedUser = { ...user, avatar: this.getMediaUrl(confirmedAvatar, `http://${providerIp}`) }
+                this._user = updatedUser
+                sessionStorage.setItem("user", JSON.stringify(updatedUser))
+
+                return confirmedAvatar
+            } finally {
+                this.lapi.connectionPool.releaseConnection(providerIp, uploadClient)
+            }
+        },
+
+        /**
+         * Fetches the backend domain from the server via check_upgrade API.
+         * Returns the domain without protocol prefix (matching iOS backendDomainToShare).
+         */
+        async fetchBackendDomain(): Promise<string> {
+            const user = this.loginUser
+            if (!user) return ""
+            try {
+                const ret = await user.client.RunMApp("check_upgrade", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    entry: "check_upgrade"
+                })
+                if (!ret) return ""
+                let domain = ret["domain"]
+                if (!domain && ret["data"]) {
+                    domain = ret["data"]["domain"]
+                }
+                if (!domain) return ""
+                // Strip protocol prefix like iOS does for placeholder display
+                if (domain.startsWith("https://")) return domain.slice(8)
+                if (domain.startsWith("http://")) return domain.slice(7)
+                return domain
+            } catch (e) {
+                console.warn("[fetchBackendDomain] Failed:", e)
+                return ""
+            }
+        },
+
+        /**
+         * Deletes the current user's account (matches iOS deleteAccount)
+         */
+        async deleteAccount(): Promise<boolean> {
+            const user = this.loginUser
+            if (!user) throw new Error("Not logged in")
+
+            const originalTimeout = user.client.timeout
+            user.client.timeout = 15000
+            let ret
+            try {
+                ret = await user.client.RunMApp("delete_account", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    userid: user.mid
+                })
+            } finally {
+                user.client.timeout = originalTimeout
+            }
+
+            if (ret && ret["success"] === false) {
+                throw new Error(ret["message"] || "Delete account failed")
+            }
+
+            // Clean up local state same as logout
+            this.logout()
+            return true
+        },
+
         getIpWithoutPort(address: string): string | null {
             const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
             const match = address.match(regex);

@@ -1,11 +1,14 @@
 <script lang="ts" setup>
-import { ref, onMounted, watch, computed, nextTick } from 'vue';
+import { ref, onMounted, watch, computed, nextTick, triggerRef } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
-import { MediaView, DetailHeader, TweetView, QRCoder } from "@/views";
-import { DownloadPrompt, DownloadModal, LoadingSpinner, PageLayout } from "@/components";
+import { MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
+import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
+
+const { t } = useI18n();
 
 const route = useRoute();
 const router = useRouter();
@@ -25,35 +28,68 @@ const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
 
-// Localization for bot verification
-function getBotVerificationMessage(): string {
-    const language = navigator.language || 'en';
-    
-    if (language.startsWith('zh')) {
-        return '点击OK。证明你不是机器人\n\n芝麻，开门！';
-    } else if (language.startsWith('ja')) {
-        return 'OKをクリック。あなたがロボットではないことを証明してください\n\n開け！ゴマ';
+// Draggable button state
+const btnEl = ref<HTMLElement | null>(null)
+const btnPos = ref({ x: 0, y: 0 })
+const btnInitialized = ref(false)
+const isDragging = ref(false)
+const lastDragPos = ref({ x: 0, y: 0 })
+const dragMoved = ref(false)
+
+function initBtnPos() {
+    if (btnInitialized.value) return
+    const rect = btnEl.value?.getBoundingClientRect()
+    if (rect) {
+        btnPos.value = { x: rect.left, y: rect.top }
     } else {
-        return 'Click OK. Prove you aren\'t bot.\n\nOpen Sesame!';
+        btnPos.value = { x: window.innerWidth / 2 - 80, y: window.innerHeight - 100 }
+    }
+    btnInitialized.value = true
+}
+
+function onDragStart(e: MouseEvent | TouchEvent) {
+    initBtnPos()
+    isDragging.value = true
+    dragMoved.value = false
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+    lastDragPos.value = { x: clientX, y: clientY }
+    e.preventDefault()
+    window.addEventListener('mousemove', onWindowDragMove)
+    window.addEventListener('mouseup', onWindowDragEnd)
+    window.addEventListener('touchmove', onWindowDragMove, { passive: false })
+    window.addEventListener('touchend', onWindowDragEnd)
+}
+
+function onWindowDragMove(e: MouseEvent | TouchEvent) {
+    if (!isDragging.value) return
+    const clientX = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX
+    const clientY = 'touches' in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY
+    btnPos.value = {
+        x: btnPos.value.x + clientX - lastDragPos.value.x,
+        y: btnPos.value.y + clientY - lastDragPos.value.y,
+    }
+    lastDragPos.value = { x: clientX, y: clientY }
+    dragMoved.value = true
+    e.preventDefault()
+}
+
+function onWindowDragEnd() {
+    if (!isDragging.value) return
+    isDragging.value = false
+    window.removeEventListener('mousemove', onWindowDragMove)
+    window.removeEventListener('mouseup', onWindowDragEnd)
+    window.removeEventListener('touchmove', onWindowDragMove)
+    window.removeEventListener('touchend', onWindowDragEnd)
+    if (!dragMoved.value) {
+        openDownloadModal()
     }
 }
 
-// Localization for loading retry message
-function getLoadingRetryMessage(): string {
-    const language = navigator.language || 'en';
-
-    if (language.startsWith('zh')) {
-        return '正在加载推文，6秒后重试...';
-    } else if (language.startsWith('ja')) {
-        return 'ツイートを読み込んでいます、6秒後に再試行...';
-    } else {
-        return 'Loading tweet, retrying in 6s...';
-    }
-}
 
 onMounted(async () => {
     if (sessionStorage["isBot"] != "No" && isWeChatBrowser()) {
-        if (confirm(getBotVerificationMessage())) {
+        if (confirm(t('botVerification'))) {
             sessionStorage["isBot"] = "No"
             loadDetail()
         } else {
@@ -99,60 +135,17 @@ async function loadDetail(retryCount = 0) {
     }
 
     try {
-        let s = sessionStorage.getItem("tweetDetail")
-        console.log('[loadDetail] sessionStorage data exists:', !!s);
-        if (s) {
-            const storedTweet = JSON.parse(s)
-            console.log('[loadDetail] storedTweet.mid:', storedTweet.mid, 'tweetId.value:', tweetId.value);
-            console.log('[loadDetail] storedTweet.author?.mid:', storedTweet.author?.mid, 'authorId.value:', authorId.value);
-            // Only use sessionStorage if the stored tweet matches the current route
-            if (storedTweet.mid === tweetId.value && (!authorId.value || storedTweet.author?.mid === authorId.value)) {
-                console.log('[loadDetail] Using cached tweet data');
-                tweet.value = storedTweet
-                // Render tweet immediately without waiting for author
-                await showTweet(timeoutId)
-                // Load author asynchronously (only if not already loaded)
-                if (!tweet.value.author && tweet.value.authorId) {
-                    tweetStore.getUser(tweet.value.authorId).then(user => {
-                        if (user && tweet.value) {
-                            tweet.value.author = user
-                        }
-                    }).catch(error => {
-                        console.warn('[TweetDetail] Failed to load author:', error)
-                    })
-                }
-            } else {
-                console.log('[loadDetail] Stored tweet doesn\'t match route, fetching new tweet');
-                // Stored tweet doesn't match current route, fetch new one
-                sessionStorage.removeItem("tweetDetail")
-                // Fetch tweet if it is not in session already.
-                // Use racing for faster loading on TweetDetail page
-                console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
-                tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
-                console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
+        // Always fetch fresh data from server
+        console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
+        tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+        console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
 
-                if (!tweet.value) {
-                    throw new Error('Tweet not found (null response)')
-                }
-
-                loadError.value = false
-                await showTweet(timeoutId)
-            }
+        if (!tweet.value) {
+            throw new Error('Tweet not found (null response)')
         }
-        else {
-            // Fetch tweet if it is not in session already.
-            // Use racing for faster loading on TweetDetail page
-            console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
-            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
-            console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
 
-            if (!tweet.value) {
-                throw new Error('Tweet not found (null response)')
-            }
-
-            loadError.value = false
-            await showTweet(timeoutId)
-        }
+        loadError.value = false
+        await showTweet(timeoutId)
         console.log(tweet.value)
 
         // display url as link
@@ -209,8 +202,6 @@ async function loadDetail(retryCount = 0) {
 }
 async function showTweet(timeoutId?: number) {
     try {
-        sessionStorage.setItem("tweetDetail", JSON.stringify(tweet.value))
-
         // Tweet content is ready to display - set loading to false early
         document.title = formattedTitle.value
         if (timeoutId) clearTimeout(timeoutId)
@@ -239,12 +230,11 @@ async function showTweet(timeoutId?: number) {
             }))
         }
 
-        // Fire and forget - let these run in background without blocking
-        Promise.allSettled(loadPromises).then(() => {
-            console.log('[TweetDetail] Background loading operations completed')
-        }).catch(error => {
-            console.warn('[TweetDetail] Some background operations failed:', error)
-        })
+        // Await comments loading, then trigger Vue reactivity
+        await Promise.allSettled(loadPromises)
+        // Use triggerRef to notify Vue that the ref's inner value has changed
+        triggerRef(tweet)
+        triggerRef(originTweet)
     } catch (error) {
         console.error('Error in showTweet:', error)
         if (timeoutId) clearTimeout(timeoutId)
@@ -279,41 +269,6 @@ const formattedTitle = computed(() => {
 })
 
 
-const downloadingText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载中...'
-    } else if (language.startsWith('ja')) {
-        return 'ダウンロード中...'
-    } else {
-        return 'Downloading...'
-    }
-})
-
-const downloadText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '下载APP获得最佳体验'
-    } else if (language.startsWith('ja')) {
-        return 'ネイティブアプリで最高の体験を'
-    } else {
-        return '下载APP获得最佳体验'
-    }
-})
-
-const backToTweetText = computed(() => {
-    const language = navigator.language || 'en'
-
-    if (language.startsWith('zh')) {
-        return '返回推文'
-    } else if (language.startsWith('ja')) {
-        return 'ツイートに戻る'
-    } else {
-        return 'Back to Tweet'
-    }
-})
 
 watch(tweetId, async (newValue, oldValue)=>{
     console.log('[tweetId watcher] tweetId changed from', oldValue, 'to', newValue);
@@ -341,23 +296,50 @@ function linkify(text: string) {
     return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
 }
 
-function addComment(tweetId: MimeiId) {
-    router.push({ name: 'post', params: { tweetId: tweetId } })
-}
+// Keep the same truncation behavior as `src/views/TweetView.vue`
+const MAX_LINES = 10;
+const MAX_CHARS_CHINESE = 300;
+const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
 
-async function toggleLike(t: Tweet) {
-    if (!tweetStore.loginUser) {
-        router.push({ name: 'login' })
-        return
+function truncateTweetContent(content: string) {
+    // Normalize `<br>` tags into real newlines so line-based truncation matches `TweetView.vue`.
+    const normalizedContent = content
+        // Match `<br>`, `<br/>`, and `<br ...>` (with attributes) safely.
+        .replace(/<br\b[^>]*\/?>/gi, '\n')
+        // Paragraph / block separators (best-effort) to keep line counting consistent.
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        // Remove any remaining HTML tags so truncation never cuts through markup.
+        .replace(/<[^>]+>/g, '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+    const linkedText = linkify(normalizedContent);
+    const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
+
+    const clipped =
+        (isChinese && linkedText.length > MAX_CHARS_CHINESE) ||
+        (!isChinese && linkedText.split('\n').length > MAX_LINES);
+
+    if (!clipped) {
+        return { html: linkedText, clipped: false, useHeightClamp: false };
     }
-    tweet.value = await tweetStore.toggleFavorite(t.mid)
-}
-async function toggleBookmark(t: Tweet) {
-    if (!tweetStore.loginUser) {
-        router.push({ name: 'login' })
-        return
+
+    let html = isChinese
+        ? linkedText.substring(0, MAX_CHARS_CHINESE)
+        : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
+
+    // If truncation cut mid-word, trim back to the last word boundary
+    if (isChinese && html.length < linkedText.length && /\S$/.test(html) && /\S/.test(linkedText[html.length] ?? ' ')) {
+        const trimmed = html.replace(/\S+$/, '');
+        if (trimmed.length > 0) html = trimmed;
     }
-    tweet.value  = await tweetStore.toggleBookmark(t.mid)
+
+    return {
+        html: html.trimEnd() + `<span class="tweet-content-more">${t('tweet.showMore')}...</span>`,
+        clipped: true,
+        // For Chinese we already truncate by character count; extra height clamping can hide `showMore`.
+        useHeightClamp: !isChinese,
+    };
 }
 
 // Download prompt functions
@@ -438,7 +420,7 @@ const documentAttachments = computed(() => {
 
 // Format file size in human-readable form
 function formatFileSize(bytes: number | undefined): string {
-    if (!bytes || bytes === 0) return '0 Bytes';
+    if (!bytes || bytes === 0) return '0 ' + t('size.bytes');
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -621,6 +603,18 @@ const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
 const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
 const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
+const truncatedTweetContent = computed(() => {
+    const content = tweet.value?.content;
+    if (!content) return { html: '', clipped: false, useHeightClamp: false };
+    return truncateTweetContent(content);
+});
+
+const truncatedOriginTweetContent = computed(() => {
+    const content = originTweet.value?.content;
+    if (!content) return { html: '', clipped: false, useHeightClamp: false };
+    return truncateTweetContent(content);
+});
+
 function goBack() {
     if (parentTweetId.value && parentAuthorId.value) {
         router.push(`/tweet/${parentTweetId.value}/${parentAuthorId.value}`);
@@ -637,18 +631,18 @@ function retryLoad() {
 </script>
 
 <template>
-<PageLayout width="wide">
+<PageLayout>
     <div v-if="isFromComment" class="back-button mb-2" @click="goBack">
-        ← {{ backToTweetText }}
+        ← {{ $t('common.back') }}
     </div>
     
     <!-- Tweet not found error - specific message for non-existent tweets -->
     <div v-if="tweetNotFound && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
         <div class="alert alert-warning" role="alert">
-            <h5 class="alert-heading">Tweet Not Found</h5>
-            <p class="mb-3">This tweet doesn't exist or may have been deleted.</p>
+            <h5 class="alert-heading">{{ $t('tweet.tweetNotFound') }}</h5>
+            <p class="mb-3">{{ $t('tweet.tweetNotFoundDesc') }}</p>
             <button @click="goBack" class="btn btn-secondary">
-                Go Back
+                {{ $t('tweet.goBack') }}
             </button>
         </div>
     </div>
@@ -656,27 +650,41 @@ function retryLoad() {
     <!-- General error message with retry button - for network/other errors -->
     <div v-if="loadError && !isLoading && hasLoadAttempted && !tweet && !tweetNotFound" class="loading-retry-message text-center my-4">
         <div class="alert alert-danger" role="alert">
-            <h5 class="alert-heading">Unable to Load Tweet</h5>
-            <p class="mb-2">There was an error loading this tweet.</p>
-            <p class="mb-3 text-muted small">Check browser console for detailed error information.</p>
+            <h5 class="alert-heading">{{ $t('tweet.unableToLoad') }}</h5>
+            <p class="mb-2">{{ $t('tweet.loadError') }}</p>
+            <p class="mb-3 text-muted small">{{ $t('tweet.checkConsole') }}</p>
             <button @click="retryLoad" class="btn btn-primary">
                 <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                Retry
+                {{ $t('common.retry') }}
             </button>
         </div>
     </div>
 
     <div v-if="tweet" class="card mb-1">
-        <div class="card-header d-flex align-items-center">
-            <DetailHeader v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
-                :is-retweet="isRetweet" :by="tweet.author.username">
+        <div class="card-header d-flex align-items-stretch">
+            <DetailHeader class="w-100" v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
+                :is-retweet="isRetweet" :by="tweet.author.username"
+                :exclude-tweet-id="tweet.originalTweet?.mid">
             </DetailHeader>
-            <DetailHeader v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"></DetailHeader>
+            <DetailHeader class="w-100" v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"
+                :exclude-tweet-id="tweet.mid">
+            </DetailHeader>
         </div>
         
         <div v-if="isRetweet" class="card-body" id="content">
 
-            <p v-if="originTweet.content" class="card-text" v-html="linkify(originTweet.content)"></p>
+            <p
+                v-if="originTweet.content"
+                class="card-text"
+                v-html="isFromComment ? truncatedOriginTweetContent.html : linkify(originTweet.content)"
+                :style="isFromComment ? {
+                    lineHeight: CONTENT_CLAMP_LINE_HEIGHT,
+                    maxHeight: (truncatedOriginTweetContent.clipped && truncatedOriginTweetContent.useHeightClamp)
+                        ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
+                        : 'none',
+                    overflow: 'hidden',
+                } : undefined"
+            ></p>
 
             <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -690,29 +698,18 @@ function retryLoad() {
                     @click='handleDocumentClick($event, doc)'
                 >
                     <span class='document-icon'>📄</span>
-                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
-            <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleLike(originTweet)" src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ originTweet.likeCount > 0 ? originTweet.likeCount : null }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleBookmark(originTweet)" src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ originTweet.bookmarkCount > 0 ? originTweet.bookmarkCount : null
-                        }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="addComment(originTweet.mid)" src='/src/ic_notice.png' alt='Comment' class='icon' />
-                    <span class='icon-number'>{{ originTweet.commentCount > 0 ? originTweet.commentCount : null
-                        }}</span>
-                </div>
-            </div>
+            <TweetActionBar :tweet="originTweet" @updated="(t) => originTweet = t" />
         </div>
         <div v-else class="card-body">
-            <p v-if="tweet.content" class="card-text" v-html="linkify(tweet.content)"></p>
+            <p
+                v-if="tweet.content"
+                class="card-text"
+                v-html="linkify(tweet.content)"
+            ></p>
 
             <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -727,42 +724,34 @@ function retryLoad() {
                     @click='handleDocumentClick($event, doc)'
                 >
                     <span class='document-icon'>📄</span>
-                    <span class='document-filename'>{{ doc.fileName || 'Unknown file' }}</span>
+                    <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
 
             <!-- quoted tweet -->
-            <blockquote v-if="!isRetweet">
+            <blockquote v-if="!isRetweet" class="quoted-tweet">
                 <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
-            <div class='icon-row d-flex justify-content-around mt-1 mb-2'>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleLike(tweet)" src='/src/ic_heart.png' alt='Favorite' class='icon' />
-                    <span class='icon-number'>{{ tweet.likeCount > 0 ? tweet.likeCount : null }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="toggleBookmark(tweet)" src='/src/ic_bookmark.png' alt='Bookmark' class='icon' />
-                    <span class='icon-number'>{{ tweet.bookmarkCount > 0 ? tweet.bookmarkCount : null }}</span>
-                </div>
-                <div class='icon-item d-flex align-items-center'>
-                    <img @click="addComment(tweet.mid)" src='/src/ic_notice.png' alt='Comment' class='icon' />
-                    <span class='icon-number'>{{ tweet.commentCount > 0 ? tweet.commentCount : null }}</span>
-                </div>
-            </div>
+            <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
         </div>
     </div>
 
-    <!-- Show comments of the original tweet if it is a retweet -->
-    <div v-if="tweet">
-        <div v-if="isRetweet">
-            <TweetView v-for="comment in originTweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="originTweet" class="comment card mb-1 mt-3" />
-        </div>
-        <!-- Show comments of the tweet -->
-        <div v-else>
-            <TweetView v-for="comment in tweet.comments" :key="comment.mid" :tweet="comment" :is-comment="true" :parent-tweet="tweet" class="comment card mb-1 mt-3" />
-        </div>
+    <!-- Comment list — reuses the same TweetList component as the main feed -->
+    <div v-if="tweet" :class="['comment-list', 'mt-3', { 'has-comments': isRetweet ? originTweet?.comments?.length : tweet.comments?.length }]">
+        <TweetList
+            v-if="isRetweet && originTweet?.comments?.length"
+            :tweets="originTweet.comments"
+            :is-comment="true"
+            :parent-tweet="originTweet"
+        />
+        <TweetList
+            v-else-if="!isRetweet && tweet.comments?.length"
+            :tweets="tweet.comments"
+            :is-comment="true"
+            :parent-tweet="tweet"
+        />
     </div>
 
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
@@ -780,16 +769,44 @@ function retryLoad() {
     />
 
     <!-- Download Button -->
-    <div v-if="showDownloadPrompt" class="download-button-container">
-        <button class="download-button" @click="openDownloadModal">
+    <div
+        v-if="showDownloadPrompt"
+        ref="btnEl"
+        class="download-button-container"
+        :class="{ dragging: isDragging }"
+        :style="btnInitialized ? { left: btnPos.x + 'px', top: btnPos.y + 'px' } : {}"
+        @mousedown="onDragStart"
+        @touchstart="onDragStart"
+    >
+        <button class="download-button">
             <img src="/src/ic_splash.png" alt="App Icon" class="download-icon" />
-            <span class="download-text">{{ downloadText }}</span>
+            <span class="download-text">{{ $t('download.downloadApp') }}</span>
         </button>
     </div>
 </PageLayout>
 </template>
 
 <style scoped>
+.quoted-tweet {
+    margin: 8px 0 8px 32px;
+    border: 1px solid #e6ecf0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.comment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.comment-list.has-comments {
+    margin-bottom: 1rem;
+}
+
+.comment-list > .card {
+    margin-bottom: 0;
+}
+
 /* Loading retry message styling */
 .loading-retry-message {
     padding: 2rem 1rem;
@@ -822,7 +839,7 @@ function retryLoad() {
 
 .card {
     width: 100%;
-    margin: 0px 0px 30px 5px;
+    margin: 0px 0px 30px 0px;
 }
 
 .card-header {
@@ -840,6 +857,12 @@ function retryLoad() {
     font-size: medium;
     white-space: pre-wrap;
     padding: 0px 8px;
+}
+.card-text :deep(.tweet-content-more) {
+    color: var(--bs-link-color, blue);
+    text-decoration: none;
+    white-space: nowrap;
+    margin-left: 0.25em;
 }
 .card-text a {
     color: blue;
@@ -951,58 +974,6 @@ function retryLoad() {
 .rounded-circle {
     width: 40px;
     height: 40px;
-}
-
-.icon-item {
-    position: relative;
-    /* Establishes a positioning context for the number */
-    display: flex;
-    flex-direction: column;
-    /* Stacks the icon and number vertically */
-    align-items: center;
-}
-
-.icon-number {
-    position: absolute;
-    /* Positions the number on top of the icon */
-    bottom: -1px;
-    /* Positions the number slightly below the icon */
-    right: -15px;
-    /* Aligns the number to the right edge of the icon */
-    font-size: 15px;
-    /* Adjust the font size for better visibility */
-    color: rgba(0, 0, 0, 0.78);
-    /* Change the color to ensure visibility */
-}
-
-.icon-row {
-    display: flex;
-    justify-content: space-around;
-}
-
-.icon {
-    width: 18px;
-    /* Set a uniform width for icons */
-    height: 18px;
-    /* Set a uniform height for icons */
-    transition: transform 0.3s;
-    cursor: pointer;
-}
-
-.icon:hover {
-    transform: scale(1.1);
-    /* Slightly enlarge the icon on hover */
-}
-
-.icon-item span {
-    margin-top: 5px;
-    /* Adds space between the icon and the number */
-    color: rgba(0, 0, 0, 0.775);
-    /* Change the color to ensure visibility */
-    font-weight: bold;
-    /* Makes the number stand out */
-    pointer-events: none;
-    /* Ensures the number doesn't interfere with icon hover */
 }
 
 /* App Download Prompt Styles */
@@ -1140,11 +1111,13 @@ function retryLoad() {
     cursor: pointer;
     display: inline-block;
     font-weight: 500;
-    color: #333;
+    color: #ccd0d4;
 }
 
 .back-button:hover {
-    opacity: 0.7;
+    color: #ccd0d4;
+    text-decoration: underline;
+    opacity: 1;
 }
 
 .document-attachments {
@@ -1199,32 +1172,41 @@ function retryLoad() {
 /* Download Button Styles */
 .download-button-container {
     position: fixed;
-    bottom: 20px;
-    left: 0;
-    width: 100%;
-    max-width: 900px;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 1000;
-    display: flex;
-    justify-content: center;
-    pointer-events: none;
+    width: fit-content;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    /* Once inline left/top are set, override bottom and transform */
+}
+
+.download-button-container[style] {
+    bottom: unset;
+    transform: none;
+}
+
+.download-button-container.dragging {
+    cursor: grabbing;
 }
 
 .download-button {
     background: #5a67d8;
     color: #ffffff;
     border: none;
-    border-radius: 25px;
-    padding: 12px 28px;
+    border-radius: 999px;
+    padding: 6px 24px;
     font-size: 1rem;
     font-weight: 500;
-    cursor: pointer;
+    cursor: inherit;
     box-shadow: 0 4px 12px rgba(90, 103, 216, 0.4);
     transition: background 0.2s ease, box-shadow 0.2s ease;
     white-space: nowrap;
     display: flex;
     align-items: center;
     gap: 8px;
-    pointer-events: auto;
 }
 
 .download-icon {
@@ -1252,7 +1234,7 @@ function retryLoad() {
 @media (max-width: 768px) {
     .download-button {
         font-size: 0.9rem;
-        padding: 10px 24px;
+        padding: 5px 20px;
     }
 
     .download-text {

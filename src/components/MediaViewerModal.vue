@@ -417,8 +417,8 @@ function goToMedia(index: number) {
 
 .image-container,
 .video-container {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -427,12 +427,30 @@ function goToMedia(index: number) {
 }
 
 .fullscreen-image {
-  width: 100vw !important;
+  width: auto !important;
   height: auto !important;
-  max-height: 100vh;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
   object-fit: contain;
   object-position: center;
   display: block;
+}
+
+.image-container :deep(.img-wrapper) {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-container :deep(.img-wrapper img) {
+  width: auto !important;
+  height: auto !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  object-fit: contain !important;
+  object-position: center !important;
 }
 
 .video-container :deep(.video-container) {
