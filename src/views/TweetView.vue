@@ -129,10 +129,15 @@ const tweetContentProcessing = computed(() => {
     return { html: linkedText, clipped: false };
   }
 
-  const html = isChinese
+  let html = isChinese
     ? linkedText.substring(0, MAX_CHARS_CHINESE)
     : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
-  return { html, clipped: true };
+  // If truncation cut mid-word, trim back to the last word boundary
+  if (isChinese && html.length < linkedText.length && /\S$/.test(html) && /\S/.test(linkedText[html.length] ?? ' ')) {
+    const trimmed = html.replace(/\S+$/, '');
+    if (trimmed.length > 0) html = trimmed;
+  }
+  return { html: html.trimEnd() + ` <span class="tweet-content-more">${t('tweet.showMore')}...</span>`, clipped: true };
 });
 
 const truncatedContentHtml = computed(() => tweetContentProcessing.value.html);
@@ -369,7 +374,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         @click='onTextClick'
       >
         <p class='tweet-content-clamp' v-html='truncatedContentHtml'></p>
-        <span v-if='isContentClipped' class='tweet-content-more'>{{ t('tweet.showMore') }}</span>
       </div>
       <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
@@ -972,13 +976,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   max-height: v-bind(contentClampMaxHeight);
 }
 
-.tweet-content-clamp a {
-  color: blue;
+.tweet-content-clamp :deep(a) {
+  color: var(--bs-link-color, blue);
   text-decoration: underline;
 }
 
-.tweet-content-more {
-  color: blue;
+.tweet-content-clamp :deep(.tweet-content-more) {
+  color: var(--bs-link-color, blue);
   text-decoration: none;
   white-space: nowrap;
   margin-left: 0.25em;
