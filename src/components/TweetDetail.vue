@@ -29,15 +29,21 @@ const showDownloadModal = ref(false)
 const isDownloading = ref(false)
 
 // Draggable button state
+const btnEl = ref<HTMLElement | null>(null)
 const btnPos = ref({ x: 0, y: 0 })
 const btnInitialized = ref(false)
 const isDragging = ref(false)
-const dragOffset = ref({ x: 0, y: 0 })
+const lastDragPos = ref({ x: 0, y: 0 })
 const dragMoved = ref(false)
 
 function initBtnPos() {
     if (btnInitialized.value) return
-    btnPos.value = { x: window.innerWidth / 2, y: window.innerHeight - 60 }
+    const rect = btnEl.value?.getBoundingClientRect()
+    if (rect) {
+        btnPos.value = { x: rect.left, y: rect.top }
+    } else {
+        btnPos.value = { x: window.innerWidth / 2 - 80, y: window.innerHeight - 100 }
+    }
     btnInitialized.value = true
 }
 
@@ -47,7 +53,7 @@ function onDragStart(e: MouseEvent | TouchEvent) {
     dragMoved.value = false
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
-    dragOffset.value = { x: clientX - btnPos.value.x, y: clientY - btnPos.value.y }
+    lastDragPos.value = { x: clientX, y: clientY }
     e.preventDefault()
     window.addEventListener('mousemove', onWindowDragMove)
     window.addEventListener('mouseup', onWindowDragEnd)
@@ -60,9 +66,10 @@ function onWindowDragMove(e: MouseEvent | TouchEvent) {
     const clientX = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX
     const clientY = 'touches' in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY
     btnPos.value = {
-        x: clientX - dragOffset.value.x,
-        y: clientY - dragOffset.value.y,
+        x: btnPos.value.x + clientX - lastDragPos.value.x,
+        y: btnPos.value.y + clientY - lastDragPos.value.y,
     }
+    lastDragPos.value = { x: clientX, y: clientY }
     dragMoved.value = true
     e.preventDefault()
 }
@@ -691,9 +698,10 @@ function retryLoad() {
     <!-- Download Button -->
     <div
         v-if="showDownloadPrompt"
+        ref="btnEl"
         class="download-button-container"
         :class="{ dragging: isDragging }"
-        :style="btnInitialized ? { left: btnPos.x + 'px', top: btnPos.y + 'px', transform: 'translate(-50%, -50%)' } : {}"
+        :style="btnInitialized ? { left: btnPos.x + 'px', top: btnPos.y + 'px' } : {}"
         @mousedown="onDragStart"
         @touchstart="onDragStart"
     >
@@ -1091,6 +1099,12 @@ function retryLoad() {
     cursor: grab;
     user-select: none;
     touch-action: none;
+    /* Once inline left/top are set, override bottom and transform */
+}
+
+.download-button-container[style] {
+    bottom: unset;
+    transform: none;
 }
 
 .download-button-container.dragging {
