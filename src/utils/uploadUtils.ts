@@ -394,6 +394,7 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
     
     // Try multiple methods to detect aspect ratio
     const methods = [
+      { name: 'VideoElement', fn: () => tryVideoElementAnalysis(file) },
       { name: 'FileHeaderAnalysis', fn: () => tryFileHeaderAnalysis(file) },
       { name: 'FileNameAnalysis', fn: () => tryFileNameAnalysis(file) },
       { name: 'FileExtensionAnalysis', fn: () => tryFileExtensionAnalysis(file) }
@@ -429,6 +430,28 @@ function getAspectRatioName(ratio: number): string {
   if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
   if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
   return `${ratio.toFixed(3)}:1`;
+}
+
+// Method 0: Use browser's video element to get actual dimensions
+async function tryVideoElementAnalysis(file: File): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      if (video.videoWidth && video.videoHeight) {
+        resolve(video.videoWidth / video.videoHeight);
+      } else {
+        reject(new Error('Video element reported zero dimensions'));
+      }
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Video element failed to load metadata'));
+    };
+    video.src = url;
+  });
 }
 
 // Method 1: Analyze file header for common video formats

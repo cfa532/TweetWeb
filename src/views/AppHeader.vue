@@ -638,7 +638,7 @@ watch(userId, async (nv, ov) => {
 }
 
 .account-avatar {
-    width: 32x;
+    width: 32px;
     height: 32px;
     object-fit: cover;
 }
