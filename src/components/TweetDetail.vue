@@ -599,7 +599,7 @@ function retryLoad() {
             </div>
 
             <!-- quoted tweet -->
-            <blockquote v-if="!isRetweet">
+            <blockquote v-if="!isRetweet" class="quoted-tweet">
                 <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
@@ -648,6 +648,14 @@ function retryLoad() {
 </template>
 
 <style scoped>
+.quoted-tweet {
+    margin: 8px 12px 8px 56px;
+    padding: 0;
+    border: 1px solid #e6ecf0;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
 .comment-list {
     display: flex;
     flex-direction: column;
