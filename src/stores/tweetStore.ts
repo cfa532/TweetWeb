@@ -1982,7 +1982,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweetId if none, a new tweet is created, otherwise a comment added to the tweetId
          * @returns a mid of the uploaded object
          */
-        async uploadTweet(tweet: any, tweetId: MimeiId) {
+        async uploadTweet(tweet: any, tweetId?: MimeiId) {
             console.log('[TWEET-STORE] Starting uploadTweet...');
             console.log('[TWEET-STORE] Tweet data:', {
                 authorId: tweet.authorId,
