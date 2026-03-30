@@ -114,6 +114,7 @@
     "files": "Files",
     "downloadable": "Downloadable",
     "private": "Private",
+    "quoteTweet": "Quote Tweet",
     "preserveQuality": "Preserve Quality",
     "preserveQualityTitle": "Preserve original video quality without resampling (larger file size)",
     "resubmit": "Re-submit",

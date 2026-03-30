@@ -114,6 +114,7 @@
     "files": "ファイル",
     "downloadable": "ダウンロード可能",
     "private": "プライベート",
+    "quoteTweet": "引用ツイート",
     "preserveQuality": "画質を保持",
     "preserveQualityTitle": "元の動画画質を保持（ファイルサイズが大きくなります）",
     "resubmit": "再送信",

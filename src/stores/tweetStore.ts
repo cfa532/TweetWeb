@@ -2098,6 +2098,32 @@ export const useTweetStore = defineStore('tweetStore', {
             return ret.mid
         },
         /**
+         * Registers a quote tweet on the original tweet's node (increments retweet count).
+         * Mirrors iOS updateRetweetCount — calls RunMApp("retweet_added") on the original
+         * tweet author's client.
+         */
+        async updateRetweetCount(originalTweet: Tweet, retweetId: MimeiId): Promise<void> {
+            const client = (originalTweet.author as any)?.client ?? this.loginUser?.client
+            if (!client) {
+                console.warn('[updateRetweetCount] No client available')
+                return
+            }
+            try {
+                await client.RunMApp("retweet_added", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    appuserid: this.loginUser?.mid,
+                    retweetid: retweetId,
+                    tweetid: originalTweet.mid,
+                    authorid: originalTweet.authorId,
+                })
+                console.log('[updateRetweetCount] ✅ Retweet count updated for:', originalTweet.mid)
+            } catch (error) {
+                console.warn('[updateRetweetCount] Failed to update retweet count:', error)
+            }
+        },
+        /**
          * Updates an existing tweet's content
          * @param tweet The full tweet object with modified content
          * @returns The mid of the updated tweet

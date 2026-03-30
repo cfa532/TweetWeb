@@ -44,6 +44,7 @@ const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
+const isQuoting = ref(false)    // whether to also post as a quote tweet (comment mode only)
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
@@ -392,7 +393,7 @@ async function onSubmit() {
     const targetTweetId = tweetId.value as MimeiId
     console.log('[TWEET-SUBMIT] Calling tweetStore.uploadTweet...', { targetTweetId });
     const result = await tweetStore.uploadTweet(tweet, targetTweetId)
-    
+
     // Check if tweet upload was successful
     console.log('[TWEET-SUBMIT] Tweet upload result:', result);
     if (result) {
@@ -406,39 +407,43 @@ async function onSubmit() {
       filesUpload.value = []
       mmFiles.value = []
       noResample.value = false
-      
-      // If this was a comment (tweetId exists), navigate back to parent tweet's detail view
+
+      // Fetch parent tweet once — used for both quote tweet and navigation
+      let parentTweet = null
       if (targetTweetId) {
         try {
-          const parentTweet = await tweetStore.getTweet(targetTweetId)
-          if (parentTweet && parentTweet.author) {
-            console.log('[TWEET-SUBMIT] Navigating back to parent tweet:', targetTweetId, parentTweet.author.mid)
-            router.push({ 
-              name: 'TweetDetail', 
-              params: { 
-                tweetId: targetTweetId, 
-                authorId: parentTweet.author.mid 
-              } 
-            })
-          } else {
-            // Fallback: navigate to parent tweet without authorId
-            console.log('[TWEET-SUBMIT] Parent tweet not found, navigating without authorId')
-            router.push({ 
-              name: 'TweetDetail', 
-              params: { 
-                tweetId: targetTweetId 
-              } 
-            })
+          parentTweet = await tweetStore.getTweet(targetTweetId)
+        } catch (e) {
+          console.warn('[TWEET-SUBMIT] Could not fetch parent tweet:', e)
+        }
+      }
+
+      // If quoting, also publish as a standalone quote tweet
+      if (targetTweetId && isQuoting.value && parentTweet) {
+        try {
+          console.log('[TWEET-SUBMIT] Posting quote tweet...')
+          const quoteTweet = {
+            ...tweet,
+            originalTweetId: targetTweetId,
+            originalAuthorId: parentTweet.authorId,
+            timestamp: Date.now(),
           }
-        } catch (error) {
-          console.error('[TWEET-SUBMIT] Error fetching parent tweet for navigation:', error)
-          // Fallback: navigate to parent tweet without authorId
-          router.push({ 
-            name: 'TweetDetail', 
-            params: { 
-              tweetId: targetTweetId 
-            } 
-          })
+          const quoteMid = await tweetStore.uploadTweet(quoteTweet, undefined)
+          if (quoteMid) {
+            console.log('[TWEET-SUBMIT] Quote tweet posted, updating retweet count:', quoteMid)
+            await tweetStore.updateRetweetCount(parentTweet, quoteMid)
+          }
+        } catch (quoteError) {
+          console.warn('[TWEET-SUBMIT] Quote tweet upload failed (comment still posted):', quoteError)
+        }
+      }
+
+      // Navigate back or emit success
+      if (targetTweetId) {
+        if (parentTweet?.author) {
+          router.push({ name: 'TweetDetail', params: { tweetId: targetTweetId, authorId: parentTweet.author.mid } })
+        } else {
+          router.push({ name: 'TweetDetail', params: { tweetId: targetTweetId } })
         }
       } else {
         // This was a new tweet, emit success event
@@ -866,6 +871,10 @@ function handleDragEnd() {
               <label for='private-checkbox'>{{ $t('editor.private') }}</label>&nbsp;&nbsp;&nbsp;
               <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
               <label for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">{{ $t('editor.preserveQuality') }}</label>&nbsp;&nbsp;&nbsp;
+              <template v-if='tweetId'>
+                <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>&nbsp;
+                <label for='quoting-checkbox'>{{ $t('editor.quoteTweet') }}</label>&nbsp;&nbsp;&nbsp;
+              </template>
               <button class='btn' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
             </span>
           </div>
