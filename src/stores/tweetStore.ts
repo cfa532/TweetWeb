@@ -29,6 +29,31 @@ function registerResponseBody(ret: any): any {
     return body
 }
 
+/**
+ * v2 toggle_followed payload: unwrap nested { success, data } (delegation used to double-wrap).
+ * @throws on { success: false } or non-boolean isFollowing
+ */
+function parseToggleFollowedV2Result(ret: unknown): boolean {
+    let cursor: unknown = ret
+    for (let depth = 0; depth < 3 && cursor && typeof cursor === "object"; depth++) {
+        const o = cursor as { success?: boolean; data?: unknown; message?: string }
+        if (o.success === false) {
+            throw new Error(typeof o.message === "string" ? o.message : "toggle_followed failed")
+        }
+        if (o.success === true && "data" in o && o.data !== undefined) {
+            cursor = o.data
+            continue
+        }
+        break
+    }
+    const response = cursor
+    if (typeof (response as { isFollowing?: unknown })?.isFollowing === "boolean") {
+        return (response as { isFollowing: boolean }).isFollowing
+    }
+    if (typeof response === "boolean") return response
+    throw new Error("Invalid response from toggle_followed")
+}
+
 /** host:port (or [v6]:port) for connection pool / WebSocket `ws://…/ws/`. */
 function socketAddressFromUrlHostPort(hostname: string, port: string): string | undefined {
     if (!hostname) return undefined
@@ -1878,23 +1903,23 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error("You must be logged in to toggle following")
             }
 
-            const ret = await loginUser.client.RunMApp("toggle_followed", {
-                aid: this.appId,
-                ver: "last",
-                version: "v2",
-                followingid: followingId,
-                userid: loginUser.mid,
-            })
-
-            // Unwrap v2 response payload if wrapped by { success, data }.
-            const response = (ret?.success && ret.data) ? ret.data : ret
-            const isFollowing = typeof response?.isFollowing === "boolean"
-                ? response.isFollowing
-                : (typeof response === "boolean" ? response : undefined)
-
-            if (isFollowing === undefined) {
-                throw new Error("Invalid response from toggle_followed")
+            // Follow can RPC to home node and sync many tweets; default pooled timeout (15s) is often too short.
+            const originalTimeout = loginUser.client.timeout
+            loginUser.client.timeout = 120000
+            let ret: unknown
+            try {
+                ret = await loginUser.client.RunMApp("toggle_followed", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    followingid: followingId,
+                    userid: loginUser.mid,
+                })
+            } finally {
+                loginUser.client.timeout = originalTimeout
             }
+
+            const isFollowing = parseToggleFollowedV2Result(ret)
 
             const hadFollowingsCache = this._followings.length > 0
             const wasFollowing = this._followings.includes(followingId)
@@ -2782,6 +2807,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 // Same as `toggleFollowing`: follower's node — use known IP from register response or entry node.
                 const followerClient = createPooledClient(ip, this.lapi.connectionPool)
+                followerClient.timeout = 120000
 
                 for (const followingId of ids) {
                     try {
@@ -2797,13 +2823,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             followingid: followingId,
                             userid: registeredUserId,
                         })
-                        const response = (toggled?.success && toggled.data) ? toggled.data : toggled
-                        const isFollowing =
-                            typeof response?.isFollowing === "boolean"
-                                ? response.isFollowing
-                                : typeof response === "boolean"
-                                  ? response
-                                  : undefined
+                        const isFollowing = parseToggleFollowedV2Result(toggled)
                         if (isFollowing !== true) {
                             console.warn(`[register:autoFollow] Unexpected toggle result for ${followingId}`, toggled)
                         }
