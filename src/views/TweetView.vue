@@ -369,6 +369,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
+        :actual-tweet='currentTweet'
         :author='originalTweet?.author'
         :timestamp='displayedTweet.timestamp as number'
         :is-retweet='isRetweet'

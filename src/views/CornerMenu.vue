@@ -44,7 +44,7 @@ function updateMenuPermissions() {
         if (isTweetAuthor || isParentTweetAuthor) {
             canDelete.value = true
         }
-        if (isTweetAuthor) {
+        if (isTweetAuthor && !props.tweet.originalTweetId) {
             canEdit.value = true
         }
     }
