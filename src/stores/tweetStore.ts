@@ -29,6 +29,29 @@ function registerResponseBody(ret: any): any {
     return body
 }
 
+/** v2 get_tweets_by_user: same as iOS unwrap — body is `data` when present, else top-level. */
+function tweetsByUserResponseBody(ret: any): any {
+    if (!ret || ret.success !== true) return ret
+    if (ret.data != null && typeof ret.data === 'object' && !Array.isArray(ret.data)) {
+        return ret.data
+    }
+    return ret
+}
+
+/** Quoted tweets inlined on list rows (originalTweets array often empty). */
+function collectNestedOriginalTweetsFromRows(tweetsData: any[] | undefined): any[] {
+    const out: any[] = []
+    if (!tweetsData) return out
+    for (const row of tweetsData) {
+        if (row == null) continue
+        const nested = row.originalTweet ?? row.original_tweet
+        if (nested != null && typeof nested === 'object' && nested.mid) {
+            out.push(nested)
+        }
+    }
+    return out
+}
+
 /**
  * v2 toggle_followed payload: unwrap nested { success, data } (delegation used to double-wrap).
  * @throws on { success: false } or non-boolean isFollowing
@@ -351,9 +374,9 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Loads tweets for a specific user by rank/popularity
          * @param userId The user ID whose tweets to load
-         * @param pageNumber page number to load (0-based)
+         * @param pageNumber 0-based page index (same as iOS fetchUserTweets — `pn` is passed through as the page index).
          * @param pageSize number of tweets per page
-         * @returns the number of tweets loaded.
+         * @returns the number of tweets loaded (raw array length from the server, including null slots).
          */
         async loadTweetsByUser(
             userId: string,
@@ -363,6 +386,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const params = {
                 aid: this.appId,
                 ver: "last",
+                version: "v2",
                 userid: userId,
                 pn: pageNumber,
                 ps: pageSize,
@@ -399,9 +423,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         return null
                     }
 
-                    // Extract tweets and originalTweets from the new response format
-                    const tweetsData = response.tweets
-                    const originalTweetsData = response.originalTweets
+                    // Match iOS fetchUserTweets: v2 may nest payload under `data`
+                    const payload = tweetsByUserResponseBody(response)
+                    const tweetsData = payload.tweets
+                    const originalTweetsData = payload.originalTweets
 
                     // Check for potential backend issue: retweets without original tweets
                     if (tweetsData && tweetsData.length > 0) {
@@ -422,6 +447,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     // Cache original tweets first (same as getTweetFeed)
                     if (originalTweetsData) {
                         await this.updateOriginalTweets(originalTweetsData)
+                    }
+
+                    const nestedOrig = collectNestedOriginalTweetsFromRows(tweetsData)
+                    if (nestedOrig.length > 0) {
+                        await this.updateOriginalTweets(nestedOrig)
                     }
 
                     // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
@@ -780,6 +810,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Cache original tweets first
                 if (response.originalTweets) {
                     await this.updateOriginalTweets(response.originalTweets)
+                }
+
+                const feedNestedOrig = collectNestedOriginalTweetsFromRows(tweetsData)
+                if (feedNestedOrig.length > 0) {
+                    await this.updateOriginalTweets(feedNestedOrig)
                 }
 
                 // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
@@ -1759,9 +1794,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     
                     console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
-                    // Set timeout for login API call (15 seconds for faster failure detection)
+                    // Login can be slower than routine RPC; allow 30s (default RPC is 15s).
                     const originalTimeout = user.client.timeout
-                    user.client.timeout = 15000  // 15 seconds
+                    user.client.timeout = 30000
                     let ret
                     try {
                         ret = await user.client.RunMApp("login", {
@@ -2334,7 +2369,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!tweet.author?.client) throw new Error('Author client not available for toggle_favorite')
             const client = tweet.author.client
             const originalTimeout = client.timeout
-            client.timeout = 30000
+            client.timeout = 15000
             try {
                 var ret = await client.RunMApp("toggle_favorite", {
                     aid: this.appId, ver: "last", version: "v2", appuserid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
@@ -2353,7 +2388,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!tweet.author?.client) throw new Error('Author client not available for toggle_bookmark')
             const client = tweet.author.client
             const originalTimeout = client.timeout
-            client.timeout = 30000
+            client.timeout = 15000
             try {
                 var ret = await client.RunMApp("toggle_bookmark", {
                     aid: this.appId, ver: "last", version: "v2", userid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
@@ -2527,7 +2562,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
             
-            const fetchWithTimeout = (url: string, timeout = 30000): Promise<any> => {
+            const fetchWithTimeout = (url: string, timeout = 15000): Promise<any> => {
                 return new Promise((resolve, reject) => {
                     const controller = new AbortController();
                     const timer = setTimeout(() => {
@@ -2594,7 +2629,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         resolved = true;
                         resolve(null);
                     }
-                }, 30000);
+                }, 15000);
                 
                 // Handle the case where all IPs were filtered out
                 if (pendingRequests === 0) {

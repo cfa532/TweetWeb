@@ -94,7 +94,6 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
       if (prop === 'timeout') {
         // Store the timeout to be applied to real clients
         customTimeout = value;
-        console.log(`[POOLED-CLIENT] Timeout set to ${value}ms for ${ip}`);
         return true;
       }
       return false;

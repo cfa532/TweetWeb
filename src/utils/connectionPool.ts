@@ -226,6 +226,7 @@ class ConnectionPoolManager {
    */
   private createClient(ip: string): any {
     const client = window.hprose.Client.create("ws://" + ip + "/ws/", this.ayApi);
+    client.timeout = 15000;
     return client;
   }
 

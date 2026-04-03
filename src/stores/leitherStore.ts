@@ -39,7 +39,11 @@ export const useLeitherStore = defineStore({
         returnUrl: "",
         hostIP: curIP,    // IP address of node to write
         baseUrl: window.location.protocol+'//'+curIP+'/',
-        client: window.hprose.Client.create("http://" + curIP +"/webapi/", ayApi),
+        client: (() => {
+            const c = window.hprose.Client.create("http://" + curIP + "/webapi/", ayApi);
+            c.timeout = 15000;
+            return c;
+        })(),
         // client: window.hprose.Client.create("ws://" + curIP +"/ws/", ayApi),
         logoUrl: import.meta.env.VITE_APP_LOGO,
         connectionPool: connectionPool as ConnectionPoolManager,

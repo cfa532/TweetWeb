@@ -210,17 +210,25 @@ async function countOriginalTweetsByUser(userId: string): Promise<number> {
         const response = await user.client.RunMApp("get_tweets_by_user", {
             aid: tweetStore.appId,
             ver: "last",
+            version: "v2",
             userid: userId,
             pn: pageNumber,
             ps: pageSize,
             appuserid: userId,
         })
 
-        if (response?.success !== true || !Array.isArray(response?.tweets)) {
+        if (response?.success !== true) {
+            break
+        }
+        const body =
+            response.data != null && typeof response.data === 'object' && !Array.isArray(response.data)
+                ? response.data
+                : response
+        if (!Array.isArray(body.tweets)) {
             break
         }
 
-        const tweets = response.tweets.filter((tweet: any) => tweet != null)
+        const tweets = body.tweets.filter((tweet: any) => tweet != null)
         if (tweets.length === 0) {
             break
         }
