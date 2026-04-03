@@ -17,8 +17,8 @@ export type ConnectionPoolInterface = Pick<ConnectionPoolManager, 'getConnection
  * @returns A proxy object that mimics an hprose client
  */
 export function createPooledClient(ip: string, connectionPool: ConnectionPoolInterface): any {
-  // Store custom timeout if set (default to 6 seconds)
-  let customTimeout = 6000;
+  // Store custom timeout if set (default 15s — matches follow / get_user expectations on slow links)
+  let customTimeout = 15000;
   
   // Create a proxy that intercepts all method calls
   const proxy = new Proxy({}, {
@@ -66,7 +66,7 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
             if (typeof method === 'function') {
               // Race the RPC call against a timeout to guarantee connection release
               // even if the underlying hprose call hangs indefinitely
-              const timeoutMs = customTimeout + 2000; // grace period beyond client timeout
+              const timeoutMs = customTimeout // match hprose client timeout (override via proxy.timeout)
               const result = await Promise.race([
                 method.apply(client, args),
                 new Promise((_, reject) =>

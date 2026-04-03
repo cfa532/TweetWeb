@@ -9,7 +9,10 @@ import i18n from '@/i18n';
 
 const GUEST_ID = "000000000000000000000000000"
 
-/** Comma-separated ids from `VITE_DEFAULT_FOLLOWINGS` (guest seed + post-register auto-follow). */
+/**
+ * Comma-separated ids from `VITE_DEFAULT_FOLLOWINGS`: same role as iOS `AppConfig.alphaId` /
+ * `Gadget.getAlphaIds()` — guest following seed and post-register auto-follow targets.
+ */
 function defaultFollowingIdsFromEnv(): string[] {
     const raw = import.meta.env.VITE_DEFAULT_FOLLOWINGS as string | undefined
     if (!raw || !String(raw).trim()) return []
@@ -19,17 +22,64 @@ function defaultFollowingIdsFromEnv(): string[] {
         .filter(Boolean)
 }
 
-/** v2 register response: { success, data?: { user } } or { success, user } */
-function parseRegisteredUserMid(ret: any): string | undefined {
+/** v2 register response body: { success, data?: { user } } or { success, user } */
+function registerResponseBody(ret: any): any {
     if (!ret) return undefined
-    const success = ret.success === true || ret.success === 1
-    if (!success) return undefined
     const body = ret.data != null && typeof ret.data === 'object' ? ret.data : ret
-    const u = body.user
-    if (u && typeof u === 'object' && typeof u.mid === 'string' && u.mid.length > 0) {
-        return u.mid
+    return body
+}
+
+/** host:port (or [v6]:port) for connection pool / WebSocket `ws://…/ws/`. */
+function socketAddressFromUrlHostPort(hostname: string, port: string): string | undefined {
+    if (!hostname) return undefined
+    const v6 = hostname.includes(':')
+    if (v6) return port ? `[${hostname}]:${port}` : `[${hostname}]`
+    return port ? `${hostname}:${port}` : hostname
+}
+
+/** Prefer host:port from API user blob; avoids get_provider for the new mid right after register. */
+function providerIpFromRegisteredUserBlob(u: any): string | undefined {
+    if (!u || typeof u !== 'object') return undefined
+    const direct = u.providerIp
+    if (typeof direct === 'string' && direct.trim() && !String(direct).includes('://')) {
+        return direct.trim()
+    }
+    for (const key of ['writableUrl', 'baseUrl'] as const) {
+        const raw = u[key]
+        if (typeof raw !== 'string' || !raw.trim()) continue
+        try {
+            const url = new URL(raw.trim())
+            const host = url.hostname
+            if (!host) continue
+            return socketAddressFromUrlHostPort(host, url.port) ?? host
+        } catch {
+            const s = raw.trim()
+            if (/^[\w.:\[\]-]+$/.test(s) && !s.includes('://')) return s
+        }
     }
     return undefined
+}
+
+type RegisterSuccessUser = {
+    mid?: string
+    user?: any
+    /** Connect here for toggle_following as the new user */
+    followerProviderIp?: string
+}
+
+function parseRegisterSuccessUser(ret: any): RegisterSuccessUser {
+    if (!ret) return {}
+    const success = ret.success === true || ret.success === 1
+    if (!success) return {}
+    const body = registerResponseBody(ret)
+    const u = body?.user
+    if (!u || typeof u !== 'object' || typeof u.mid !== 'string' || !u.mid.length) return {}
+    const fromBlob = providerIpFromRegisteredUserBlob(u)
+    return { mid: u.mid, user: u, followerProviderIp: fromBlob }
+}
+
+function parseRegisteredUserMid(ret: any): string | undefined {
+    return parseRegisterSuccessUser(ret).mid
 }
 const TWEET_COUNT = 5
 
@@ -1376,11 +1426,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.log(`[raceProviderIps] Trying IP: ${ip}`);
                     const client = await this.lapi.getClient(ip);
 
-                    // Race the API call with a 6-second timeout
+                    // Race the API call with a 15-second timeout (slow nodes / follow path)
+                    const raceMs = 15000
                     const result = await Promise.race([
                         apiCall(ip, client),
                         new Promise<never>((_, reject) =>
-                            setTimeout(() => reject(new Error(`Timeout after 6000ms for ${ip}`)), 6000)
+                            setTimeout(() => reject(new Error(`Timeout after ${raceMs}ms for ${ip}`)), raceMs)
                         )
                     ]);
 
@@ -2679,9 +2730,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 const msg = ret?.["message"] || "Registration failed"
                 throw new Error(msg)
             }
-            const registeredMid = parseRegisteredUserMid(ret)
+            const { mid: registeredMid, user: registeredBlob, followerProviderIp } = parseRegisterSuccessUser(ret)
             if (registeredMid) {
-                void this._autoFollowDefaultUsersAfterRegister(registeredMid)
+                void this._autoFollowDefaultUsersAfterRegister(
+                    registeredMid,
+                    registeredBlob,
+                    followerProviderIp,
+                )
             } else {
                 console.warn("[register] No user.mid in registration response; skipping default followings auto-follow")
             }
@@ -2689,11 +2744,45 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * After successful registration, follow `VITE_DEFAULT_FOLLOWINGS` as the new account (matches iOS registerUser background task).
+         * After successful registration, follow `VITE_DEFAULT_FOLLOWINGS` as the new account (same list
+         * as iOS `Gadget.getAlphaIds()` after register).
+         * @param followerProviderIp from register payload (baseUrl/writableUrl); fallback: entry `hostIP` (same node as register RPC).
          */
-        _autoFollowDefaultUsersAfterRegister(registeredUserId: MimeiId) {
+        _autoFollowDefaultUsersAfterRegister(
+            registeredUserId: MimeiId,
+            registeredUserBlob?: any,
+            followerProviderIp?: string,
+        ) {
             void (async () => {
                 const ids = defaultFollowingIdsFromEnv()
+                if (ids.length === 0) return
+
+                const ip =
+                    (followerProviderIp && followerProviderIp.trim()) ||
+                    (this.lapi.hostIP && String(this.lapi.hostIP).trim()) ||
+                    ''
+                if (!ip) {
+                    console.warn("[register:autoFollow] No provider IP hint or entry hostIP; cannot auto-follow")
+                    return
+                }
+
+                // Seed cache so later getUser skips a failing get_provider_ips for the new mid (short race window).
+                if (
+                    registeredUserBlob &&
+                    typeof registeredUserBlob === 'object' &&
+                    registeredUserBlob.mid === registeredUserId &&
+                    Array.isArray(registeredUserBlob.hostIds) &&
+                    registeredUserBlob.hostIds.length > 0
+                ) {
+                    const seeded = { ...registeredUserBlob, mid: registeredUserId, providerIp: ip }
+                    delete (seeded as any).password
+                    delete (seeded as any).client
+                    sessionStorage.setItem(registeredUserId, JSON.stringify(seeded))
+                }
+
+                // Same as `toggleFollowing`: follower's node — use known IP from register response or entry node.
+                const followerClient = createPooledClient(ip, this.lapi.connectionPool)
+
                 for (const followingId of ids) {
                     try {
                         const target = await this.getUser(followingId)
@@ -2701,7 +2790,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             console.warn(`[register:autoFollow] User not found, skip: ${followingId}`)
                             continue
                         }
-                        const toggled = await this.lapi.client.RunMApp("toggle_following", {
+                        const toggled = await followerClient.RunMApp("toggle_following", {
                             aid: this.appId,
                             ver: "last",
                             version: "v2",
