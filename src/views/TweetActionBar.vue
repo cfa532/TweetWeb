@@ -51,7 +51,27 @@ async function onRetweet() {
     redirectToLogin();
     return;
   }
-  router.push({ name: 'post', query: { retweet: props.tweet.mid } });
+  const original = { ...props.tweet };
+  // Optimistic update
+  emit('updated', { ...original, retweetCount: (original.retweetCount ?? 0) + 1 });
+  try {
+    const retweetPayload = {
+      authorId: tweetStore.loginUser.mid,
+      timestamp: Date.now(),
+      originalTweetId: original.mid,
+      originalAuthorId: original.authorId,
+    };
+    const newMid = await tweetStore.uploadTweet(retweetPayload);
+    if (newMid) {
+      await tweetStore.updateRetweetCount(original, newMid);
+    }
+    // Refresh tweet from server to get accurate count
+    const refreshed = await tweetStore.getTweet(original.mid);
+    if (refreshed) emit('updated', refreshed);
+  } catch (e) {
+    emit('updated', original);
+    console.error('[onRetweet] failed:', e);
+  }
 }
 
 async function onLike() {
