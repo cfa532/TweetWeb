@@ -73,6 +73,7 @@
     "noMorePosts": "没有更多帖子了",
     "showNewTweets": "显示 {count} 条新推文",
     "forwardedBy": "由 {'@'}{name} 转发",
+    "forwardedByYou": "由你转发",
     "loadingAuthor": "加载中...",
     "loadingUsername": "加载中",
     "editTweet": "编辑推文",

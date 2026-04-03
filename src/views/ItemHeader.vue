@@ -99,7 +99,7 @@ function openDetailView() {
     <div class='user-info flex-grow-1' @click.stop.prevent='openDetailView'>
       <!-- Optional Label -->
       <div v-if='isRetweet' class='label text-muted small'>
-        {{ $t('tweet.forwardedBy', { name: by }) }}
+        {{ by === tweetStore.loginUser?.username ? $t('tweet.forwardedByYou') : $t('tweet.forwardedBy', { name: by }) }}
       </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>

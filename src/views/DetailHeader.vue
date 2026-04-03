@@ -169,7 +169,7 @@ watch(
         </div>
         <div class='user-info flex-grow-1'>
           <div v-if='isRetweet' class='label text-muted small'>
-            {{ $t('tweet.forwardedBy', { name: by }) }}
+            {{ by === tweetStore.loginUser?.username ? $t('tweet.forwardedByYou') : $t('tweet.forwardedBy', { name: by }) }}
           </div>
           <div class='username-alias-time'>
             <span class='username fw-bold'>{{ author.name?.trim() ? author.name : (author.username || '') }}</span>
