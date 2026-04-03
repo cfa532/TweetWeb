@@ -172,7 +172,7 @@ watch(
             {{ $t('tweet.forwardedBy', { name: by }) }}
           </div>
           <div class='username-alias-time'>
-            <span class='username fw-bold'>{{ author.name }}</span>
+            <span class='username fw-bold'>{{ author.name?.trim() ? author.name : (author.username || '') }}</span>
             <span class='alias text-muted'>@{{ author.username }}</span>
           </div>
           <div class='mt-1'>

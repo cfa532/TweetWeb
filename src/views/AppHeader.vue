@@ -1,14 +1,32 @@
 <script lang="ts" setup>
 import { watch, onMounted, ref, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
+import { useAlertStore } from '@/stores/alert.store';
 import { DownloadPrompt, DownloadModal } from '@/components';
 import { formatTimeDifference } from '@/lib';
 
+const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const tweetStore = useTweetStore()
+const alertStore = useAlertStore()
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
+
+/** Logo: on home feed → my profile when logged in; anywhere else AppHeader appears → home. */
+function onAppAvatarClick() {
+    if (route.name !== 'main') {
+        router.push({ name: 'main' })
+        return
+    }
+    const mid = tweetStore.loginUser?.mid
+    if (mid) {
+        router.push(`/author/${mid}`)
+    } else {
+        router.push({ name: 'main' })
+    }
+}
 const isAccountMenuOpen = ref(false)
 let accountMenuCloseTimer: ReturnType<typeof setTimeout> | null = null
 const props = defineProps({
@@ -17,6 +35,94 @@ const props = defineProps({
 const userId = computed(() => props.userId)
 const avatarUrl = ref(import.meta.env.VITE_APP_LOGO)
 const user = ref<User>()
+
+/** Bold name in profile header — use username when display name is missing (same as ItemHeader). */
+const profileHeaderDisplayName = computed(() => {
+    const u = user.value
+    if (!u) return ''
+    const name = u.name
+    if (name != null && String(name).trim() !== '') return name
+    const un = u.username
+    if (un != null && String(un).trim() !== '') return un
+    return ''
+})
+
+/** Profile header follow: same source as UserRow — `getFollowings(loginUser)` (not store.followings / guest seed). */
+const FOLLOW_PROFILE_DEBOUNCE_MS = 600
+const loginFollowingIds = ref<MimeiId[]>([])
+const localIsFollowing = ref(false)
+const isTogglingProfileFollow = ref(false)
+let profileFollowCooldownUntil = 0
+
+const canShowProfileFollowBtn = computed(
+    () =>
+        isLoggedIn.value &&
+        !!user.value &&
+        !!tweetStore.loginUser &&
+        user.value.mid !== tweetStore.loginUser.mid,
+)
+
+function syncFollowButtonFromServerList() {
+    const id = userId.value
+    if (!id || !tweetStore.loginUser || id === tweetStore.loginUser.mid) {
+        localIsFollowing.value = false
+        return
+    }
+    localIsFollowing.value = loginFollowingIds.value.includes(id)
+}
+
+async function refreshLoginFollowingIds() {
+    if (!tweetStore.loginUser) {
+        loginFollowingIds.value = []
+        syncFollowButtonFromServerList()
+        return
+    }
+    try {
+        loginFollowingIds.value = await tweetStore.getFollowings(tweetStore.loginUser.mid)
+    } catch (e) {
+        console.warn('[AppHeader] refreshLoginFollowingIds failed', e)
+        loginFollowingIds.value = []
+    }
+    syncFollowButtonFromServerList()
+}
+
+watch(
+    () => [userId.value, tweetStore.loginUser?.mid] as const,
+    () => {
+        void refreshLoginFollowingIds()
+    },
+    { immediate: true },
+)
+
+async function onProfileToggleFollow(event: Event) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!user.value || !tweetStore.loginUser || isTogglingProfileFollow.value) return
+    const now = Date.now()
+    if (now < profileFollowCooldownUntil) return
+    profileFollowCooldownUntil = now + FOLLOW_PROFILE_DEBOUNCE_MS
+
+    const previous = localIsFollowing.value
+    localIsFollowing.value = !previous
+    isTogglingProfileFollow.value = true
+    try {
+        const nextState = await tweetStore.toggleFollowing(user.value.mid)
+        localIsFollowing.value = nextState
+        const id = user.value.mid
+        if (nextState && !loginFollowingIds.value.includes(id)) {
+            loginFollowingIds.value = [...loginFollowingIds.value, id]
+        } else if (!nextState) {
+            loginFollowingIds.value = loginFollowingIds.value.filter((x) => x !== id)
+        }
+    } catch (error) {
+        localIsFollowing.value = previous
+        console.error('Failed to toggle following:', error)
+        alertStore.error(t('profile.followActionFailed'))
+    } finally {
+        isTogglingProfileFollow.value = false
+        profileFollowCooldownUntil = Math.max(profileFollowCooldownUntil, Date.now() + FOLLOW_PROFILE_DEBOUNCE_MS)
+    }
+}
 
 // App download prompt and modal
 const showDownloadPrompt = ref(false)
@@ -192,14 +298,34 @@ onMounted(() => {
         showDownloadPrompt.value = false
     }, 30000)
 })
-watch(userId, async (nv, ov) => {
-    if (nv) {
-        user.value = await tweetStore.getUser(nv, true)
-    }
-    else {
-        user.value = undefined
-    }
-}, { immediate: true })
+watch(
+    userId,
+    async (nv) => {
+        if (!nv) {
+            user.value = undefined
+            return
+        }
+        const requestedId = nv
+        const syncPeek =
+            tweetStore.users.get(requestedId) ??
+            (tweetStore.loginUser?.mid === requestedId ? tweetStore.loginUser : undefined)
+        if (syncPeek) {
+            user.value = syncPeek
+        } else if (user.value?.mid !== requestedId) {
+            user.value = undefined
+        }
+        try {
+            const u = await tweetStore.getUser(requestedId, true)
+            if (userId.value !== requestedId) return
+            user.value = u ?? syncPeek
+        } catch (e) {
+            console.warn('[AppHeader] getUser failed', e)
+            if (userId.value !== requestedId) return
+            if (syncPeek) user.value = syncPeek
+        }
+    },
+    { immediate: true },
+)
 </script>
 
 <template>
@@ -207,14 +333,14 @@ watch(userId, async (nv, ov) => {
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img :src="user ? user.avatar : avatarUrl" @click="router.push({ name: 'main' })" alt="Logo"
+                    <img :src="user ? user.avatar : avatarUrl" @click="onAppAvatarClick" alt="Logo"
                         class="rounded-circle" />
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
                     <!-- Username, Alias, and Time -->
                     <div class="username-alias-time">
-                        <span class="username fw-bold">{{ user.name }}</span>
+                        <span class="username fw-bold">{{ profileHeaderDisplayName }}</span>
                         <span class="alias text-muted">@{{ user.username }}</span>
                         <span class="time text-muted">
                             - {{ formatTimeDifference(user.timestamp as number) }}
@@ -276,6 +402,16 @@ watch(userId, async (nv, ov) => {
                     user.followingCount }} {{ $t('profile.following') }}</a>
                 <a href="#"  class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
             </div>
+            <button
+                v-if="canShowProfileFollowBtn"
+                type="button"
+                class="profile-follow-btn"
+                :class="{ 'is-following': localIsFollowing }"
+                :disabled="isTogglingProfileFollow"
+                @click="onProfileToggleFollow"
+            >
+                {{ localIsFollowing ? $t('profile.unfollow') : $t('profile.follow') }}
+            </button>
         </div>
     </div>
     
@@ -352,14 +488,15 @@ watch(userId, async (nv, ov) => {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
     width: 100%;
 }
 
 .links {
     padding-left: 10px;
     display: flex;
-    width: 80%;
-    /* Takes 80% of the container width */
+    flex: 1;
+    min-width: 0;
 }
 
 .links a {
@@ -375,6 +512,31 @@ watch(userId, async (nv, ov) => {
 
 .links a:hover {
     text-decoration: underline;
+}
+
+.profile-follow-btn {
+    flex-shrink: 0;
+    border: 1px solid #0d6efd;
+    border-radius: 999px;
+    background: transparent;
+    color: #0d6efd;
+    font-size: 0.85rem;
+    font-weight: 500;
+    min-width: 88px;
+    padding: 5px 18px 5px 12px;
+    margin-right: 10px;
+    line-height: 1;
+    transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.profile-follow-btn.is-following {
+    border-color: #dc3545;
+    color: #dc3545;
+}
+
+.profile-follow-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
 }
 
 /* New styles for the link container */

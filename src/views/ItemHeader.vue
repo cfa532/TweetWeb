@@ -23,6 +23,16 @@ const router = useRouter()
 const route = useRoute()
 const tweetStore = useTweetStore()
 
+/** Bold line in tweet header: use username when display name is missing (same idea as UserAccount profile). */
+const authorDisplayName = computed(() => {
+  if (!props.author) return t('tweet.loadingAuthor')
+  const name = props.author.name
+  if (name != null && String(name).trim() !== '') return name
+  const u = props.author.username
+  if (u != null && String(u).trim() !== '') return u
+  return t('tweet.loadingAuthor')
+})
+
 function openUserPage(userId: string) {
   if (props.author) {
     tweetStore.addFollowing(userId)
@@ -93,7 +103,7 @@ function openDetailView() {
       </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>
-        <span class='username fw-bold' :class='{ "loading-text": !props.author }'>{{ props.author?.name || $t('tweet.loadingAuthor') }}</span>
+        <span class='username fw-bold' :class='{ "loading-text": !props.author }'>{{ authorDisplayName }}</span>
       </div>
       <!-- Followers and Friends Links -->
       <div class='mt-1'>

@@ -34,6 +34,17 @@ const canShowFollowButton = computed(() => {
     user.value.mid !== tweetStore.loginUser.mid
 })
 
+/** Bold name — use username when display name is missing (same as ItemHeader). */
+const rowDisplayName = computed(() => {
+  const u = user.value
+  if (!u) return ''
+  const name = u.name
+  if (name != null && String(name).trim() !== '') return name
+  const un = u.username
+  if (un != null && String(un).trim() !== '') return un
+  return ''
+})
+
 // Show cached data immediately if available, otherwise load from server
 const cachedUser = tweetStore.users.get(props.userId) ||
     (tweetStore.loginUser?.mid === props.userId ? tweetStore.loginUser : null)
@@ -115,7 +126,7 @@ async function onToggleFollow(event: Event) {
     <div class="user-info flex-grow-1">
       <!-- Username, Alias, and Time -->
       <div class="username-alias-time">
-        <span class="username fw-bold">{{ user.name }}</span>
+        <span class="username fw-bold">{{ rowDisplayName }}</span>
         <span class="alias text-muted">@{{ user.username }}</span>
         <span class="time text-muted">- {{ formatTimeDifference(user.timestamp as number) }}</span>
       </div>

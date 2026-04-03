@@ -63,7 +63,7 @@ function providerIpFromRegisteredUserBlob(u: any): string | undefined {
 type RegisterSuccessUser = {
     mid?: string
     user?: any
-    /** Connect here for toggle_following as the new user */
+    /** Connect here for toggle_followed as the new user */
     followerProviderIp?: string
 }
 
@@ -1878,7 +1878,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error("You must be logged in to toggle following")
             }
 
-            const ret = await loginUser.client.RunMApp("toggle_following", {
+            const ret = await loginUser.client.RunMApp("toggle_followed", {
                 aid: this.appId,
                 ver: "last",
                 version: "v2",
@@ -1893,7 +1893,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 : (typeof response === "boolean" ? response : undefined)
 
             if (isFollowing === undefined) {
-                throw new Error("Invalid response from toggle_following")
+                throw new Error("Invalid response from toggle_followed")
             }
 
             const hadFollowingsCache = this._followings.length > 0
@@ -2790,7 +2790,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             console.warn(`[register:autoFollow] User not found, skip: ${followingId}`)
                             continue
                         }
-                        const toggled = await followerClient.RunMApp("toggle_following", {
+                        const toggled = await followerClient.RunMApp("toggle_followed", {
                             aid: this.appId,
                             ver: "last",
                             version: "v2",
