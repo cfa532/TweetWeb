@@ -1614,6 +1614,9 @@ export const useTweetStore = defineStore('tweetStore', {
                         const colonCount = (ip.match(/:/g) || []).length;
                         if (v4only && colonCount > 1) return false;
 
+                        // Filter out private/local IPs (not reachable from public internet)
+                        if (this.isLocalIP(ip)) return false;
+
                         return true;
                     });
 
@@ -2489,7 +2492,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 /^127\./, // Loopback
                 /^10\./, // Class A private
                 /^192\.168\./, // Class C private
-                /^172\.(1[6-9]|2[0-9]|3[0-1])\./ // Class B private
+                /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // Class B private
+                /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // RFC 6598 Shared Address Space (Tailscale)
             ];
 
             // IPv6 local patterns
