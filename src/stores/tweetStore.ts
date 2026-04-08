@@ -145,7 +145,8 @@ export const useTweetStore = defineStore('tweetStore', {
         _user: null as User | null,      // login user data
         healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(), // Cache health check results
         healthCheckInProgress: new Map<string, Promise<boolean>>(), // Track ongoing health checks
-        _pendingUserFetches: new Map<string, Promise<User | undefined>>() // Deduplicate concurrent getUser calls
+        _pendingUserFetches: new Map<string, Promise<User | undefined>>(), // Deduplicate concurrent getUser calls
+        _deletedTweetIds: new Set<string>() // Prevent re-insertion after optimistic delete
     }),
     getters: {
         /**
@@ -270,8 +271,8 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async addTweetToStore(tweet: Tweet) {
             try {
-                // skip tweet that is in this.tweets already.
-                if (this.tweetIndex.has(tweet.mid))
+                // skip tweet that is in this.tweets already, or was deleted this session.
+                if (this.tweetIndex.has(tweet.mid) || this._deletedTweetIds.has(tweet.mid))
                     return
 
                 // Use pre-resolved author if caller already set it, otherwise fetch
@@ -1908,6 +1909,7 @@ export const useTweetStore = defineStore('tweetStore', {
             this._followings = []
             this.tweets = []
             this.tweetIndex.clear()
+            this._deletedTweetIds.clear()
             this.originalTweets = []
             this.originalTweetIndex.clear()
             this.users.clear()
@@ -1999,6 +2001,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param authorId The ID of the tweet author
          */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
+            this._deletedTweetIds.add(tweetId)
             this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
             this.tweetIndex.delete(tweetId)
             let user = await this.getUser(authorId)
