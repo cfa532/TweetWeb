@@ -20,8 +20,22 @@ const fileBrowserRouter = require('./uploadedFilesBrowser');
 const netdisk = require('./netdisk');
 const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
+const agentRouter = require('./agentRoutes');
+const commentRouter = require('./commentRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
+
+// Global CORS for https://x.com — must run before any route registrations
+// so that OPTIONS preflight requests are answered with the explicit origin
+// (the later cors() call uses a '*' wildcard, which browsers reject for
+// credentialed requests from x.com).
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', 'https://x.com');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 // Promisify exec for async/await usage
 const execAsync = promisify(exec);
@@ -399,6 +413,11 @@ function checkAuthorizedUser(req, res, next) {
   if (req.path === '/normalize-video' || req.path.startsWith('/normalize-video/status/')) {
     return next();
   }
+
+  // Skip authorization for the comment endpoint (uses server-side X cookies)
+  if (req.path === '/comment') {
+    return next();
+  }
   
   // Skip authorization for PATCH requests to existing uploads
   if ((req.method === 'PATCH' || req.method === 'HEAD') && req.path.startsWith('/upload/')) {
@@ -581,6 +600,8 @@ app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
 app.use('/', zipRouter);         // ZIP processing routes
+app.use('/api/agent', agentRouter()); // Agent proxy routes
+app.use('/', commentRouter);    // X (Twitter) comment proxy
 
 // Health check endpoint (no authorization required)
 app.get('/health', (req, res) => {
