@@ -943,7 +943,7 @@ function retryLoad() {
     align-items: stretch;
     max-height: none;
     overflow: visible;
-    gap: 8px;
+    gap: 2px;
     width: 100%;
 }
 
