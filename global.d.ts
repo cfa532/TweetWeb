@@ -19,6 +19,7 @@ interface User {
     username: string;
     name?: string;
     profile?: string;
+    agentPublicKey?: string;
     hostIds?: MimeiId[];  // Array of host IDs, where hostIds[0] may be read host and hostIds[1] may be write host
     providerIp?: string;  // Provider's IP that has write permission
     writableHostIp?: string | null;  // Cached writable host IP, fetched lazily when needed
@@ -28,6 +29,7 @@ interface User {
     followersCount?: number;
     tweetCount?: number;
     cloudDrivePort?: number;  // Port for backend service (undefined/null/0 means no service)
+    domainToShare?: string;
     hostUrl?: string;
 };
 

@@ -115,6 +115,70 @@ type RegisterSuccessUser = {
     followerProviderIp?: string
 }
 
+type AgentToken = {
+    version: number
+    mimeiId: string
+    privateKey: string
+    publicKey: string
+    createdAt: number
+    scope: string[]
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = ""
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte)
+    }
+    return btoa(binary)
+}
+
+function utf8ToBase64(value: string): string {
+    return bytesToBase64(new TextEncoder().encode(value))
+}
+
+function base64UrlToBase64(value: string): string {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/")
+    return base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")
+}
+
+async function createAgentTokenForUser(mimeiId: string, scope: string[] = ["post", "comment"]): Promise<{ tokenString: string, publicKey: string }> {
+    if (!globalThis.crypto?.subtle) {
+        throw new Error("Agent token generation is not supported in this browser")
+    }
+
+    const keyPair = await globalThis.crypto.subtle.generateKey(
+        { name: "Ed25519" },
+        true,
+        ["sign", "verify"]
+    )
+    if (!("privateKey" in keyPair) || !("publicKey" in keyPair)) {
+        throw new Error("Failed to generate agent token keypair")
+    }
+
+    const [privateJwk, publicJwk] = await Promise.all([
+        globalThis.crypto.subtle.exportKey("jwk", keyPair.privateKey),
+        globalThis.crypto.subtle.exportKey("jwk", keyPair.publicKey),
+    ])
+
+    if (typeof privateJwk.d !== "string" || typeof publicJwk.x !== "string") {
+        throw new Error("Failed to export agent token keypair")
+    }
+
+    const token: AgentToken = {
+        version: 1,
+        mimeiId,
+        privateKey: base64UrlToBase64(privateJwk.d),
+        publicKey: base64UrlToBase64(publicJwk.x),
+        createdAt: Date.now(),
+        scope,
+    }
+
+    return {
+        tokenString: utf8ToBase64(JSON.stringify(token)),
+        publicKey: token.publicKey,
+    }
+}
+
 function parseRegisterSuccessUser(ret: any): RegisterSuccessUser {
     if (!ret) return {}
     const success = ret.success === true || ret.success === 1
@@ -2943,6 +3007,54 @@ export const useTweetStore = defineStore('tweetStore', {
             sessionStorage.setItem("user", JSON.stringify(user))
 
             return true
+        },
+
+        /**
+         * Generates a new agent token locally and stores its public key on the server.
+         * Mirrors the iOS flow used for AI agent access.
+         */
+        async generateAgentToken(): Promise<string> {
+            const user = this.loginUser
+            if (!user) throw new Error("Must be logged in to generate agent token")
+
+            const tokenResult = await createAgentTokenForUser(user.mid, ["post", "comment"])
+
+            const userObj: any = {
+                mid: user.mid,
+                agentPublicKey: tokenResult.publicKey,
+                cloudDrivePort: user.cloudDrivePort ?? 0,
+            }
+            if (typeof user.domainToShare === "string" && user.domainToShare.trim()) {
+                userObj.domainToShare = user.domainToShare.trim()
+            }
+
+            const originalTimeout = user.client.timeout
+            user.client.timeout = 15000
+            let ret
+            try {
+                ret = await user.client.RunMApp("set_author_core_data", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    user: JSON.stringify(userObj)
+                })
+            } finally {
+                user.client.timeout = originalTimeout
+            }
+
+            if (!ret) throw new Error("Failed to update agent public key")
+            if (ret["success"] === false) {
+                throw new Error(ret["message"] || "Failed to update agent public key")
+            }
+            if (ret["status"] && ret["status"] !== "success") {
+                throw new Error(ret["reason"] || "Failed to update agent public key")
+            }
+
+            user.agentPublicKey = tokenResult.publicKey
+            this._user = user
+            sessionStorage.setItem("user", JSON.stringify(user))
+
+            return tokenResult.tokenString
         },
 
         /**

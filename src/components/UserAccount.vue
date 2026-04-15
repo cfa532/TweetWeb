@@ -23,6 +23,8 @@ const showDeleteConfirm = ref(false);
 const showLogoutConfirm = ref(false);
 const showAvatarCropper = ref(false);
 const isUploadingAvatar = ref(false);
+const isGeneratingAgentToken = ref(false);
+const agentToken = ref('');
 
 // --- Login fields ---
 const loginUsername = ref('');
@@ -47,6 +49,7 @@ const backendDomain = ref('');
 
 const user = computed(() => tweetStore.loginUser);
 const isLoggedIn = computed(() => !!user.value);
+const hasAgentToken = computed(() => !!user.value?.agentPublicKey);
 
 onMounted(() => {
     const requestedView = route.query.view;
@@ -86,6 +89,9 @@ function clearError() {
 
 async function switchView(view: string) {
     clearError();
+    if (view !== 'edit') {
+        agentToken.value = '';
+    }
     activeView.value = view;
     if (view === 'edit') {
         populateEditFields();
@@ -239,6 +245,40 @@ async function handleDeleteAccount() {
         errorMessage.value = err?.message || t('auth.deleteFailed');
     } finally {
         isLoading.value = false;
+    }
+}
+
+async function handleGenerateAgentToken() {
+    isGeneratingAgentToken.value = true;
+    clearError();
+    try {
+        agentToken.value = await tweetStore.generateAgentToken();
+        alertStore.success(t('auth.agentTokenGenerated'));
+    } catch (err: any) {
+        errorMessage.value = err?.message || t('auth.agentTokenGenerateFailed');
+    } finally {
+        isGeneratingAgentToken.value = false;
+    }
+}
+
+async function copyAgentToken() {
+    if (!agentToken.value) return;
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(agentToken.value);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = agentToken.value;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        }
+        alertStore.success(t('auth.agentTokenCopied'));
+    } catch (err: any) {
+        errorMessage.value = err?.message || t('auth.agentTokenCopyFailed');
     }
 }
 
@@ -400,6 +440,12 @@ function goBack() {
                         <span class="info-label">{{ $t('auth.joined') }}</span>
                         <span class="info-value text-muted">{{ formatTimeDifference(user?.timestamp as number) }}</span>
                     </div>
+                    <div class="info-row">
+                        <span class="info-label">{{ $t('auth.aiAgentAccess') }}</span>
+                        <span class="info-value text-muted">
+                            {{ hasAgentToken ? $t('auth.tokenConfigured') : $t('auth.tokenNotConfigured') }}
+                        </span>
+                    </div>
                 </div>
 
                 <div v-if="errorMessage" class="alert alert-danger py-2">{{ errorMessage }}</div>
@@ -469,6 +515,48 @@ function goBack() {
                     <label class="form-label">{{ $t('auth.shareDomain') }}</label>
                     <input v-model="editDomainToShare" type="url" class="form-control" :disabled="isLoading"
                         :placeholder="backendDomain || $t('auth.shareDomainPlaceholder')" />
+                </div>
+
+                <div class="agent-token-card mb-3">
+                    <div class="agent-token-header">
+                        <div>
+                            <div class="agent-token-title">{{ $t('auth.aiAgentAccess') }}</div>
+                            <div class="agent-token-status text-muted">
+                                {{ hasAgentToken ? $t('auth.tokenConfigured') : $t('auth.tokenNotConfigured') }}
+                            </div>
+                        </div>
+                    </div>
+                    <p class="agent-token-description mb-2">{{ $t('auth.agentTokenDescription') }}</p>
+                    <p class="agent-token-security text-muted mb-3">{{ $t('auth.agentTokenSecurity') }}</p>
+                    <textarea
+                        v-if="agentToken"
+                        :value="agentToken"
+                        class="form-control mb-2"
+                        rows="4"
+                        readonly
+                    />
+                    <div class="d-flex gap-2">
+                        <button
+                            type="button"
+                            class="btn btn-outline-primary flex-fill"
+                            @click="handleGenerateAgentToken"
+                            :disabled="isLoading || isGeneratingAgentToken"
+                        >
+                            <span v-if="isGeneratingAgentToken" class="spinner-border spinner-border-sm me-1"></span>
+                            {{ isGeneratingAgentToken
+                                ? $t('auth.generatingAgentToken')
+                                : (hasAgentToken ? $t('auth.regenerateAgentToken') : $t('auth.generateAgentToken')) }}
+                        </button>
+                        <button
+                            v-if="agentToken"
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            @click="copyAgentToken"
+                            :disabled="isLoading || isGeneratingAgentToken"
+                        >
+                            {{ $t('auth.copyAgentToken') }}
+                        </button>
+                    </div>
                 </div>
 
                 <div v-if="errorMessage" class="alert alert-danger py-2">{{ errorMessage }}</div>
@@ -635,6 +723,23 @@ function goBack() {
     text-align: right;
     word-break: break-all;
     max-width: 60%;
+}
+
+.agent-token-card {
+    padding: 16px;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    background: #f8f9fa;
+}
+
+.agent-token-title {
+    font-weight: 600;
+}
+
+.agent-token-status,
+.agent-token-description,
+.agent-token-security {
+    font-size: 0.9rem;
 }
 
 .confirm-overlay {

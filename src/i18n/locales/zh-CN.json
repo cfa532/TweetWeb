@@ -56,7 +56,20 @@
     "deleteFailed": "删除账户失败。",
     "logoutConfirm": "您确定要登出吗？",
     "deleteConfirm": "此操作无法撤销。所有数据将丢失。",
-    "joined": "加入时间"
+    "joined": "加入时间",
+    "aiAgentAccess": "AI 代理访问",
+    "tokenConfigured": "已配置令牌",
+    "tokenNotConfigured": "未配置",
+    "agentTokenDescription": "生成代理令牌后，AI 代理无需密码即可代你发帖或评论。",
+    "agentTokenSecurity": "请妥善保管此令牌。如果泄露，请重新生成以撤销旧令牌。",
+    "generateAgentToken": "生成令牌",
+    "generatingAgentToken": "生成令牌中...",
+    "regenerateAgentToken": "重新生成令牌",
+    "copyAgentToken": "复制令牌",
+    "agentTokenGenerated": "代理令牌已生成。",
+    "agentTokenCopied": "代理令牌已复制到剪贴板。",
+    "agentTokenGenerateFailed": "生成代理令牌失败。",
+    "agentTokenCopyFailed": "复制代理令牌失败。"
   },
   "profile": {
     "followers": "关注者",

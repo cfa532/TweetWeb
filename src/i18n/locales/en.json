@@ -56,7 +56,20 @@
     "deleteFailed": "Failed to delete account.",
     "logoutConfirm": "Are you sure you want to logout?",
     "deleteConfirm": "This action is permanent and cannot be undone. All your data will be lost.",
-    "joined": "Joined"
+    "joined": "Joined",
+    "aiAgentAccess": "AI Agent Access",
+    "tokenConfigured": "Token configured",
+    "tokenNotConfigured": "Not configured",
+    "agentTokenDescription": "Generate an agent token so AI agents can post or comment without your password.",
+    "agentTokenSecurity": "Keep this token secret. If it is exposed, regenerate it to revoke the old one.",
+    "generateAgentToken": "Generate Token",
+    "generatingAgentToken": "Generating Token...",
+    "regenerateAgentToken": "Regenerate Token",
+    "copyAgentToken": "Copy Token",
+    "agentTokenGenerated": "Agent token generated.",
+    "agentTokenCopied": "Agent token copied to clipboard.",
+    "agentTokenGenerateFailed": "Failed to generate agent token.",
+    "agentTokenCopyFailed": "Failed to copy agent token."
   },
   "profile": {
     "followers": "Followers",

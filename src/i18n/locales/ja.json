@@ -56,7 +56,20 @@
     "deleteFailed": "アカウントの削除に失敗しました。",
     "logoutConfirm": "ログアウトしてもよろしいですか？",
     "deleteConfirm": "この操作は元に戻せません。すべてのデータが失われます。",
-    "joined": "参加日"
+    "joined": "参加日",
+    "aiAgentAccess": "AI エージェントアクセス",
+    "tokenConfigured": "トークン設定済み",
+    "tokenNotConfigured": "未設定",
+    "agentTokenDescription": "エージェントトークンを生成すると、AI エージェントがパスワードなしで投稿やコメントを行えます。",
+    "agentTokenSecurity": "このトークンは秘密として扱ってください。漏えいした場合は再生成して古いトークンを無効化してください。",
+    "generateAgentToken": "トークンを生成",
+    "generatingAgentToken": "トークン生成中...",
+    "regenerateAgentToken": "トークンを再生成",
+    "copyAgentToken": "トークンをコピー",
+    "agentTokenGenerated": "エージェントトークンを生成しました。",
+    "agentTokenCopied": "エージェントトークンをクリップボードにコピーしました。",
+    "agentTokenGenerateFailed": "エージェントトークンの生成に失敗しました。",
+    "agentTokenCopyFailed": "エージェントトークンのコピーに失敗しました。"
   },
   "profile": {
     "followers": "フォロワー",
