@@ -85,12 +85,45 @@ function socketAddressFromUrlHostPort(hostname: string, port: string): string | 
     return port ? `${hostname}:${port}` : hostname
 }
 
+/** Normalize host/IP so we can run range checks on raw addresses and URLs. */
+function hostFromAddress(address: string): string {
+    const raw = String(address ?? "").trim()
+    if (!raw) return ""
+    try {
+        if (raw.includes("://")) {
+            const hostname = new URL(raw).hostname
+            if (hostname) return hostname
+        }
+    } catch {
+        // Fall through to manual parsing for non-standard input.
+    }
+    let candidate = raw
+    const slashIndex = candidate.indexOf("/")
+    if (slashIndex >= 0) candidate = candidate.slice(0, slashIndex)
+    if (candidate.startsWith("[")) {
+        const end = candidate.indexOf("]")
+        if (end > 1) return candidate.slice(1, end)
+    }
+    const ipv4WithOptionalPort = candidate.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?$/)
+    if (ipv4WithOptionalPort) return ipv4WithOptionalPort[1]
+    const hostPort = candidate.match(/^([^:]+):\d+$/)
+    if (hostPort) return hostPort[1]
+    return candidate
+}
+
+/** Tailscale typically uses the RFC6598 shared range 100.64.0.0/10. */
+function isTailscaleAddress(address: string): boolean {
+    const host = hostFromAddress(address)
+    return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+}
+
 /** Prefer host:port from API user blob; avoids get_provider for the new mid right after register. */
 function providerIpFromRegisteredUserBlob(u: any): string | undefined {
     if (!u || typeof u !== 'object') return undefined
     const direct = u.providerIp
     if (typeof direct === 'string' && direct.trim() && !String(direct).includes('://')) {
-        return direct.trim()
+        const normalizedDirect = direct.trim()
+        if (!isTailscaleAddress(normalizedDirect)) return normalizedDirect
     }
     for (const key of ['writableUrl', 'baseUrl'] as const) {
         const raw = u[key]
@@ -99,10 +132,11 @@ function providerIpFromRegisteredUserBlob(u: any): string | undefined {
             const url = new URL(raw.trim())
             const host = url.hostname
             if (!host) continue
-            return socketAddressFromUrlHostPort(host, url.port) ?? host
+            const candidate = socketAddressFromUrlHostPort(host, url.port) ?? host
+            if (!isTailscaleAddress(candidate)) return candidate
         } catch {
             const s = raw.trim()
-            if (/^[\w.:\[\]-]+$/.test(s) && !s.includes('://')) return s
+            if (/^[\w.:\[\]-]+$/.test(s) && !s.includes('://') && !isTailscaleAddress(s)) return s
         }
     }
     return undefined
@@ -1681,6 +1715,8 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         // Filter out private/local IPs (not reachable from public internet)
                         if (this.isLocalIP(ip)) return false;
+                        // Explicit guard for VPN-assigned Tailscale addresses.
+                        if (isTailscaleAddress(ip)) return false;
 
                         return true;
                     });
@@ -2794,6 +2830,9 @@ export const useTweetStore = defineStore('tweetStore', {
                             if (colonCount > 1) return false;
                         }
 
+                        // Skip local and VPN-only addresses for node resolution.
+                        if (this.isLocalIP(ip) || isTailscaleAddress(ip)) return false;
+
                         return true;
                     });
 
@@ -2892,7 +2931,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     (followerProviderIp && followerProviderIp.trim()) ||
                     (this.lapi.hostIP && String(this.lapi.hostIP).trim()) ||
                     ''
-                if (!ip) {
+                if (ip && isTailscaleAddress(ip)) {
+                    console.warn("[register:autoFollow] Ignoring Tailscale provider IP hint", ip)
+                }
+                const usableIp = ip && !isTailscaleAddress(ip)
+                    ? ip
+                    : ((this.lapi.hostIP && String(this.lapi.hostIP).trim() && !isTailscaleAddress(String(this.lapi.hostIP).trim()))
+                        ? String(this.lapi.hostIP).trim()
+                        : '')
+                if (!usableIp) {
                     console.warn("[register:autoFollow] No provider IP hint or entry hostIP; cannot auto-follow")
                     return
                 }
@@ -2905,14 +2952,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     Array.isArray(registeredUserBlob.hostIds) &&
                     registeredUserBlob.hostIds.length > 0
                 ) {
-                    const seeded = { ...registeredUserBlob, mid: registeredUserId, providerIp: ip }
+                    const seeded = { ...registeredUserBlob, mid: registeredUserId, providerIp: usableIp }
                     delete (seeded as any).password
                     delete (seeded as any).client
                     sessionStorage.setItem(registeredUserId, JSON.stringify(seeded))
                 }
 
                 // Same as `toggleFollowing`: follower's node — use known IP from register response or entry node.
-                const followerClient = createPooledClient(ip, this.lapi.connectionPool)
+                const followerClient = createPooledClient(usableIp, this.lapi.connectionPool)
                 followerClient.timeout = 120000
 
                 for (const followingId of ids) {
