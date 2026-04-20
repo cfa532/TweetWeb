@@ -25,12 +25,9 @@ const commentRouter = require('./commentRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
 
-// Global CORS for https://x.com — must run before any route registrations
-// so that OPTIONS preflight requests are answered with the explicit origin
-// (the later cors() call uses a '*' wildcard, which browsers reject for
-// credentialed requests from x.com).
+// Global CORS — allow any origin so clients from any host can upload.
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'https://x.com');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(200);

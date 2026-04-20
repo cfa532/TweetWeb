@@ -108,7 +108,7 @@ export async function normalizeVideo(
       // Track upload progress (5-40% of total progress bar)
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && onProgress) {
-          const uploadProgress = Math.floor(5 + ((event.loaded / event.total) * 35)); // 5-40% for upload
+          const uploadProgress = Math.max(5, Math.round(5 + ((event.loaded / event.total) * 35))); // 5-40% for upload
           onProgress(uploadProgress);
         }
       });
@@ -269,7 +269,8 @@ export async function uploadVideo(
       // Track upload progress (0-40% of total progress bar)
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && onProgress) {
-          const uploadProgress = Math.floor((event.loaded / event.total) * 40); // 0-40% for upload
+          const rawPct = event.loaded / event.total;
+          const uploadProgress = rawPct > 0 ? Math.max(1, Math.round(rawPct * 40)) : 0;
           console.log(`[UPLOAD-PROGRESS] ${uploadProgress}% (${(event.loaded / 1024 / 1024).toFixed(2)}MB / ${(event.total / 1024 / 1024).toFixed(2)}MB)`);
           onProgress(uploadProgress);
         }

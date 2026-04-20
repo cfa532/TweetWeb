@@ -513,7 +513,7 @@ async function uploadFileToIPFS(
   console.log(`[UPLOAD] Starting upload for ${fileName} (${(data.byteLength / 1024 / 1024).toFixed(2)}MB)`)
   console.log(`[UPLOAD] ArrayBuffer details: byteLength=${data.byteLength}, constructor=${data.constructor.name}`)
   
-  const chunkSize = 1024 * 1024 // 1MB chunks to match iOS
+  const chunkSize = 2 * 1024 * 1024 // 2MB chunks
   let offset = 0
   let fsid: string | null = null
   let chunkNumber = 0
@@ -559,7 +559,7 @@ async function uploadFileToIPFS(
       const response = await uploadClient.RunMApp('upload_ipfs', request, [uint8Chunk])
       
       // Update progress
-      uploadProgress[fileIndex] = Math.floor((end / data.byteLength) * 100)
+      uploadProgress[fileIndex] = Math.max(1, Math.round((end / data.byteLength) * 100))
       
       // Handle v2 response format: {success: true, data: fsid|cid} or {success: false, message: string}
       if (response && typeof response === 'object') {
