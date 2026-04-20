@@ -510,7 +510,9 @@ watch(authorId, async (nv, ov) => {
 
     // Force-refresh user data from its host (keeps cache for instant display
     // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
-    tweetStore.getUser(nv, true);
+    tweetStore.getUser(nv, true).then(u => {
+        console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
+    });
     await initialLoadTweets(nv);
     // Deep link to a tweet, or restore list position / scroll top on author switch
     await maybeScrollOrRestoreProfile(nv, ov)
