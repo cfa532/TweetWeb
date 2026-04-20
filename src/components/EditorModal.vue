@@ -147,12 +147,12 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         } else {
           const cloudDrivePort = String(author.cloudDrivePort);
           let ipAddress: string | null = null;
-          try {
-            const resolved = await tweetStore.resolveWritableHostIp(author);
-            ipAddress = resolved.includes(':') ? resolved.split(':')[0] : resolved;
-          } catch (resolveError) {
+          if (author.writableHostIp) {
+            const raw = author.writableHostIp;
+            ipAddress = raw.includes(':') ? raw.split(':')[0] : raw;
+          } else {
             useIPFSFallback = true;
-            fallbackReason = `Failed to resolve writable host: ${resolveError instanceof Error ? resolveError.message : resolveError}`;
+            fallbackReason = 'Writable host not resolved';
             shouldWarnFallback = true;
           }
 
@@ -251,6 +251,15 @@ async function onSubmit() {
   loading.value = true
   let attachments = <MimeiFileType[]>[]
   try {
+    // Resolve writable host once upfront so attachment uploads and uploadTweet share the cached IP.
+    if (author.hostIds?.[0] && !author.writableHostIp) {
+      try {
+        await tweetStore.resolveWritableHostIp(author)
+      } catch (e) {
+        console.warn('[EDITOR] Writable host resolution failed, uploads may fall back to IPFS:', e)
+      }
+    }
+
     if (filesUpload.value.length > 0) {
       attachments = (await uploadAttachedFiles(filesUpload.value))
         .filter((v) => v.status === 'fulfilled')

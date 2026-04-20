@@ -1340,18 +1340,19 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!forceRefresh && this.users.get(userId))
                 return this.users.get(userId)
 
-            // Deduplicate concurrent fetches for the same user
-            if (!forceRefresh) {
-                const pending = this._pendingUserFetches.get(userId)
-                if (pending) return pending
-            }
+            // Deduplicate concurrent fetches for the same user.
+            // Use separate keys for forced vs normal fetches so a cached (fast)
+            // non-refresh promise never satisfies a caller that needs fresh data.
+            const pendingKey = forceRefresh ? `${userId}:force` : userId
+            const pending = this._pendingUserFetches.get(pendingKey)
+            if (pending) return pending
 
             const fetchPromise = this._fetchUser(userId, forceRefresh)
-            this._pendingUserFetches.set(userId, fetchPromise)
+            this._pendingUserFetches.set(pendingKey, fetchPromise)
             try {
                 return await fetchPromise
             } finally {
-                this._pendingUserFetches.delete(userId)
+                this._pendingUserFetches.delete(pendingKey)
             }
         },
 
