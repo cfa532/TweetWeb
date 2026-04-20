@@ -369,9 +369,13 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async addTweetToStore(tweet: Tweet) {
             try {
-                // skip tweet that is in this.tweets already, or was deleted this session.
-                if (this.tweetIndex.has(tweet.mid) || this._deletedTweetIds.has(tweet.mid))
+                if (this._deletedTweetIds.has(tweet.mid)) return
+                const existing = this.tweetIndex.get(tweet.mid)
+                if (existing) {
+                    // Tweet already cached — refresh mutable fields from fresh data.
+                    this.refreshCachedTweet(existing, tweet)
                     return
+                }
 
                 // Use pre-resolved author if caller already set it, otherwise fetch
                 let author = tweet.author || await this.getUser(tweet.authorId)
@@ -471,6 +475,23 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Merge mutable scalar fields from a fresh server tweet into the cached
+         * copy, preserving object refs (author, attachments) so Vue keeps running
+         * video players and avatars in place.
+         */
+        refreshCachedTweet(cached: Tweet, fresh: Tweet) {
+            const freshLikeCount = fresh.likeCount ?? (fresh as any).favoriteCount
+            if (freshLikeCount !== undefined) cached.likeCount = freshLikeCount
+            if (fresh.commentCount !== undefined) cached.commentCount = fresh.commentCount
+            if (fresh.retweetCount !== undefined) cached.retweetCount = fresh.retweetCount
+            if (fresh.bookmarkCount !== undefined) cached.bookmarkCount = fresh.bookmarkCount
+            if (fresh.content !== undefined) cached.content = fresh.content
+            if (fresh.isPrivate !== undefined) cached.isPrivate = fresh.isPrivate
+            if (fresh.downloadable !== undefined) cached.downloadable = fresh.downloadable
+            if (fresh.timestamp !== undefined) cached.timestamp = fresh.timestamp
+        },
+
+        /**
          * Loads tweets for a specific user by rank/popularity
          * @param userId The user ID whose tweets to load
          * @param pageNumber 0-based page index (same as iOS fetchUserTweets — `pn` is passed through as the page index).
@@ -563,15 +584,16 @@ export const useTweetStore = defineStore('tweetStore', {
 
                     if (tweetsData) {
                         for (const tweetJson of tweetsData) {
-                            if (tweetJson != null) {
-                                const tweet = tweetJson as Tweet
-                                const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                if (!cachedTweet) {
-                                    try {
-                                        await this.addTweetToStore(tweet)
-                                    } catch (error) {
-                                        console.error("Error processing tweet:", tweet.mid, error)
-                                    }
+                            if (tweetJson == null) continue
+                            const tweet = tweetJson as Tweet
+                            const cachedTweet = this.tweetIndex.get(tweet.mid)
+                            if (cachedTweet) {
+                                this.refreshCachedTweet(cachedTweet, tweet)
+                            } else {
+                                try {
+                                    await this.addTweetToStore(tweet)
+                                } catch (error) {
+                                    console.error("Error processing tweet:", tweet.mid, error)
                                 }
                             }
                         }
@@ -939,11 +961,12 @@ export const useTweetStore = defineStore('tweetStore', {
                                 // Skip private tweets in feed
                                 if (tweet.isPrivate) {
                                     continue
+                                }
+                                const cachedTweet = this.tweetIndex.get(tweet.mid)
+                                if (cachedTweet) {
+                                    this.refreshCachedTweet(cachedTweet, tweet)
                                 } else {
-                                    const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                    if (!cachedTweet) {
-                                        await this.addTweetToStore(tweet)
-                                    }
+                                    await this.addTweetToStore(tweet)
                                 }
                             } catch (error) {
                                 console.error("Error processing tweet in feed:", error)
@@ -1033,11 +1056,12 @@ export const useTweetStore = defineStore('tweetStore', {
                                 // Skip private tweets in feed (same as getTweetFeed)
                                 if (tweet.isPrivate) {
                                     continue
+                                }
+                                const cachedTweet = this.tweetIndex.get(tweet.mid)
+                                if (cachedTweet) {
+                                    this.refreshCachedTweet(cachedTweet, tweet)
                                 } else {
-                                    const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                    if (!cachedTweet) {
-                                        await this.addTweetToStore(tweet)
-                                    }
+                                    await this.addTweetToStore(tweet)
                                 }
                             } catch (error) {
                                 console.error("Error processing tweet in updateFollowingTweets:", error)
