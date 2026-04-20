@@ -26,10 +26,28 @@ const { getLeitherPort } = require('./leitherDetector');
 const app = express();
 
 // Global CORS — allow any origin so clients from any host can upload.
+// Keep Allow-Headers in sync with the cors() middleware config below; this
+// runs first and short-circuits OPTIONS preflight, so it must accept every
+// header the client might send (e.g. Cache-Control for video uploads, TUS
+// protocol headers for resumable uploads).
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', [
+    'Content-Type',
+    'Authorization',
+    'Tus-Resumable',
+    'Upload-Length',
+    'Upload-Metadata',
+    'Upload-Offset',
+    'Upload-Defer-Length',
+    'x-username',
+    'X-Username',
+    'Accept',
+    'Cache-Control',
+    'Connection',
+    'Keep-Alive'
+  ].join(', '));
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });

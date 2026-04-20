@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
@@ -343,6 +343,24 @@ onMounted(() => {
     stopVideo();
     next();
   });
+});
+
+// In detail view, fetchTweet returns the tweet before the author resolves, then
+// asynchronously updates media.mid to use author.providerIp. Watch for that
+// change and restart HLS so the video loads from the correct server.
+watch(() => props.media.mid, (newMid, oldMid) => {
+  if (!isHLSInitialized || !isHLS.value || newMid === oldMid || isInTweetList.value) return;
+  console.log(`[VideoJS] media.mid changed after HLS init, restarting: ${oldMid} → ${newMid}`);
+  cleanupHlsInstance();
+  isHLSInitialized = false;
+  hasTriedPlaylistFallback = false;
+  hasTriedSinglePlaylist = false;
+  videoErrorRetryCount = 0;
+  mediaErrorRecoveryCount = 0;
+  lastMediaErrorTime = 0;
+  failedFragments.clear();
+  showVideoError.value = false;
+  setupHLS();
 });
 
 onUnmounted(() => {

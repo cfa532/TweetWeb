@@ -2200,112 +2200,67 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a mid of the uploaded object
          */
         async uploadTweet(tweet: any, tweetId?: MimeiId) {
-            console.log('[TWEET-STORE] Starting uploadTweet...');
-            console.log('[TWEET-STORE] Tweet data:', {
-                authorId: tweet.authorId,
-                title: tweet.title,
-                contentLength: tweet.content?.length || 0,
-                attachmentsCount: tweet.attachments?.length || 0,
-                isPrivate: tweet.isPrivate,
-                downloadable: tweet.downloadable,
-                tweetId: tweetId
-            });
+            if (!this.loginUser) throw new Error('Not logged in')
 
-            // Check if we need to get writable host IP
-            if (!this.loginUser?.writableHostIp && this.loginUser?.hostIds && this.loginUser.hostIds.length >= 2) {
-                console.log('[TWEET-STORE] No writable host IP cached, checking hostIds for writable host...');
-
+            // Point the main client at the writable host (hostIds[0]) for writes.
+            // Matches iOS appUser.resolveWritableUrl; runs once per session then
+            // caches via user.writableHostIp.
+            if (!this.loginUser.writableHostIp && this.loginUser.hostIds?.[0]) {
                 try {
-                    // Create a temporary user object with the writable host ID
-                    const writableUser = { ...this.loginUser, hostId: this.loginUser.hostIds[0] };
-
-                    // Try to get writable host IP with a short timeout
-                    const ipPromise = this.getNodeIp(writableUser, true)
-                    const timeoutPromise = new Promise<string | null>((resolve) => {
-                        setTimeout(() => resolve(null), 5000) // 5 second timeout for writable host discovery
-                    })
-                    const writableIp = await Promise.race([ipPromise, timeoutPromise])
-
-                    if (writableIp) {
-                        console.log(`[TWEET-STORE] Got writable host IP: ${writableIp}`)
-                        // Update user with writable host IP
-                        this.loginUser.writableHostIp = writableIp
-                        this.loginUser.providerIp = writableIp
-                        this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
-                        // Update stored user data
-                        sessionStorage.setItem("user", JSON.stringify(this.loginUser))
-                        console.log('[TWEET-STORE] Switched to writable host IP for upload')
-                    } else {
-                        console.log('[TWEET-STORE] Writable host IP not available, using current provider IP')
-                    }
+                    const writableIp = await Promise.race([
+                        this.resolveWritableHostIp(this.loginUser),
+                        new Promise<string>((_, reject) =>
+                            setTimeout(() => reject(new Error('writable host discovery timeout')), 5000))
+                    ])
+                    this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
+                    sessionStorage.setItem('user', JSON.stringify(this.loginUser))
                 } catch (error) {
-                    console.warn('[TWEET-STORE] Failed to get writable host IP, using current provider IP:', error)
+                    console.warn('[TWEET-STORE] Writable host unavailable, using current client:', error)
                 }
-            } else if (this.loginUser?.writableHostIp) {
-                console.log(`[TWEET-STORE] Using cached writable host IP: ${this.loginUser.writableHostIp}`)
-            } else if (!this.loginUser?.hostIds || this.loginUser.hostIds.length < 2) {
-                console.log('[TWEET-STORE] User does not have enough hostIds for writable host detection, using current provider IP')
             }
 
-            var ret: any
-            const originalTimeout = this.loginUser?.client.timeout
-            
-            // Use longer timeout for tweet upload (Leither service may be busy after video processing)
-            const effectiveTimeout = 5 * 60 * 1000 // 5 minutes
-            console.log('[TWEET-STORE] Using timeout:', effectiveTimeout / (60 * 1000), 'minutes');
-            
+            // Leither may be busy after video processing; allow 5 minutes per write.
+            const effectiveTimeout = 5 * 60 * 1000
+            const originalTimeout = this.loginUser.client.timeout
+            this.loginUser.client.timeout = effectiveTimeout
+
+            let ret: any
             try {
-                // Set timeout for this operation
-                this.loginUser!.client.timeout = effectiveTimeout
-                
-                // Create a timeout promise to handle long-running operations
                 const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => {
-                        const timeoutMinutes = Math.round(effectiveTimeout / (60 * 1000))
-                        const timeoutHours = Math.round(effectiveTimeout / (60 * 60 * 1000))
-                        const timeoutText = timeoutHours > 0 ? `${timeoutHours} hours` : `${timeoutMinutes} minutes`
-                        reject(new Error(`Tweet upload timeout after ${timeoutText}. This may be due to extensive video processing on the backend.`))
-                    }, effectiveTimeout)
+                    setTimeout(() => reject(new Error(
+                        `Tweet upload timeout after ${effectiveTimeout / 60000} minutes. This may be due to extensive video processing on the backend.`
+                    )), effectiveTimeout)
                 })
-                
-                // Create the upload promise
+
                 const uploadPromise = (async () => {
                     if (tweetId) {
-                        console.log('[TWEET-STORE] Calling add_comment API...');
-                        // Fetch parent tweet to get its author's hostId
-                        const parentTweet = await this.getTweet(tweetId);
-                        if (!parentTweet || !parentTweet.author?.hostIds || !parentTweet.author?.hostIds[0]) {
-                            throw new Error('Failed to fetch parent tweet or parent tweet author hostIds[0]');
+                        const parentTweet = await this.getTweet(tweetId)
+                        const parentAuthorHostId = parentTweet?.author?.hostIds?.[0]
+                        if (!parentAuthorHostId) {
+                            throw new Error('Parent tweet author has no hostIds[0]')
                         }
-                        const parentAuthorHostId = parentTweet.author.hostIds[0];
-                        console.log('[TWEET-STORE] Using parent tweet author hostId:', parentAuthorHostId);
-                        return await this.loginUser?.client.RunMApp("add_comment",
-                            {aid: this.appId, ver: "last", tweetid: tweetId, comment: JSON.stringify(tweet), userid: this.loginUser?.mid, hostid: parentAuthorHostId}
-                        )
-                    } else {
-                        console.log('[TWEET-STORE] Calling add_tweet API...');
-                        return await this.loginUser?.client.RunMApp("add_tweet",
-                            {aid: this.appId, ver: "last", tweet: JSON.stringify(tweet),
-                                hostid: this.loginUser?.hostIds?.[0]})
+                        return await this.loginUser!.client.RunMApp('add_comment', {
+                            aid: this.appId, ver: 'last',
+                            tweetid: tweetId,
+                            comment: JSON.stringify(tweet),
+                            userid: this.loginUser!.mid,
+                            hostid: parentAuthorHostId,
+                        })
                     }
+                    return await this.loginUser!.client.RunMApp('add_tweet', {
+                        aid: this.appId, ver: 'last',
+                        tweet: JSON.stringify(tweet),
+                        hostid: this.loginUser!.hostIds?.[0],
+                    })
                 })()
-                
-                // Race between upload and timeout
-                console.log('[TWEET-STORE] Starting Promise.race between upload and timeout...');
+
                 ret = await Promise.race([uploadPromise, timeoutPromise])
-                console.log('[TWEET-STORE] Promise.race completed, result:', ret);
-                
             } catch (error) {
-                console.error('[TWEET-STORE] Upload failed:', error);
                 console.error(`Upload ${tweetId ? 'comment' : 'tweet'} failed:`, error)
                 throw error
             } finally {
-                // Restore original timeout
-                this.loginUser!.client.timeout = originalTimeout
-                console.log('[TWEET-STORE] Restored original timeout');
+                this.loginUser.client.timeout = originalTimeout
             }
-            
-            console.log(`Upload ${tweetId ? 'comment' : 'tweet'} result:`, tweetId, ret)
                 
             // Check if the backend returned null, indicating failure
             if (ret === null || ret === undefined || !ret.success) {
@@ -2756,16 +2711,11 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Gets the IP address list of a node, after removing local IPv4
-         * Calls get_node_ips with version=v2 which returns a list of IPs
-         * @param user The user object containing client and hostId
-         * @param v4Only Whether to filter out IPv6 addresses (default: v4Only)
-         * @returns The first non-local IP address found, or null if none available
+         * Resolves a user's hostIds[0] to an IP via get_node_ips (v2).
+         * Returns the first non-local, non-VPN, non-IPv6 (when v4Only is on)
+         * address, or null if none are usable.
          */
-        async getNodeIp(
-            user: User,
-            v4only: boolean = v4Only
-        ): Promise<string | null> {
+        async getNodeIp(user: User): Promise<string | null> {
             try {
                 const hostId = user.hostIds?.[0];
                 if (!hostId) {
@@ -2773,91 +2723,136 @@ export const useTweetStore = defineStore('tweetStore', {
                     return null;
                 }
 
-                console.log(`[getNodeIp] Getting node IPs for nodeId ${hostId} (v4Only: ${v4Only})...`);
-
-                // Call get_node_ips (plural) with version v2 to get list of IPs
                 const params: any = {
-                    aid: this.lapi.appId,
-                    ver: "last",
-                    version: "v2",
+                    aid: this.lapi.appId, ver: "last", version: "v2",
                     nodeid: hostId,
                 };
-
-                // Only add v4only parameter if true
-                if (v4Only) {
-                    params.v4only = "true";
-                }
+                if (v4Only) params.v4only = "true";
 
                 const ipResponse = await user.client.RunMApp("get_node_ips", params);
-
-                console.log(`[getNodeIp] Raw response from get_node_ips for nodeId ${hostId}:`, ipResponse);
-
                 if (!ipResponse) {
-                    console.error("[getNodeIp] No response from get_node_ips for nodeId", hostId);
+                    console.error(`[getNodeIp] No response for nodeId ${hostId}`);
                     return null;
                 }
 
-                // Handle the response - could be array or wrapped in data property
+                // get_node_ips may return array, {data: array|string}, or a bare string.
                 let ipList: string[] = [];
-
-                if (Array.isArray(ipResponse)) {
-                    ipList = ipResponse;
-                } else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) {
-                    ipList = ipResponse.data;
-                } else if (typeof ipResponse === 'string') {
-                    // Single IP as string
-                    ipList = [ipResponse];
-                } else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') {
-                    // Single IP wrapped in data
-                    ipList = [ipResponse.data];
-                } else {
-                    console.error("[getNodeIp] Invalid response format from get_node_ips:", ipResponse);
+                if (Array.isArray(ipResponse)) ipList = ipResponse;
+                else if (typeof ipResponse === 'string') ipList = [ipResponse];
+                else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) ipList = ipResponse.data;
+                else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') ipList = [ipResponse.data];
+                else {
+                    console.error(`[getNodeIp] Invalid response for nodeId ${hostId}:`, ipResponse);
                     return null;
                 }
 
-                // Filter and trim IP addresses, optionally removing IPv6 addresses
                 const ipAddresses = ipList
                     .map(ip => ip.trim())
                     .filter(ip => {
-                        if (ip.length === 0) return false;
-
-                        // If v4Only is true, filter out IPv6 addresses
-                        if (v4Only) {
-                            // Filter out IPv6 addresses (they contain [ ] brackets or multiple colons)
-                            if (ip.includes('[') || ip.includes(']')) return false;
-                            // Count colons - IPv6 has multiple colons, IPv4 with port has only one
-                            const colonCount = (ip.match(/:/g) || []).length;
-                            if (colonCount > 1) return false;
-                        }
-
-                        // Skip local and VPN-only addresses for node resolution.
-                        if (this.isLocalIP(ip) || isTailscaleAddress(ip)) return false;
-
-                        return true;
+                        if (!ip) return false;
+                        // Filter IPv6 (brackets or multiple colons) when v4Only.
+                        if (v4Only && (ip.includes('[') || (ip.match(/:/g) || []).length > 1)) return false;
+                        // Skip local and VPN-only addresses.
+                        return !this.isLocalIP(ip) && !isTailscaleAddress(ip);
                     });
 
                 if (ipAddresses.length === 0) {
-                    console.error("[getNodeIp] No valid IPs returned for nodeId", hostId);
+                    console.error(`[getNodeIp] No valid IPs for nodeId ${hostId}`);
                     return null;
                 }
-
-                // Return first IP address
-                const resultIp = ipAddresses[0];
-                console.log(`[getNodeIp] Returning IP address for nodeId ${hostId}:`, resultIp);
-                return resultIp;
+                return ipAddresses[0];
 
             } catch (error) {
-                const hostId = user.hostIds?.[0] || 'unknown';
-                console.error("[getNodeIp] Error getting node IPs for nodeId", hostId, error);
+                console.error(`[getNodeIp] Error for nodeId ${user.hostIds?.[0] || 'unknown'}:`, error);
                 return null;
             }
         },
 
         /**
-         * Extracts the IP address from a full address string (removes port)
-         * @param address full ip address with port
-         * @returns IP without port
+         * Resolves the writable host IP for a user by resolving hostIds[0] to an IP,
+         * matching iOS User.resolveWritableUrl(). File uploads must use this host
+         * rather than the user's cached providerIp (which may point to a read-only node).
+         * Result is cached on user.writableHostIp.
          */
+        async resolveWritableHostIp(user: User): Promise<string> {
+            if (user.writableHostIp) return user.writableHostIp
+
+            const hostId = user.hostIds?.[0]
+            if (!hostId) {
+                throw new Error('Upload server not configured: user has no hostIds[0]')
+            }
+
+            const ip = await this.getNodeIp(user)
+            if (!ip) {
+                throw new Error(`Upload server not responding: could not resolve hostIds[0]=${hostId}`)
+            }
+
+            user.writableHostIp = ip
+            if (user === this.loginUser) {
+                sessionStorage.setItem('user', JSON.stringify(user))
+            }
+            return ip
+        },
+
+        /**
+         * Uploads binary data via chunked upload_ipfs to the user's writable host.
+         * Matches iOS MediaProcessor.uploadRegularFile: chunked PUT loop followed
+         * by a separate finalization call. Returns the resulting CID.
+         */
+        async uploadBlobToIpfs(
+            user: User,
+            data: ArrayBuffer | Uint8Array,
+            onProgress?: (percent: number) => void,
+        ): Promise<string> {
+            const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+            const chunkSize = 2 * 1024 * 1024 // 2MB — same as iOS uploadRegularFile
+            const uploadTimeout = 10 * 60 * 1000 // 10 min for large files
+
+            const uploadIp = await this.resolveWritableHostIp(user)
+            const client = await this.lapi.connectionPool.getConnection(uploadIp)
+            const originalTimeout = client.timeout
+            client.timeout = uploadTimeout
+
+            const parseFsid = (response: any): string => {
+                if (typeof response === 'string') return response
+                if (response && typeof response === 'object') {
+                    if (response.success === false) {
+                        throw new Error(response.message || 'Upload failed')
+                    }
+                    if (response.success === true && response.data) return response.data
+                }
+                throw new Error(`Unexpected upload_ipfs response: ${JSON.stringify(response)}`)
+            }
+
+            try {
+                let offset = 0
+                let fsid: string | null = null
+                while (offset < bytes.length) {
+                    const end = Math.min(offset + chunkSize, bytes.length)
+                    const chunk = bytes.slice(offset, end)
+                    const request: any = { aid: this.appId, ver: 'last', version: 'v2', offset }
+                    if (fsid) request.fsid = fsid
+                    fsid = parseFsid(await client.RunMApp('upload_ipfs', request, [chunk]))
+                    offset = end
+                    onProgress?.(Math.max(1, Math.round((offset / bytes.length) * 100)))
+                }
+                if (!fsid) throw new Error('upload_ipfs returned no fsid')
+
+                const finalResponse = await client.RunMApp('upload_ipfs', {
+                    aid: this.appId, ver: 'last', version: 'v2',
+                    offset, fsid, finished: 'true',
+                })
+                // Finalization may return {cid} directly or unwrap to a string.
+                if (finalResponse && typeof finalResponse === 'object' && finalResponse.cid) {
+                    return finalResponse.cid
+                }
+                return parseFsid(finalResponse)
+            } finally {
+                client.timeout = originalTimeout
+                this.lapi.connectionPool.releaseConnection(uploadIp, client)
+            }
+        },
+
         /**
          * Registers a new user account (matches iOS registerUser)
          */
@@ -3113,106 +3108,31 @@ export const useTweetStore = defineStore('tweetStore', {
             const user = this.loginUser
             if (!user) throw new Error("Not logged in")
 
-            const providerIp = user.providerIp
-            if (!providerIp) throw new Error("Provider IP not available")
+            const cid = await this.uploadBlobToIpfs(user, await blob.arrayBuffer())
 
-            // Convert blob to ArrayBuffer and upload via upload_ipfs
-            const arrayBuffer = await blob.arrayBuffer()
-            const uint8Data = new Uint8Array(arrayBuffer)
-            const chunkSize = 1024 * 1024
-            let offset = 0
-            let fsid: string | null = null
-
-            const uploadClient = await this.lapi.connectionPool.getConnection(providerIp)
-
+            // Register the new avatar on the user's node. Use the read-host client;
+            // the server replicates the change to the writable host.
+            const originalTimeout = user.client.timeout
+            user.client.timeout = 15000
+            let confirmedAvatar: string = cid
             try {
-                uploadClient.timeout = 60000
-
-                while (offset < uint8Data.length) {
-                    const end = Math.min(offset + chunkSize, uint8Data.length)
-                    const chunk = uint8Data.slice(offset, end)
-
-                    const request: any = {
-                        aid: this.appId,
-                        ver: 'last',
-                        version: 'v2',
-                        offset: offset
-                    }
-                    if (fsid) request.fsid = fsid
-
-                    const response = await uploadClient.RunMApp('upload_ipfs', request, [chunk])
-
-                    if (response && typeof response === 'object') {
-                        if (response.success === false) throw new Error(response.message || 'Upload failed')
-                        if (response.success === true && response.data) {
-                            fsid = response.data
-                            offset = end
-                        } else {
-                            throw new Error(`Invalid response: ${JSON.stringify(response)}`)
-                        }
-                    } else if (typeof response === 'string') {
-                        fsid = response
-                        offset = end
-                    } else {
-                        throw new Error(`Unexpected response type: ${typeof response}`)
-                    }
-                }
-
-                if (!fsid) throw new Error('No file ID returned')
-
-                // Finalize upload
-                const finalResponse = await uploadClient.RunMApp('upload_ipfs', {
-                    aid: this.appId,
-                    ver: 'last',
-                    version: 'v2',
-                    offset: offset,
-                    fsid: fsid,
-                    finished: 'true'
+                const ret = await user.client.RunMApp("set_user_avatar", {
+                    aid: this.appId, ver: "last", version: "v2",
+                    userid: user.mid, avatar: cid,
                 })
-
-                let cid: string | null = null
-                if (finalResponse && typeof finalResponse === 'object') {
-                    if (finalResponse.success === true && finalResponse.data) cid = finalResponse.data
-                    else if (finalResponse.cid) cid = finalResponse.cid
-                } else if (typeof finalResponse === 'string') {
-                    cid = finalResponse
-                }
-
-                if (!cid) throw new Error('No CID returned from finalization')
-
-                // Set user avatar on server (matches iOS HproseInstance.setUserAvatar)
-                const originalTimeout = user.client.timeout
-                user.client.timeout = 15000
-                let confirmedAvatar: string
-                try {
-                    const ret = await user.client.RunMApp("set_user_avatar", {
-                        aid: this.appId,
-                        ver: "last",
-                        version: "v2",
-                        userid: user.mid,
-                        avatar: cid
-                    })
-
-                    if (ret && typeof ret === 'object') {
-                        confirmedAvatar = ret.data || ret.avatar || cid
-                    } else if (typeof ret === 'string') {
-                        confirmedAvatar = ret
-                    } else {
-                        confirmedAvatar = cid
-                    }
-                } finally {
-                    user.client.timeout = originalTimeout
-                }
-
-                // Update local state with new object to trigger reactivity
-                const updatedUser = { ...user, avatar: this.getMediaUrl(confirmedAvatar, `http://${providerIp}`) }
-                this._user = updatedUser
-                sessionStorage.setItem("user", JSON.stringify(updatedUser))
-
-                return confirmedAvatar
+                if (ret && typeof ret === 'object') confirmedAvatar = ret.data || ret.avatar || cid
+                else if (typeof ret === 'string') confirmedAvatar = ret
             } finally {
-                this.lapi.connectionPool.releaseConnection(providerIp, uploadClient)
+                user.client.timeout = originalTimeout
             }
+
+            // Avatar display uses user.providerIp (read host), not the writable host.
+            const displayIp = user.providerIp || user.writableHostIp
+            const updatedUser = { ...user, avatar: this.getMediaUrl(confirmedAvatar, `http://${displayIp}`) }
+            this._user = updatedUser
+            sessionStorage.setItem("user", JSON.stringify(updatedUser))
+
+            return confirmedAvatar
         },
 
         /**
@@ -3276,16 +3196,9 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         getIpWithoutPort(address: string): string | null {
-            const regex = /^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::(\d+))?$/;
-            const match = address.match(regex);
-            if (match) {
-                // If match[1] exists, it's IPv6, so return with brackets
-                // If match[2] exists, it's IPv4, return as is
-                let ip = match[1] ? `[${match[1]}]` : match[2];
-                const port = match[3] ? parseInt(match[3], 10) : null; // Port number (or null if not present)
-                return ip;
-            }
-            return null
+            const match = address.match(/^(?:\[([0-9a-fA-F:]+)\]|([0-9.]+))(?::\d+)?$/);
+            if (!match) return null;
+            return match[1] ? `[${match[1]}]` : match[2];
         },
     },
 });

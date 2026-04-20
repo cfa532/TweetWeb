@@ -1500,9 +1500,7 @@ playlist.m3u8`;
     
     // Send response with proper headers to ensure delivery
     res.setHeader('Content-Type', 'application/json');
-    const responseMessage = normalizedFileSizeMB <= HLS_THRESHOLD_MB 
-      ? 'Video normalized and added to IPFS successfully'
-      : 'Video normalized, converted to HLS and added to IPFS successfully';
+    const responseMessage = 'Video normalized, converted to HLS and stored successfully';
     
     res.setHeader('Content-Length', Buffer.byteLength(JSON.stringify({
       success: true,
@@ -1828,46 +1826,12 @@ async function processVideoUploadInternal(req, jobId) {
     
     console.timeEnd(`[${jobId}] video-normalization`);
     
-    // Check file size and route accordingly
-    const HLS_THRESHOLD_MB = 32;
+    // /convert-video is only invoked by clients for files >50MB that expect HLS
+    // output. Always convert to HLS regardless of the normalized file size;
+    // small originals are handled client-side via the direct-upload route.
     let cid;
-    
-    if (normalizedFileSizeMB <= HLS_THRESHOLD_MB) {
-      // File size ≤ 32MB: upload as MP4 directly to IPFS
-      console.log(`[${jobId}] [ROUTE] Normalized file size (${normalizedFileSizeMB.toFixed(2)}MB) ≤ ${HLS_THRESHOLD_MB}MB, uploading as MP4 directly`);
-      
-      updateProgressSafe(jobId, 60, 'Uploading MP4 to IPFS...');
-      
-      const escapedPath = escapeShellArg(normalizedFilePath);
-      const cidOutput = await executeLeitherOperationWithProgress(
-        `ipfs add ${escapedPath}`,
-        jobId,
-        60,
-        100,
-        'Uploading to IPFS...',
-        600000 // 10 minutes timeout
-      );
-      
-      // Extract CID from output
-      const trimmedOutput = cidOutput.trim();
-      const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
-      if (ipfsAddOkMatch) {
-        cid = ipfsAddOkMatch[1];
-      } else {
-        const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
-        if (cidMatch) {
-          cid = cidMatch[1];
-        }
-      }
-      
-      if (!cid) {
-        throw new Error('Failed to extract CID from IPFS add output');
-      }
-      
-      console.log(`[${jobId}] [SUCCESS] MP4 video uploaded to IPFS, CID: ${cid}`);
-    } else {
-      // File size > 32MB: convert to HLS with 720p and 480p variants
-      console.log(`[${jobId}] [ROUTE] Normalized file size (${normalizedFileSizeMB.toFixed(2)}MB) > ${HLS_THRESHOLD_MB}MB, converting to HLS`);
+    {
+      console.log(`[${jobId}] [ROUTE] Normalized file size (${normalizedFileSizeMB.toFixed(2)}MB), converting to HLS`);
 
       // Get normalized resolution (after normalization, max resolution is 720p)
       const normalizedResolution = getVideoResolution(targetWidth, targetHeight);
@@ -2145,16 +2109,16 @@ playlist.m3u8`;
       const variantDescription = isSingleVariant ? `Single-variant (${referenceDim}p)` : 'Dual-variant';
       console.log(`[${jobId}] [SUCCESS] ${variantDescription} HLS conversion completed`);
       
-      // Upload HLS content to IPFS
-      updateProgressSafe(jobId, 80, 'Uploading HLS to IPFS...');
-      
+      // Store HLS bundle in content-addressed storage
+      updateProgressSafe(jobId, 80, 'Storing HLS stream...');
+
       const escapedPath = escapeShellArg(tempDir);
       const cidOutput = await executeLeitherOperationWithProgress(
         `ipfs add ${escapedPath}`,
         jobId,
         80,
         100,
-        'Uploading to IPFS...',
+        'Storing HLS stream...',
         6 * 60 * 60 * 1000 // 6 hours for IPFS add
       );
       
@@ -2937,11 +2901,11 @@ async function processNormalizeVideoInternal(req, jobId) {
       
       console.log(`[${jobId}] [SUCCESS] Dual-variant HLS conversion completed`);
 
-      // Upload HLS content to IPFS
+      // Store HLS bundle in content-addressed storage
       normalizeJobs.set(jobId, {
         status: 'processing',
         progress: 80,
-        message: 'Uploading HLS to IPFS...',
+        message: 'Storing HLS stream...',
         startTime: normalizeJobs.get(jobId).startTime
       });
 

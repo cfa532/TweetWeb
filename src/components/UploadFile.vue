@@ -37,9 +37,22 @@ interface StoredUpload {
 }
 
 onMounted(async () => {
-    let ip = tweetStore.getIpWithoutPort(tweetStore.loginUser?.providerIp as string)
-    tusServerUrl = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
-    console.log("TUS server", tusServerUrl)
+    // Resolve writable host IP from hostIds[0] (matches iOS resolveWritableUrl)
+    // rather than using the cached providerIp, which may be a read-only node.
+    if (!tweetStore.loginUser) {
+        alertStore.error(t('netdisk.uploadFailed'))
+        return
+    }
+    try {
+        const writableIp = await tweetStore.resolveWritableHostIp(tweetStore.loginUser)
+        const ip = tweetStore.getIpWithoutPort(writableIp) || writableIp
+        tusServerUrl = `http://${ip}:${tweetStore.loginUser.cloudDrivePort}`
+        console.log("TUS server", tusServerUrl)
+    } catch (err) {
+        console.error("Failed to resolve writable host for TUS upload:", err)
+        alertStore.error(err instanceof Error ? err.message : String(err))
+        return
+    }
 
     // Check if there are any uploads in progress from localStorage
     const storedUploadsString = localStorage.getItem('resumableUploads');

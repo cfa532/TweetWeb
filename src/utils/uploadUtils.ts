@@ -333,15 +333,14 @@ export async function uploadVideo(
           const statusResult = await statusResponse.json();
           console.log('Job status:', statusResult.status, 'Progress:', statusResult.progress + '%', 'Message:', statusResult.message);
           
-          // Update progress if callback provided (map job progress to 40-70% range for processing, 70-100% for IPFS)
+          // Map server progress 0-50% → 40-70% (video processing)
+          // and 50-100% → 70-100% (server-side storage step).
           if (onProgress && statusResult.progress) {
             let mappedProgress;
             if (statusResult.progress <= 50) {
-              // First 50% of server progress maps to 40-70% (video processing)
-              mappedProgress = Math.floor(40 + (statusResult.progress * 0.6)); // Map 0-50% to 40-70%
+              mappedProgress = Math.floor(40 + (statusResult.progress * 0.6));
             } else {
-              // Second 50% of server progress maps to 70-100% (IPFS upload)
-              mappedProgress = Math.floor(70 + ((statusResult.progress - 50) * 0.6)); // Map 50-100% to 70-100%
+              mappedProgress = Math.floor(70 + ((statusResult.progress - 50) * 0.6));
             }
             onProgress(mappedProgress);
           }

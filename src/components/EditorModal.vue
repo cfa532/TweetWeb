@@ -9,18 +9,6 @@ import { CidModal } from '@/views'
 import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
 
-// Helper function to get human-readable aspect ratio names
-function getAspectRatioDisplayName(ratio: number): string {
-  const tolerance = 0.01;
-  if (Math.abs(ratio - (4/3)) < tolerance) return '4:3';
-  if (Math.abs(ratio - (16/9)) < tolerance) return '16:9';
-  if (Math.abs(ratio - (21/9)) < tolerance) return '21:9';
-  if (Math.abs(ratio - (16/10)) < tolerance) return '16:10';
-  if (Math.abs(ratio - (9/16)) < tolerance) return '9:16 (portrait)';
-  if (Math.abs(ratio - 1) < tolerance) return '1:1 (square)';
-  return `${ratio.toFixed(3)}:1`;
-}
-
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
 }
@@ -93,56 +81,32 @@ async function retryUpload<T>(
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     try {
-      if (attempt > 0) {
-        console.log(`[UPLOAD-RETRY] Attempting retry ${attempt}/${config.maxRetries} for ${fileName}`);
-      }
-
-      const result = await uploadFn();
-      if (attempt > 0) {
-        console.log(`[UPLOAD-RETRY] Retry successful for ${fileName} on attempt ${attempt + 1}`);
-      }
-      return result;
+      return await uploadFn();
     } catch (error) {
       lastError = error;
-      console.error(`[UPLOAD-RETRY] Attempt ${attempt + 1} failed for ${fileName}:`, error);
+      console.error(`[UPLOAD-RETRY] Attempt ${attempt + 1}/${config.maxRetries + 1} failed for ${fileName}:`, error);
 
-      // Clear connection pool if we hit a connection timeout - connections may be stale
+      // Clear connection pool on connection timeout — pool may hold stale sockets.
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('Connection request timeout')) {
-        console.log(`[UPLOAD-RETRY] Connection pool timeout detected, clearing stale connections`);
-        console.log(`[UPLOAD-RETRY] Pool stats before clear:`, tweetStore.lapi.connectionPool.getStats());
         tweetStore.lapi.connectionPool.clearAll();
-        console.log(`[UPLOAD-RETRY] Pool cleared, stats after:`, tweetStore.lapi.connectionPool.getStats());
       }
 
-      // Don't retry if this is the last attempt or error is not retryable
-      if (attempt >= config.maxRetries || !isRetryableError(error)) {
-        break;
-      }
+      if (attempt >= config.maxRetries || !isRetryableError(error)) break;
 
-      // Calculate delay with exponential backoff
       const delay = Math.min(
         config.initialDelay * Math.pow(config.backoffMultiplier, attempt),
         config.maxDelay
       );
-
-      console.log(`[UPLOAD-RETRY] Waiting ${delay}ms before retry ${attempt + 1} for ${fileName}`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 
-  // All retries failed
-  console.error(`[UPLOAD-RETRY] All ${config.maxRetries + 1} attempts failed for ${fileName}`);
   throw lastError;
 }
 
 onMounted(() => {
   tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
-  console.log('EditorModal mounted with author:', {
-    mid: author.mid,
-    providerIp: author.providerIp,
-    cloudDrivePort: author.cloudDrivePort
-  });
 })
 
 // Upload files and store them as IPFS or Mimei type
@@ -159,15 +123,9 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       let processedFile = file;
       let cid: string = '';
 
-      // Handle different file types
       if (isImageType(fileType)) {
-        // Upload original file without any compression (debug mode)
-        console.log(`[UPLOAD] Uploading image ${file.name} (${(file.size / 1024).toFixed(1)}KB) without compression`)
-        cid = await retryUpload(
-          () => uploadFileFromFile(file, i),
-          file.name
-        );
-        
+        cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
+
       } else if (isVideoType(fileType)) {
         // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
@@ -178,97 +136,61 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         let isHLSConverted = false; // Track if video was converted to HLS
         
         if (file.size <= SMALL_VIDEO_THRESHOLD_BYTES) {
-          // For small videos (<50MB), use direct IPFS upload route
+          // Small videos go direct-to-IPFS (progressive MP4) — the intended route,
+          // no fallback warning.
           useIPFSFallback = true;
-          fallbackReason = null; // No warning needed, this is the intended route
+        } else if (!author.cloudDrivePort) {
+          // null/undefined/0: no backend HLS service configured.
+          useIPFSFallback = true;
+          fallbackReason = 'cloudDrivePort not configured';
+          shouldWarnFallback = true;
         } else {
-          // Check 1: Is cloudDrivePort null, undefined, or 0?
-          // Note: 0 explicitly means "no service available"
-          if (author.cloudDrivePort === null || author.cloudDrivePort === undefined) {
+          const cloudDrivePort = String(author.cloudDrivePort);
+          let ipAddress: string | null = null;
+          try {
+            const resolved = await tweetStore.resolveWritableHostIp(author);
+            ipAddress = resolved.includes(':') ? resolved.split(':')[0] : resolved;
+          } catch (resolveError) {
             useIPFSFallback = true;
-            fallbackReason = 'cloudDrivePort is null or undefined';
-            console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+            fallbackReason = `Failed to resolve writable host: ${resolveError instanceof Error ? resolveError.message : resolveError}`;
             shouldWarnFallback = true;
-          } else if (author.cloudDrivePort === 0) {
+          }
+
+          const baseUrl = ipAddress ? `http://${ipAddress}:${cloudDrivePort}` : '';
+          const serviceAvailable = ipAddress ? await checkServiceAvailability(baseUrl) : false;
+
+          if (!useIPFSFallback && !serviceAvailable) {
             useIPFSFallback = true;
-            fallbackReason = 'cloudDrivePort is 0 (no service available)';
-            console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
+            fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
             shouldWarnFallback = true;
-          } else {
-            // cloudDrivePort has a valid value - check if backend service is available
-            // Call /health endpoint to verify service is running
-            const cloudDrivePort = author.cloudDrivePort.toString();
-            
-            // Extract IP address from providerIp (which might include a port)
-            let ipAddress = author.providerIp || '';
-            if (ipAddress.includes(':')) {
-              // Remove port from providerIp if it exists
-              ipAddress = ipAddress.split(':')[0];
+          } else if (!useIPFSFallback) {
+            cid = await retryUpload(
+              () => uploadVideo(
+                file,
+                baseUrl,
+                cloudDrivePort,
+                (progress) => { uploadProgress[i] = progress; },
+                noResample.value
+              ),
+              file.name
+            );
+
+            if (!cid || cid.trim() === '') {
+              throw new Error('Video upload failed: No CID returned from server');
             }
-            
-            // Check 2: Call /health endpoint to verify service is alive
-            const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
-            const serviceAvailable = await checkServiceAvailability(baseUrl);
-            
-            if (!serviceAvailable) {
-              useIPFSFallback = true;
-              fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
-              console.warn(`Video upload: ${fallbackReason}, using IPFS fallback`);
-              shouldWarnFallback = true;
-            } else {
-              console.log('Video upload parameters:', {
-                originalProviderIp: author.providerIp,
-                extractedIpAddress: ipAddress,
-                cloudDrivePort: cloudDrivePort,
-                baseUrl: baseUrl,
-                noResample: noResample.value
-              });
-              
-              // Service is available, use regular video upload
-              console.log(`Starting video upload for ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-              cid = await retryUpload(
-                () => uploadVideo(
-                  file,
-                  baseUrl,
-                  cloudDrivePort,
-                  (progress) => {
-                    // Update progress based on job processing progress
-                    uploadProgress[i] = progress;
-                    console.log(`Processing progress for ${file.name}: ${uploadProgress[i]}%`);
-                  },
-                  noResample.value
-                ),
-                file.name
-              );
-              
-              // Validate that we received a valid CID
-              if (!cid || cid.trim() === '') {
-                throw new Error('Video upload failed: No CID returned from server');
-              }
-              
-              isHLSConverted = true; // Video was successfully converted to HLS
-              uploadProgress[i] = 100; // Complete
-            }
+
+            isHLSConverted = true;
+            uploadProgress[i] = 100;
           }
         }
-        
-        // Use IPFS upload if needed (for small videos <50MB or as fallback)
+
+        // Fallback path: small videos, missing/unreachable cloudDrivePort, or
+        // resolution failure — all land here and upload progressive MP4 via upload_ipfs.
         if (useIPFSFallback) {
-          const reasonText = fallbackReason ? ` (Reason: ${fallbackReason})` : '';
-          if (fallbackReason) {
-            console.log(`Using IPFS upload for video: ${file.name}${reasonText}`);
-          } else {
-            console.log(`Using direct IPFS upload for small video: ${file.name}`);
-          }
           if (shouldWarnFallback && fallbackReason) {
             useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
           }
-          
-          // Use the new upload_ipfs API (matches iOS)
-          cid = await retryUpload(
-            () => uploadFileFromFile(file, i),
-            file.name
-          );
+          cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
         }
         
         // Store HLS conversion status for later use
@@ -282,18 +204,9 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         );
       }
 
-      const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) : 
+      const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) :
                          isImageType(fileType) ? await getImageAspectRatio(file) : null;
-      
-      // Log aspect ratio detection result
-      if (isVideoType(fileType) && aspectRatio) {
-        console.log(`🎬 [VIDEO PREVIEW] File: ${file.name}`);
-        console.log(`📐 [VIDEO PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
-      } else if (isImageType(fileType) && aspectRatio) {
-        console.log(`🖼️ [IMAGE PREVIEW] File: ${file.name}`);
-        console.log(`📐 [IMAGE PREVIEW] Detected aspect ratio: ${aspectRatio.toFixed(3)} (${getAspectRatioDisplayName(aspectRatio)})`);
-      }
-      
+
       const fi = {
         mid: cid,
         type: isVideoType(fileType) ? ((file as any).__isHLSConverted ? MEDIA_TYPES.HLS_VIDEO : MEDIA_TYPES.VIDEO) : fileType,
@@ -303,7 +216,6 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         aspectRatio: aspectRatio
       } as MimeiFileType;
 
-      console.log(`📋 [PREVIEW RESULT]`, fi);
       results.push({ status: 'fulfilled', value: fi });
 
     } catch (error) {
@@ -331,142 +243,95 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 }
 
 async function onSubmit() {
-  console.log('[TWEET-SUBMIT] Starting tweet submission...');
-  
-  // Check if user is logged in (matches iOS behavior)
   if (!tweetStore.loginUser) {
     useAlertStore().error(t('editor.loginToPost'))
     return
   }
-  
+
   loading.value = true
   let attachments = <MimeiFileType[]>[]
   try {
-    console.log('[TWEET-SUBMIT] File uploads to process:', filesUpload.value.length);
-    console.log('[TWEET-SUBMIT] CID modal files:', mmFiles.value.length);
-    
     if (filesUpload.value.length > 0) {
-      console.log('[TWEET-SUBMIT] Processing file uploads...');
-      // with attachments to be uploaded
-      // reopen the DB mimei as cur version, for writing
       attachments = (await uploadAttachedFiles(filesUpload.value))
-        .filter((v) => { return v.status === 'fulfilled' })
-        .map((v: any) => {
-          return v.value    // get FileInfo of each attachment
-        })
-      console.log('[TWEET-SUBMIT] File uploads completed:', attachments.length);
-      if (attachments?.length < filesUpload.value.length) {
-        // uploading files failed
-        throw 'Attachments uploading failed' + attachments.toString()
+        .filter((v) => v.status === 'fulfilled')
+        .map((v: any) => v.value)
+      if (attachments.length < filesUpload.value.length) {
+        throw new Error('Attachments uploading failed')
       }
     }
-    
-    // upload tweet
-    let tweet = {
-      authorId: tweetStore.loginUser!.mid,  // Safe: we validated loginUser exists above
+
+    const tweet = {
+      authorId: tweetStore.loginUser.mid,
       title: tweetTitle.value,
       content: txtConent.value,
       attachments: attachments.concat(mmFiles.value),
       isPrivate: isPrivate.value,
       downloadable: downloadable.value,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     }
-    
-    console.log('[TWEET-SUBMIT] Tweet object created:', {
-      authorId: tweet.authorId,
-      title: tweet.title,
-      contentLength: tweet.content?.length || 0,
-      totalAttachments: tweet.attachments.length,
-      uploadedAttachments: attachments.length,
-      cidModalAttachments: mmFiles.value.length,
-      isPrivate: tweet.isPrivate,
-      downloadable: tweet.downloadable
-    });
-    
-    console.log('[TWEET-SUBMIT] CID modal attachments details:', mmFiles.value.map(f => ({
-      fileName: f.fileName,
-      mid: f.mid,
-      type: f.type,
-      size: f.size
-    })));
-    
+
     const targetTweetId = tweetId.value as MimeiId
-    console.log('[TWEET-SUBMIT] Calling tweetStore.uploadTweet...', { targetTweetId });
     const result = await tweetStore.uploadTweet(tweet, targetTweetId)
-
-    // Check if tweet upload was successful
-    console.log('[TWEET-SUBMIT] Tweet upload result:', result);
-    if (result) {
-      console.log('[TWEET-SUBMIT] Tweet upload successful!');
-      useAlertStore().success(t('editor.tweetUploaded'))
-      submitFailed.value = false
-
-      // Clear form only on success
-      txtConent.value = null
-      tweetTitle.value = null
-      filesUpload.value = []
-      mmFiles.value = []
-      noResample.value = false
-
-      // Fetch parent tweet once — used for both quote tweet and navigation
-      let parentTweet = null
-      if (targetTweetId) {
-        try {
-          parentTweet = await tweetStore.getTweet(targetTweetId)
-        } catch (e) {
-          console.warn('[TWEET-SUBMIT] Could not fetch parent tweet:', e)
-        }
-      }
-
-      // If quoting, also publish as a standalone quote tweet
-      if (targetTweetId && isQuoting.value && parentTweet) {
-        try {
-          console.log('[TWEET-SUBMIT] Posting quote tweet...')
-          const quoteTweet = {
-            ...tweet,
-            originalTweetId: targetTweetId,
-            originalAuthorId: parentTweet.authorId,
-            timestamp: Date.now(),
-          }
-          const quoteMid = await tweetStore.uploadTweet(quoteTweet, undefined)
-          if (quoteMid) {
-            console.log('[TWEET-SUBMIT] Quote tweet posted, updating retweet count:', quoteMid)
-            await tweetStore.updateRetweetCount(parentTweet, quoteMid)
-          }
-        } catch (quoteError) {
-          console.warn('[TWEET-SUBMIT] Quote tweet upload failed (comment still posted):', quoteError)
-        }
-      }
-
-      // Navigate back or emit success
-      if (targetTweetId) {
-        if (parentTweet?.author) {
-          router.push({ name: 'TweetDetail', params: { tweetId: targetTweetId, authorId: parentTweet.author.mid } })
-        } else {
-          router.push({ name: 'TweetDetail', params: { tweetId: targetTweetId } })
-        }
-      } else {
-        // This was a new tweet, emit success event
-        emit('uploaded', result)
-        emit('hide')
-      }
-    } else {
-      console.log('[TWEET-SUBMIT] Tweet upload failed: No response from server');
-      throw new Error("Tweet upload failed: No response from server")
+    if (!result) {
+      throw new Error('Tweet upload failed: No response from server')
     }
-    
+
+    useAlertStore().success(t('editor.tweetUploaded'))
+    submitFailed.value = false
+
+    // Clear form only on success
+    txtConent.value = null
+    tweetTitle.value = null
+    filesUpload.value = []
+    mmFiles.value = []
+    noResample.value = false
+
+    // Fetch parent tweet once — used for both quote tweet and navigation
+    let parentTweet = null
+    if (targetTweetId) {
+      try {
+        parentTweet = await tweetStore.getTweet(targetTweetId)
+      } catch (e) {
+        console.warn('[TWEET-SUBMIT] Could not fetch parent tweet:', e)
+      }
+    }
+
+    // If quoting, also publish as a standalone quote tweet
+    if (targetTweetId && isQuoting.value && parentTweet) {
+      try {
+        const quoteTweet = {
+          ...tweet,
+          originalTweetId: targetTweetId,
+          originalAuthorId: parentTweet.authorId,
+          timestamp: Date.now(),
+        }
+        const quoteMid = await tweetStore.uploadTweet(quoteTweet, undefined)
+        if (quoteMid) {
+          await tweetStore.updateRetweetCount(parentTweet, quoteMid)
+        }
+      } catch (quoteError) {
+        console.warn('[TWEET-SUBMIT] Quote tweet upload failed (comment still posted):', quoteError)
+      }
+    }
+
+    if (targetTweetId) {
+      const params: any = { tweetId: targetTweetId }
+      if (parentTweet?.author) params.authorId = parentTweet.author.mid
+      router.push({ name: 'TweetDetail', params })
+    } else {
+      emit('uploaded', result)
+      emit('hide')
+    }
   } catch (err) {
-    // something wrong uploading files or tweet, show error
-    console.error('[TWEET-SUBMIT] Error occurred:', err);
     console.error('onSubmit err:', err)
     useAlertStore().error(err instanceof Error ? err.message : String(err))
     submitFailed.value = true
 
-    // Refresh loginUser: clear per-user cache and re-fetch from network,
-    // then overwrite _user and sessionStorage['user'] in place (never null them first)
+    // Refresh loginUser: clear per-user cache and re-fetch, overwriting
+    // _user and sessionStorage['user'] in place (never null them first).
     const mid = tweetStore.loginUser?.mid
     if (mid) {
-      tweetStore.removeUser(mid)  // clears users map + sessionStorage[mid]
+      tweetStore.removeUser(mid)
       const freshUser = await tweetStore.getUser(mid, true)
       if (freshUser) {
         tweetStore._user = freshUser
@@ -474,207 +339,44 @@ async function onSubmit() {
       }
     }
   } finally {
-    console.log('[TWEET-SUBMIT] Submission process completed, setting loading to false');
     loading.value = false
   }
 }
 
-// Upload file using upload_ipfs API - reads file directly using FileReader
-async function uploadFileFromFile(
-  file: File,
-  fileIndex: number
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const arrayBuffer = e.target?.result as ArrayBuffer
-        if (!arrayBuffer) {
-          reject(new Error('Failed to read file'))
-          return
-        }
-        const cid = await uploadFileToIPFS(arrayBuffer, fileIndex, file.name)
-        resolve(cid)
-      } catch (error) {
-        reject(error)
-      }
-    }
-    reader.onerror = () => reject(new Error('FileReader error'))
-    reader.readAsArrayBuffer(file)
-  })
-}
-
-// Upload file using upload_ipfs API (matches iOS implementation)
-async function uploadFileToIPFS(
-  data: ArrayBuffer,
-  fileIndex: number,
-  fileName: string
-): Promise<string> {
-  console.log(`[UPLOAD] Starting upload for ${fileName} (${(data.byteLength / 1024 / 1024).toFixed(2)}MB)`)
-  console.log(`[UPLOAD] ArrayBuffer details: byteLength=${data.byteLength}, constructor=${data.constructor.name}`)
-  
-  const chunkSize = 2 * 1024 * 1024 // 2MB chunks
-  let offset = 0
-  let fsid: string | null = null
-  let chunkNumber = 0
-  
-  // Get a direct connection for uploads to avoid connection pool timeout
-  // File uploads are long-running and shouldn't use the shared pool
-  const providerIp = tweetStore.loginUser?.providerIp
-  if (!providerIp) {
-    throw new Error('Provider IP not available')
-  }
-  
-  const uploadClient = await tweetStore.lapi.connectionPool.getConnection(providerIp)
-  
-  try {
-    // Set a longer timeout for file uploads (10 minutes)
-    uploadClient.timeout = 10 * 60 * 1000
-    
-    while (offset < data.byteLength) {
-      const end = Math.min(offset + chunkSize, data.byteLength)
-      const chunk = data.slice(offset, end)
-      const uint8Chunk = new Uint8Array(chunk)
-      chunkNumber++
-      
-      console.log(`[UPLOAD] Chunk ${chunkNumber}: offset=${offset}, end=${end}, size=${chunk.byteLength}, uint8Length=${uint8Chunk.length}`)
-      
-      // Build request object (matches iOS structure)
-      const request: any = {
-        aid: tweetStore.appId,
-        ver: 'last',
-        version: 'v2',
-        offset: offset
-      }
-      
-      if (fsid) {
-        request.fsid = fsid
-      }
-      
-      // NOTE: Do NOT set finished='true' here - that's done in a separate finalization request (matches iOS)
-      
-      console.log(`[UPLOAD] Uploading chunk ${chunkNumber} for ${fileName}: ${((offset / data.byteLength) * 100).toFixed(1)}%`)
-      
-      // Call upload_ipfs API directly (matches iOS implementation)
-      const response = await uploadClient.RunMApp('upload_ipfs', request, [uint8Chunk])
-      
-      // Update progress
-      uploadProgress[fileIndex] = Math.max(1, Math.round((end / data.byteLength) * 100))
-      
-      // Handle v2 response format: {success: true, data: fsid|cid} or {success: false, message: string}
-      if (response && typeof response === 'object') {
-        if (response.success === false) {
-          throw new Error(response.message || 'Upload failed')
-        }
-        
-        if (response.success === true && response.data) {
-          fsid = response.data
-          offset = end
-        } else {
-          throw new Error(`Invalid response structure: ${JSON.stringify(response)}`)
-        }
-      } else if (typeof response === 'string') {
-        // Handle non-v2 response (direct string)
-        fsid = response
-        offset = end
-      } else {
-        throw new Error(`Unexpected response type: ${typeof response}`)
-      }
-    }
-    
-    if (!fsid) {
-      throw new Error('No file ID returned from server')
-    }
-    
-    // Send finalization request (matches iOS - separate request with finished='true')
-    console.log(`[UPLOAD] Uploaded ${chunkNumber} chunks, finalizing...`)
-    const finalRequest: any = {
-      aid: tweetStore.appId,
-      ver: 'last',
-      version: 'v2',
-      offset: offset,
-      fsid: fsid,
-      finished: 'true'
-    }
-    
-    const finalResponse = await uploadClient.RunMApp('upload_ipfs', finalRequest)
-    
-    // Parse finalization response
-    let cid: string | null = null
-    if (finalResponse && typeof finalResponse === 'object') {
-      if (finalResponse.success === true && finalResponse.data) {
-        cid = finalResponse.data
-      } else if (finalResponse.cid) {
-        cid = finalResponse.cid
-      }
-    } else if (typeof finalResponse === 'string') {
-      cid = finalResponse
-    }
-    
-    if (!cid) {
-      throw new Error('No CID returned from finalization')
-    }
-    
-    uploadProgress[fileIndex] = 100
-    console.log(`[UPLOAD] Upload completed for ${fileName}, CID: ${cid}`)
-    return cid
-    
-  } catch (error) {
-    console.error(`[UPLOAD] Error uploading ${fileName}:`, error)
-    throw error
-  } finally {
-    // Always release the connection back to the pool
-    if (providerIp) {
-      tweetStore.lapi.connectionPool.releaseConnection(providerIp, uploadClient)
-      console.log(`[UPLOAD] Released connection for ${fileName}`)
-    }
-  }
+// Upload a file via upload_ipfs (store helper handles writable-host resolution
+// and chunking).
+async function uploadFileFromFile(file: File, fileIndex: number): Promise<string> {
+  if (!tweetStore.loginUser) throw new Error('Not logged in')
+  const data = await file.arrayBuffer()
+  const cid = await tweetStore.uploadBlobToIpfs(
+    tweetStore.loginUser,
+    data,
+    (percent) => { uploadProgress[fileIndex] = percent }
+  )
+  uploadProgress[fileIndex] = 100
+  return cid
 }
 
 // Check if the cloud drive service is available at the specified URL
 async function checkServiceAvailability(baseUrl: string): Promise<boolean> {
   try {
-    console.log(`Checking service availability at: ${baseUrl}/health`);
-    
-    // Try to make a health check request with a reasonable timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout for slow networks
-    
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(`${baseUrl}/health`, {
       method: 'GET',
       signal: controller.signal,
-      headers: {
-        'Accept': 'application/json',
-      }
-    }).catch((error) => {
-      console.warn(`Health check fetch failed: ${error.message}`);
-      return null;
-    });
-    
+      headers: { 'Accept': 'application/json' },
+    }).catch(() => null);
+
     clearTimeout(timeoutId);
-    
-    // Service must return a successful response with JSON
-    if (response && response.ok) {
-      try {
-        const data = await response.json();
-        // Validate that the response has the expected structure
-        if (data && data.status === 'ok') {
-          console.log(`Service availability check: AVAILABLE (status: ${data.status}, timestamp: ${data.timestamp})`);
-          return true;
-        } else {
-          console.warn(`Service availability check: Invalid health response format:`, data);
-          return false;
-        }
-      } catch (jsonError) {
-        console.warn(`Service availability check: Failed to parse JSON response:`, jsonError);
-        return false;
-      }
+
+    if (response?.ok) {
+      const data = await response.json().catch(() => null);
+      return data?.status === 'ok';
     }
-    
-    console.warn(`Service availability check: NOT AVAILABLE (status: ${response?.status || 'no response'})`);
     return false;
-  } catch (error) {
-    console.warn(`Service availability check: ERROR - ${error}`);
+  } catch {
     return false;
   }
 }
@@ -769,7 +471,6 @@ const handleCids = (ids: MimeiFileType[]) => {
 };
 const cancelCidsModal = () => {
   showCidModal.value = false;
-  console.log('Modal cancelled');
 };
 const openModal = () => {
   showCidModal.value = true;

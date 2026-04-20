@@ -634,14 +634,14 @@ async function processZipUpload(req, res) {
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Length', Buffer.byteLength(JSON.stringify({
         success: true,
-        message: 'ZIP file extracted and HLS content added to IPFS successfully',
+        message: 'ZIP file extracted and HLS stream stored successfully',
         cid: cid,
         tempDir: tempDir
       })));
       
       res.end(JSON.stringify({
         success: true,
-        message: 'ZIP file extracted and HLS content added to IPFS successfully',
+        message: 'ZIP file extracted and HLS stream stored successfully',
         cid: cid,
         tempDir: tempDir
       }));
@@ -824,7 +824,7 @@ async function processZipUploadInternal(req, jobId) {
       console.log(`[${jobId}] [INFO] Adding HLS content to IPFS from path: '${hlsContentPath}'`);
       
       // Update progress (safe - never decreases)
-      updateProgressSafe(jobId, 80, 'Adding to IPFS...');
+      updateProgressSafe(jobId, 80, 'Storing processed content...');
 
       console.log(`[${jobId}] [DEBUG] Starting IPFS add operation...`);
       let cid;
