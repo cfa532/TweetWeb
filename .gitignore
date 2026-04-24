@@ -33,3 +33,4 @@ coverage
 .cursor/rules/kluster-code-verify.mdc
 .kluster
 .claude/settings.json
+/.claude
