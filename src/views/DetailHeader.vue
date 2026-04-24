@@ -228,14 +228,15 @@ watch(
 }
 .detail-header-root {
   width: 100%;
-  margin: 2px 0 0 0;
+  margin: 0;
+  padding: 8px 0;
 }
 .author-carousel-outer {
   width: calc(100% + 16px);
   max-width: none;
   margin-left: -8px;
   margin-right: -8px;
-  margin-bottom: 0;
+  margin-bottom: -8px;
   margin-top: 0.25rem;
   overflow: hidden;
   perspective: 720px;

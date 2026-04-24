@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue';
+import { computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
@@ -91,7 +91,7 @@ function openDetailView() {
 <template>
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
-    <div class='avatar me-2 author-avatar'>
+    <div :class="['avatar', 'me-2', 'author-avatar', { 'comment-avatar': isComment }]">
       <img v-if='props.author' :src='props.author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(props.author.mid)'>
       <div v-else class='rounded-circle loading-avatar'></div>
     </div>
@@ -147,7 +147,7 @@ function openDetailView() {
 .tweet-header {
   width: 100%;
   cursor: pointer;
-  margin: 8px 0 8px 0;
+  margin: 4px 0 4px 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -197,6 +197,10 @@ function openDetailView() {
   max-width: none !important;
   max-height: none !important;
   cursor: pointer;
+}
+.comment-avatar img {
+  width: 40px !important;
+  height: 40px !important;
 }
 .user-info {
   width: 100%;
