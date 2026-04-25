@@ -6,6 +6,7 @@ import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
 import i18n from '@/i18n';
+import { ed25519 } from '@noble/curves/ed25519.js';
 
 const GUEST_ID = "000000000000000000000000000"
 
@@ -176,33 +177,41 @@ function base64UrlToBase64(value: string): string {
 }
 
 async function createAgentTokenForUser(mimeiId: string, scope: string[] = ["post", "comment"]): Promise<{ tokenString: string, publicKey: string }> {
-    if (!globalThis.crypto?.subtle) {
-        throw new Error("Agent token generation is not supported in this browser")
-    }
+    let privateKeyBytes: Uint8Array
+    let publicKeyBytes: Uint8Array
 
-    const keyPair = await globalThis.crypto.subtle.generateKey(
-        { name: "Ed25519" },
-        true,
-        ["sign", "verify"]
-    )
-    if (!("privateKey" in keyPair) || !("publicKey" in keyPair)) {
-        throw new Error("Failed to generate agent token keypair")
-    }
+    if (globalThis.crypto?.subtle) {
+        const keyPair = await globalThis.crypto.subtle.generateKey(
+            { name: "Ed25519" },
+            true,
+            ["sign", "verify"]
+        )
+        if (!("privateKey" in keyPair) || !("publicKey" in keyPair)) {
+            throw new Error("Failed to generate agent token keypair")
+        }
 
-    const [privateJwk, publicJwk] = await Promise.all([
-        globalThis.crypto.subtle.exportKey("jwk", keyPair.privateKey),
-        globalThis.crypto.subtle.exportKey("jwk", keyPair.publicKey),
-    ])
+        const [privateJwk, publicJwk] = await Promise.all([
+            globalThis.crypto.subtle.exportKey("jwk", keyPair.privateKey),
+            globalThis.crypto.subtle.exportKey("jwk", keyPair.publicKey),
+        ])
 
-    if (typeof privateJwk.d !== "string" || typeof publicJwk.x !== "string") {
-        throw new Error("Failed to export agent token keypair")
+        if (typeof privateJwk.d !== "string" || typeof publicJwk.x !== "string") {
+            throw new Error("Failed to export agent token keypair")
+        }
+
+        privateKeyBytes = Uint8Array.from(atob(base64UrlToBase64(privateJwk.d)), c => c.charCodeAt(0))
+        publicKeyBytes = Uint8Array.from(atob(base64UrlToBase64(publicJwk.x)), c => c.charCodeAt(0))
+    } else {
+        // Fallback for non-secure contexts (HTTP): use pure-JS Ed25519 implementation
+        privateKeyBytes = ed25519.utils.randomSecretKey()
+        publicKeyBytes = ed25519.getPublicKey(privateKeyBytes)
     }
 
     const token: AgentToken = {
         version: 1,
         mimeiId,
-        privateKey: base64UrlToBase64(privateJwk.d),
-        publicKey: base64UrlToBase64(publicJwk.x),
+        privateKey: bytesToBase64(privateKeyBytes),
+        publicKey: bytesToBase64(publicKeyBytes),
         createdAt: Date.now(),
         scope,
     }
@@ -218,8 +227,14 @@ function parseRegisterSuccessUser(ret: any): RegisterSuccessUser {
     const success = ret.success === true || ret.success === 1
     if (!success) return {}
     const body = registerResponseBody(ret)
-    const u = body?.user
-    if (!u || typeof u !== 'object' || typeof u.mid !== 'string' || !u.mid.length) return {}
+    let u = body?.user
+    if (typeof u === 'string') {
+        try { u = JSON.parse(u) } catch { return {} }
+    }
+    if (!u || typeof u !== 'object' || typeof u.mid !== 'string' || !u.mid.length) {
+        console.debug('[parseRegisterSuccessUser] mid missing, ret=', JSON.stringify(ret))
+        return {}
+    }
     const fromBlob = providerIpFromRegisteredUserBlob(u)
     return { mid: u.mid, user: u, followerProviderIp: fromBlob }
 }
@@ -2073,11 +2088,13 @@ export const useTweetStore = defineStore('tweetStore', {
             loginUser.client.timeout = 120000
             let ret: unknown
             try {
-                ret = await loginUser.client.RunMApp("toggle_followed", {
+                const followingUser = this.users.get(followingId)
+                ret = await loginUser.client.RunMApp("toggle_following", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
                     followingid: followingId,
+                    followingid_hostid: followingUser?.hostIds?.[0],
                     userid: loginUser.mid,
                 })
             } finally {
@@ -2989,12 +3006,13 @@ export const useTweetStore = defineStore('tweetStore', {
                             console.warn(`[register:autoFollow] User not found, skip: ${followingId}`)
                             continue
                         }
-                        const toggled = await followerClient.RunMApp("toggle_followed", {
+                        const toggled = await followerClient.RunMApp("toggle_following", {
                             aid: this.appId,
                             ver: "last",
                             version: "v2",
                             followingid: followingId,
                             userid: registeredUserId,
+                            userid_hostid: registeredUserBlob?.hostIds?.[0],
                         })
                         const isFollowing = parseToggleFollowedV2Result(toggled)
                         if (isFollowing !== true) {
