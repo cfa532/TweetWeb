@@ -1571,21 +1571,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 return null;
             }
 
-            // Skip IPs that have failed within the cooldown window so dead nodes
-            // don't keep saturating the connection pool. If every candidate is
-            // in cooldown, fall back to the original list and try them anyway —
-            // one of them might have recovered.
-            const liveIps = ips.filter(ip => !nodePool.isIpFailed(ip));
-            const candidates = liveIps.length > 0 ? liveIps : ips;
-            if (liveIps.length < ips.length) {
-                const skipped = ips.filter(ip => nodePool.isIpFailed(ip));
-                console.warn(`[raceProviderIps] Skipping ${skipped.length} IP(s) in cooldown:`, skipped);
-            }
-
-            console.log(`[raceProviderIps] Racing ${candidates.length} IP(s):`, candidates);
+            console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
 
             // Create promises for each IP with individual timeouts
-            const racePromises = candidates.map(async (ip) => {
+            const racePromises = ips.map(async (ip) => {
                 try {
                     const client = await this.lapi.getClient(ip);
 
@@ -1599,11 +1588,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     ]);
 
                     console.log(`[raceProviderIps] ✅ Success with IP: ${ip}`);
-                    nodePool.clearIpFailed(ip);
                     return { result, ip };
                 } catch (error) {
                     console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
-                    nodePool.markIpFailed(ip);
                     throw error; // Re-throw so Promise.any sees this as a rejection
                 }
             });
