@@ -99,11 +99,13 @@ const isInTweetList = computed(() => {
 
 // Pre-size wrapper in detail/modal; in feed, .media-attachments already sets aspect-ratio — a second
 // ratio here letterboxes (black band) under the video.
-// Detail view falls back to 16/9 so the loading placeholder fills the
-// container instead of showing the browser's tiny default <video> box.
+// Detail view: prefer the live ratio from loadedmetadata once the video
+// reports its real dimensions, then media.aspectRatio (server hint), then
+// 16/9 fallback so the loading skeleton still fills the container.
+const measuredAspectRatio = ref<number | null>(null);
 const videoWrapperStyle = computed(() => {
   if (isInTweetList.value) return {};
-  const ar = props.media.aspectRatio;
+  const ar = measuredAspectRatio.value ?? props.media.aspectRatio;
   if (ar && ar > 0) return { aspectRatio: String(ar) };
   return { aspectRatio: '16 / 9' };
 });
@@ -289,12 +291,10 @@ onMounted(() => {
               const videoHeight = video.value.videoHeight;
               const videoWidth = video.value.videoWidth;
               if (videoHeight > 0 && videoWidth > 0) {
-                const aspectRatio = videoHeight / videoWidth;
-                const containerWidth = video.value.offsetWidth || video.value.clientWidth;
-                if (containerWidth > 0) {
-                  const calculatedHeight = containerWidth * aspectRatio;
-                  video.value.style.minHeight = Math.max(calculatedHeight, 200) + 'px';
-                }
+                // Update wrapper aspect-ratio to match the actual video so the
+                // wrapper hugs the frame — otherwise an inaccurate (or missing)
+                // media.aspectRatio leaves black space above/below.
+                measuredAspectRatio.value = videoWidth / videoHeight;
               }
             }
             updateTimeRemaining();
@@ -2267,22 +2267,36 @@ function stopVideo() {
   }
 }
 
-/* Detail view: the wrapper carries the aspect-ratio (from media metadata or
- * the 16/9 fallback), so the <video> fills it. object-fit:contain keeps the
- * actual video letterboxed inside once playback starts, while the loading
- * placeholder occupies the full container instead of the browser's default
- * 300×150 intrinsic box. */
+/* Detail view: the wrapper carries the aspect-ratio (from measured metadata,
+ * media.aspectRatio hint, or the 16/9 fallback). The <video> is absolutely
+ * positioned so its box always exactly matches the wrapper — no flex
+ * centering of an intermediate height:100% child to fight against the
+ * aspect-ratio on iOS Safari, and no jumping when the video first paints.
+ * object-fit:contain keeps the actual frame letterboxed inside once
+ * playback starts; during the loading skeleton the entire wrapper is filled. */
 .video-container:not(.tweet-list) .video-wrapper {
+  display: block;
   width: 100%;
   height: auto;
 }
 
+.video-container:not(.tweet-list) .video-tap-handler {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
 .video-container:not(.tweet-list) .video {
+  position: absolute;
+  inset: 0;
   width: 100% !important;
   height: 100% !important;
   max-width: 100% !important;
   max-height: 80vh !important;
   object-fit: contain !important;
+  object-position: center !important;
+  margin: 0 !important;
 }
 
 /* Mobile adjustments - Full-width videos */
