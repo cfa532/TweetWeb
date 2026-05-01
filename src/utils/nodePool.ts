@@ -18,10 +18,33 @@ interface NodeInfo {
 class NodePool {
     private nodes = new Map<string, NodeInfo>()
     private inflightRequests = new Map<string, Promise<string[]>>()
+    private failedIps = new Map<string, number>()  // ip -> failedAt timestamp
     private cacheTTL: number
+    private readonly failedIpTTL = 60 * 1000  // 1 minute cooldown for dead IPs
 
     constructor(cacheTTL = 5 * 60 * 1000) {  // 5 minutes default
         this.cacheTTL = cacheTTL
+    }
+
+    /** Mark an IP as recently failed so callers can skip it for a cooldown period. */
+    markIpFailed(ip: string) {
+        this.failedIps.set(ip, Date.now())
+    }
+
+    /** Clear an IP from the failed list (call on a successful response from it). */
+    clearIpFailed(ip: string) {
+        this.failedIps.delete(ip)
+    }
+
+    /** Whether the IP is in the failure cooldown window. */
+    isIpFailed(ip: string): boolean {
+        const failedAt = this.failedIps.get(ip)
+        if (!failedAt) return false
+        if (Date.now() - failedAt > this.failedIpTTL) {
+            this.failedIps.delete(ip)
+            return false
+        }
+        return true
     }
 
     /** Get cached IPs for a node MID, or null if expired/missing */
