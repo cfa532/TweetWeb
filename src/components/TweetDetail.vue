@@ -388,10 +388,22 @@ const mediaAttachments = computed(() => {
     const attachments = displayedTweet.value?.attachments || [];
     return attachments.filter((attachment: MimeiFileType) => {
         const normalizedType = normalizeMediaType(attachment.type);
-        return normalizedType.includes('image') || 
-               normalizedType.includes('video') || 
+        return normalizedType.includes('image') ||
+               normalizedType.includes('video') ||
                normalizedType.includes('audio');
     });
+});
+
+// When the only attachment is a landscape video, shape the container to
+// match its aspect ratio instead of the default tall (≥80vh) box used
+// for portrait videos and images. Returns the ratio (width/height) or null.
+const landscapeVideoRatio = computed<number | null>(() => {
+    const items = mediaAttachments.value;
+    if (items.length !== 1) return null;
+    const item = items[0];
+    if (!isVideoMedia(item)) return null;
+    const ar = (item as any).aspectRatio;
+    return typeof ar === 'number' && ar > 1 ? ar : null;
 });
 
 // Filter out media attachments (image, video, audio) to get documents
@@ -663,7 +675,12 @@ function retryLoad() {
                 } : undefined"
             ></p>
 
-            <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
+            <div v-if="mediaAttachments.length > 0"
+                :class="['media-attachments', {
+                    'media-attachments--multi': mediaAttachments.length > 1,
+                    'media-attachments--landscape': landscapeVideoRatio,
+                }]"
+                :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
                     v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid"></MediaView>
             </div>
@@ -688,7 +705,12 @@ function retryLoad() {
                 v-html="linkify(tweet.content)"
             ></p>
 
-            <div v-if="mediaAttachments.length > 0" :class="['media-attachments', { 'media-attachments--multi': mediaAttachments.length > 1 }]">
+            <div v-if="mediaAttachments.length > 0"
+                :class="['media-attachments', {
+                    'media-attachments--multi': mediaAttachments.length > 1,
+                    'media-attachments--landscape': landscapeVideoRatio,
+                }]"
+                :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
                     v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
                 </MediaView>
@@ -914,6 +936,30 @@ function retryLoad() {
     object-fit: contain;
 }
 
+/* Single landscape video: shape the container to the video's aspect ratio
+   instead of the default tall (≥80vh) box. The aspect-ratio is set inline. */
+.media-attachments--landscape {
+    max-height: none;
+    width: 100%;
+}
+
+.media-attachments--landscape :deep(.container),
+.media-attachments--landscape :deep(.video-container),
+.media-attachments--landscape :deep(.video-wrapper) {
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+    min-height: 0 !important;
+}
+
+.media-attachments--landscape :deep(video) {
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    object-fit: contain;
+}
+
 /* Multiple media: vertical list layout */
 .media-attachments--multi {
     flex-direction: column;
@@ -932,18 +978,19 @@ function retryLoad() {
     content-visibility: auto;
 }
 
-/* Desktop: ensure video takes at least 80vh */
+/* Desktop: ensure video takes at least 80vh — but only for portrait videos
+   and images. Landscape videos use their natural aspect ratio (set inline). */
 @media (min-width: 768px) {
-    .media-attachments:has(video) {
+    .media-attachments:has(video):not(.media-attachments--landscape) {
         min-height: 80vh;
     }
 
-    .media-attachments :deep(.video-container),
-    .media-attachments :deep(.video-wrapper) {
+    .media-attachments:not(.media-attachments--landscape) :deep(.video-container),
+    .media-attachments:not(.media-attachments--landscape) :deep(.video-wrapper) {
         min-height: 80vh !important;
     }
 
-    .media-attachments :deep(video) {
+    .media-attachments:not(.media-attachments--landscape) :deep(video) {
         min-height: 80vh !important;
     }
 }
