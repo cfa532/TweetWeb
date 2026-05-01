@@ -1395,87 +1395,46 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            // Try to get user with up to 2 attempts total
-            let providerIp: string | null = null
-            let user: any = null
-            let providerClient: any = null
-            let failedIp: string | null = null
-
-            for (let attempt = 1; attempt <= 2; attempt++) {
-                try {
-                    // Force server to refresh its IP cache when forceRefresh (login) or on retry to avoid stale IPs
-                    providerIp = await this.getProviderIp(userId, v4Only, forceRefresh || attempt > 1)
-                    if (!providerIp) {
-                        console.warn(`No provider found for user ${userId}, attempt ${attempt}/2`)
-                        if (attempt === 2) return undefined
-                        continue
-                    }
-
-                    // Skip retry if refreshed IP is the same as the one that already failed
-                    if (attempt > 1 && providerIp === failedIp) {
-                        console.warn(`[_fetchUser] Refreshed IP for ${userId} is the same stale IP (${providerIp}), giving up`)
-                        this._nullifyCachedIp(userId)
-                        return undefined
-                    }
-
-                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-
-                    user = await providerClient.RunMApp("get_user", {
-                        aid: this.appId,
-                        ver: "last",
-                        version: "v3",
-                        userid: userId,
-                    })
-
-                    // Handle wrapped JSON response
-                    if (user && typeof user === 'object' && 'success' in user) {
-                        if (user.success === true) {
-                            user = user.data;
-                        } else {
-                            // Check if it's "User not found" - if so, don't retry
-                            if (user.message === "User not found") {
-                                console.log(`User ${userId} not found on server, giving up`)
-                                return undefined
-                            } else {
-                                // Other server error, may retry
-                                console.log(`get_user server error for user ${userId}, attempt ${attempt}/2:`, user.message)
-                                user = null;
-                                failedIp = providerIp
-                                if (attempt === 2) {
-                                    this._nullifyCachedIp(userId)
-                                    return undefined
-                                }
-                                continue
-                            }
-                        }
-                    }
-
-                    console.log(`get_user result for user ${userId}, attempt ${attempt}/2:`, user)
-
-                    // If we got a valid user, break out of retry loop
-                    if (user && typeof user === 'object' && user.mid && user.hostIds) {
-                        break
-                    }
-
-                } catch (error) {
-                    console.error(`get_user attempt ${attempt}/2 failed for user ${userId}:`, error)
-                    user = null
-                    failedIp = providerIp
-                    if (attempt === 2) {
-                        this._nullifyCachedIp(userId)
-                        return undefined
-                    }
-                }
+            // Resolve all provider IPs (up to 2) and race them in parallel.
+            // Whichever node responds first with valid user data wins; dead nodes
+            // simply lose the race instead of blocking sequentially on a 15s timeout.
+            const providerIps = await this.getProviderIps(userId, v4Only, forceRefresh)
+            if (providerIps.length === 0) {
+                console.warn(`[_fetchUser] No provider IPs for user ${userId}`)
+                return undefined
             }
 
-            // Validate user object
-            if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
-                console.error(`get_user returned invalid User object for user ${userId} after 2 attempts:`, user)
-                // Clear stale sessionStorage cache so next call doesn't reuse the bad IP
+            const raceResult = await this.raceProviderIps(providerIps, async (_ip, client) => {
+                const result = await client.RunMApp("get_user", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v3",
+                    userid: userId,
+                })
+                // Unwrap v2 response { success, data, message } so a server-side
+                // failure throws and the race continues with the other IP.
+                if (result && typeof result === 'object' && 'success' in result) {
+                    if (result.success === true) return result.data
+                    throw new Error(result.message || 'get_user failed')
+                }
+                return result
+            })
+
+            if (!raceResult) {
+                console.error(`[_fetchUser] All provider IPs failed for user ${userId}`)
                 this._nullifyCachedIp(userId)
                 return undefined
             }
-            
+
+            let user: any = raceResult.result
+            const providerIp = raceResult.ip
+
+            if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
+                console.error(`[_fetchUser] Invalid user object for ${userId}:`, user)
+                this._nullifyCachedIp(userId)
+                return undefined
+            }
+
             // cache the user data
             user.providerIp = providerIp
             // Use server's cloudDrivePort if available
@@ -1483,7 +1442,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
             user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
             sessionStorage.setItem(userId, JSON.stringify(user))
-            user.client = providerClient
+            user.client = createPooledClient(providerIp, this.lapi.connectionPool)
             user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
             delete user.baseUrl
             delete user.writableUrl
@@ -1638,13 +1597,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     return { result, ip };
                 } catch (error) {
                     console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
-                    throw error; // Re-throw so Promise.race can handle it
+                    throw error; // Re-throw so Promise.any sees this as a rejection
                 }
             });
 
             try {
-                // Race all promises, first success wins
-                const winner = await Promise.race(racePromises);
+                // First fulfilled wins; rejections are ignored unless ALL reject.
+                // Using Promise.any (not Promise.race) so a fast rejection from a
+                // dead IP doesn't cancel the still-pending healthy IP.
+                const winner = await Promise.any(racePromises);
                 return winner;
             } catch (error) {
                 console.error(`[raceProviderIps] All IPs failed:`, error);
