@@ -5,7 +5,7 @@ import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import { AppHeader, UserRow } from "@/views";
 import { LoadingSpinner, PageLayout } from "@/components";
-import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
+import { LOAD_TIMEOUT_MS } from '@/constants';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -66,24 +66,14 @@ onMounted(async () => {
             loginFollowingIds.value = []
         }
 
-        // Load all following IDs with timeout, refresh immediately on timeout (max attempts)
-        const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
-
+        // Load all following IDs with timeout. On timeout show empty state instead
+        // of reloading the page (the reload was disruptive and didn't fix anything).
         let timeoutId: number | null = null;
         const loadPromise = tweetStore.getFollowings(userId)
-        const timeoutPromise = new Promise<never>((_, reject) =>
+        const timeoutPromise = new Promise<MimeiId[]>((resolve) =>
             timeoutId = window.setTimeout(() => {
-                if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-                    console.warn(`Followings load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`)
-                    sessionStorage.setItem('followingsRefreshCount', (refreshCount + 1).toString())
-                    isLoading.value = false
-                    window.location.reload()
-                } else {
-                    console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for Followings, stopping`)
-                    isLoading.value = false
-                    sessionStorage.removeItem('followingsRefreshCount')
-                }
-                reject(new Error('Followings load timeout'))
+                console.warn('[Followings] load timeout; showing empty state')
+                resolve([])
             }, LOAD_TIMEOUT_MS)
         )
 
@@ -91,7 +81,6 @@ onMounted(async () => {
         // Success - clear the timeout
         if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
-        sessionStorage.removeItem('followingsRefreshCount') // Clear on success
 
         // Load the first batch of users
         if (followingIds.value.length > 0) {
@@ -130,25 +119,15 @@ watch(() => route.params.userId, async (newUserId) => {
                 loginFollowingIds.value = []
             }
 
-            // Load followings with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
-            const refreshCount = parseInt(sessionStorage.getItem('followingsRefreshCount') || '0')
-
+            // Load followings with 15-second timeout; on timeout show empty list
+            // rather than reloading.
             let timeoutId: number | null = null;
             const loadPromise = tweetStore.getFollowings(newUserId as MimeiId)
-            const timeoutPromise = new Promise<never>((_, reject) =>
+            const timeoutPromise = new Promise<MimeiId[]>((resolve) =>
                 timeoutId = window.setTimeout(() => {
-                    if (refreshCount < 3) {
-                        console.warn(`Followings load timeout after 15 seconds, refreshing page (${refreshCount + 1}/3)`)
-                        sessionStorage.setItem('followingsRefreshCount', (refreshCount + 1).toString())
-                        isLoading.value = false
-                        window.location.reload()
-                    } else {
-                        console.warn('Max refresh attempts (3) reached for Followings, stopping')
-                        isLoading.value = false
-                        sessionStorage.removeItem('followingsRefreshCount')
-                    }
-                    reject(new Error('Followings load timeout'))
-                }, 15000) // 15 seconds
+                    console.warn('[Followings] load timeout (route change); showing empty state')
+                    resolve([])
+                }, 15000)
             )
 
             const newIds = await Promise.race([loadPromise, timeoutPromise])
@@ -156,7 +135,6 @@ watch(() => route.params.userId, async (newUserId) => {
             if (timeoutId) clearTimeout(timeoutId)
             followingIds.value = newIds
             isLoading.value = false
-            sessionStorage.removeItem('followingsRefreshCount') // Clear on success
 
             if (newIds.length > 0) {
                 await loadNextBatch()

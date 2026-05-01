@@ -65,32 +65,22 @@ onMounted(async () => {
             loginFollowingIds.value = []
         }
 
-        // Load all follower IDs with 15-second timeout, refresh immediately on timeout (max 3 refreshes)
-        const refreshCount = parseInt(sessionStorage.getItem('followersRefreshCount') || '0')
-
+        // Load all follower IDs with a 15-second timeout. Show empty state on timeout
+        // instead of reloading the page — the reload was disruptive (could fire even
+        // after the user navigated away) and didn't actually solve anything.
         let timeoutId: number | null = null;
         const loadPromise = tweetStore.getFollowers(userId)
-        const timeoutPromise = new Promise<never>((_, reject) =>
+        const timeoutPromise = new Promise<MimeiId[]>((resolve) =>
             timeoutId = window.setTimeout(() => {
-                if (refreshCount < 3) {
-                    console.warn(`Followers load timeout after 15 seconds, refreshing page (${refreshCount + 1}/3)`)
-                    sessionStorage.setItem('followersRefreshCount', (refreshCount + 1).toString())
-                    isLoading.value = false
-                    window.location.reload()
-                } else {
-                    console.warn('Max refresh attempts (3) reached for Followers, stopping')
-                    isLoading.value = false
-                    sessionStorage.removeItem('followersRefreshCount')
-                }
-                reject(new Error('Followers load timeout'))
-            }, 15000) // 15 seconds
+                console.warn('[Followers] load timeout; showing empty state')
+                resolve([])
+            }, 15000)
         )
 
         followerIds.value = await Promise.race([loadPromise, timeoutPromise])
         // Success - clear the timeout
         if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
-        sessionStorage.removeItem('followersRefreshCount') // Clear on success
 
         // Load the first batch of users
         if (followerIds.value.length > 0) {
@@ -129,25 +119,15 @@ watch(() => route.params.userId, async (newUserId) => {
                 loginFollowingIds.value = []
             }
 
-            // Load followers with 6-second timeout, refresh immediately on timeout (max 5 refreshes)
-            const refreshCount = parseInt(sessionStorage.getItem('followersRefreshCount') || '0')
-
+            // Load followers with 15-second timeout; on timeout show empty list
+            // rather than reloading.
             let timeoutId: number | null = null;
             const loadPromise = tweetStore.getFollowers(newUserId as MimeiId)
-            const timeoutPromise = new Promise<never>((_, reject) =>
+            const timeoutPromise = new Promise<MimeiId[]>((resolve) =>
                 timeoutId = window.setTimeout(() => {
-                    if (refreshCount < 3) {
-                        console.warn(`Followers load timeout after 15 seconds, refreshing page (${refreshCount + 1}/3)`)
-                        sessionStorage.setItem('followersRefreshCount', (refreshCount + 1).toString())
-                        isLoading.value = false
-                        window.location.reload()
-                    } else {
-                        console.warn('Max refresh attempts (3) reached for Followers, stopping')
-                        isLoading.value = false
-                        sessionStorage.removeItem('followersRefreshCount')
-                    }
-                    reject(new Error('Followers load timeout'))
-                }, 15000) // 15 seconds
+                    console.warn('[Followers] load timeout (route change); showing empty state')
+                    resolve([])
+                }, 15000)
             )
 
             const newIds = await Promise.race([loadPromise, timeoutPromise])
@@ -155,7 +135,6 @@ watch(() => route.params.userId, async (newUserId) => {
             if (timeoutId) clearTimeout(timeoutId)
             followerIds.value = newIds
             isLoading.value = false
-            sessionStorage.removeItem('followersRefreshCount') // Clear on success
 
             if (newIds.length > 0) {
                 await loadNextBatch()

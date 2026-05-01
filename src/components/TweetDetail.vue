@@ -6,7 +6,7 @@ import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
-import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS, RETRY_DELAY_MS } from '@/constants';
+import { LOAD_TIMEOUT_MS } from '@/constants';
 
 const { t } = useI18n();
 
@@ -108,31 +108,19 @@ onMounted(async () => {
         showDownloadPrompt.value = true
     }, 2000)
 });
-async function loadDetail(retryCount = 0) {
-    const maxRetries = MAX_REFRESH_ATTEMPTS
+async function loadDetail() {
     isLoading.value = true
     loadError.value = false
     tweetNotFound.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: refresh page after timeout if still loading (max attempts)
-    const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
-    let timeoutId: number | null = null;
-
-    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-        timeoutId = window.setTimeout(() => {
-            console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms - refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
-            sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
-            isLoading.value = false;
-            window.location.reload();
-        }, LOAD_TIMEOUT_MS);
-    } else {
-        console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached, stopping`);
-        isLoading.value = false;
-        sessionStorage.removeItem('tweetDetailRefreshCount');
-        loadError.value = true;
-        return; // Exit early if max retries reached
-    }
+    // Safety timeout: stop the spinner if loading takes too long, but don't
+    // reload the page — let the user see whatever loaded so far (or retry).
+    const timeoutId: number = window.setTimeout(() => {
+        console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms; giving up the fresh fetch`)
+        isLoading.value = false
+        if (!tweet.value) loadError.value = true
+    }, LOAD_TIMEOUT_MS)
 
     try {
         tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
@@ -144,43 +132,15 @@ async function loadDetail(retryCount = 0) {
         loadError.value = false
         await showTweet(timeoutId)
     } catch (error) {
-        console.error(`Error loading tweet detail (attempt ${retryCount + 1}/${maxRetries + 1}):`, error);
+        clearTimeout(timeoutId)
+        console.error('[TweetDetail] Error loading tweet detail:', error)
 
-        // Log essential error details for debugging stuck loading states
-        if (error && typeof error === 'object' && 'message' in error) {
-            console.error(`Error details: ${error.message}`);
-        }
-
-        // Check if this is a "tweet not found" error
         const isTweetNotFound = error && typeof error === 'object' && 'message' in error &&
-                               error.message === 'Tweet not found (null response)';
-
+                               (error as Error).message === 'Tweet not found (null response)'
+        isLoading.value = false
         if (isTweetNotFound) {
-            console.error('[TweetDetail] Tweet not found - showing specific error message')
-            isLoading.value = false
             tweetNotFound.value = true
-        } else if (retryCount < maxRetries) {
-            console.log(`[TweetDetail] Retrying by refreshing page... (${retryCount + 1}/${maxRetries})`)
-            // Add delay before retry
-            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-
-            // Refresh immediately on error (within max retries limit)
-            const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0');
-            if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-                sessionStorage.setItem('tweetDetailRefreshCount', (refreshCount + 1).toString());
-                clearTimeout(timeoutId);
-                window.location.reload();
-            } else {
-                console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached in retry logic, giving up`);
-                clearTimeout(timeoutId);
-                isLoading.value = false;
-                loadError.value = true;
-                sessionStorage.removeItem('tweetDetailRefreshCount');
-            }
         } else {
-            console.error('[TweetDetail] Max retries reached, giving up')
-            clearTimeout(timeoutId)
-            isLoading.value = false
             loadError.value = true
         }
     }
@@ -268,7 +228,7 @@ watch(tweetId, async (newValue, oldValue)=>{
         tweet.value = null
         originTweet.value = null
         isRetweet.value = false
-        await loadDetail(0)
+        await loadDetail()
     }
 });
 
@@ -615,7 +575,7 @@ function goBack() {
 function retryLoad() {
     console.log('[TweetDetail] User initiated retry');
     tweetNotFound.value = false;
-    loadDetail(0);
+    loadDetail();
 }
 </script>
 

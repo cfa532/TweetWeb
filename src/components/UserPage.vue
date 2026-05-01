@@ -3,7 +3,7 @@ import { onMounted, ref, onUnmounted, watch, computed, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
-import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
+import { LOAD_TIMEOUT_MS } from '@/constants';
 import { USER_PAGE_SCROLL_PREFIX } from '@/constants/scrollRestore';
 import { TweetView, AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
@@ -205,15 +205,9 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
         const pinnedTimeout = new Promise<Tweet[]>((_, reject) => {
             timeoutId = window.setTimeout(() => {
                 pinnedHasTimedOut = true;
-                if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-                    console.warn(`Pinned tweets timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
-                    sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
-                    window.location.reload();
-                } else {
-                    console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage pinned tweets, stopping`);
-                    isLoading.value = false;
-                    sessionStorage.removeItem('userPageRefreshCount');
-                }
+                // Don't reload the page — cached pinned tweets are already shown.
+                // Just give up the fresh refresh and let the user keep the cached view.
+                console.warn(`[UserPage] Pinned tweets timeout after ${LOAD_TIMEOUT_MS}ms; keeping cached view`);
                 reject(new Error('Pinned tweets timeout'));
             }, LOAD_TIMEOUT_MS);
         });
@@ -292,19 +286,12 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
                 return result;
             });
 
-            // Set timeout to refresh on failure
+            // Time out the page-load round, but keep the cached view in place.
             const timeoutPromise = new Promise<never>((_, reject) => {
                 currentTimeoutId = window.setTimeout(() => {
                     hasTimedOut = true;
-                    if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-                        console.warn(`Load timeout after ${LOAD_TIMEOUT_MS}ms, refreshing page (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`);
-                        sessionStorage.setItem('userPageRefreshCount', (refreshCount + 1).toString());
-                        window.location.reload();
-                    } else {
-                        console.warn(`Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached for UserPage, stopping`);
-                        isLoading.value = false;
-                        sessionStorage.removeItem('userPageRefreshCount');
-                    }
+                    console.warn(`[UserPage] Page load timeout after ${LOAD_TIMEOUT_MS}ms; keeping cached view`);
+                    isLoading.value = false;
                     reject(new Error('Page load timeout'));
                 }, LOAD_TIMEOUT_MS);
             });
