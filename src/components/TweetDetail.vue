@@ -135,10 +135,7 @@ async function loadDetail(retryCount = 0) {
     }
 
     try {
-        // Always fetch fresh data from server
-        console.log('[TweetDetail TIMING] Calling getTweet...', new Date().toISOString())
         tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
-        console.log('[TweetDetail TIMING] ✅ Tweet received and set, Vue will render now:', new Date().toISOString())
 
         if (!tweet.value) {
             throw new Error('Tweet not found (null response)')
@@ -146,7 +143,6 @@ async function loadDetail(retryCount = 0) {
 
         loadError.value = false
         await showTweet(timeoutId)
-        console.log(tweet.value)
 
         // display url as link
         document.addEventListener("DOMContentLoaded", function () {
@@ -271,17 +267,12 @@ const formattedTitle = computed(() => {
 
 
 watch(tweetId, async (newValue, oldValue)=>{
-    console.log('[tweetId watcher] tweetId changed from', oldValue, 'to', newValue);
     if (newValue && oldValue !== newValue) {
-        console.log('[tweetId watcher] Reloading tweet data for:', newValue);
         // Clear current tweet and use the same loadDetail function with retry logic
         tweet.value = null
         originTweet.value = null
         isRetweet.value = false
         await loadDetail(0)
-        console.log('[tweetId watcher] Finished reloading, tweet.value:', tweet.value);
-    } else {
-        console.log('[tweetId watcher] No change detected');
     }
 });
 
@@ -544,8 +535,6 @@ const navigationMeta = ref<{
 
 const updateNavigationMeta = () => {
     try {
-        console.log('[updateNavigationMeta] route.query:', route.query);
-
         // First check if we have navigation metadata in the URL query params
         const fromQuery = {
             fromComment: route.query.fromComment === 'true',
@@ -553,27 +542,20 @@ const updateNavigationMeta = () => {
             parentAuthorId: route.query.parentAuthorId as string | undefined
         };
 
-        console.log('[updateNavigationMeta] fromQuery:', fromQuery);
-
         // If we have valid navigation metadata from query params, store it in sessionStorage
         if (fromQuery.fromComment && fromQuery.parentTweetId) {
-            console.log('[updateNavigationMeta] Using query params, storing in sessionStorage');
             sessionStorage.setItem('navigationMeta', JSON.stringify(fromQuery));
             navigationMeta.value = fromQuery;
             return;
         }
 
-        console.log('[updateNavigationMeta] No valid query params, checking sessionStorage');
-
         // Otherwise, check sessionStorage for previously stored metadata
         const stored = sessionStorage.getItem('navigationMeta');
         if (stored) {
-            console.log('[updateNavigationMeta] Found in sessionStorage:', stored);
             navigationMeta.value = JSON.parse(stored);
             return;
         }
 
-        console.log('[updateNavigationMeta] No navigation metadata found');
         navigationMeta.value = null;
     } catch (error) {
         console.warn('[updateNavigationMeta] Error parsing navigation meta:', error);
@@ -586,7 +568,6 @@ updateNavigationMeta();
 
 // Watch for route changes and update navigation metadata
 watch(() => route.query, () => {
-    console.log('[TweetDetail] Route query changed, updating navigation meta');
     updateNavigationMeta();
 }, { immediate: true });
 
