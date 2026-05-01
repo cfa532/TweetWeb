@@ -74,8 +74,14 @@ const isScrolling = ref(false);
     if (!isInTweetList.value) return 'auto';
     return regularVideoActive.value ? 'auto' : 'none';
   });
-// Show native controls on desktop in detail view, hide elsewhere
-const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value)
+// Tracks whether the video has reported its metadata yet. Used to suppress
+// native browser controls during the initial load so the native loading
+// spinner (a hard-to-see dark gray on Safari) doesn't compete with our
+// white buffering overlay.
+const hasMetadata = ref(false);
+
+// Show native controls on desktop detail view AFTER metadata loads.
+const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value && hasMetadata.value)
 
 const canShowPausedOverlays = computed(() => {
   return !showVideoError.value &&
@@ -286,6 +292,8 @@ onMounted(() => {
           hasTriedPlaylistFallback = false;
           showVideoError.value = false;
           failedFragments.clear();
+          // Native controls can come up now that the spinner phase is over.
+          hasMetadata.value = true;
           if (video.value) {
             if (!isInTweetList.value) {
               const videoHeight = video.value.videoHeight;
@@ -1810,8 +1818,12 @@ function stopVideo() {
         </div>
       </div>
       
-      <!-- Loading spinner overlay: always on desktop; on mobile only after user has started playback -->
-      <div v-if="isBuffering && !showControls && (!isMobile || isPlaying)" class="buffering-overlay">
+      <!-- Loading spinner overlay: always shown when buffering. Sits on top of
+           the native browser controls so the spinner is visible even on Safari
+           detail view (where the native loading indicator is barely visible
+           against the black wrapper). On mobile, suppress before the user
+           starts playback so it doesn't compete with the play overlay. -->
+      <div v-if="isBuffering && (!isMobile || isPlaying)" class="buffering-overlay">
         <div class="buffering-spinner"></div>
       </div>
 
