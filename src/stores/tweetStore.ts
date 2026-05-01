@@ -1450,10 +1450,51 @@ export const useTweetStore = defineStore('tweetStore', {
             if (existingUser) {
                 // Preserve object identity so existing tweet/header refs receive refreshed fields.
                 Object.assign(existingUser as any, user as any)
+                this._rewriteUserMediaHosts(userId, providerIp)
                 return existingUser
             }
             this.users.set(userId, user)
+            this._rewriteUserMediaHosts(userId, providerIp)
             return user
+        },
+
+        /**
+         * After raceProviderIps elects a fresh winner for a user, rewrite the
+         * host portion of any cached attachment URLs that were built against an
+         * older (now dead) provider IP. Only the host swaps; the /ipfs/<hash>
+         * path is preserved. Also refreshes the `provider` field on each tweet
+         * and the cached `author.providerIp` / `author.avatar` so subsequent
+         * renders use the live host.
+         */
+        _rewriteUserMediaHosts(userId: MimeiId, newProviderIp: string) {
+            const newBase = `http://${newProviderIp}`
+            const swapHost = (url: string | undefined): string | undefined => {
+                if (!url) return url
+                if (!/^https?:\/\//i.test(url)) return url
+                return url.replace(/^https?:\/\/[^/]+/, newBase)
+            }
+            const fixTweet = (t: Tweet | undefined | null) => {
+                if (!t) return
+                const isOurs = (t.author && t.author.mid === userId) || t.authorId === userId
+                if (!isOurs) return
+                t.provider = newProviderIp
+                if (t.author) {
+                    if (t.author.providerIp !== newProviderIp) t.author.providerIp = newProviderIp
+                    t.author.avatar = swapHost(t.author.avatar) ?? t.author.avatar
+                }
+                if (t.attachments) {
+                    for (const a of t.attachments) {
+                        const next = swapHost(a.mid as any)
+                        if (next) a.mid = next
+                    }
+                }
+            }
+
+            for (const t of this.tweets) {
+                fixTweet(t)
+                fixTweet(t?.originalTweet as any)
+            }
+            for (const t of this.originalTweetIndex.values()) fixTweet(t)
         },
         
         /**

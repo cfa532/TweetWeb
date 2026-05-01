@@ -16,7 +16,7 @@ const isLoaded = ref(false);
         <div v-if="!isLoaded" class="img-loading-overlay">
             <div class="img-spinner"></div>
         </div>
-        <img :src="props.media.mid" @load="isLoaded = true" @error="isLoaded = true"/>
+        <img :src="props.media.mid" loading="lazy" decoding="async" @load="isLoaded = true" @error="isLoaded = true"/>
     </div>
 </template>
 

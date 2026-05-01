@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
@@ -32,6 +32,11 @@ const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
 const showPlayOverlay = ref(!props.autoplay); // Don't show overlay initially if autoplay is enabled
 const isAudio = props.media.type?.toLowerCase().includes('audio') ?? false;
+// Feed: defer attaching <source> for regular MP4s until the coordinator marks
+// this video the primary. Without this gate every MP4 in the feed begins
+// buffering on render even with preload=none on some browsers, hammering the
+// connection pool. Detail view always loads.
+const regularVideoActive = ref(false);
 // In list/feed (typically non-autoplay), avoid showing spinner before user action.
 const isBuffering = ref(!isAudio && !!props.autoplay);
 // True while the coordinator has marked this video as primary and auto-play
@@ -54,6 +59,20 @@ const isScrolling = ref(false);
   const isRegularVideo = computed(() => {
     const mediaType = props.media.type?.toLowerCase();
     return mediaType === 'video';
+  });
+
+  // Render <source> for regular MP4 only when needed: always in detail view,
+  // and only after the coordinator promotes this video in the feed.
+  const shouldRenderRegularSource = computed(() => {
+    if (!isRegularVideo.value) return false;
+    if (!isInTweetList.value) return true;
+    return regularVideoActive.value;
+  });
+
+  // Feed videos must not auto-buffer; only the primary should preload.
+  const videoPreload = computed(() => {
+    if (!isInTweetList.value) return 'auto';
+    return regularVideoActive.value ? 'auto' : 'none';
   });
 // Show native controls on desktop in detail view, hide elsewhere
 const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value)
@@ -80,11 +99,13 @@ const isInTweetList = computed(() => {
 
 // Pre-size wrapper in detail/modal; in feed, .media-attachments already sets aspect-ratio — a second
 // ratio here letterboxes (black band) under the video.
+// Detail view falls back to 16/9 so the loading placeholder fills the
+// container instead of showing the browser's tiny default <video> box.
 const videoWrapperStyle = computed(() => {
   if (isInTweetList.value) return {};
   const ar = props.media.aspectRatio;
   if (ar && ar > 0) return { aspectRatio: String(ar) };
-  return {};
+  return { aspectRatio: '16 / 9' };
 });
 
 const timeRemainingText = ref('0:00');
@@ -299,7 +320,14 @@ onMounted(() => {
             isBuffering.value = false;
           }
         } else if (isRegularVideo.value) {
-          setupRegularVideo();
+          if (!isInTweetList.value) {
+            // Detail view: attach the source and load immediately.
+            setupRegularVideo();
+          } else {
+            // Feed: wait for coordinator to mark this primary. Listeners
+            // are attached in setupRegularVideo() once the source mounts.
+            isBuffering.value = false;
+          }
         }
         
         // Register with video playback coordinator for single-video-at-a-time in tweet list
@@ -329,6 +357,17 @@ onMounted(() => {
               if (!isHLSInitialized && isHLS.value) {
                 isBuffering.value = true;
                 setupHLS();
+                return;
+              }
+              if (isRegularVideo.value && !regularVideoActive.value) {
+                // First time becoming primary: mount the <source>, attach
+                // listeners, then call .load() to kick off buffering.
+                regularVideoActive.value = true;
+                isBuffering.value = true;
+                nextTick(() => {
+                  setupRegularVideo();
+                  video.value?.load();
+                });
                 return;
               }
               if (hls) hls.startLoad(-1);
@@ -1816,7 +1855,7 @@ function stopVideo() {
           :autoplay="props.autoplay && !isInTweetList"
           :controls="showControls"
           :controlslist="showControls ? controls : undefined"
-          preload="auto"
+          :preload="videoPreload"
           playsinline
           webkit-playsinline
           x5-playsinline
@@ -1825,8 +1864,9 @@ function stopVideo() {
           @loadedmetadata="checkVideoOrientation"
           @contextmenu="disableRightClick"
         >
-            <!-- For regular videos only - HLS videos are handled by HLS.js -->
-            <source v-if="isRegularVideo" :src="getVideoSource()" type="video/mp4" />
+            <!-- For regular videos only - HLS videos are handled by HLS.js.
+                 In feed, source is deferred until coordinator promotes this video. -->
+            <source v-if="shouldRenderRegularSource" :src="getVideoSource()" type="video/mp4" />
           Your browser does not support the video tag.
         </video>
       </div>
@@ -2227,12 +2267,21 @@ function stopVideo() {
   }
 }
 
-/* Responsive video in detail view - adapts to screen width and height */
+/* Detail view: the wrapper carries the aspect-ratio (from media metadata or
+ * the 16/9 fallback), so the <video> fills it. object-fit:contain keeps the
+ * actual video letterboxed inside once playback starts, while the loading
+ * placeholder occupies the full container instead of the browser's default
+ * 300×150 intrinsic box. */
+.video-container:not(.tweet-list) .video-wrapper {
+  width: 100%;
+  height: auto;
+}
+
 .video-container:not(.tweet-list) .video {
+  width: 100% !important;
+  height: 100% !important;
   max-width: 100% !important;
   max-height: 80vh !important;
-  width: auto !important;
-  height: auto !important;
   object-fit: contain !important;
 }
 
