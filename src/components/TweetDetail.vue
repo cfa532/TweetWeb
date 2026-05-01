@@ -143,17 +143,6 @@ async function loadDetail(retryCount = 0) {
 
         loadError.value = false
         await showTweet(timeoutId)
-
-        // display url as link
-        document.addEventListener("DOMContentLoaded", function () {
-            const contentElement = document.getElementById('content');
-            const paragraphs = contentElement?.getElementsByClassName('card-text');
-            if (paragraphs)
-                for (let i = 0; i < paragraphs.length; i++) {
-                    const paragraph = paragraphs[i];
-                    paragraph.innerHTML = linkify(paragraph.innerHTML);
-                }
-        });
     } catch (error) {
         console.error(`Error loading tweet detail (attempt ${retryCount + 1}/${maxRetries + 1}):`, error);
 
@@ -211,10 +200,17 @@ async function showTweet(timeoutId?: number) {
         if (tweet.value.originalTweetId) {
             loadPromises.push((async () => {
                 try {
-                    originTweet.value = await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+                    // If the parent tweet came from cache it already carries
+                    // its originalTweet; reuse it instead of refetching.
+                    originTweet.value = tweet.value.originalTweet
+                        ?? await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
                     if (!tweet.value.content && !tweet.value.attachments) {
+                        // Pure retweet (no added content): show the original's comments.
                         isRetweet.value = true
                         await tweetStore.loadComments(originTweet.value)
+                    } else {
+                        // Quote-retweet: comments belong to the outer tweet.
+                        await tweetStore.loadComments(tweet.value)
                     }
                 } catch (error) {
                     console.warn('[TweetDetail] Failed to load original tweet:', error)
