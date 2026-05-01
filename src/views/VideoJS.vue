@@ -6,6 +6,16 @@ import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
 import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 
+// Cross-instance HLS playlist cache, keyed by base media URL. The same
+// stream may be opened by multiple VideoJS instances (e.g. once in the
+// feed and once in the tweet detail view) on different copies of the
+// media object — the per-prop cache (props.media.playlist) doesn't survive
+// the JSON.parse round trip from sessionStorage. Caching globally lets the
+// detail view skip the parallel master.m3u8 + playlist.m3u8 probe and go
+// straight to whichever filename the feed already validated. Avoids
+// re-issuing the playlist.m3u8 request that often returns 500.
+const globalPlaylistFilenameCache = new Map<string, 'master.m3u8' | 'playlist.m3u8'>();
+
 const props = defineProps({
   media: { type: Object as PropType<MimeiFileType>, required: true },
   autoplay: { type: Boolean, required: false },
@@ -854,9 +864,20 @@ function getHLSMasterSource(): string {
 }
 
 function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {
+  // Check the global cross-instance cache first so a freshly-mounted detail
+  // view skips the probe when the feed already resolved the same stream.
+  const baseUrl = getBaseMediaUrl();
+  const global = globalPlaylistFilenameCache.get(baseUrl);
+  if (global === 'master.m3u8' || global === 'playlist.m3u8') {
+    console.log(`[HLS Playlist Cache] HIT (global) for ${baseUrl}: ${global}`);
+    // Also seed the per-prop cache for any future reads on this object.
+    if (props.media.playlist !== global) props.media.playlist = global;
+    return global;
+  }
   const cached = props.media.playlist;
   if (cached === 'master.m3u8' || cached === 'playlist.m3u8') {
-    console.log(`[HLS Playlist Cache] HIT for media ${props.media.mid}: ${cached}`);
+    console.log(`[HLS Playlist Cache] HIT (prop) for media ${props.media.mid}: ${cached}`);
+    globalPlaylistFilenameCache.set(baseUrl, cached);
     return cached;
   }
   console.log(`[HLS Playlist Cache] MISS for media ${props.media.mid}`);
@@ -864,6 +885,8 @@ function getCachedPlaylistFilename(): 'master.m3u8' | 'playlist.m3u8' | null {
 }
 
 function cacheResolvedPlaylistFilename(fileName: 'master.m3u8' | 'playlist.m3u8') {
+  const baseUrl = getBaseMediaUrl();
+  globalPlaylistFilenameCache.set(baseUrl, fileName);
   if (props.media.playlist !== fileName) {
     props.media.playlist = fileName;
     console.log(`[HLS Playlist Cache] STORE for media ${props.media.mid}: ${fileName}`);

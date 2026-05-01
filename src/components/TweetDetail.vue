@@ -6,7 +6,7 @@ import { useTweetStore } from "@/stores";
 import { MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
-import { LOAD_TIMEOUT_MS } from '@/constants';
+import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
 
 const { t } = useI18n();
 
@@ -114,12 +114,30 @@ async function loadDetail() {
     tweetNotFound.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: stop the spinner if loading takes too long, but don't
-    // reload the page — let the user see whatever loaded so far (or retry).
+    // Safety timeout: if the detail view hasn't loaded successfully after
+    // LOAD_TIMEOUT_MS, reload the page once to recover (e.g. when the
+    // connection pool is saturated by a prior followers-list visit).
+    // Capped at MAX_REFRESH_ATTEMPTS via sessionStorage so a tweet that
+    // genuinely cannot load doesn't bounce forever; the counter is cleared
+    // on a successful load (see showTweet).
+    const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0')
     const timeoutId: number = window.setTimeout(() => {
-        console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms; giving up the fresh fetch`)
-        isLoading.value = false
-        if (!tweet.value) loadError.value = true
+        if (tweet.value) {
+            // Tweet content rendered (cached path). Just stop the spinner.
+            console.warn(`[TweetDetail] Secondary load timeout after ${LOAD_TIMEOUT_MS}ms; keeping rendered view`)
+            isLoading.value = false
+            return
+        }
+        if (refreshCount < MAX_REFRESH_ATTEMPTS) {
+            console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms — reloading (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`)
+            sessionStorage.setItem('tweetDetailRefreshCount', String(refreshCount + 1))
+            window.location.reload()
+        } else {
+            console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached, giving up`)
+            sessionStorage.removeItem('tweetDetailRefreshCount')
+            isLoading.value = false
+            loadError.value = true
+        }
     }, LOAD_TIMEOUT_MS)
 
     try {

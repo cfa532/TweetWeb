@@ -1200,14 +1200,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     tweetInDB = raceResult.result
                     providerIp = raceResult.ip
-                    providerClient = await this.lapi.getClient(providerIp)
+                    // Use auto-releasing proxy so the pool slot is freed after each RPC.
+                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
                 } else {
                     providerIp = await this.getProviderIp(tweetId)
                     if (!providerIp) {
                         console.warn(`[fetchTweet] No provider IP for tweet ${tweetId}`)
                         return null
                     }
-                    providerClient = await this.lapi.getClient(providerIp)
+                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
                     tweetInDB = await providerClient.RunMApp("get_tweet", {
                         aid: this.lapi.appId,
                         ver: "last",
@@ -1573,10 +1574,17 @@ export const useTweetStore = defineStore('tweetStore', {
 
             console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
 
-            // Create promises for each IP with individual timeouts
+            // Create promises for each IP with individual timeouts.
+            //
+            // IMPORTANT: use createPooledClient (auto-releasing proxy) instead
+            // of lapi.getClient (raw client). lapi.getClient acquires a pool
+            // slot but never releases it, leaking one slot per race attempt;
+            // after a few batches the pool saturates and subsequent races
+            // time out at 15s with "Connection request timeout for ...". The
+            // proxy releases the slot after each RPC method call.
             const racePromises = ips.map(async (ip) => {
                 try {
-                    const client = await this.lapi.getClient(ip);
+                    const client = createPooledClient(ip, this.lapi.connectionPool);
 
                     // Race the API call with a 15-second timeout (slow nodes / follow path)
                     const raceMs = 15000
@@ -1740,7 +1748,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
             console.log('[loadComments] Loading comments for tweet:', tweet.mid, 'provider:', tweet.provider)
-            let client = await this.lapi.getClient(tweet.provider)
+            // Use auto-releasing proxy so the pool slot is freed after the RPC.
+            let client = createPooledClient(tweet.provider, this.lapi.connectionPool)
             let comments = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
@@ -2400,7 +2409,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
 
-            const hproseClient = await this.lapi.getClient(ip)
+            const hproseClient = createPooledClient(ip, this.lapi.connectionPool)
             let file = await hproseClient.RunMApp("get_shared_file", {
                 aid: this.lapi.appId,
                 ver: "last",

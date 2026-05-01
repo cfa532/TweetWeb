@@ -16,7 +16,10 @@ const loginFollowingIds = ref([] as MimeiId[])
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
 const currentIndex = ref(0)
-const batchSize = 15 // Number of users to load at once
+const batchSize = 8 // Number of users to load at once
+                    // (kept small so the connection pool isn't saturated by
+                    //  dozens of parallel getUser calls; subsequent batches
+                    //  auto-load as soon as the current one resolves)
 const containerRef = ref<HTMLElement>()
 
 // Computed property for currently visible user IDs
@@ -31,16 +34,43 @@ const hasMoreUsers = computed(() => {
 
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
 
-// Load the next batch of user IDs
+// Load the next batch of user IDs.
+//
+// Kick off pre-fetches for the batch in parallel, then reveal the rows
+// IMMEDIATELY so each UserRow renders a placeholder right away. Each
+// UserRow's own onMounted getUser call is deduped via tweetStore's
+// _pendingUserFetches map (in-flight at this point), so it shares the
+// same promise — one network call per user, and each row updates as
+// soon as its individual data lands (no waiting for the whole batch).
+//
+// The await on Promise.allSettled gates the next batch so we don't
+// pile on the connection pool. After the batch settles, recurse to
+// load the next one — keeps loading continuously until every following
+// is mounted.
 const loadNextBatch = async () => {
     if (isLoadingMore.value || !hasMoreUsers.value) return
-    
+
     isLoadingMore.value = true
     const endIndex = Math.min(currentIndex.value + batchSize, followingIds.value.length)
-    
-    // Simply update the current index to show more user IDs
+    const idsToLoad = followingIds.value.slice(currentIndex.value, endIndex)
+
+    // Start fetches FIRST so they're registered in _pendingUserFetches
+    // before UserRow's onMounted runs and looks them up.
+    const fetches = idsToLoad.map(id => tweetStore.getUser(id).catch(() => undefined))
+
+    // Reveal the rows now — UserRow placeholders mount and dedup with
+    // the in-flight fetches above.
     currentIndex.value = endIndex
+
+    // Gate next batch on this batch settling.
+    await Promise.allSettled(fetches)
+
     isLoadingMore.value = false
+
+    if (hasMoreUsers.value) {
+        // Auto-continue without waiting for scroll.
+        loadNextBatch()
+    }
 }
 
 // Handle scroll to load more users
