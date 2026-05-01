@@ -804,7 +804,11 @@ export const useTweetStore = defineStore('tweetStore', {
             let pinned: any[] = []
 
             for (let attempt = 1; attempt <= 2; attempt++) {
-                const user = await this._getUserForProviderRetryAttempt(userId, attempt, true)
+                // Use the cached user on first attempt; only force a fresh
+                // provider lookup on retry. Forcing on attempt 1 used to wipe
+                // the user record we just loaded (e.g. in the followers list)
+                // and triggered a 15s race — making profile loads slow.
+                const user = await this._getUserForProviderRetryAttempt(userId, attempt)
 
                 if (!user) {
                     return []
