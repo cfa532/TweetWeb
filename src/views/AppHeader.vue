@@ -323,7 +323,10 @@ watch(
             user.value = undefined
         }
         try {
-            const u = await tweetStore.getUser(requestedId, true)
+            // Use cache when available — racing provider IPs on every profile
+            // visit was wasteful. If the cached IP is dead, the avatar's
+            // @error handler force-refreshes to recover (see onAvatarError).
+            const u = await tweetStore.getUser(requestedId)
             if (userId.value !== requestedId) return
             user.value = u ?? syncPeek
         } catch (e) {
@@ -334,6 +337,18 @@ watch(
     },
     { immediate: true },
 )
+
+/** Cached avatar URLs can point at a now-dead provider IP. On image load
+ *  failure, force a fresh getUser; _rewriteUserMediaHosts swaps the host
+ *  on the live User object and the <img> reloads automatically. */
+function onAvatarError(event: Event) {
+    const img = event.target as HTMLImageElement | null
+    if (!img || img.dataset.refreshed === '1') return
+    const id = userId.value
+    if (!id) return
+    img.dataset.refreshed = '1'
+    tweetStore.getUser(id, true).catch(() => undefined)
+}
 </script>
 
 <template>
@@ -341,7 +356,7 @@ watch(
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img :src="user ? user.avatar : avatarUrl" @click="onAppAvatarClick" alt="Logo"
+                    <img :src="user ? user.avatar : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
                         class="rounded-circle" />
                 </div>
                 <!-- User Info -->

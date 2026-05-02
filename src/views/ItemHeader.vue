@@ -39,6 +39,24 @@ function openUserPage(userId: string) {
     router.push(`/author/${userId}`)
   }
 }
+
+/**
+ * Author avatars come from sessionStorage-cached User records that may have
+ * been built against a now-dead provider IP. When the <img> 404s, force a
+ * fresh getUser — _rewriteUserMediaHosts will then swap the avatar URL on
+ * tweet.author to the new winning host and Vue re-renders the <img>.
+ *
+ * Guarded by a one-shot data-attr so a permanently bad image (deleted
+ * avatar, etc.) doesn't loop.
+ */
+function handleAvatarError(event: Event) {
+  const img = event.target as HTMLImageElement | null
+  if (!img || img.dataset.refreshed === '1') return
+  const authorId = props.author?.mid
+  if (!authorId) return
+  img.dataset.refreshed = '1'
+  tweetStore.getUser(authorId, true).catch(() => undefined)
+}
 function openDetailView() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
     const authorId = props.tweet?.author?.mid || props.tweet?.authorId;
@@ -92,7 +110,7 @@ function openDetailView() {
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
     <div :class="['avatar', 'me-2', 'author-avatar', { 'comment-avatar': isComment }]">
-      <img v-if='props.author' :src='props.author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(props.author.mid)'>
+      <img v-if='props.author' :src='props.author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(props.author.mid)' @error='handleAvatarError'>
       <div v-else class='rounded-circle loading-avatar'></div>
     </div>
     <!-- User Info -->
