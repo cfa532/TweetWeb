@@ -424,6 +424,14 @@ function goBack() {
                         <div class="fw-bold">{{ user?.tweetCount ?? 0 }}</div>
                         <small class="text-muted">{{ $t('profile.tweets') }}</small>
                     </div>
+                    <div class="stat-item stat-item--display">
+                        <div class="fw-bold">{{ user?.bookmarksCount ?? 0 }}</div>
+                        <small class="text-muted">{{ $t('profile.bookmarks') }}</small>
+                    </div>
+                    <div class="stat-item stat-item--display">
+                        <div class="fw-bold">{{ user?.favoritesCount ?? 0 }}</div>
+                        <small class="text-muted">{{ $t('profile.favorites') }}</small>
+                    </div>
                 </div>
 
                 <!-- Info rows -->
@@ -701,6 +709,15 @@ function goBack() {
 
 .stat-item:hover {
     background: #f0f0f0;
+}
+
+/* Non-clickable display variant — no route yet for bookmarks/favorites. */
+.stat-item--display {
+    cursor: default;
+}
+
+.stat-item--display:hover {
+    background: transparent;
 }
 
 .info-section {

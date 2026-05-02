@@ -28,6 +28,8 @@ interface User {
     followingCount?: number;
     followersCount?: number;
     tweetCount?: number;
+    bookmarksCount?: number;
+    favoritesCount?: number;
     cloudDrivePort?: number;  // Port for backend service (undefined/null/0 means no service)
     domainToShare?: string;
     hostUrl?: string;
@@ -47,6 +49,11 @@ interface Tweet {
     comments?: Tweet[];
 
     likeCount?: number;
+    /** Per-appUser flags returned by the server for this tweet:
+     *  [0] = favorited, [1] = bookmarked, [2] = retweeted.
+     *  Populated server-side based on the appuserid query param;
+     *  flipped optimistically by toggleFavorite / toggleBookmark. */
+    favorites?: boolean[];
     bookmarkCount?: number;
     retweetCount?: number;
     commentCount?: number;

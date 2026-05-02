@@ -234,6 +234,12 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
                             (existing as any)[key] = ft[key];
                         }
                     }
+                    // Per-appUser flags ([favorite, bookmark, retweeted]) — ref
+                    // comparison would always differ on a new array, so always
+                    // overwrite when the server provided a value.
+                    if (ft.favorites !== undefined) {
+                        existing.favorites = ft.favorites;
+                    }
                     // Keep provider/avatar in sync so cached pinned tweets don't keep stale hosts.
                     if (ft.provider) existing.provider = ft.provider;
                     if (ft.author) {

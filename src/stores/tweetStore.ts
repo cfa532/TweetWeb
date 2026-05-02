@@ -507,6 +507,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (fresh.isPrivate !== undefined) cached.isPrivate = fresh.isPrivate
             if (fresh.downloadable !== undefined) cached.downloadable = fresh.downloadable
             if (fresh.timestamp !== undefined) cached.timestamp = fresh.timestamp
+            if (fresh.favorites !== undefined) cached.favorites = fresh.favorites
         },
 
         /**
@@ -799,6 +800,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const params = {
                 aid: this.appId,
                 ver: "last",
+                version: "v2",  // matches iOS — required for tweet.favorites to be populated per appUser
                 userid: userId,
                 appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
             }
@@ -818,7 +820,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 try {
-                    pinned = await user.client.RunMApp("get_pinned_tweets", params)
+                    const raw = await user.client.RunMApp("get_pinned_tweets", params)
+
+                    // v2 wraps payloads as { success, data, message }. Unwrap.
+                    pinned = (raw && typeof raw === 'object' && 'success' in raw)
+                        ? (raw.success ? (raw.data ?? []) : [])
+                        : raw
 
                     // Validate that pinned is an array
                     if (!Array.isArray(pinned)) {
@@ -1271,6 +1278,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 likeCount: tweetData.favoriteCount ?? tweetData.likeCount,
                 bookmarkCount: tweetData.bookmarkCount,
                 commentCount: tweetData.commentCount,
+                favorites: tweetData.favorites,
             }
 
             // If we have originalTweetData, convert it too (without waiting for author)
@@ -1294,6 +1302,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     likeCount: originalTweetData.favoriteCount ?? originalTweetData.likeCount,
                     bookmarkCount: originalTweetData.bookmarkCount,
                     commentCount: originalTweetData.commentCount,
+                    favorites: originalTweetData.favorites,
                 }
             }
 
@@ -1829,6 +1838,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             likeCount: e.favoriteCount ?? e.likeCount ?? 0,
                             bookmarkCount: e.bookmarkCount ?? 0,
                             commentCount: e.commentCount ?? 0,
+                            favorites: e.favorites,
                             comments: [],
                             attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
                                 .map((a: MimeiFileType) => {
@@ -2533,6 +2543,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     bookmarkCount: s.bookmarkCount ?? tweet.bookmarkCount,
                     commentCount: s.commentCount ?? tweet.commentCount,
                     retweetCount: s.retweetCount ?? tweet.retweetCount,
+                    // [favorite, bookmark, retweeted] per appUser.
+                    favorites: Array.isArray(s.favorites) ? s.favorites : tweet.favorites,
                 }
                 const idx = this.tweets.findIndex(e => e.mid == tweet.mid)
                 if (idx >= 0) {

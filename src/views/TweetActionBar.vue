@@ -20,8 +20,12 @@ const emit = defineEmits<{
   (e: 'updated', tweet: Tweet): void;
 }>();
 
-const isLiked = computed(() => (props.tweet.likeCount ?? 0) > 0 && tweetStore.loginUser != null);
-const isBookmarked = computed(() => (props.tweet.bookmarkCount ?? 0) > 0 && tweetStore.loginUser != null);
+// Server returns per-appUser flags as tweet.favorites: [favorite, bookmark, retweeted].
+// Index matches iOS UserActions.{FAVORITE=0, BOOKMARK=1, RETWEET=2}.
+const FAVORITE_IDX = 0;
+const BOOKMARK_IDX = 1;
+const isLiked = computed(() => !!props.tweet.favorites?.[FAVORITE_IDX] && tweetStore.loginUser != null);
+const isBookmarked = computed(() => !!props.tweet.favorites?.[BOOKMARK_IDX] && tweetStore.loginUser != null);
 
 function formatCount(count?: number): string {
   if (!count || count <= 0) return '';
@@ -71,15 +75,28 @@ async function onRetweet() {
   }
 }
 
+/** Build a new favorites array with index `idx` flipped. Defaults to
+ *  [false, false, false] when missing so the action bar always has a
+ *  3-slot array to work with. */
+function flipFavoriteAt(current: boolean[] | undefined, idx: number): boolean[] {
+  const next = current ? [...current] : [false, false, false];
+  while (next.length < 3) next.push(false);
+  next[idx] = !next[idx];
+  return next;
+}
+
 async function onLike() {
   if (!tweetStore.loginUser) {
     redirectToLogin();
     return;
   }
   const original = { ...props.tweet };
-  const wasLiked = (original.likeCount ?? 0) > 0;
-  // Optimistic update: show result immediately
-  emit('updated', { ...original, likeCount: (original.likeCount ?? 0) + (wasLiked ? -1 : 1) });
+  const wasLiked = !!original.favorites?.[FAVORITE_IDX];
+  emit('updated', {
+    ...original,
+    likeCount: Math.max(0, (original.likeCount ?? 0) + (wasLiked ? -1 : 1)),
+    favorites: flipFavoriteAt(original.favorites, FAVORITE_IDX),
+  });
   try {
     const serverResult = await tweetStore.toggleFavorite(original);
     emit('updated', serverResult);
@@ -96,8 +113,12 @@ async function onBookmark() {
     return;
   }
   const original = { ...props.tweet };
-  const wasBookmarked = (original.bookmarkCount ?? 0) > 0;
-  emit('updated', { ...original, bookmarkCount: (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1) });
+  const wasBookmarked = !!original.favorites?.[BOOKMARK_IDX];
+  emit('updated', {
+    ...original,
+    bookmarkCount: Math.max(0, (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1)),
+    favorites: flipFavoriteAt(original.favorites, BOOKMARK_IDX),
+  });
   try {
     const serverResult = await tweetStore.toggleBookmark(original);
     emit('updated', serverResult);
