@@ -496,10 +496,13 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         refreshCachedTweet(cached: Tweet, fresh: Tweet) {
             const freshLikeCount = fresh.likeCount ?? (fresh as any).favoriteCount
-            if (freshLikeCount !== undefined) cached.likeCount = freshLikeCount
-            if (fresh.commentCount !== undefined) cached.commentCount = fresh.commentCount
-            if (fresh.retweetCount !== undefined) cached.retweetCount = fresh.retweetCount
-            if (fresh.bookmarkCount !== undefined) cached.bookmarkCount = fresh.bookmarkCount
+            // Never decrease counts from a background refresh — explicit user actions
+            // (toggleFavorite, updateRetweetCount) write the authoritative value via
+            // _applyServerTweet; background feed data may lag behind.
+            if (freshLikeCount !== undefined && freshLikeCount >= (cached.likeCount ?? 0)) cached.likeCount = freshLikeCount
+            if (fresh.commentCount !== undefined && fresh.commentCount >= (cached.commentCount ?? 0)) cached.commentCount = fresh.commentCount
+            if (fresh.retweetCount !== undefined && fresh.retweetCount >= (cached.retweetCount ?? 0)) cached.retweetCount = fresh.retweetCount
+            if (fresh.bookmarkCount !== undefined && fresh.bookmarkCount >= (cached.bookmarkCount ?? 0)) cached.bookmarkCount = fresh.bookmarkCount
             if (fresh.content !== undefined) cached.content = fresh.content
             if (fresh.isPrivate !== undefined) cached.isPrivate = fresh.isPrivate
             if (fresh.downloadable !== undefined) cached.downloadable = fresh.downloadable
@@ -2084,13 +2087,28 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error("You must be logged in to toggle following")
             }
 
+            // Route the call directly to loginUser's primary host (hostIds[0])
+            // so the backend's `userHostId === nodeId` check fires and the local
+            // handler runs. The cross-node delegation path in toggle_following.js
+            // drops the response payload (Java-Map-backed bridge object whose
+            // keys are not JS-enumerable), turning a clearly successful op into
+            // a client-side failure. Falls back to loginUser.client if the
+            // writable host can't be resolved.
+            let homeClient = loginUser.client
+            try {
+                const writableIp = await this.resolveWritableHostIp(loginUser)
+                homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            } catch (e) {
+                console.warn('[toggleFollowing] Could not resolve home host, using current client:', e)
+            }
+
             // Follow can RPC to home node and sync many tweets; default pooled timeout (15s) is often too short.
-            const originalTimeout = loginUser.client.timeout
-            loginUser.client.timeout = 120000
+            const originalTimeout = homeClient.timeout
+            homeClient.timeout = 120000
             let ret: unknown
             try {
                 const followingUser = this.users.get(followingId)
-                ret = await loginUser.client.RunMApp("toggle_following", {
+                ret = await homeClient.RunMApp("toggle_following", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -2099,7 +2117,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     userid: loginUser.mid,
                 })
             } finally {
-                loginUser.client.timeout = originalTimeout
+                homeClient.timeout = originalTimeout
             }
 
             const isFollowing = parseToggleFollowedV2Result(ret)
@@ -2324,7 +2342,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
             try {
-                await client.RunMApp("retweet_added", {
+                const ret = await client.RunMApp("retweet_added", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -2333,7 +2351,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweetid: originalTweet.mid,
                     authorid: originalTweet.authorId,
                 })
-                console.log('[updateRetweetCount] ✅ Retweet count updated for:', originalTweet.mid)
+                // Mirror iOS unwrapV2Response: prefer ret.data, fall back to ret itself
+                const tweetDict = ret?.success ? (ret.data ?? ret) : null
+                // Use server count if available, otherwise keep optimistic +1 (upload already succeeded)
+                const newCount = tweetDict?.retweetCount ?? (originalTweet.retweetCount ?? 0) + 1
+                const idx = this.tweets.findIndex(e => e.mid === originalTweet.mid)
+                if (idx >= 0) this.tweets[idx].retweetCount = newCount
             } catch (error) {
                 console.warn('[updateRetweetCount] Failed to update retweet count:', error)
             }
