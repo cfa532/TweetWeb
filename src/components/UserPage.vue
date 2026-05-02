@@ -408,6 +408,37 @@ async function loadMoreTweets() {
 const displayedTweets = ref<Tweet[]>([]);
 const pendingCount = ref(0);
 
+// Active view tab from AppHeader: undefined / 'tweets' = user's own tweets,
+// 'bookmarks' / 'favorites' fetch via get_user_meta and replace the body.
+const userView = computed<'tweets' | 'bookmarks' | 'favorites'>(() => {
+    const v = route.query.view
+    return v === 'bookmarks' || v === 'favorites' ? v : 'tweets'
+});
+
+const metaTweets = ref<Tweet[]>([]);
+const isMetaLoading = ref(false);
+
+watch(
+    () => [route.params.authorId, userView.value] as const,
+    async ([uid, view]) => {
+        if (view === 'tweets' || !uid) {
+            metaTweets.value = []
+            return
+        }
+        const type = view === 'bookmarks' ? 'bookmark_list' : 'favorite_list'
+        isMetaLoading.value = true
+        try {
+            metaTweets.value = await tweetStore.loadUserTweetsByType(uid as string, type)
+        } catch (e) {
+            console.warn('[UserPage] loadUserTweetsByType failed:', e)
+            metaTweets.value = []
+        } finally {
+            isMetaLoading.value = false
+        }
+    },
+    { immediate: true }
+);
+
 function appendNewToDisplayed() {
     const displayedMap = new Map(displayedTweets.value.map(t => [t.mid, t]));
 
@@ -529,33 +560,50 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 <template>
     <PageLayout>
         <AppHeader :userId='authorId' />
-        <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
-        <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key="'pinned-' + tweet.mid"/>
-        <hr v-if='pinnedTweets?.length!>0' />
-        <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
-        <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
-            {{ $t('tweet.showNewTweets', pendingCount) }}
-        </div>
-        <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid'/>
-        <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
-        <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
-            <LoadingSpinner size="sm" />
-            <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
-            <div v-else class="small text-muted">{{ retryMessage }}</div>
-        </div>
-        <div v-else-if='isLoading' class='d-flex flex-column align-items-center justify-content-center gap-2 my-4 py-3 tweet-list-load-more'>
-            <LoadingSpinner />
-            <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
-            <div v-if='retryMessage' class='text-muted small'>
-                {{ retryMessage }}
+
+        <!-- Bookmarks / Favorites view: replaces pinned + own-tweets list. -->
+        <template v-if="userView !== 'tweets'">
+            <b style='color: #8899a6;'>&nbsp;&nbsp;{{ userView === 'bookmarks' ? $t('profile.bookmarks') : $t('profile.favorites') }}</b>
+            <TweetView v-for='tweet in metaTweets' :tweet='tweet' :key="userView + '-' + tweet.mid"/>
+            <div v-if='isMetaLoading' class='d-flex flex-column align-items-center justify-content-center gap-2 my-4 py-3'>
+                <LoadingSpinner />
+                <span class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
             </div>
-        </div>
-        <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
-            {{ loadError }}
-        </div>
-        <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center my-4 small' style='color: #8899a6;'>
-            {{ $t('tweet.noMorePosts') }}
-        </div>
+            <div v-else-if='metaTweets.length === 0' class='text-center my-4 small' style='color: #8899a6;'>
+                {{ $t('tweet.noMorePosts') }}
+            </div>
+        </template>
+
+        <!-- Default: user's own tweets (pinned + chronological). -->
+        <template v-else>
+            <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
+            <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key="'pinned-' + tweet.mid"/>
+            <hr v-if='pinnedTweets?.length!>0' />
+            <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
+            <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
+                {{ $t('tweet.showNewTweets', pendingCount) }}
+            </div>
+            <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid'/>
+            <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
+            <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
+                <LoadingSpinner size="sm" />
+                <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
+                <div v-else class="small text-muted">{{ retryMessage }}</div>
+            </div>
+            <div v-else-if='isLoading' class='d-flex flex-column align-items-center justify-content-center gap-2 my-4 py-3 tweet-list-load-more'>
+                <LoadingSpinner />
+                <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
+                <div v-if='retryMessage' class='text-muted small'>
+                    {{ retryMessage }}
+                </div>
+            </div>
+            <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
+                {{ loadError }}
+            </div>
+            <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center my-4 small' style='color: #8899a6;'>
+                {{ $t('tweet.noMorePosts') }}
+            </div>
+        </template>
     </PageLayout>
 </template>
 

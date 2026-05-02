@@ -338,6 +338,21 @@ watch(
     { immediate: true },
 )
 
+/** Active profile view tab — driven by the `view` query param so it's
+ *  deep-linkable and the browser back button works as expected.
+ *  Default (no query) maps to 'tweets'. */
+const activeView = computed<'tweets' | 'bookmarks' | 'favorites'>(() => {
+    const v = route.query.view
+    return v === 'bookmarks' || v === 'favorites' ? v : 'tweets'
+})
+
+function setView(view: 'bookmarks' | 'favorites' | undefined) {
+    const u = userId.value
+    if (!u) return
+    const query = view ? { view } : {}
+    router.replace({ path: `/author/${u}`, query })
+}
+
 /** Cached avatar URLs can point at a now-dead provider IP. On image load
  *  failure, force a fresh getUser; _rewriteUserMediaHosts swaps the host
  *  on the live User object and the <img> reloads automatically. */
@@ -423,7 +438,12 @@ function onAvatarError(event: Event) {
                     user.followersCount }} {{ $t('profile.fans') }}</a>
                 <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
                     user.followingCount }} {{ $t('profile.following') }}</a>
-                <a href="#"  class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
+                    @click.prevent="setView(undefined)">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'bookmarks' }"
+                    @click.prevent="setView('bookmarks')">{{ user.bookmarksCount ?? 0 }} {{ $t('profile.bookmarks') }}</a>
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'favorites' }"
+                    @click.prevent="setView('favorites')">{{ user.favoritesCount ?? 0 }} {{ $t('profile.favorites') }}</a>
             </div>
             <button
                 v-if="canShowProfileFollowBtn"
@@ -535,6 +555,11 @@ function onAvatarError(event: Event) {
 
 .links a:hover {
     text-decoration: underline;
+}
+
+.links a.view-tab.active {
+    color: #1d9bf0 !important;
+    font-weight: 600;
 }
 
 .profile-follow-btn {

@@ -901,6 +901,67 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             return pinnedTweets
         },
+
+        /**
+         * Load a user's bookmark / favorite tweet list (matches iOS
+         * `getUserTweetsByType` via the get_user_meta RPC). The server
+         * returns tweets with the per-appUser `favorites` array populated.
+         *
+         * @param userId profile being viewed
+         * @param type   'bookmark_list' or 'favorite_list'
+         */
+        async loadUserTweetsByType(
+            userId: string,
+            type: 'bookmark_list' | 'favorite_list',
+            pageNumber: number = 0,
+            pageSize: number = 20
+        ): Promise<Tweet[]> {
+            const user = await this.getUser(userId)
+            if (!user || !user.client) return []
+
+            const params = {
+                aid: this.appId,
+                ver: "last",
+                version: "v2",
+                userid: userId,
+                type,
+                pn: pageNumber,
+                ps: pageSize,
+                appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+            }
+
+            let raw: any
+            try {
+                raw = await user.client.RunMApp("get_user_meta", params)
+            } catch (e) {
+                console.warn(`[loadUserTweetsByType] ${type} RPC failed for ${userId}:`, e)
+                return []
+            }
+
+            const data = (raw && typeof raw === 'object' && 'success' in raw)
+                ? (raw.success ? (raw.data ?? []) : [])
+                : raw
+
+            if (!Array.isArray(data)) {
+                console.warn(`[loadUserTweetsByType] ${type} response not an array for ${userId}:`, data)
+                return []
+            }
+
+            const result: Tweet[] = []
+            for (const t of data) {
+                if (!t || !t.mid) continue
+                try {
+                    await this.addTweetToStore(t)
+                } catch (e) {
+                    console.error(`[loadUserTweetsByType] addTweetToStore failed for`, t.mid, e)
+                    continue
+                }
+                const stored = this.tweetIndex.get(t.mid)
+                if (stored) result.push(stored)
+            }
+            return result
+        },
+
         /**
          * Load tweets of appUser and its followings from network.
          * Keep null elements in the response list and preserves their positions.
