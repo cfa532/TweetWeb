@@ -65,9 +65,6 @@ async function onRetweet() {
     if (newMid) {
       await tweetStore.updateRetweetCount(original, newMid);
     }
-    // Refresh tweet from server to get accurate count
-    const refreshed = await tweetStore.getTweet(original.mid);
-    if (refreshed) emit('updated', refreshed);
   } catch (e) {
     emit('updated', original);
     console.error('[onRetweet] failed:', e);
