@@ -353,6 +353,13 @@ function setView(view: 'bookmarks' | 'favorites' | undefined) {
     router.replace({ path: `/author/${u}`, query })
 }
 
+/** Bookmarks / Favorites lists are personal to the appUser — only show
+ *  the tabs (and the corresponding tweet feeds) on the self-profile.
+ *  Matches iOS ProfileStatsView. */
+const isViewingSelf = computed(
+    () => !!tweetStore.loginUser && !!user.value && user.value.mid === tweetStore.loginUser.mid
+)
+
 /** Cached avatar URLs can point at a now-dead provider IP. On image load
  *  failure, force a fresh getUser; _rewriteUserMediaHosts swaps the host
  *  on the live User object and the <img> reloads automatically. */
@@ -438,12 +445,20 @@ function onAvatarError(event: Event) {
                     user.followersCount }} {{ $t('profile.fans') }}</a>
                 <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
                     user.followingCount }} {{ $t('profile.following') }}</a>
-                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
+                <!-- Tweets count: plain text for other users, an active-able
+                     tab when viewing the appUser's own profile so the user
+                     can switch back from the Bookmarks/Favorites views. -->
+                <a v-if="isViewingSelf" href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
                     @click.prevent="setView(undefined)">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
-                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'bookmarks' }"
-                    @click.prevent="setView('bookmarks')">{{ user.bookmarksCount ?? 0 }} {{ $t('profile.bookmarks') }}</a>
-                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'favorites' }"
-                    @click.prevent="setView('favorites')">{{ user.favoritesCount ?? 0 }} {{ $t('profile.favorites') }}</a>
+                <a v-else href="#" class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
+
+                <!-- Bookmarks / Favorites are personal: appUser only. -->
+                <template v-if="isViewingSelf">
+                    <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'bookmarks' }"
+                        @click.prevent="setView('bookmarks')">{{ user.bookmarksCount ?? 0 }} {{ $t('profile.bookmarks') }}</a>
+                    <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'favorites' }"
+                        @click.prevent="setView('favorites')">{{ user.favoritesCount ?? 0 }} {{ $t('profile.favorites') }}</a>
+                </template>
             </div>
             <button
                 v-if="canShowProfileFollowBtn"
