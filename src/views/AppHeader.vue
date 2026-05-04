@@ -379,7 +379,8 @@ function onAvatarError(event: Event) {
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
                     <img :src="user ? user.avatar : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
-                        class="rounded-circle" />
+                        class="rounded-circle"
+                        :title="user ? `ID: ${user.mid}\nBase URL: ${user.providerIp ?? 'N/A'}\nHost ID: ${user.hostIds?.[0] ?? 'N/A'}` : undefined" />
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
