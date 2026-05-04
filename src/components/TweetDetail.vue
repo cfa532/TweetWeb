@@ -141,7 +141,13 @@ async function loadDetail() {
     }, LOAD_TIMEOUT_MS)
 
     try {
-        tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+        // Retry up to 3 times with a short delay — provider IP resolution can
+        // transiently return empty on first page load (RPC not yet warm).
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 5000))
+            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+            if (tweet.value) break
+        }
 
         if (!tweet.value) {
             throw new Error('Tweet not found (null response)')

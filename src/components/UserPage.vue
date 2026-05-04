@@ -269,6 +269,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     isLoading.value = true;
 
     let currentTimeoutId: number | null = null;
+    let loadSucceeded = false;
 
     // Start loading pinned tweets in parallel with regular tweets so the pinned
     // video (shown first on the page) gets priority bandwidth.
@@ -330,6 +331,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             }
 
             tweetsLoaded += loadedPageSize;
+            loadSucceeded = true;
 
             // If fewer tweets than the full page were returned there are no more pages.
             if (loadedPageSize < pageSize) {
@@ -361,12 +363,14 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         if (currentTimeoutId) {
             clearTimeout(currentTimeoutId);
         }
-        // Reconcile: remove cached tweets no longer on server, add new ones
-        const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
-        const filtered = displayedTweets.value.filter(t => storeIds.has(t.mid));
-        // Only replace array if items were actually removed, to avoid unnecessary re-render
-        if (filtered.length !== displayedTweets.value.length) {
-            displayedTweets.value = filtered;
+        // Reconcile only when the network load succeeded — if it failed entirely
+        // (node unreachable, timeout) keep cached tweets on screen.
+        if (loadSucceeded) {
+            const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
+            const filtered = displayedTweets.value.filter(t => storeIds.has(t.mid));
+            if (filtered.length !== displayedTweets.value.length) {
+                displayedTweets.value = filtered;
+            }
         }
         appendNewToDisplayed();
         isLoading.value = false;

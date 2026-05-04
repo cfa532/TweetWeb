@@ -1911,21 +1911,56 @@ export const useTweetStore = defineStore('tweetStore', {
                                 }),
                         }
 
-                        // Load author asynchronously — update through the reactive
-                        // tweet.comments proxy so Vue detects the change.
-                        this.getUser(e.authorId).then(author => {
-                            if (author && tweet.comments) {
-                                const reactiveComment = tweet.comments.find(c => c.mid === e.mid)
-                                if (reactiveComment) {
-                                    reactiveComment.author = author
+                        // Load author asynchronously.
+                        // Fast path first: ask the tweet's own provider, since the comment
+                        // came from there and it may have the author's data cached.
+                        // Slow path: fall back to the author's own provider with retries.
+                        const tweetProvider = tweet.provider
+                        ;(async () => {
+                            const setCommentAuthor = (author: any) => {
+                                if (!author || !tweet.comments) return
+                                const rc = tweet.comments.find(c => c.mid === e.mid)
+                                if (rc) rc.author = author
+                            }
+
+                            // 1. Synchronous in-memory cache — no network, instant
+                            const inMemory = (this.loginUser?.mid === e.authorId ? this.loginUser : undefined)
+                                ?? this.users.get(e.authorId)
+                            if (inMemory) { setCommentAuthor(inMemory); return }
+
+                            // 2. Tweet's own provider — known-reachable, no delay
+                            if (tweetProvider) {
+                                try {
+                                    const client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                                    const result = await client.RunMApp("get_user", {
+                                        aid: this.appId, ver: "last", version: "v3", userid: e.authorId,
+                                    })
+                                    const ud = (result?.success === true) ? result.data : result
+                                    if (ud?.mid && ud?.hostIds) {
+                                        ud.providerIp = tweetProvider
+                                        ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                                        ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                        if (ud.writableHostIp === undefined) ud.writableHostIp = null
+                                        this.users.set(e.authorId, ud)
+                                        setCommentAuthor(ud); return
+                                    }
+                                } catch (err) {
+                                    console.warn("[loadComments] tweet-provider get_user failed for", e.authorId, err)
                                 }
                             }
-                        }).catch(error => {
-                            // Only log errors for non-timeout cases to reduce noise
-                            if (!error.message?.includes('timeout')) {
-                                console.warn("Error loading comment author:", e.authorId, error)
+
+                            // 3. User's own provider — checks sessionStorage then network, with retries
+                            for (let attempt = 1; attempt <= 3; attempt++) {
+                                if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
+                                try {
+                                    const author = await this._getUserForProviderRetryAttempt(e.authorId, attempt)
+                                    if (author) { setCommentAuthor(author); return }
+                                } catch (error: any) {
+                                    if (!error?.message?.includes('timeout'))
+                                        console.warn("Error loading comment author:", e.authorId, error)
+                                }
                             }
-                        })
+                        })()
 
                         return comment
                     } catch (error) {
@@ -2679,7 +2714,7 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Checks if an IP address is a local network address
          * @param ip is full IP address with port
-         * @returns true if the ip is of local network. Only allow port# between 8000 and 9000.
+         * @returns true if the ip is of local network.
          */
         isLocalIP(ip: string) {
             const localPatterns = [
@@ -2697,16 +2732,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 /^fc00:/, // IPv6 unique local
                 /^fd00:/, // IPv6 unique local
             ];
-
-            const portRegex = /:(\d+)$/;
-            const portMatch = ip.match(portRegex);
-
-            if (portMatch) {
-                const port = parseInt(portMatch[1], 10);
-                if (port < 8000 || port > 9000) {
-                    return true;
-                }
-            }
 
             // Check for IPv4 patterns
             if (localPatterns.some(pattern => pattern.test(ip))) {
