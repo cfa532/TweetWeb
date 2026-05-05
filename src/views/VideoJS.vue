@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, inject } from 'vue';
 import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
@@ -95,8 +95,17 @@ const controls = computed(()=>{
   return props.media.downloadable==false ? "nodownload" : undefined
 })
 
+// TweetDetail provides this so embedded quote-tweet videos don't get
+// gated by the feed playback coordinator (which can leave them stuck on
+// the spinner if the embedded box never reaches the 50%-visible threshold).
+const isInTweetDetailPage = inject<boolean>('isInTweetDetailPage', false);
+
 // Detect if this video is being displayed in a tweet list context
 const isInTweetList = computed(() => {
+  // The detail page renders quoted tweets via TweetView, which adds the
+  // .tweet-container ancestor. Without this guard those embedded videos
+  // would defer to the coordinator and never start loading.
+  if (isInTweetDetailPage) return false;
   // Check if we're in a tweet list by looking for tweet list specific elements
   const tweetContainer = vdiv.value?.closest('.tweet-container');
   const isInList = tweetContainer && !tweetContainer.closest('.card-body')?.closest('.comment');
@@ -796,41 +805,46 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
 // Setup regular video playback (non-HLS)
 function setupRegularVideo() {
   if (!video.value) return;
-  
+
   const videoElement = video.value;
-  
+
   // Enable hardware acceleration if supported
   if (supportsHardwareAcceleration) {
     videoElement.style.transform = 'translateZ(0)'; // Force hardware acceleration
     videoElement.style.willChange = 'transform'; // Optimize for animations
   }
-  
-  // Source is already set via the <source> element in template
-  // No need to set src here to avoid conflicts
-  
+
   // Add error handling for regular video
   videoElement.addEventListener('error', handleVideoError);
-  
+
   // Add load event to confirm video loaded
   videoElement.addEventListener('loadeddata', () => {
-    // Video loaded successfully
+    isBuffering.value = false;
   }, { once: true });
-  
+
   // Add canplay event and start playing if autoplay is enabled
   videoElement.addEventListener('canplay', () => {
-    // Video can start playing
+    isBuffering.value = false;
     if (props.autoplay && !isInTweetList.value) {
       videoElement.play().catch(() => {
-        // Autoplay was prevented, user will need to use native controls
-        showPlayOverlay.value = false; // Still hide overlay, rely on native controls
+        // Autoplay blocked — drop back to the centered play overlay.
+        showPlayOverlay.value = true;
       });
     }
   }, { once: true });
-  
+
+  // Force the browser to (re)load whatever <source> is currently mounted.
+  // Vue may have rendered the <source> element AFTER the <video> mounted —
+  // without this call the browser sometimes never starts loading.
+  try { videoElement.load(); } catch {}
+
   // Try to play immediately if autoplay is enabled
   if (props.autoplay && !isInTweetList.value) {
     videoElement.play().catch(() => {
-      // Will retry when canplay event fires
+      // Autoplay blocked — clear the spinner so the user sees the play
+      // overlay instead of an indefinite loading state.
+      isBuffering.value = false;
+      showPlayOverlay.value = true;
     });
   }
 }

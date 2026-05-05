@@ -1342,17 +1342,21 @@ export const useTweetStore = defineStore('tweetStore', {
                 favorites: tweetData.favorites,
             }
 
-            // If we have originalTweetData, convert it too (without waiting for author)
+            // Build the originalTweet shell WITHOUT touching attachments yet.
+            // Recursive fetchTweet may have already prepended a host onto each
+            // attachment URL; calling getMediaUrl on top of that produces a
+            // double-wrapped, broken URL. Defer URL building until we know
+            // the original author's provider.
             if (originalTweetData) {
                 tweet.originalTweet = {
                     mid: originalTweetData.mid,
                     authorId: originalTweetData.authorId,
                     timestamp: originalTweetData.timestamp,
-                    author: null, // Will be loaded asynchronously
+                    author: null, // Will be loaded below
                     title: originalTweetData.title,
                     content: originalTweetData.content,
                     attachments: originalTweetData.attachments?.map((e: MimeiFileType) => {
-                        e.mid = this.getMediaUrl(e.mid, "http://" + providerIp)
+                        // Carry the raw entry through; URL is set after author resolves.
                         e.downloadable = originalTweetData.downloadable
                         return e
                     }),
@@ -1367,42 +1371,70 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            // Load authors asynchronously (non-blocking) - expected timeouts are normal
-            this.getUser(tweetData.authorId).then(author => {
-                if (author && tweet) {
-                    tweet.author = author
-                    // Only update media URLs if author's provider IP differs from initial one
-                    if (tweet.attachments && author.providerIp && author.providerIp !== providerIp) {
-                        tweet.attachments.forEach((e: MimeiFileType) => {
-                            e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + author.providerIp)
-                        })
-                    }
-                }
-            }).catch(error => {
-                // Only log non-timeout errors to reduce noise
-                if (!error.message?.includes('timeout')) {
-                    console.warn('[fetchTweet] Failed to load author asynchronously:', tweetData.authorId, error)
-                }
-            })
+            // Pull just the IPFS hash out of whatever shape the input was in:
+            // either a raw hash or a host-prefixed full URL (from recursive
+            // fetchTweet). The hash is the segment after the final "/".
+            const extractHash = (m: string | undefined): string => {
+                if (!m) return ''
+                if (m.length <= 27) return m // already a raw hash
+                const idx = m.lastIndexOf('/')
+                return idx >= 0 ? m.substring(idx + 1) : m
+            }
 
-            // Load original tweet author asynchronously if needed
-            if (originalTweetData && tweet.originalTweet) {
-                this.getUser(originalTweetData.authorId).then(originalAuthor => {
-                    if (originalAuthor && tweet.originalTweet) {
-                        tweet.originalTweet.author = originalAuthor
-                        // Only update media URLs if author's provider IP differs from initial one
-                        if (tweet.originalTweet.attachments && originalAuthor.providerIp && originalAuthor.providerIp !== providerIp) {
-                            tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
-                                e.mid = this.getMediaUrl(e.mid.split('/').pop()!, "http://" + originalAuthor.providerIp)
-                            })
-                        }
-                    }
-                }).catch(error => {
-                    // Only log non-timeout errors to reduce noise
+            // Resolve both authors in parallel BEFORE returning. This ensures
+            //   1. tweet.author and tweet.originalTweet.author are populated
+            //      (no broken header / empty avatar in the detail view).
+            //   2. Attachment URLs are rebuilt against each author's actual
+            //      provider, not the outer tweet's provider — important for
+            //      quote tweets where the original lives on a different node.
+            // Mutating attachment URLs after the caller wraps `tweet` in a Vue
+            // ref doesn't reliably propagate through the proxy, so do it now.
+            const authorPromise = this.getUser(tweetData.authorId).catch(error => {
+                if (!error.message?.includes('timeout')) {
+                    console.warn('[fetchTweet] Failed to load author:', tweetData.authorId, error)
+                }
+                return undefined
+            })
+            const originalAuthorPromise = (originalTweetData && tweet.originalTweet)
+                ? this.getUser(originalTweetData.authorId).catch(error => {
                     if (!error.message?.includes('timeout')) {
-                        console.warn('[fetchTweet] Failed to load original tweet author asynchronously:', originalTweetData.authorId, error)
+                        console.warn('[fetchTweet] Failed to load original tweet author:', originalTweetData.authorId, error)
                     }
+                    return undefined
                 })
+                : Promise.resolve(undefined)
+
+            const [resolvedAuthor, resolvedOriginalAuthor] = await Promise.all([authorPromise, originalAuthorPromise])
+
+            // Rebuild outer-tweet attachments now that we know the author host.
+            // Fall back to the discovery providerIp if the author resolution
+            // didn't yield a usable host.
+            const outerHost = resolvedAuthor?.providerIp || providerIp
+            if (resolvedAuthor) tweet.author = resolvedAuthor
+            if (tweet.attachments) {
+                tweet.attachments.forEach((e: MimeiFileType) => {
+                    e.mid = this.getMediaUrl(extractHash(e.mid), "http://" + outerHost)
+                })
+            }
+
+            // Rebuild original-tweet attachments using the original author's
+            // host. If we couldn't resolve the original author, fall back to
+            // the recursive fetch's `provider` field (which fetchTweet itself
+            // resolved), then to the outer host as a last resort.
+            if (tweet.originalTweet) {
+                const originalHost =
+                    resolvedOriginalAuthor?.providerIp ||
+                    (originalTweetData?.provider as string | undefined) ||
+                    outerHost
+                if (resolvedOriginalAuthor) {
+                    tweet.originalTweet.author = resolvedOriginalAuthor
+                }
+                tweet.originalTweet.provider = originalHost
+                if (tweet.originalTweet.attachments) {
+                    tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
+                        e.mid = this.getMediaUrl(extractHash(e.mid), "http://" + originalHost)
+                    })
+                }
             }
 
             sessionStorage.setItem(tweetData.mid, JSON.stringify(tweet))
@@ -1877,110 +1909,104 @@ export const useTweetStore = defineStore('tweetStore', {
 
             // comment type is a different Tweet type from the definition in this app
             if (comments) {
-                // Create comment objects without authors first, then load authors asynchronously
-                const commentPromises = comments.map(async (e) => {
-                    try {
-                        // Skip null or invalid comments
-                        if (!e || !e.mid || !e.authorId) {
-                            console.warn("Skipping invalid comment:", e)
-                            return null
-                        }
-
-                        // Build a full Tweet-shaped comment object so it behaves
-                        // identically to a regular tweet (detail navigation, action bar, etc.)
-                        const comment: any = {
-                            mid: e.mid,
-                            authorId: e.authorId,
-                            author: null as User | null, // Will be loaded asynchronously
-                            content: e.content,
-                            timestamp: e.timestamp,
-                            // Inherit parent provider so detail view / action bar works.
-                            provider: tweet.provider,
-                            likeCount: e.favoriteCount ?? e.likeCount ?? 0,
-                            bookmarkCount: e.bookmarkCount ?? 0,
-                            commentCount: e.commentCount ?? 0,
-                            favorites: e.favorites,
-                            comments: [],
-                            attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
-                                .map((a: MimeiFileType) => {
-                                    // comments are stored on the same node as the parent tweet.
-                                    if (a.mid && tweet.provider) {
-                                        a.mid = this.getMediaUrl(a.mid, "http://" + tweet.provider)
-                                    }
-                                    return a
-                                }),
-                        }
-
-                        // Load author asynchronously.
-                        // Fast path first: ask the tweet's own provider, since the comment
-                        // came from there and it may have the author's data cached.
-                        // Slow path: fall back to the author's own provider with retries.
-                        const tweetProvider = tweet.provider
-                        ;(async () => {
-                            const setCommentAuthor = (author: any) => {
-                                if (!author || !tweet.comments) return
-                                const rc = tweet.comments.find(c => c.mid === e.mid)
-                                if (rc) rc.author = author
-                            }
-
-                            // 1. Synchronous in-memory cache — no network, instant
-                            const inMemory = (this.loginUser?.mid === e.authorId ? this.loginUser : undefined)
-                                ?? this.users.get(e.authorId)
-                            if (inMemory) { setCommentAuthor(inMemory); return }
-
-                            // 2. Tweet's own provider — known-reachable, no delay
-                            if (tweetProvider) {
-                                try {
-                                    const client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    const result = await client.RunMApp("get_user", {
-                                        aid: this.appId, ver: "last", version: "v3", userid: e.authorId,
-                                    })
-                                    const ud = (result?.success === true) ? result.data : result
-                                    if (ud?.mid && ud?.hostIds) {
-                                        ud.providerIp = tweetProvider
-                                        ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                        ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
-                                        if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                        this.users.set(e.authorId, ud)
-                                        setCommentAuthor(ud); return
-                                    }
-                                } catch (err) {
-                                    console.warn("[loadComments] tweet-provider get_user failed for", e.authorId, err)
-                                }
-                            }
-
-                            // 3. User's own provider — checks sessionStorage then network, with retries
-                            for (let attempt = 1; attempt <= 3; attempt++) {
-                                if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
-                                try {
-                                    const author = await this._getUserForProviderRetryAttempt(e.authorId, attempt)
-                                    if (author) { setCommentAuthor(author); return }
-                                } catch (error: any) {
-                                    if (!error?.message?.includes('timeout'))
-                                        console.warn("Error loading comment author:", e.authorId, error)
-                                }
-                            }
-                        })()
-
-                        return comment
-                    } catch (error) {
-                        console.error("Error processing comment:", e?.mid || "unknown", error)
-                        return null
+                // Phase 1: build all comment objects synchronously — no author yet.
+                // Building first, then assigning to tweet.comments, then kicking off
+                // author lookups, ensures every author write goes through the
+                // reactive proxy that Vue creates when an object is placed into
+                // store state. (Mutating the raw closure reference would not
+                // trigger re-render once the proxy exists.)
+                const tweetProvider = tweet.provider
+                const validComments: any[] = []
+                for (const e of comments) {
+                    if (!e || !e.mid || !e.authorId) {
+                        console.warn("Skipping invalid comment:", e)
+                        continue
                     }
-                })
+                    const comment: any = {
+                        mid: e.mid,
+                        authorId: e.authorId,
+                        author: null as User | null,
+                        content: e.content,
+                        timestamp: e.timestamp,
+                        provider: tweetProvider,
+                        likeCount: e.favoriteCount ?? e.likeCount ?? 0,
+                        bookmarkCount: e.bookmarkCount ?? 0,
+                        commentCount: e.commentCount ?? 0,
+                        favorites: e.favorites,
+                        comments: [],
+                        attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
+                            .map((a: MimeiFileType) => {
+                                // Comments are stored on the same node as the parent tweet.
+                                if (a.mid && tweetProvider) {
+                                    a.mid = this.getMediaUrl(a.mid, "http://" + tweetProvider)
+                                }
+                                return a
+                            }),
+                    }
+                    validComments.push(comment)
+                }
 
-                // Wait for all comment objects to be created (but not for authors to load)
-                const commentObjects = await Promise.all(commentPromises)
-                const validComments = commentObjects.filter((c): c is NonNullable<typeof c> => c !== null)
-
-                // Atomically replace the comments array with fresh server data.
-                // Appending causes duplicates when the same tweet is visited more than
-                // once because the cached tweet object already holds the previously
-                // loaded comments. Preserve any locally-created comments not yet
-                // returned by the server (e.g. optimistic inserts).
-                const freshMids = new Set(validComments.map((c: any) => c.mid))
+                // Phase 2: atomically replace tweet.comments with fresh server data.
+                // Preserve any locally-created comments not yet returned by the server
+                // (e.g. optimistic inserts).
+                const freshMids = new Set(validComments.map(c => c.mid))
                 const localOnly = (tweet.comments ?? []).filter(c => !freshMids.has(c.mid))
                 tweet.comments = [...validComments, ...localOnly]
+
+                // Phase 3: load authors asynchronously and write them onto the
+                // proxied entries inside tweet.comments. Looking up by mid each
+                // time guarantees we mutate the reactive proxy — which works
+                // even if the comments array gets replaced again later.
+                const setCommentAuthor = (mid: MimeiId, author: any) => {
+                    if (!author || !tweet.comments) return
+                    const rc = tweet.comments.find(c => c.mid === mid)
+                    if (rc) rc.author = author
+                }
+                for (const e of comments) {
+                    if (!e || !e.mid || !e.authorId) continue
+                    const commentMid = e.mid as MimeiId
+                    const authorId = e.authorId as MimeiId
+                    void (async () => {
+                        // 1. Synchronous in-memory cache — no network, instant
+                        const inMemory = (this.loginUser?.mid === authorId ? this.loginUser : undefined)
+                            ?? this.users.get(authorId)
+                        if (inMemory) { setCommentAuthor(commentMid, inMemory); return }
+
+                        // 2. Tweet's own provider — known-reachable, no delay
+                        if (tweetProvider) {
+                            try {
+                                const c = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                                const result = await c.RunMApp("get_user", {
+                                    aid: this.appId, ver: "last", version: "v3", userid: authorId,
+                                })
+                                const ud = (result?.success === true) ? result.data : result
+                                if (ud?.mid && ud?.hostIds) {
+                                    ud.providerIp = tweetProvider
+                                    ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                                    ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                    if (ud.writableHostIp === undefined) ud.writableHostIp = null
+                                    this.users.set(authorId, ud)
+                                    setCommentAuthor(commentMid, ud)
+                                    return
+                                }
+                            } catch (err) {
+                                console.warn("[loadComments] tweet-provider get_user failed for", authorId, err)
+                            }
+                        }
+
+                        // 3. User's own provider — checks sessionStorage then network, with retries
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
+                            try {
+                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
+                                if (author) { setCommentAuthor(commentMid, author); return }
+                            } catch (error: any) {
+                                if (!error?.message?.includes('timeout'))
+                                    console.warn("Error loading comment author:", authorId, error)
+                            }
+                        }
+                    })()
+                }
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },

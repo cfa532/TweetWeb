@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, watch, computed, nextTick, triggerRef } from 'vue';
+import { ref, onMounted, watch, computed, nextTick, triggerRef, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
@@ -13,6 +13,12 @@ const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const tweetStore = useTweetStore()
+
+// Tells descendant VideoJS components to skip the feed playback coordinator
+// gating — embedded quote-tweet videos on this page need to load eagerly
+// instead of waiting for the coordinator's 50%-visible threshold.
+provide('isInTweetDetailPage', true)
+
 const tweetId = computed(()=>route.params.tweetId as MimeiId)
 const authorId = computed(()=>route.params.authorId as MimeiId | undefined)
 const tweet = ref()
