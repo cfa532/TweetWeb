@@ -38,13 +38,14 @@ function updateMenuPermissions() {
     canDelete.value = false
     canEdit.value = false
     if (tweetStore.loginUser && props.tweet) {
+        const isAdmin = tweetStore.loginUser.username === 'admin'
         const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
 
-        if (isTweetAuthor || isParentTweetAuthor) {
+        if (isAdmin || isTweetAuthor || isParentTweetAuthor) {
             canDelete.value = true
         }
-        if (isTweetAuthor && !props.tweet.originalTweetId) {
+        if ((isAdmin || isTweetAuthor) && !props.tweet.originalTweetId) {
             canEdit.value = true
         }
     }
@@ -140,7 +141,7 @@ function openEditor() {
 async function submitEdit() {
   if (!props.tweet || !tweetStore.loginUser) return
   try {
-    await tweetStore.updateTweet(props.tweet.mid, editContent.value)
+    await tweetStore.updateTweet(props.tweet.mid, editContent.value, props.tweet.authorId)
     props.tweet.content = editContent.value
     showEditor.value = false
   } catch (error: any) {
@@ -155,10 +156,11 @@ async function deleteItem() {
   }
   
   closeMenu()
-  
+  const isAdmin = tweetStore.loginUser.username === 'admin'
+
   if (props.isComment && props.parentTweet) {
-    // Delete comment - requires comment author OR parent tweet author
-    if (tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
+    // Delete comment - requires comment author OR parent tweet author OR admin
+    if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
       const commentIdToDelete = props.tweet.mid
       
       await tweetStore.deleteComment(
@@ -183,8 +185,8 @@ async function deleteItem() {
       }
     }
   } else {
-    // Delete regular tweet - requires tweet author
-    if (tweetStore.loginUser.mid === props.tweet.authorId) {
+    // Delete regular tweet - requires tweet author OR admin
+    if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId) {
       tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
     }
   }

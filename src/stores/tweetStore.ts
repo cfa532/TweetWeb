@@ -2290,8 +2290,8 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async deleteComment(commentId: MimeiId, commentAuthorId: MimeiId, parentTweetId: MimeiId, parentAuthorId: MimeiId) {
             // Verify authorization: can be called by comment author or parent tweet author
-            if (!this.loginUser || (this.loginUser.mid !== commentAuthorId && this.loginUser.mid !== parentAuthorId)) {
-                console.error("Unauthorized: Only comment author or parent tweet author can delete comments")
+            if (!this.loginUser || (this.loginUser.username !== 'admin' && this.loginUser.mid !== commentAuthorId && this.loginUser.mid !== parentAuthorId)) {
+                console.error("Unauthorized: Only comment author, parent tweet author, or admin can delete comments")
                 return
             }
 
@@ -2472,14 +2472,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweet The full tweet object with modified content
          * @returns The mid of the updated tweet
          */
-        async updateTweet(tweetId: MimeiId, content: string) {
+        async updateTweet(tweetId: MimeiId, content: string, authorId?: MimeiId) {
             if (!this.loginUser) {
                 throw new Error('Not authorized to edit this tweet')
             }
             try {
                 const ret = await this.loginUser.client.RunMApp("update_tweet",
                     {aid: this.appId, ver: "last",
-                        appuserid: this.loginUser.mid,
+                        appuserid: authorId ?? this.loginUser.mid,
                         tweetid: tweetId,
                         content: content})
                 if (!ret || !ret.success) {
