@@ -2298,8 +2298,16 @@ export const useTweetStore = defineStore('tweetStore', {
             this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
             this.tweetIndex.delete(tweetId)
             let user = await this.getUser(authorId)
-            if (user) {
-                await this.loginUser?.client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
+            if (user && this.loginUser) {
+                // Mutation: route through loginUser's writable host (hostIds[0]).
+                let client = this.loginUser.client
+                try {
+                    const writableIp = await this.resolveWritableHostIp(this.loginUser)
+                    client = createPooledClient(writableIp, this.lapi.connectionPool)
+                } catch (e) {
+                    console.warn('[deleteTweet] Could not resolve writable host, using current client:', e)
+                }
+                await client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
                     tweetid: tweetId, userid: authorId
                 })
             }
@@ -2503,7 +2511,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error('Not authorized to edit this tweet')
             }
             try {
-                const ret = await this.loginUser.client.RunMApp("update_tweet",
+                // Mutation: route through loginUser's writable host (hostIds[0]).
+                let client = this.loginUser.client
+                try {
+                    const writableIp = await this.resolveWritableHostIp(this.loginUser)
+                    client = createPooledClient(writableIp, this.lapi.connectionPool)
+                } catch (e) {
+                    console.warn('[updateTweet] Could not resolve writable host, using current client:', e)
+                }
+                const ret = await client.RunMApp("update_tweet",
                     {aid: this.appId, ver: "last",
                         appuserid: authorId ?? this.loginUser.mid,
                         tweetid: tweetId,
@@ -3207,18 +3223,26 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (trimmed) userObj.domainToShare = trimmed
             }
 
-            const originalTimeout = user.client.timeout
-            user.client.timeout = 15000
+            // Mutation: route through user's writable host (hostIds[0]).
+            let writeClient = user.client
+            try {
+                const writableIp = await this.resolveWritableHostIp(user)
+                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            } catch (e) {
+                console.warn('[updateProfile] Could not resolve writable host, using current client:', e)
+            }
+            const originalTimeout = writeClient.timeout
+            writeClient.timeout = 15000
             let ret
             try {
-                ret = await user.client.RunMApp("set_author_core_data", {
+                ret = await writeClient.RunMApp("set_author_core_data", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
                     user: JSON.stringify(userObj)
                 })
             } finally {
-                user.client.timeout = originalTimeout
+                writeClient.timeout = originalTimeout
             }
 
             if (!ret) throw new Error("Profile update failed")
@@ -3258,18 +3282,26 @@ export const useTweetStore = defineStore('tweetStore', {
                 userObj.domainToShare = user.domainToShare.trim()
             }
 
-            const originalTimeout = user.client.timeout
-            user.client.timeout = 15000
+            // Mutation: route through user's writable host (hostIds[0]).
+            let writeClient = user.client
+            try {
+                const writableIp = await this.resolveWritableHostIp(user)
+                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            } catch (e) {
+                console.warn('[updateAgentPublicKey] Could not resolve writable host, using current client:', e)
+            }
+            const originalTimeout = writeClient.timeout
+            writeClient.timeout = 15000
             let ret
             try {
-                ret = await user.client.RunMApp("set_author_core_data", {
+                ret = await writeClient.RunMApp("set_author_core_data", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
                     user: JSON.stringify(userObj)
                 })
             } finally {
-                user.client.timeout = originalTimeout
+                writeClient.timeout = originalTimeout
             }
 
             if (!ret) throw new Error("Failed to update agent public key")
@@ -3298,20 +3330,28 @@ export const useTweetStore = defineStore('tweetStore', {
 
             const cid = await this.uploadBlobToIpfs(user, await blob.arrayBuffer())
 
-            // Register the new avatar on the user's node. Use the read-host client;
-            // the server replicates the change to the writable host.
-            const originalTimeout = user.client.timeout
-            user.client.timeout = 15000
+            // Mutation: route through user's writable host (hostIds[0]) so the
+            // change lands on the writable node directly instead of relying on
+            // server-side replication from a read-only host.
+            let writeClient = user.client
+            try {
+                const writableIp = await this.resolveWritableHostIp(user)
+                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            } catch (e) {
+                console.warn('[setUserAvatar] Could not resolve writable host, using current client:', e)
+            }
+            const originalTimeout = writeClient.timeout
+            writeClient.timeout = 15000
             let confirmedAvatar: string = cid
             try {
-                const ret = await user.client.RunMApp("set_user_avatar", {
+                const ret = await writeClient.RunMApp("set_user_avatar", {
                     aid: this.appId, ver: "last", version: "v2",
                     userid: user.mid, avatar: cid,
                 })
                 if (ret && typeof ret === 'object') confirmedAvatar = ret.data || ret.avatar || cid
                 else if (typeof ret === 'string') confirmedAvatar = ret
             } finally {
-                user.client.timeout = originalTimeout
+                writeClient.timeout = originalTimeout
             }
 
             // Avatar display uses user.providerIp (read host), not the writable host.
@@ -3360,18 +3400,26 @@ export const useTweetStore = defineStore('tweetStore', {
             const user = this.loginUser
             if (!user) throw new Error("Not logged in")
 
-            const originalTimeout = user.client.timeout
-            user.client.timeout = 15000
+            // Mutation: route through user's writable host (hostIds[0]).
+            let writeClient = user.client
+            try {
+                const writableIp = await this.resolveWritableHostIp(user)
+                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            } catch (e) {
+                console.warn('[deleteAccount] Could not resolve writable host, using current client:', e)
+            }
+            const originalTimeout = writeClient.timeout
+            writeClient.timeout = 15000
             let ret
             try {
-                ret = await user.client.RunMApp("delete_account", {
+                ret = await writeClient.RunMApp("delete_account", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
                     userid: user.mid
                 })
             } finally {
-                user.client.timeout = originalTimeout
+                writeClient.timeout = originalTimeout
             }
 
             if (ret && ret["success"] === false) {
