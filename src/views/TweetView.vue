@@ -639,6 +639,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   position: relative;
   border-radius: 8px;
   overflow: hidden;
+  margin-top: 8px;
 }
 
 .grid-item {

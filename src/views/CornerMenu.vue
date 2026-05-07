@@ -20,6 +20,7 @@ const editContent = ref('')
 let suppressDotClickFromTouch = false
 const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false},
+    editTweet: {type: Object as PropType<Tweet>, required: false}, // For retweets: the original tweet to edit (has content); tweet is the wrapper (used for delete)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false}
 })
@@ -40,12 +41,13 @@ function updateMenuPermissions() {
     if (tweetStore.loginUser && props.tweet) {
         const isAdmin = tweetStore.loginUser.username === 'admin'
         const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
+        const isEditTargetAuthor = tweetStore.loginUser.mid === (props.editTweet || props.tweet).authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
 
         if (isAdmin || isTweetAuthor || isParentTweetAuthor) {
             canDelete.value = true
         }
-        if ((isAdmin || isTweetAuthor) && !props.tweet.originalTweetId) {
+        if (isAdmin || isEditTargetAuthor) {
             canEdit.value = true
         }
     }
@@ -134,15 +136,17 @@ function copyLink() {
 function openEditor() {
   if (!props.tweet) return
   closeMenu()
-  editContent.value = props.tweet.content || ''
+  const target = props.editTweet || props.tweet
+  editContent.value = target.content || ''
   showEditor.value = true
 }
 
 async function submitEdit() {
   if (!props.tweet || !tweetStore.loginUser) return
+  const target = props.editTweet || props.tweet
   try {
-    await tweetStore.updateTweet(props.tweet.mid, editContent.value, props.tweet.authorId)
-    props.tweet.content = editContent.value
+    await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
+    target.content = editContent.value
     showEditor.value = false
   } catch (error: any) {
     alertStore.error(error.message || t('tweet.failedUpdateTweet'))

@@ -137,7 +137,7 @@ function openDetailView() {
     </div>
   </div>
   <div v-if="tweet" class="corner-menu-container" @click.stop>
-    <CornerMenu :tweet="actualTweet || tweet" :parent-tweet="parentTweet" :is-comment="isComment" />
+    <CornerMenu :tweet="actualTweet || tweet" :edit-tweet="isRetweet ? tweet : undefined" :parent-tweet="parentTweet" :is-comment="isComment" />
   </div>
 </template>
 
