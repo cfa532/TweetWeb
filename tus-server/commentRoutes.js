@@ -105,10 +105,38 @@ async function postCommentWithPlaywright({ tweet_id, text }) {
     // because X keeps streaming requests and never truly goes idle.
     await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // Wait for the reply box to appear — it's the div[role="textbox"] inside the reply area
-    // On a tweet detail page, the first textbox is the reply composer
-    const replyBox = page.locator('[data-testid="tweetTextarea_0"]');
-    await replyBox.waitFor({ state: 'visible', timeout: 30000 });
+    // Wait for the tweet article to confirm the page rendered (not a login wall)
+    try {
+      await page.locator('article[data-testid="tweet"]').first().waitFor({ state: 'visible', timeout: 20000 });
+    } catch (articleErr) {
+      // Capture a screenshot to help diagnose what rendered instead
+      const screenshotPath = `/tmp/comment-fail-${tweet_id}.png`;
+      await page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => {});
+      console.error(`[COMMENT] Tweet article not found; screenshot saved to ${screenshotPath}`);
+      throw new Error('Tweet article did not load — possible login wall or deleted tweet');
+    }
+
+    // Give React a moment to attach event handlers after the article is visible
+    await page.waitForTimeout(2000);
+
+    // The reply composer may not be visible until the user clicks the reply action.
+    // Try scrolling to the textarea first; if it's still not visible, click the
+    // reply button on the tweet to activate the inline composer.
+    let replyBox = page.locator('[data-testid="tweetTextarea_0"]');
+    const isVisible = await replyBox.isVisible().catch(() => false);
+
+    if (!isVisible) {
+      // Try clicking the reply icon on the tweet to open the composer
+      const replyAction = page.locator('[data-testid="reply"]').first();
+      await replyAction.waitFor({ state: 'visible', timeout: 20000 });
+      await replyAction.click();
+      // Re-acquire the locator after the click
+      replyBox = page.locator('[data-testid="tweetTextarea_0"]');
+      await replyBox.waitFor({ state: 'visible', timeout: 15000 });
+    } else {
+      // Scroll into view in case it is off-screen
+      await replyBox.scrollIntoViewIfNeeded();
+    }
 
     // Click to focus the reply box
     await replyBox.click();
