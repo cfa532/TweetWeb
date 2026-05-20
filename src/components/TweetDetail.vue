@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, watch, computed, nextTick, triggerRef, provide } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed, nextTick, triggerRef, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
@@ -184,6 +184,9 @@ async function showTweet(timeoutId?: number) {
         sessionStorage.removeItem('tweetDetailRefreshCount') // Clear refresh count on success
 
         // Load comments and additional data in parallel (truly non-blocking)
+        // Track which tweet owns the comments so we can sync after load.
+        let commentOwner: Tweet | null = null
+
         const loadPromises = []
 
         // Load original tweet if needed
@@ -197,19 +200,29 @@ async function showTweet(timeoutId?: number) {
                     if (!tweet.value.content && !tweet.value.attachments) {
                         // Pure retweet (no added content): show the original's comments.
                         isRetweet.value = true
-                        await tweetStore.loadComments(originTweet.value)
+                        const failed = await tweetStore.loadComments(originTweet.value)
+                        commentOwner = originTweet.value
+                        failed.forEach(id => failedCommentIds.value.add(id))
                     } else {
                         // Quote-retweet: comments belong to the outer tweet.
-                        await tweetStore.loadComments(tweet.value)
+                        const failed = await tweetStore.loadComments(tweet.value)
+                        commentOwner = tweet.value
+                        failed.forEach(id => failedCommentIds.value.add(id))
                     }
                 } catch (error) {
                     console.warn('[TweetDetail] Failed to load original tweet:', error)
                 }
             })())
         } else {
-            loadPromises.push(tweetStore.loadComments(tweet.value).catch(error => {
-                console.warn('[TweetDetail] Failed to load comments:', error)
-            }))
+            loadPromises.push((async () => {
+                try {
+                    const failed = await tweetStore.loadComments(tweet.value)
+                    commentOwner = tweet.value
+                    failed.forEach(id => failedCommentIds.value.add(id))
+                } catch (error) {
+                    console.warn('[TweetDetail] Failed to load comments:', error)
+                }
+            })())
         }
 
         // Await comments loading, then trigger Vue reactivity
@@ -217,6 +230,23 @@ async function showTweet(timeoutId?: number) {
         // Use triggerRef to notify Vue that the ref's inner value has changed
         triggerRef(tweet)
         triggerRef(originTweet)
+
+        // Reset pagination and attach IntersectionObserver for infinite-scroll comments
+        commentPage.value = 0
+        hasMoreComments.value = true
+        setupCommentObserver()
+
+        // Mirrors iOS TweetDetailView.setupInitialData: when the author's write node
+        // (hostIds[0]) and read node (hostIds[1]) differ, kick off a background sync
+        // for any failed comment IDs and schedule a 5-minute repeat (same as iOS).
+        if (commentOwner && authorNodesDiffer(commentOwner)) {
+            const owner = commentOwner
+            void syncMissingComments(owner)
+            if (syncTimer) clearInterval(syncTimer)
+            syncTimer = setInterval(() => {
+                void syncMissingComments(owner)
+            }, 5 * 60 * 1000)
+        }
     } catch (error) {
         console.error('Error in showTweet:', error)
         if (timeoutId) clearTimeout(timeoutId)
@@ -258,6 +288,10 @@ watch(tweetId, async (newValue, oldValue)=>{
         tweet.value = null
         originTweet.value = null
         isRetweet.value = false
+        commentPage.value = 0
+        hasMoreComments.value = true
+        failedCommentIds.value = new Set()
+        if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
         await loadDetail()
     }
 });
@@ -524,6 +558,84 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     }
 }
 
+// Comment pagination and sync state — mirrors iOS TweetDetailView's CommentListView
+const commentPage = ref(0)
+const isLoadingMoreComments = ref(false)
+const hasMoreComments = ref(true)
+const commentBottomSentinel = ref<HTMLElement | null>(null)
+let commentObserver: IntersectionObserver | null = null
+const failedCommentIds = ref<Set<string>>(new Set())
+let syncTimer: ReturnType<typeof setInterval> | null = null
+
+function setupCommentObserver() {
+    if (commentObserver) {
+        commentObserver.disconnect()
+        commentObserver = null
+    }
+    nextTick(() => {
+        if (!commentBottomSentinel.value) return
+        commentObserver = new IntersectionObserver(async (entries) => {
+            if (entries[0].isIntersecting) {
+                await loadMoreComments()
+            }
+        }, { threshold: 0.1 })
+        commentObserver.observe(commentBottomSentinel.value)
+    })
+}
+
+async function loadMoreComments() {
+    if (isLoadingMoreComments.value || !hasMoreComments.value) return
+    const targetTweet = isRetweet.value ? originTweet.value : tweet.value
+    if (!targetTweet) return
+    isLoadingMoreComments.value = true
+    const nextPage = commentPage.value + 1
+    try {
+        const hasMore = await tweetStore.loadMoreComments(targetTweet, nextPage)
+        hasMoreComments.value = hasMore
+        commentPage.value = nextPage
+    } finally {
+        isLoadingMoreComments.value = false
+    }
+}
+
+// Mirrors iOS TweetDetailView.syncMissingComments:
+// For each comment ID that arrived from the server but couldn't be parsed,
+// call node_update_mid_by_score on the write node to push it to the read node,
+// then prepend the recovered comment to the list.
+async function syncMissingComments(parentTweet: Tweet) {
+    const ids = Array.from(failedCommentIds.value)
+    if (ids.length === 0) return
+    for (const commentId of ids) {
+        const comment = await tweetStore.syncComment(commentId as any, parentTweet)
+        if (comment) {
+            failedCommentIds.value.delete(commentId)
+            // Prepend only if not already in the list
+            const existing = parentTweet.comments ?? []
+            if (!existing.some(c => c.mid === comment.mid)) {
+                parentTweet.comments = [comment, ...existing]
+            }
+        }
+    }
+}
+
+// Returns true when the tweet author's write node (hostIds[0]) and read node
+// (hostIds[1]) are different — mirroring iOS's hostIds check in setupInitialData.
+function authorNodesDiffer(t: Tweet): boolean {
+    const ids = (t.author as any)?.hostIds as string[] | undefined
+    return Array.isArray(ids) && ids.length >= 2 && ids[0] !== ids[1]
+}
+
+onUnmounted(() => {
+    if (commentObserver) {
+        commentObserver.disconnect()
+        commentObserver = null
+    }
+    if (syncTimer) {
+        clearInterval(syncTimer)
+        syncTimer = null
+    }
+})
+
 // Store navigation metadata in sessionStorage to persist across route changes
 const navigationMeta = ref<{
     fromComment: boolean;
@@ -741,6 +853,15 @@ function retryLoad() {
             :is-comment="true"
             :parent-tweet="tweet"
         />
+        <!-- Infinite scroll sentinel — becoming visible triggers next page load -->
+        <div ref="commentBottomSentinel" class="comment-sentinel"></div>
+        <div v-if="isLoadingMoreComments" class="d-flex justify-content-center my-2">
+            <LoadingSpinner />
+        </div>
+        <div v-if="!hasMoreComments && (isRetweet ? originTweet?.comments?.length : tweet.comments?.length)"
+             class="text-center text-muted small py-3">
+            {{ $t('tweet.noMoreComments') }}
+        </div>
     </div>
 
     <div v-if="isLoading" class="d-flex justify-content-center my-3">
@@ -787,6 +908,10 @@ function retryLoad() {
     display: flex;
     flex-direction: column;
     gap: 1px;
+}
+
+.comment-sentinel {
+    height: 1px;
 }
 .comment-list.has-comments {
     margin-bottom: 1rem;

@@ -1874,28 +1874,47 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
         /**
-         * Load comments of a tweet into its comments attribute. 
+         * Load comments of a tweet into its comments attribute.
          * Comments are on the same node with the tweet.
          * @param tweet The tweet to load comments for
+         * @returns Array of comment IDs that were present in the server response but
+         *          could not be parsed (missing authorId / malformed). Callers may pass
+         *          these to syncComment() when the author's write and read nodes differ.
          */
-        async loadComments(tweet: Tweet) {
+        async loadComments(tweet: Tweet): Promise<string[]> {
             if (!tweet || !tweet.provider) {
                 console.warn('[loadComments] Skipping: no tweet or provider', tweet?.mid, tweet?.provider)
-                return
+                return []
             }
             console.log('[loadComments] Loading comments for tweet:', tweet.mid, 'provider:', tweet.provider)
             // Use auto-releasing proxy so the pool slot is freed after the RPC.
             let client = createPooledClient(tweet.provider, this.lapi.connectionPool)
-            let comments = await client.RunMApp("get_comments", {
+            const raw = await client.RunMApp("get_comments", {
                 aid: this.lapi.appId,
                 ver: "last",
+                version: "v2",
                 tweetid: tweet.mid,
                 appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                 pn: 0,
                 ps: 20
-            }) as any[]
+            }) as any
+
+            // Unwrap v2 envelope {success, data} or accept bare array (older server).
+            let comments: any[]
+            if (Array.isArray(raw)) {
+                comments = raw
+            } else if (raw && typeof raw === 'object' && 'success' in raw) {
+                comments = raw.success ? (raw.data ?? []) : []
+            } else {
+                comments = []
+            }
 
             console.log('[loadComments] API returned:', comments?.length ?? 0, 'comments')
+
+            // Collect IDs of entries that arrived from the server with a mid but
+            // couldn't be fully parsed (missing authorId etc.). These are candidates
+            // for node_update_mid_by_score sync when hostIds[0] !== hostIds[1].
+            const failedIds: string[] = []
 
             // comment type is a different Tweet type from the definition in this app
             if (comments) {
@@ -1908,8 +1927,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 const tweetProvider = tweet.provider
                 const validComments: any[] = []
                 for (const e of comments) {
-                    if (!e || !e.mid || !e.authorId) {
-                        console.warn("Skipping invalid comment:", e)
+                    if (!e) continue  // null entry — comment not yet synced to read node, no ID available
+                    if (!e.mid) continue
+                    if (!e.authorId) {
+                        // Has mid but malformed — track for sync retry
+                        failedIds.push(e.mid as string)
                         continue
                     }
                     const comment: any = {
@@ -1999,6 +2021,205 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+            return failedIds
+        },
+
+        /**
+         * Mirrors iOS HproseInstance.syncComment:
+         * When the tweet author's write node (hostIds[0]) and read node (hostIds[1])
+         * differ, a comment written to the write node may not yet be available on the
+         * read node. This method:
+         *   1. Calls node_update_mid_by_score on the write node to push the comment
+         *      across to the read node.
+         *   2. Retries get_tweet on the read node (tweet.provider) to retrieve it.
+         *   3. Returns the hydrated comment object, or null on failure.
+         */
+        async syncComment(commentId: MimeiId, parentTweet: Tweet): Promise<Tweet | null> {
+            const authorId = parentTweet.authorId
+            if (!authorId) return null
+
+            const author = this.users.get(authorId) ?? await this.getUser(authorId)
+            if (!author?.hostIds?.[0]) {
+                console.warn('[syncComment] No hostIds[0] for author', authorId)
+                return null
+            }
+
+            // Step 1: push comment from write node to read node via node_update_mid_by_score
+            try {
+                const writableIp = await this.resolveWritableHostIp(author)
+                const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                await writeClient.RunMApp("node_update_mid_by_score", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    hostid: author.hostIds[0],
+                    userid: authorId,
+                    mid: commentId,
+                })
+            } catch (e) {
+                console.warn('[syncComment] node_update_mid_by_score failed for', commentId, e)
+                return null
+            }
+
+            // Step 2: retry get_tweet on the read node (tweet.provider)
+            const provider = parentTweet.provider
+            if (!provider) return null
+            try {
+                const readClient = createPooledClient(provider, this.lapi.connectionPool)
+                const raw = await readClient.RunMApp("get_tweet", {
+                    aid: this.appId,
+                    ver: "last",
+                    tweetid: commentId,
+                    appuserid: this.loginUser?.mid ?? GUEST_ID,
+                }) as any
+                if (!raw) return null
+
+                // Unwrap v2 envelope if present
+                const dict = (raw?.success === true) ? (raw.data ?? raw) : raw
+                if (!dict?.mid || !dict?.authorId) return null
+
+                const comment: any = {
+                    mid: dict.mid,
+                    authorId: dict.authorId,
+                    author: null as any,
+                    content: dict.content,
+                    timestamp: dict.timestamp,
+                    provider,
+                    likeCount: dict.favoriteCount ?? dict.likeCount ?? 0,
+                    bookmarkCount: dict.bookmarkCount ?? 0,
+                    commentCount: dict.commentCount ?? 0,
+                    favorites: dict.favorites,
+                    comments: [],
+                    attachments: dict.attachments
+                        ?.filter((a: any) => a != null)
+                        .map((a: any) => {
+                            if (a.mid && provider) a.mid = this.getMediaUrl(a.mid, 'http://' + provider)
+                            return a
+                        }),
+                }
+
+                // Load author
+                const commentAuthor = this.users.get(dict.authorId as MimeiId)
+                    ?? await this.getUser(dict.authorId as MimeiId)
+                if (commentAuthor) comment.author = commentAuthor
+
+                return comment as Tweet
+            } catch (e) {
+                console.warn('[syncComment] get_tweet retry failed for', commentId, e)
+                return null
+            }
+        },
+
+        /**
+         * Appends the next page of comments to tweet.comments without replacing existing ones.
+         * Mirrors iOS TweetDetailView's paginated commentFetcher (fetchComments page/size).
+         * @returns true if there may be more comments (fetched count >= pageSize)
+         */
+        async loadMoreComments(tweet: Tweet, pageNumber: number, pageSize: number = 20): Promise<boolean> {
+            if (!tweet || !tweet.provider) return false
+
+            const tweetProvider = tweet.provider
+            const client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+
+            let rawComments: any[]
+            try {
+                rawComments = await client.RunMApp("get_comments", {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    tweetid: tweet.mid,
+                    appuserid: this.loginUser?.mid ?? GUEST_ID,
+                    pn: pageNumber,
+                    ps: pageSize,
+                }) as any[]
+            } catch (e) {
+                console.warn('[loadMoreComments] Failed to fetch page', pageNumber, e)
+                return false
+            }
+
+            if (!rawComments || rawComments.length === 0) return false
+
+            const existingMids = new Set((tweet.comments ?? []).map(c => c.mid))
+            const newComments: any[] = []
+
+            for (const e of rawComments) {
+                if (!e || !e.mid || !e.authorId || existingMids.has(e.mid)) continue
+                newComments.push({
+                    mid: e.mid,
+                    authorId: e.authorId,
+                    author: null as any,
+                    content: e.content,
+                    timestamp: e.timestamp,
+                    provider: tweetProvider,
+                    likeCount: e.favoriteCount ?? e.likeCount ?? 0,
+                    bookmarkCount: e.bookmarkCount ?? 0,
+                    commentCount: e.commentCount ?? 0,
+                    favorites: e.favorites,
+                    comments: [],
+                    attachments: e.attachments
+                        ?.filter((a: any) => a != null)
+                        .map((a: any) => {
+                            if (a.mid && tweetProvider) {
+                                a.mid = this.getMediaUrl(a.mid, 'http://' + tweetProvider)
+                            }
+                            return a
+                        }),
+                })
+            }
+
+            if (newComments.length > 0) {
+                tweet.comments = [...(tweet.comments ?? []), ...newComments]
+
+                // Load authors asynchronously — same pattern as loadComments
+                const setCommentAuthor = (mid: MimeiId, author: any) => {
+                    if (!author || !tweet.comments) return
+                    const rc = tweet.comments.find(c => c.mid === mid)
+                    if (rc) rc.author = author
+                }
+                for (const e of rawComments) {
+                    if (!e || !e.mid || !e.authorId) continue
+                    const commentMid = e.mid as MimeiId
+                    const authorId = e.authorId as MimeiId
+                    void (async () => {
+                        const inMemory = (this.loginUser?.mid === authorId ? this.loginUser : undefined)
+                            ?? this.users.get(authorId)
+                        if (inMemory) { setCommentAuthor(commentMid, inMemory); return }
+
+                        if (tweetProvider) {
+                            try {
+                                const c = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                                const result = await c.RunMApp("get_user", {
+                                    aid: this.appId, ver: "last", version: "v3", userid: authorId,
+                                })
+                                const ud = (result?.success === true) ? result.data : result
+                                if (ud?.mid && ud?.hostIds) {
+                                    ud.providerIp = tweetProvider
+                                    ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                                    ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                    if (ud.writableHostIp === undefined) ud.writableHostIp = null
+                                    this.users.set(authorId, ud)
+                                    setCommentAuthor(commentMid, ud)
+                                    return
+                                }
+                            } catch (err) {
+                                console.warn("[loadMoreComments] get_user failed for", authorId, err)
+                            }
+                        }
+
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
+                            try {
+                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
+                                if (author) { setCommentAuthor(commentMid, author); return }
+                            } catch (error: any) {
+                                if (!error?.message?.includes('timeout'))
+                                    console.warn("[loadMoreComments] Error loading author:", authorId, error)
+                            }
+                        }
+                    })()
+                }
+            }
+
+            return rawComments.length >= pageSize
         },
 
         /**
@@ -2629,18 +2850,19 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleFavorite(tweet: Tweet) {
-            if (!tweet.author?.client) throw new Error('Author client not available for toggle_favorite')
-            const client = tweet.author.client
-            const originalTimeout = client.timeout
-            client.timeout = 15000
-            try {
-                var ret = await client.RunMApp("toggle_favorite", {
-                    aid: this.appId, ver: "last", version: "v2", appuserid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
-                })
-                return this._applyServerTweet(tweet, ret)
-            } finally {
-                client!.timeout = originalTimeout
-            }
+            // Route through tweet.provider (current healthy IP) rather than
+            // tweet.author.client, which may be a stale client from a prior session.
+            const provider = tweet.provider ?? tweet.author?.providerIp
+            if (!provider) throw new Error('No provider IP available for toggle_favorite')
+            const client = createPooledClient(provider, this.lapi.connectionPool)
+            const ret = await client.RunMApp("toggle_favorite", {
+                aid: this.appId, ver: "last", version: "v2",
+                appuserid: this.loginUser?.mid,
+                tweetid: tweet.mid,
+                authorid: tweet.authorId,
+                userhostid: this.loginUser?.hostIds?.[0],
+            })
+            return this._applyServerTweet(tweet, ret)
         },
         /**
          * Toggles the bookmark status of a tweet
@@ -2648,18 +2870,19 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleBookmark(tweet: Tweet) {
-            if (!tweet.author?.client) throw new Error('Author client not available for toggle_bookmark')
-            const client = tweet.author.client
-            const originalTimeout = client.timeout
-            client.timeout = 15000
-            try {
-                var ret = await client.RunMApp("toggle_bookmark", {
-                    aid: this.appId, ver: "last", version: "v2", userid: this.loginUser?.mid, tweetid: tweet.mid, authorid: tweet.authorId, userhostid: this.loginUser?.hostIds?.[0]
-                })
-                return this._applyServerTweet(tweet, ret)
-            } finally {
-                client!.timeout = originalTimeout
-            }
+            // Route through tweet.provider (current healthy IP) rather than
+            // tweet.author.client, which may be a stale client from a prior session.
+            const provider = tweet.provider ?? tweet.author?.providerIp
+            if (!provider) throw new Error('No provider IP available for toggle_bookmark')
+            const client = createPooledClient(provider, this.lapi.connectionPool)
+            const ret = await client.RunMApp("toggle_bookmark", {
+                aid: this.appId, ver: "last", version: "v2",
+                userid: this.loginUser?.mid,
+                tweetid: tweet.mid,
+                authorid: tweet.authorId,
+                userhostid: this.loginUser?.hostIds?.[0],
+            })
+            return this._applyServerTweet(tweet, ret)
         },
         _applyServerTweet(tweet: Tweet, ret: any): Tweet {
             // Unwrap v2 response: if ret has data field, use it

@@ -86,6 +86,7 @@
   },
   "tweet": {
     "noMorePosts": "これ以上の投稿はありません",
+    "noMoreComments": "これ以上のコメントはありません",
     "showNewTweets": "{count}件の新しいツイートを表示",
     "forwardedBy": "{'@'}{name}がリツイート",
     "forwardedByYou": "あなたがリツイート",

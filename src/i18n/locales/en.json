@@ -86,6 +86,7 @@
   },
   "tweet": {
     "noMorePosts": "No more posts",
+    "noMoreComments": "No more comments",
     "showNewTweets": "Show {count} new tweet | Show {count} new tweets",
     "forwardedBy": "Forwarded by {'@'}{name}",
     "forwardedByYou": "Forwarded by you",
