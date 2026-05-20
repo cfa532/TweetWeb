@@ -256,8 +256,9 @@ export const useTweetStore = defineStore('tweetStore', {
         appId: import.meta.env.VITE_MIMEI_APPID,
         installApk: import.meta.env.VITE_APP_PKG,
         _user: null as User | null,      // login user data
-        healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(), // Cache health check results
-        healthCheckInProgress: new Map<string, Promise<boolean>>(), // Track ongoing health checks
+        healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(),
+        healthCheckInProgress: new Map<string, Promise<boolean>>(),
+        _writableHostCache: new Map<string, {ip: string, expiresAt: number}>(), // keyed by hostId
         _pendingUserFetches: new Map<string, Promise<User | undefined>>(), // Deduplicate concurrent getUser calls
         _deletedTweetIds: new Set<string>() // Prevent re-insertion after optimistic delete
     }),
@@ -1624,80 +1625,48 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param ip The IP address (with optional port) to check
          * @returns True if server responds, false otherwise
          */
-        async isServerHealthy(ip: string): Promise<boolean> {
-            const now = Date.now();
-            const cacheTTL = 30 * 60 * 1000; // 30 minutes cache
-            
-            // Check if we have a recent cached result
+        async isServerHealthy(ip: string, timeoutMs: number = 5000): Promise<boolean> {
+            const cacheTTL = 30 * 60 * 1000;
             const cached = this.healthCheckCache.get(ip);
-            if (cached && (now - cached.timestamp) < cacheTTL) {
-                console.log(`[isServerHealthy] Using cached result for ${ip}: ${cached.isHealthy ? 'healthy' : 'unhealthy'}`);
+            if (cached && (Date.now() - cached.timestamp) < cacheTTL) {
+                console.log(`[isServerHealthy] cached ${ip}: ${cached.isHealthy ? 'healthy' : 'unhealthy'}`);
                 return cached.isHealthy;
             }
-            
-            // Check if a health check is already in progress for this IP
+
             const inProgress = this.healthCheckInProgress.get(ip);
-            if (inProgress) {
-                console.log(`[isServerHealthy] Health check already in progress for ${ip}, waiting...`);
-                return await inProgress;
-            }
-            
-            // Start a new health check
-            const healthCheckPromise = (async () => {
+            if (inProgress) return await inProgress;
+
+            const probe = (async () => {
+                const controller = new AbortController();
+                const tid = setTimeout(() => controller.abort(), timeoutMs);
+                let isHealthy = false;
                 try {
-                    const baseUrl = `http://${ip}`;
-                    
-                    // Make a simple HEAD request to check if server is alive
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout for HEAD request
-                    
-                    const response = await fetch(baseUrl, {
+                    // HEAD probe: no body sent or received — just checks TCP + HTTP reachability.
+                    // no-cors is required for cross-origin servers that don't send CORS headers.
+                    await fetch(`http://${ip}`, {
                         method: 'HEAD',
+                        mode: 'no-cors',
+                        cache: 'no-store',
                         signal: controller.signal,
-                        mode: 'no-cors', // Allow cross-origin requests
-                    }).catch(() => null);
-                    
-                    clearTimeout(timeoutId);
-                    
-                    // For no-cors mode, we just check if the request completed without error
-                    // If we get here without exception, the server is reachable
-                    const isHealthy = response !== null;
-                    
-                    // Cache the result
-                    this.healthCheckCache.set(ip, { isHealthy, timestamp: Date.now() });
-                    
-                    console.log(`[isServerHealthy] Server ${ip} is ${isHealthy ? 'reachable' : 'not reachable'}`);
-                    return isHealthy;
-                } catch (error) {
-                    console.error(`[isServerHealthy] Health check error for ${ip}:`, error);
-                    // Cache negative result
-                    this.healthCheckCache.set(ip, { isHealthy: false, timestamp: Date.now() });
-                    return false;
+                    });
+                    isHealthy = true;
+                } catch {
+                    isHealthy = false;
                 } finally {
-                    // Remove from in-progress map
+                    clearTimeout(tid);
+                    this.healthCheckCache.set(ip, { isHealthy, timestamp: Date.now() });
                     this.healthCheckInProgress.delete(ip);
                 }
+                console.log(`[isServerHealthy] ${ip}: ${isHealthy ? 'healthy' : 'unhealthy'}`);
+                return isHealthy;
             })();
-            
-            // Store the promise so other callers can wait for it
-            this.healthCheckInProgress.set(ip, healthCheckPromise);
-            
-            return await healthCheckPromise;
+
+            this.healthCheckInProgress.set(ip, probe);
+            return probe;
         },
 
-        /**
-         * Check if a server is healthy with a timeout
-         * @param ip The IP address (with optional port) to check
-         * @param timeout Timeout in milliseconds (default: 10000ms = 10s)
-         * @returns True if server is healthy within timeout, false otherwise
-         */
-        async isServerHealthyWithTimeout(ip: string, timeout: number = 10000): Promise<boolean> {
-            return Promise.race([
-                this.isServerHealthy(ip),
-                new Promise<boolean>((resolve) => {
-                    setTimeout(() => resolve(false), timeout);
-                })
-            ]);
+        async isServerHealthyWithTimeout(ip: string, timeout: number = 5000): Promise<boolean> {
+            return this.isServerHealthy(ip, timeout);
         },
 
         /**
@@ -3020,11 +2989,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * Result is cached on user.writableHostIp.
          */
         async resolveWritableHostIp(user: User): Promise<string> {
-            // Write operations are rare but failures are expensive — always resolve
-            // a fresh, health-checked IP via getNodeIp rather than trusting a cache.
             const hostId = user.hostIds?.[0]
             if (!hostId) {
                 throw new Error('Upload server not configured: user has no hostIds[0]')
+            }
+
+            const TTL = 5 * 60 * 1000 // 5 minutes
+            const cached = this._writableHostCache.get(hostId)
+            if (cached && Date.now() < cached.expiresAt) {
+                user.writableHostIp = cached.ip
+                return cached.ip
             }
 
             const ip = await this.getNodeIp(user)
@@ -3032,10 +3006,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error(`Upload server not responding: could not resolve hostIds[0]=${hostId}`)
             }
 
+            this._writableHostCache.set(hostId, { ip, expiresAt: Date.now() + TTL })
             user.writableHostIp = ip
-            if (user === this.loginUser) {
-                sessionStorage.setItem('user', JSON.stringify(user))
-            }
             return ip
         },
 
@@ -3100,7 +3072,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     lastError = error
                     console.error(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} failed:`, error)
                     if (attempt < maxAttempts) {
-                        // Clear cached writable host so next attempt re-resolves a fresh IP.
+                        // Invalidate cache so next attempt re-resolves a fresh IP.
+                        const hostId = user.hostIds?.[0]
+                        if (hostId) this._writableHostCache.delete(hostId)
                         user.writableHostIp = null
                         this.lapi.connectionPool.clearAll()
                         await new Promise(resolve => setTimeout(resolve, 1000))
