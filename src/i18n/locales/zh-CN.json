@@ -113,7 +113,9 @@
     "share": "分享",
     "copyLink": "复制链接",
     "linkCopied": "链接已复制!",
-    "showMore": "更多"
+    "showMore": "更多",
+    "likeFailed": "点赞失败，请重试。",
+    "bookmarkFailed": "收藏失败，请重试。"
   },
   "time": {
     "secondsAgo": "{n}秒前",

@@ -113,7 +113,9 @@
     "share": "共有",
     "copyLink": "リンクをコピー",
     "linkCopied": "リンクをコピーしました!",
-    "showMore": "もっと見る"
+    "showMore": "もっと見る",
+    "likeFailed": "いいねに失敗しました。もう一度お試しください。",
+    "bookmarkFailed": "ブックマークに失敗しました。もう一度お試しください。"
   },
   "time": {
     "secondsAgo": "{n}秒前",

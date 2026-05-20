@@ -11,6 +11,14 @@ const { t } = useI18n();
 const tweetStore = useTweetStore();
 const showShareMenu = ref(false);
 const copied = ref(false);
+const errorMsg = ref('');
+let errorTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showError(msg: string) {
+  errorMsg.value = msg;
+  if (errorTimer) clearTimeout(errorTimer);
+  errorTimer = setTimeout(() => { errorMsg.value = ''; }, 3000);
+}
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
@@ -101,8 +109,8 @@ async function onLike() {
     const serverResult = await tweetStore.toggleFavorite(original);
     emit('updated', serverResult);
   } catch (e) {
-    // Rollback on failure
     emit('updated', original);
+    showError(t('tweet.likeFailed'));
     console.error('[onLike] failed:', e);
   }
 }
@@ -124,6 +132,7 @@ async function onBookmark() {
     emit('updated', serverResult);
   } catch (e) {
     emit('updated', original);
+    showError(t('tweet.bookmarkFailed'));
     console.error('[onBookmark] failed:', e);
   }
 }
@@ -160,6 +169,9 @@ function closeShareMenu() {
 </script>
 
 <template>
+  <Teleport to="body">
+    <div v-if="errorMsg" class="action-bar-toast">{{ errorMsg }}</div>
+  </Teleport>
   <div class="action-bar" @click.stop>
     <button class="action-btn" @click="onComment" :title="$t('tweet.comment')">
       <font-awesome-icon :icon="['far', 'comment']" />
@@ -284,5 +296,22 @@ function closeShareMenu() {
   right: 0;
   bottom: 0;
   z-index: 99;
+}
+</style>
+
+<style>
+.action-bar-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 20px;
+  font-size: 14px;
+  white-space: nowrap;
+  z-index: 9999;
+  pointer-events: none;
 }
 </style>

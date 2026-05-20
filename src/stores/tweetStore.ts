@@ -2850,18 +2850,17 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleFavorite(tweet: Tweet) {
-            // Route through tweet.provider (current healthy IP) rather than
-            // tweet.author.client, which may be a stale client from a prior session.
-            const provider = tweet.provider ?? tweet.author?.providerIp
-            if (!provider) throw new Error('No provider IP available for toggle_favorite')
-            const client = createPooledClient(provider, this.lapi.connectionPool)
-            const ret = await client.RunMApp("toggle_favorite", {
+            const params = {
                 aid: this.appId, ver: "last", version: "v2",
                 appuserid: this.loginUser?.mid,
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
                 userhostid: this.loginUser?.hostIds?.[0],
-            })
+            }
+            const author = tweet.author ?? this.users.get(tweet.authorId)
+            if (!author) throw new Error('Author not found for toggle_favorite')
+            const writableIp = await this.resolveWritableHostIp(author)
+            const ret = await createPooledClient(writableIp, this.lapi.connectionPool).RunMApp("toggle_favorite", params)
             return this._applyServerTweet(tweet, ret)
         },
         /**
@@ -2870,18 +2869,17 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleBookmark(tweet: Tweet) {
-            // Route through tweet.provider (current healthy IP) rather than
-            // tweet.author.client, which may be a stale client from a prior session.
-            const provider = tweet.provider ?? tweet.author?.providerIp
-            if (!provider) throw new Error('No provider IP available for toggle_bookmark')
-            const client = createPooledClient(provider, this.lapi.connectionPool)
-            const ret = await client.RunMApp("toggle_bookmark", {
+            const params = {
                 aid: this.appId, ver: "last", version: "v2",
                 userid: this.loginUser?.mid,
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
                 userhostid: this.loginUser?.hostIds?.[0],
-            })
+            }
+            const author = tweet.author ?? this.users.get(tweet.authorId)
+            if (!author) throw new Error('Author not found for toggle_bookmark')
+            const writableIp = await this.resolveWritableHostIp(author)
+            const ret = await createPooledClient(writableIp, this.lapi.connectionPool).RunMApp("toggle_bookmark", params)
             return this._applyServerTweet(tweet, ret)
         },
         _applyServerTweet(tweet: Tweet, ret: any): Tweet {

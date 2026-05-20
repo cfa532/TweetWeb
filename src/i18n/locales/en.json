@@ -113,7 +113,9 @@
     "share": "Share",
     "copyLink": "Copy link",
     "linkCopied": "Link copied!",
-    "showMore": "show more"
+    "showMore": "show more",
+    "likeFailed": "Failed to like. Please try again.",
+    "bookmarkFailed": "Failed to bookmark. Please try again."
   },
   "time": {
     "secondsAgo": "{n} seconds ago",
