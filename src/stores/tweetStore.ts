@@ -273,6 +273,9 @@ export const useTweetStore = defineStore('tweetStore', {
             if (sessionStorage.getItem("user")) {
                 let usr = JSON.parse(sessionStorage.getItem("user")!)
                 usr.client = createPooledClient(usr.providerIp, state.lapi.connectionPool)
+                // Don't trust persisted writableHostIp — re-resolve fresh each session.
+                // Matches iOS which explicitly does not encode writableUrl across sessions.
+                usr.writableHostIp = null
                 state._user = usr
                 return usr
             }
@@ -1873,10 +1876,28 @@ export const useTweetStore = defineStore('tweetStore', {
                     return [];
                 }
 
-                // Return first 2 IPs without testing them
-                const resultIps = ipAddresses.slice(0, 2);
-                console.log(`[getProviderIps] Returning ${resultIps.length} IP address(es) for ${mid}:`, resultIps);
-                return resultIps;
+                // Race all candidate IPs in parallel; return the first one that passes
+                // a health check. Remaining checks are abandoned once a winner is found.
+                const candidates = ipAddresses.slice(0, 4);
+                const winner = await new Promise<string | null>((resolve) => {
+                    let settled = 0;
+                    for (const ip of candidates) {
+                        this.isServerHealthyWithTimeout(ip, 3000).then(healthy => {
+                            if (healthy) { resolve(ip); return; }
+                            if (++settled === candidates.length) resolve(null);
+                        }).catch(() => {
+                            if (++settled === candidates.length) resolve(null);
+                        });
+                    }
+                });
+
+                if (!winner) {
+                    console.warn(`[getProviderIps] All health checks failed for ${mid}, falling back to first candidate:`, candidates[0]);
+                    return [candidates[0]];
+                }
+
+                console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner);
+                return [winner];
 
             } catch (error) {
                 console.error("[getProviderIps] Error getting provider IPs for", mid, error);
@@ -2963,7 +2984,28 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.error(`[getNodeIp] No valid IPs for nodeId ${hostId}`);
                     return null;
                 }
-                return ipAddresses[0];
+
+                // Race all candidates in parallel (matches iOS _getHostIP withTaskGroup).
+                // Return the first IP that passes a health check; cancel the rest.
+                const candidates = ipAddresses.slice(0, 4);
+                const winner = await new Promise<string | null>((resolve) => {
+                    let settled = 0;
+                    for (const ip of candidates) {
+                        this.isServerHealthyWithTimeout(ip, 5000).then(healthy => {
+                            if (healthy) { resolve(ip); return; }
+                            if (++settled === candidates.length) resolve(null);
+                        }).catch(() => {
+                            if (++settled === candidates.length) resolve(null);
+                        });
+                    }
+                });
+
+                if (winner) {
+                    console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
+                    return winner;
+                }
+                console.error(`[getNodeIp] All health checks failed for nodeId ${hostId}`);
+                return null;
 
             } catch (error) {
                 console.error(`[getNodeIp] Error for nodeId ${user.hostIds?.[0] || 'unknown'}:`, error);
@@ -2978,8 +3020,8 @@ export const useTweetStore = defineStore('tweetStore', {
          * Result is cached on user.writableHostIp.
          */
         async resolveWritableHostIp(user: User): Promise<string> {
-            if (user.writableHostIp) return user.writableHostIp
-
+            // Write operations are rare but failures are expensive — always resolve
+            // a fresh, health-checked IP via getNodeIp rather than trusting a cache.
             const hostId = user.hostIds?.[0]
             if (!hostId) {
                 throw new Error('Upload server not configured: user has no hostIds[0]')
@@ -3008,13 +3050,8 @@ export const useTweetStore = defineStore('tweetStore', {
             onProgress?: (percent: number) => void,
         ): Promise<string> {
             const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
-            const chunkSize = 2 * 1024 * 1024 // 2MB — same as iOS uploadRegularFile
+            const chunkSize = 2 * 1024 * 1024 // 2MB chunks
             const uploadTimeout = 10 * 60 * 1000 // 10 min for large files
-
-            const uploadIp = await this.resolveWritableHostIp(user)
-            const client = await this.lapi.connectionPool.getConnection(uploadIp)
-            const originalTimeout = client.timeout
-            client.timeout = uploadTimeout
 
             const parseFsid = (response: any): string => {
                 if (typeof response === 'string') return response
@@ -3027,33 +3064,53 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error(`Unexpected upload_ipfs response: ${JSON.stringify(response)}`)
             }
 
-            try {
-                let offset = 0
-                let fsid: string | null = null
-                while (offset < bytes.length) {
-                    const end = Math.min(offset + chunkSize, bytes.length)
-                    const chunk = bytes.slice(offset, end)
-                    const request: any = { aid: this.appId, ver: 'last', version: 'v2', offset }
-                    if (fsid) request.fsid = fsid
-                    fsid = parseFsid(await client.RunMApp('upload_ipfs', request, [chunk]))
-                    offset = end
-                    onProgress?.(Math.max(1, Math.round((offset / bytes.length) * 100)))
-                }
-                if (!fsid) throw new Error('upload_ipfs returned no fsid')
+            // Matches iOS uploadRegularFile: 2 attempts; on first failure clear cached
+            // writableHostIp so resolveWritableHostIp re-resolves a fresh healthy IP.
+            const maxAttempts = 2
+            let lastError: any
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const uploadIp = await this.resolveWritableHostIp(user)
+                console.log(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} using IP:`, uploadIp)
+                const client = await this.lapi.connectionPool.getConnection(uploadIp)
+                const originalTimeout = client.timeout
+                client.timeout = uploadTimeout
+                try {
+                    let offset = 0
+                    let fsid: string | null = null
+                    while (offset < bytes.length) {
+                        const end = Math.min(offset + chunkSize, bytes.length)
+                        const chunk = bytes.slice(offset, end)
+                        const request: any = { aid: this.appId, ver: 'last', version: 'v2', offset }
+                        if (fsid) request.fsid = fsid
+                        fsid = parseFsid(await client.RunMApp('upload_ipfs', request, [chunk]))
+                        offset = end
+                        onProgress?.(Math.max(1, Math.round((offset / bytes.length) * 100)))
+                    }
+                    if (!fsid) throw new Error('upload_ipfs returned no fsid')
 
-                const finalResponse = await client.RunMApp('upload_ipfs', {
-                    aid: this.appId, ver: 'last', version: 'v2',
-                    offset, fsid, finished: 'true',
-                })
-                // Finalization may return {cid} directly or unwrap to a string.
-                if (finalResponse && typeof finalResponse === 'object' && finalResponse.cid) {
-                    return finalResponse.cid
+                    const finalResponse = await client.RunMApp('upload_ipfs', {
+                        aid: this.appId, ver: 'last', version: 'v2',
+                        offset, fsid, finished: 'true',
+                    })
+                    if (finalResponse && typeof finalResponse === 'object' && finalResponse.cid) {
+                        return finalResponse.cid
+                    }
+                    return parseFsid(finalResponse)
+                } catch (error) {
+                    lastError = error
+                    console.error(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} failed:`, error)
+                    if (attempt < maxAttempts) {
+                        // Clear cached writable host so next attempt re-resolves a fresh IP.
+                        user.writableHostIp = null
+                        this.lapi.connectionPool.clearAll()
+                        await new Promise(resolve => setTimeout(resolve, 1000))
+                    }
+                } finally {
+                    client.timeout = originalTimeout
+                    this.lapi.connectionPool.releaseConnection(uploadIp, client)
                 }
-                return parseFsid(finalResponse)
-            } finally {
-                client.timeout = originalTimeout
-                this.lapi.connectionPool.releaseConnection(uploadIp, client)
             }
+            throw lastError
         },
 
         /**
