@@ -15,6 +15,10 @@ const { chromium } = require('playwright');
 const router = express.Router();
 
 const COOKIES_PATH = path.join(__dirname, 'cookies.json');
+const COMMENT_PRIVATE_KEY_PATH =
+  process.env.COMMENT_PRIVATE_KEY_PATH ||
+  path.join(__dirname, 'comment_private_key.pem');
+const ENCRYPTED_COMMENT_ALG = 'RSA-OAEP-256+A256GCM';
 
 /**
  * Load cookies from cookies.json and convert them to Playwright's format.
@@ -68,6 +72,76 @@ function loadCookies() {
       }
       return cookie;
     });
+}
+
+function readCommentPrivateKey() {
+  return fs.readFileSync(COMMENT_PRIVATE_KEY_PATH, 'utf8');
+}
+
+function decryptCommentPayload(body) {
+  if (!body || typeof body !== 'object') {
+    throw new Error('Request body must be an encrypted JSON object');
+  }
+
+  const { version, alg, key, iv, ciphertext } = body;
+  if (
+    version !== 1 ||
+    alg !== ENCRYPTED_COMMENT_ALG ||
+    typeof key !== 'string' ||
+    typeof iv !== 'string' ||
+    typeof ciphertext !== 'string'
+  ) {
+    throw new Error(
+      `Request body must be encrypted with ${ENCRYPTED_COMMENT_ALG}`
+    );
+  }
+
+  const privateKey = readCommentPrivateKey();
+  const aesKey = crypto.privateDecrypt(
+    {
+      key: privateKey,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: 'sha256',
+    },
+    Buffer.from(key, 'base64')
+  );
+  const encryptedBytes = Buffer.from(ciphertext, 'base64');
+  const ivBytes = Buffer.from(iv, 'base64');
+
+  if (ivBytes.length !== 12) {
+    throw new Error('Encrypted payload has an invalid IV');
+  }
+  if (encryptedBytes.length <= 16) {
+    throw new Error('Encrypted payload is too short');
+  }
+
+  const authTag = encryptedBytes.subarray(encryptedBytes.length - 16);
+  const encryptedBody = encryptedBytes.subarray(0, encryptedBytes.length - 16);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, ivBytes);
+  decipher.setAuthTag(authTag);
+
+  const decrypted = Buffer.concat([
+    decipher.update(encryptedBody),
+    decipher.final(),
+  ]);
+  return JSON.parse(decrypted.toString('utf8'));
+}
+
+function validateCommentRequest(payload) {
+  const { tweet_id, text } = payload || {};
+  if (
+    typeof text !== 'string' ||
+    !text.trim() ||
+    typeof tweet_id !== 'string' ||
+    !tweet_id.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    tweet_id: tweet_id.trim(),
+    text: text.trim(),
+  };
 }
 
 /**
@@ -190,19 +264,24 @@ async function postCommentWithPlaywright({ tweet_id, text }) {
 // ---------------------------------------------------------------------------
 
 router.post('/comment', (req, res) => {
-  const { tweet_id, text } = req.body || {};
-  if (
-    typeof text !== 'string' ||
-    !text.trim() ||
-    typeof tweet_id !== 'string' ||
-    !tweet_id.trim()
-  ) {
+  let comment;
+  try {
+    comment = validateCommentRequest(decryptCommentPayload(req.body));
+  } catch (err) {
+    console.warn('[COMMENT] Failed to decrypt request:', err.message);
     return res.status(400).json({
-      error:
-        'Request body must be {"tweet_id": string, "text": string}',
+      error: 'Request body must be an encrypted comment payload',
     });
   }
 
+  if (!comment) {
+    return res.status(400).json({
+      error:
+        'Encrypted payload must contain {"tweet_id": string, "text": string}',
+    });
+  }
+
+  const { tweet_id, text } = comment;
   const reqId = crypto.randomBytes(4).toString('hex');
   console.log(
     `[COMMENT] ${reqId} accepted (tweet_id=${tweet_id})`
