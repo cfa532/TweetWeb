@@ -161,38 +161,41 @@ async function deleteItem() {
   
   closeMenu()
   const isAdmin = tweetStore.loginUser.username === 'admin'
+  try {
+    if (props.isComment && props.parentTweet) {
+      // Delete comment - requires comment author OR parent tweet author OR admin
+      if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
+        const commentIdToDelete = props.tweet.mid
 
-  if (props.isComment && props.parentTweet) {
-    // Delete comment - requires comment author OR parent tweet author OR admin
-    if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
-      const commentIdToDelete = props.tweet.mid
-      
-      await tweetStore.deleteComment(
-        commentIdToDelete,
-        props.tweet.authorId,
-        props.parentTweet.mid,
-        props.parentTweet.authorId
-      )
-      
-      // Force update by replacing the comments array to trigger Vue reactivity
-      if (props.parentTweet.comments && Array.isArray(props.parentTweet.comments)) {
-        // Remove the comment from the array
-        props.parentTweet.comments = props.parentTweet.comments.filter((c: Tweet) => c && c.mid !== commentIdToDelete)
-        
-        // Update comment count if it exists
-        if (props.parentTweet.commentCount !== undefined) {
-          props.parentTweet.commentCount = Math.max(0, (props.parentTweet.commentCount || 0) - 1)
+        await tweetStore.deleteComment(
+          commentIdToDelete,
+          props.tweet.authorId,
+          props.parentTweet.mid,
+          props.parentTweet.authorId
+        )
+
+        // Force update by replacing the comments array to trigger Vue reactivity
+        if (props.parentTweet.comments && Array.isArray(props.parentTweet.comments)) {
+          // Remove the comment from the array
+          props.parentTweet.comments = props.parentTweet.comments.filter((c: Tweet) => c && c.mid !== commentIdToDelete)
+
+          // Update comment count if it exists
+          if (props.parentTweet.commentCount !== undefined) {
+            props.parentTweet.commentCount = Math.max(0, (props.parentTweet.commentCount || 0) - 1)
+          }
+
+          // Force Vue to update by using nextTick
+          await nextTick()
         }
-        
-        // Force Vue to update by using nextTick
-        await nextTick()
+      }
+    } else {
+      // Delete regular tweet - requires tweet author OR admin
+      if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId) {
+        await tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
       }
     }
-  } else {
-    // Delete regular tweet - requires tweet author OR admin
-    if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId) {
-      tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
-    }
+  } catch (error: any) {
+    alertStore.error(error?.message || t('tweet.failedDeleteTweet'))
   }
 }
 </script>

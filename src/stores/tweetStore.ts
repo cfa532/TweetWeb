@@ -2505,23 +2505,34 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param authorId The ID of the tweet author
          */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
-            this._deletedTweetIds.add(tweetId)
-            this.tweets.splice(this.tweets.findIndex(e=>e.mid==tweetId), 1)
-            this.tweetIndex.delete(tweetId)
-            let user = await this.getUser(authorId)
-            if (user && this.loginUser) {
-                // Mutation: route through loginUser's writable host (hostIds[0]).
-                let client = this.loginUser.client
-                try {
-                    const writableIp = await this.resolveWritableHostIp(this.loginUser)
-                    client = createPooledClient(writableIp, this.lapi.connectionPool)
-                } catch (e) {
-                    console.warn('[deleteTweet] Could not resolve writable host, using current client:', e)
-                }
-                await client.RunMApp("delete_tweet", {aid: this.appId, ver: "last",
-                    tweetid: tweetId, userid: authorId
-                })
+            if (!this.loginUser) {
+                throw new Error('Not authorized to delete this tweet')
             }
+
+            const tweetIndex = this.tweets.findIndex(e => e.mid === tweetId)
+            if (tweetIndex >= 0) {
+                this._deletedTweetIds.add(tweetId)
+                this.tweets.splice(tweetIndex, 1)
+                this.tweetIndex.delete(tweetId)
+            }
+
+            const author = await this.getUser(authorId)
+            if (!author?.client) {
+                throw new Error('Tweet author provider is unavailable')
+            }
+
+            const payload: Record<string, any> = {
+                aid: this.appId,
+                ver: "last",
+                appuserid: this.loginUser.mid, // caller identity (admin or owner)
+                tweetid: tweetId,
+                userid: authorId, // tweet owner
+            }
+            if (author.hostIds?.[0]) {
+                payload.hostid = author.hostIds[0]
+            }
+
+            await author.client.RunMApp("delete_tweet", payload)
         },
 
         /**
@@ -2722,17 +2733,28 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error('Not authorized to edit this tweet')
             }
             try {
-                // Mutation: route through loginUser's writable host (hostIds[0]).
-                let client = this.loginUser.client
-                try {
-                    const writableIp = await this.resolveWritableHostIp(this.loginUser)
-                    client = createPooledClient(writableIp, this.lapi.connectionPool)
-                } catch (e) {
-                    console.warn('[updateTweet] Could not resolve writable host, using current client:', e)
+                const targetAuthorId = authorId ?? this.loginUser.mid
+                let targetAuthor: User | undefined
+                if (targetAuthorId !== this.loginUser.mid) {
+                    targetAuthor = await this.getUser(targetAuthorId)
+                }
+
+                // update_tweet enforces author identity in appuserid, so for admin edits
+                // we must act on the tweet owner's node and pass owner id as appuserid.
+                let client = targetAuthor?.client ?? this.loginUser.client
+                if (!targetAuthor && this.loginUser) {
+                    try {
+                        const writableIp = await this.resolveWritableHostIp(this.loginUser)
+                        client = createPooledClient(writableIp, this.lapi.connectionPool)
+                    } catch (e) {
+                        console.warn('[updateTweet] Could not resolve writable host, using current client:', e)
+                    }
                 }
                 const ret = await client.RunMApp("update_tweet",
                     {aid: this.appId, ver: "last",
-                        appuserid: authorId ?? this.loginUser.mid,
+                        appuserid: targetAuthorId,
+                        userid: targetAuthorId,
+                        hostid: targetAuthor?.hostIds?.[0],
                         tweetid: tweetId,
                         content: content})
                 if (!ret || !ret.success) {
