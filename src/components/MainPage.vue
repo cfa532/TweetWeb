@@ -14,6 +14,7 @@ const { t } = useI18n();
 const tweetStore = useTweetStore();
 const router = useRouter();
 const isLoading = ref(false);
+const showLoadMoreSpinner = ref(false);
 const retryMessage = ref('');
 const scrollThreshold = 200; // Distance from bottom to trigger load
 const initialLoad = ref(true);
@@ -22,6 +23,25 @@ const pageSize = 5; // Using the same TWEET_COUNT constant from tweetStore
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
+let loadMoreSpinnerTimer: ReturnType<typeof setTimeout> | null = null;
+
+function startLoadMoreSpinnerDelay() {
+    clearLoadMoreSpinnerDelay();
+    // Only show spinner if loading takes longer than 1s.
+    loadMoreSpinnerTimer = setTimeout(() => {
+        if (isLoading.value && !initialLoad.value) {
+            showLoadMoreSpinner.value = true;
+        }
+    }, 1000);
+}
+
+function clearLoadMoreSpinnerDelay() {
+    if (loadMoreSpinnerTimer) {
+        clearTimeout(loadMoreSpinnerTimer);
+        loadMoreSpinnerTimer = null;
+    }
+    showLoadMoreSpinner.value = false;
+}
 
 function restoreMainFeedScroll() {
     const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
@@ -92,6 +112,9 @@ async function loadMoreTweets() {
     if (isLoading.value || !hasMoreTweets.value) return;
 
     isLoading.value = true;
+    if (!initialLoad.value) {
+        startLoadMoreSpinnerDelay();
+    }
     loadError.value = '';
 
     try {
@@ -113,6 +136,7 @@ async function loadMoreTweets() {
         loadError.value = t('tweet.loadMoreError');
         lastErrorTime = Date.now();
     } finally {
+        clearLoadMoreSpinnerDelay();
         appendNewToDisplayed();
         isLoading.value = false;
         scheduleLoadMoreIfStillNearBottom();
@@ -158,6 +182,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
     loadMoreObserver?.disconnect();
+    clearLoadMoreSpinnerDelay();
 });
 
 async function loadTweetsWithMinimum() {
@@ -234,7 +259,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
         </div>
         <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid' />
         <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
-        <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
+        <div v-if='showLoadMoreSpinner && isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
             <LoadingSpinner size="sm" />
             <span v-if="!retryMessage" class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
             <div v-else class="small text-muted">{{ retryMessage }}</div>
