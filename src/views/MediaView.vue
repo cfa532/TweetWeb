@@ -4,6 +4,7 @@ import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { Image, PDFView, VideoJS, BlobData, AudioPlayer } from './index'
 import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
+import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -13,6 +14,7 @@ const props = defineProps({
     addtionalItems: {type: Number, required: false},    // show PLUS sign over last item in preview grid
     mediaList: {type: Array as PropType<MimeiFileType[]>, required: false}, // All media items for gallery
     mediaIndex: {type: Number, required: false}, // Index of current media in the list
+    mediaLoadState: {type: String as PropType<MediaLoadState>, required: false, default: 'visible'},
 });
 
 const router = useRouter();
@@ -118,9 +120,10 @@ function handleMediaClick(event: MouseEvent) {
             :is="userComponent"
             v-bind="props"
             :autoplay="resolvedAutoplay"
+            :media-load-state="props.mediaLoadState"
         ></component>
         <KeepAlive v-else>
-            <component :is="userComponent" v-bind="props" :autoplay="resolvedAutoplay"></component>
+            <component :is="userComponent" v-bind="props" :autoplay="resolvedAutoplay" :media-load-state="props.mediaLoadState"></component>
         </KeepAlive>
     </div>
 </template>

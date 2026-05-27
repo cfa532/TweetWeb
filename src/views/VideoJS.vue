@@ -5,6 +5,7 @@ import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
 import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
+import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
 
 // Cross-instance HLS playlist cache, keyed by base media URL. The same
 // stream may be opened by multiple VideoJS instances (e.g. once in the
@@ -22,6 +23,7 @@ const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: false },
   mediaList: { type: Array as PropType<MimeiFileType[]>, required: false },
   mediaIndex: { type: Number, required: false },
+  mediaLoadState: { type: String as PropType<MediaLoadState>, required: false, default: 'visible' },
 })
 const router = useRouter();
 const tweetStore = useTweetStore();
@@ -61,18 +63,18 @@ const isScrolling = ref(false);
     return mediaType === 'video';
   });
 
-  // Render <source> for regular MP4 only when needed: always in detail view,
-  // and only after the coordinator promotes this video in the feed.
+  // Render <source> for regular MP4 when it is visible/preloading so a
+  // non-primary visible video can keep showing its frame instead of flashing black.
   const shouldRenderRegularSource = computed(() => {
     if (!isRegularVideo.value) return false;
     if (!isInTweetList.value) return true;
-    return regularVideoActive.value;
+    return regularVideoActive.value || props.mediaLoadState !== 'idle';
   });
 
-  // Feed videos must not auto-buffer; only the primary should preload.
+  // Visible/preloaded feed videos may keep their frame buffered, but playback is still owned by the primary coordinator.
   const videoPreload = computed(() => {
     if (!isInTweetList.value) return 'auto';
-    return regularVideoActive.value ? 'auto' : 'none';
+    return regularVideoActive.value || props.mediaLoadState !== 'idle' ? 'auto' : 'none';
   });
 // Tracks whether the video has reported its metadata yet. Used to suppress
 // native browser controls during the initial load so the native loading
@@ -176,6 +178,24 @@ let hasTriedPlaylistFallback = false;
 let failedFragments = new Set<string>(); // Track fragments that have failed to avoid infinite loops
 const MANIFEST_PROBE_TIMEOUT_MS = 12000;
 let pendingUserPlayRequest = false;
+let hlsSetupToken = 0;
+
+function shouldLoadFeedMedia(): boolean {
+  if (!isInTweetList.value) return true;
+  return props.mediaLoadState !== 'idle';
+}
+
+function debugVideoLoad(message: string) {
+  if (!import.meta.env.DEV) return;
+  console.debug(`[MEDIA VIDEO] ${message}`, {
+    tweetId: props.tweet?.mid,
+    mediaId: props.media.mid,
+    fileName: props.media.fileName,
+    type: props.media.type,
+    state: props.mediaLoadState,
+    primary: video.value ? isCoordinatorPrimary(video.value) : false,
+  });
+}
 
 function cleanupHlsInstance() {
   if (!hls) return;
@@ -196,6 +216,28 @@ function cleanupHlsInstance() {
   if (mediaElement) {
     mediaElement.removeAttribute('src');
   }
+}
+
+function releaseFeedMedia(reason: string) {
+  debugVideoLoad(reason);
+  hlsSetupToken += 1;
+  regularVideoActive.value = false;
+  cleanupHlsInstance();
+  isHLSInitialized = false;
+  isPlaying.value = false;
+  isBuffering.value = false;
+  coordinatorAutoplayPending.value = false;
+  hasMetadata.value = false;
+  showVideoError.value = false;
+  nextTick(() => {
+    const el = video.value;
+    if (!el) return;
+    try {
+      if (!el.paused) el.pause();
+      el.removeAttribute('src');
+      el.load();
+    } catch {}
+  });
 }
 
 onMounted(() => {
@@ -330,16 +372,31 @@ onMounted(() => {
         if (isHLS.value && !isHLSInitialized) {
           if (!isInTweetList.value) {
             // Detail view: initialize immediately
+            debugVideoLoad('load detail hls');
+            setupHLS();
+          } else if (props.mediaLoadState !== 'idle') {
+            isBuffering.value = props.mediaLoadState === 'visible' && isCoordinatorPrimary(video.value);
+            debugVideoLoad(props.mediaLoadState === 'visible' ? 'load visible hls' : 'preload hls');
             setupHLS();
           } else {
-            // Feed: always defer to the coordinator so only one video loads
-            // at a time. The coordinator's onPrimaryChange(true) triggers setupHLS.
+            // Feed: idle videos wait until visible/preloaded before attaching
+            // network-heavy video sources.
             isBuffering.value = false;
           }
         } else if (isRegularVideo.value) {
           if (!isInTweetList.value) {
             // Detail view: attach the source and load immediately.
+            debugVideoLoad('load detail mp4');
             setupRegularVideo();
+          } else if (props.mediaLoadState !== 'idle') {
+            regularVideoActive.value = true;
+            isBuffering.value = props.mediaLoadState === 'visible' && isCoordinatorPrimary(video.value);
+            debugVideoLoad(props.mediaLoadState === 'visible' ? 'load visible mp4' : 'preload mp4');
+            nextTick(() => {
+              if (!shouldLoadFeedMedia()) return;
+              setupRegularVideo();
+              video.value?.load();
+            });
           } else {
             // Feed: wait for coordinator to mark this primary. Listeners
             // are attached in setupRegularVideo() once the source mounts.
@@ -373,6 +430,7 @@ onMounted(() => {
               // will call play() once metadata is available.
               if (!isHLSInitialized && isHLS.value) {
                 isBuffering.value = true;
+                debugVideoLoad('load primary hls');
                 setupHLS();
                 return;
               }
@@ -381,6 +439,7 @@ onMounted(() => {
                 // listeners, then call .load() to kick off buffering.
                 regularVideoActive.value = true;
                 isBuffering.value = true;
+                debugVideoLoad('load primary mp4');
                 nextTick(() => {
                   setupRegularVideo();
                   video.value?.load();
@@ -390,8 +449,8 @@ onMounted(() => {
               if (hls) hls.startLoad(-1);
             } else {
               coordinatorAutoplayPending.value = false;
-              // Don't stop loading if the user explicitly tapped play;
-              // the manifest/fragments may still be in-flight.
+              // Pause non-primary playback, but keep visible/preloaded media
+              // attached so the user still sees its frame while scrolling.
               if (hls && !pendingUserPlayRequest) {
                 hls.stopLoad();
               }
@@ -429,6 +488,35 @@ watch(() => props.media.mid, (newMid, oldMid) => {
   setupHLS();
 });
 
+watch(() => props.mediaLoadState, (state) => {
+  if (!isInTweetList.value || !video.value) return;
+
+  if (state === 'idle') {
+    if (isCoordinatorPrimary(video.value)) return;
+    debugVideoLoad('cancel idle');
+    releaseFeedMedia('cancel idle');
+    return;
+  }
+
+  if (isHLS.value && !isHLSInitialized) {
+    isBuffering.value = state === 'visible';
+    debugVideoLoad(state === 'visible' ? 'load visible hls' : 'preload hls');
+    setupHLS();
+    return;
+  }
+
+  if (isRegularVideo.value && !regularVideoActive.value) {
+    regularVideoActive.value = true;
+    isBuffering.value = state === 'visible';
+    debugVideoLoad(state === 'visible' ? 'load visible mp4' : 'preload mp4');
+    nextTick(() => {
+      if (!shouldLoadFeedMedia()) return;
+      setupRegularVideo();
+      video.value?.load();
+    });
+  }
+});
+
 onUnmounted(() => {
   isUnmounting = true;
   // Clean up event listeners
@@ -454,7 +542,9 @@ onUnmounted(() => {
 
 function setupHLS() {
   if (!video.value || isHLSInitialized) return;
+  if (!shouldLoadFeedMedia()) return;
   isHLSInitialized = true;
+  const setupToken = ++hlsSetupToken;
   
   const videoElement = video.value;
 
@@ -487,7 +577,7 @@ function setupHLS() {
         videoElement.src = '';
         videoElement.load();
         if (Hls.isSupported()) {
-          setupHLSWithJS(videoElement);
+          setupHLSWithJS(videoElement, setupToken);
         } else {
           console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
         }
@@ -509,7 +599,7 @@ function setupHLS() {
           videoElement.src = '';
           videoElement.load();
           if (Hls.isSupported()) {
-            setupHLSWithJS(videoElement);
+            setupHLSWithJS(videoElement, setupToken);
           } else {
             console.error('Native HLS failed and hls.js is not supported, cannot play HLS video');
           }
@@ -518,7 +608,7 @@ function setupHLS() {
     }
   } else if (Hls.isSupported()) {
     // Use hls.js for all non-Safari browsers or when native HLS is not available
-    setupHLSWithJS(videoElement);
+    setupHLSWithJS(videoElement, setupToken);
   } else {
     console.error('HLS is not supported in this browser');
     showVideoError.value = true;
@@ -528,29 +618,28 @@ function setupHLS() {
 }
 
 // Setup HLS using hls.js library
-function setupHLSWithJS(videoElement: HTMLVideoElement) {
+function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
     const hlsConfig = isInTweetList.value ? {
       // Low quality settings for tweet list with hardware acceleration
       enableWorker: true,
       lowLatencyMode: false, // Disable low latency for list view
-      // Conservative bandwidth settings for list view
-      abrEwmaDefaultEstimate: 250000, // 250kbps default bandwidth estimate (lower)
-      abrBandWidthFactor: 0.8, // More conservative bandwidth factor
-      abrBandWidthUpFactor: 0.5, // Very conservative for bandwidth increases
+      // Start modestly, but keep enough buffer for smooth primary playback.
+      abrEwmaDefaultEstimate: 500000,
+      abrBandWidthFactor: 0.9,
+      abrBandWidthUpFactor: 0.65,
       abrMaxWithRealBitrate: true,
       // Start with the lowest quality for list view (safe for single-level streams)
       startLevel: 0,
       capLevelToPlayerSize: true,
-      // Smaller buffer for list view
-      maxBufferLength: 15, // Reduced buffer length
-      maxMaxBufferLength: 300, // Reduced max buffer
-      maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer size (smaller)
+      maxBufferLength: 30,
+      maxMaxBufferLength: 180,
+      maxBufferSize: 60 * 1000 * 1000,
       maxBufferHole: 0.5,
       // Hardware acceleration settings
       enableSoftwareAES: false, // Use hardware AES if available
       enableStashBuffer: true, // Enable stash buffer for smoother playback
-      stashInitialSize: 384 * 1024, // Initial stash buffer size
+      stashInitialSize: 768 * 1024,
     } : {
       // High quality settings for detail view with hardware acceleration
       enableWorker: true,
@@ -792,9 +881,11 @@ function setupHLSWithJS(videoElement: HTMLVideoElement) {
           ]);
 
           if (isUnmounting) return;
+          if (setupToken !== hlsSetupToken || !shouldLoadFeedMedia()) return;
           createHLSInstance(winner.url, winner.sourceName);
         } catch {
           if (isUnmounting) return;
+          if (setupToken !== hlsSetupToken || !shouldLoadFeedMedia()) return;
           console.warn('HLS.js: Both manifest probes failed; falling back to direct attach with master');
           createHLSInstance(masterUrl, 'master');
         }
@@ -1776,6 +1867,10 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
 // Stop video playback and clean up resources
 function stopVideo() {
   const currentVideo = video.value;
+  hlsSetupToken += 1;
+  if (isInTweetList.value) {
+    debugVideoLoad('stop and release');
+  }
   if (isHLS.value) {
     cleanupHlsInstance();
     if (currentVideo) {

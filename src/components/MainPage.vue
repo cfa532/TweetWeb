@@ -4,8 +4,8 @@ import { useRouter, onBeforeRouteLeave } from 'vue-router';
 import { MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
-import { TweetView, AppHeader } from '@/views';
-import { LoadingSpinner, PageLayout } from '@/components';
+import { AppHeader } from '@/views';
+import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { isWeChatBrowser } from '@/lib';
 
 
@@ -257,7 +257,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
         <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
             {{ $t('tweet.showNewTweets', pendingCount) }}
         </div>
-        <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid' />
+        <TweetList :tweets="displayedTweets" />
         <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
         <div v-if='showLoadMoreSpinner && isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
             <LoadingSpinner size="sm" />

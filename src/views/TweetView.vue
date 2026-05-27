@@ -6,6 +6,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { MediaView, ItemHeader, TweetActionBar } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
+import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
 
 const { t } = useI18n();
 const tweetStore = useTweetStore()
@@ -16,7 +17,8 @@ const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
   isQuoted: { type: Boolean, required: false, default: false },
   isComment: { type: Boolean, required: false, default: false },
-  parentTweet: { type: Object as PropType<Tweet>, required: false }
+  parentTweet: { type: Object as PropType<Tweet>, required: false },
+  mediaLoadStateFor: { type: Function as PropType<(media: MimeiFileType) => MediaLoadState>, required: false },
 });
 
 const originalTweet = ref<Tweet | null>();
@@ -235,6 +237,10 @@ const mediaAttachments = computed(() => {
   });
 });
 
+function mediaLoadState(media: MimeiFileType): MediaLoadState {
+  return props.mediaLoadStateFor?.(media) ?? 'visible';
+}
+
 // Filter out media attachments (image, video, audio) to get documents
 const documentAttachments = computed(() => {
   const attachments = displayedTweet.value.attachments || [];
@@ -403,6 +409,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
             :tweet='displayedTweet'
             :media-list='mediaAttachments'
             :media-index='0'
+            :media-load-state='mediaLoadState(mediaAttachments[0])'
             class='img-fluid portrait-center'
           ></MediaView>
         </div>
@@ -417,6 +424,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='index'
+              :media-load-state='mediaLoadState(media)'
               class='grid-item'
             ></MediaView>
           </div>
@@ -428,6 +436,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='index'
+              :media-load-state='mediaLoadState(media)'
               class='grid-item'
             ></MediaView>
           </div>
@@ -437,6 +446,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='0'
+              :media-load-state='mediaLoadState(mediaAttachments[0])'
               :class='["grid-item", isPortrait(mediaAttachments[0]) ? "grid-item-portrait" : "grid-item-landscape"]'
             ></MediaView>
             <MediaView
@@ -444,6 +454,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='1'
+              :media-load-state='mediaLoadState(mediaAttachments[1])'
               :class='["grid-item", isPortrait(mediaAttachments[1]) ? "grid-item-portrait" : "grid-item-landscape"]'
             ></MediaView>
           </div>
@@ -457,6 +468,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='0'
+              :media-load-state='mediaLoadState(mediaAttachments[0])'
               class='grid-item grid-item-golden-left'
             ></MediaView>
             <div class='grid-item-golden-right'>
@@ -467,6 +479,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
                 :tweet='displayedTweet'
                 :media-list='mediaAttachments'
                 :media-index='idx'
+                :media-load-state='mediaLoadState(mediaAttachments[idx])'
                 class='grid-item'
               ></MediaView>
             </div>
@@ -477,6 +490,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='0'
+              :media-load-state='mediaLoadState(mediaAttachments[0])'
               class='grid-item grid-item-golden-top'
             ></MediaView>
             <div class='grid-item-golden-bottom'>
@@ -487,6 +501,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
                 :tweet='displayedTweet'
                 :media-list='mediaAttachments'
                 :media-index='idx'
+                :media-load-state='mediaLoadState(mediaAttachments[idx])'
                 class='grid-item'
               ></MediaView>
             </div>
@@ -497,6 +512,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='0'
+              :media-load-state='mediaLoadState(mediaAttachments[0])'
               class='grid-item grid-item-left-tall'
             ></MediaView>
             <div class='grid-item-right-stacked'>
@@ -507,6 +523,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
                 :tweet='displayedTweet'
                 :media-list='mediaAttachments'
                 :media-index='idx'
+                :media-load-state='mediaLoadState(mediaAttachments[idx])'
                 class='grid-item'
               ></MediaView>
             </div>
@@ -517,6 +534,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='0'
+              :media-load-state='mediaLoadState(mediaAttachments[0])'
               class='grid-item grid-item-top-wide'
             ></MediaView>
             <div class='grid-item-bottom-two'>
@@ -527,6 +545,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
                 :tweet='displayedTweet'
                 :media-list='mediaAttachments'
                 :media-index='idx'
+                :media-load-state='mediaLoadState(mediaAttachments[idx])'
                 class='grid-item'
               ></MediaView>
             </div>
@@ -543,6 +562,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='idx'
+              :media-load-state='mediaLoadState(mediaAttachments[idx])'
               class='grid-item'
             ></MediaView>
           </div>
@@ -554,6 +574,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :tweet='displayedTweet'
               :media-list='mediaAttachments'
               :media-index='idx'
+              :media-load-state='mediaLoadState(mediaAttachments[idx])'
               class='grid-item'
               :addtional-items='idx === 3 && mediaAttachments.length > 4 ? mediaAttachments.length - 4 : undefined'
             ></MediaView>

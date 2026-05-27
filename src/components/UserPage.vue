@@ -5,9 +5,9 @@ import { useTweetStore } from '@/stores';
 import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
 import { LOAD_TIMEOUT_MS } from '@/constants';
 import { USER_PAGE_SCROLL_PREFIX } from '@/constants/scrollRestore';
-import { TweetView, AppHeader } from '@/views';
+import { AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
-import { LoadingSpinner, PageLayout } from '@/components';
+import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 
 const { t } = useI18n();
 
@@ -568,7 +568,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
         <!-- Bookmarks / Favorites view: replaces pinned + own-tweets list. -->
         <template v-if="userView !== 'tweets'">
             <b style='color: #8899a6;'>&nbsp;&nbsp;{{ userView === 'bookmarks' ? $t('profile.bookmarks') : $t('profile.favorites') }}</b>
-            <TweetView v-for='tweet in metaTweets' :tweet='tweet' :key="userView + '-' + tweet.mid"/>
+            <TweetList :tweets="metaTweets" />
             <div v-if='isMetaLoading' class='d-flex flex-column align-items-center justify-content-center gap-2 my-4 py-3'>
                 <LoadingSpinner />
                 <span class="small" style="color: #8899a6;">{{ $t('common.loading') }}</span>
@@ -581,13 +581,13 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
         <!-- Default: user's own tweets (pinned + chronological). -->
         <template v-else>
             <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
-            <TweetView v-for='tweet in pinnedTweets' :tweet='tweet' :key="'pinned-' + tweet.mid"/>
+            <TweetList :tweets="pinnedTweets" />
             <hr v-if='pinnedTweets?.length!>0' />
             <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
             <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
                 {{ $t('tweet.showNewTweets', pendingCount) }}
             </div>
-            <TweetView v-for='tweet in displayedTweets' :tweet='tweet' :key='tweet.mid'/>
+            <TweetList :tweets="displayedTweets" />
             <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
             <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
                 <LoadingSpinner size="sm" />

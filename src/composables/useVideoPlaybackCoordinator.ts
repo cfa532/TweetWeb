@@ -31,8 +31,10 @@ const registry = new Map<HTMLVideoElement, VideoEntry>()
 let primaryVideo: HTMLVideoElement | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-/** At least this fraction of the video wrapper must be in the viewport to count as visible (play / stay primary). */
-const MIN_VISIBLE_RATIO = 0.5
+/** At least this fraction of the video wrapper must be in the viewport to become primary. */
+const MIN_PLAY_VISIBLE_RATIO = 0.5
+/** Once a video is primary, keep it primary until it is mostly gone to avoid play/pause flicker near the threshold. */
+const MIN_KEEP_VISIBLE_RATIO = 0.18
 const DEBOUNCE_MS = 200
 
 // Track scroll direction so selectPrimary can pick the video the user is
@@ -95,11 +97,12 @@ function setupObserver(el: HTMLVideoElement, wrapper: HTMLElement) {
           reg.top = entry.boundingClientRect.top
         }
       }
-      // Pause as soon as the primary drops below half visible; clear primary so a
-      // quick scroll back re-runs full setPrimary and autoplay resumes correctly.
+      // Keep the current primary stable while it is still meaningfully visible.
+      // Without hysteresis, tiny layout/scroll changes around 50% can make the
+      // primary play/pause repeatedly.
       if (el === primaryVideo) {
         const reg = registry.get(el)
-        if (reg && reg.ratio < MIN_VISIBLE_RATIO && !el.ended) {
+        if (reg && reg.ratio < MIN_KEEP_VISIBLE_RATIO && !el.ended) {
           if (!el.paused) el.pause()
           primaryVideo.removeEventListener('ended', handlePrimaryEnded)
           primaryVideo = null
@@ -131,9 +134,16 @@ function isBeforeInDocumentOrder(a: VideoEntry, b: VideoEntry): boolean {
 }
 
 function selectPrimary() {
+  if (primaryVideo) {
+    const current = registry.get(primaryVideo)
+    if (current && !current.el.ended && current.ratio >= MIN_KEEP_VISIBLE_RATIO) {
+      return
+    }
+  }
+
   let best: VideoEntry | null = null
   for (const entry of registry.values()) {
-    if (entry.ratio < MIN_VISIBLE_RATIO || entry.el.ended) {
+    if (entry.ratio < MIN_PLAY_VISIBLE_RATIO || entry.el.ended) {
       continue
     }
     if (!best) {
@@ -197,7 +207,7 @@ function handlePrimaryEnded() {
 
   // Only advance if the tweet is still visible
   const tweetStillVisible = [...registry.values()].some(
-    e => getTweetContainer(e) === tweetContainer && e.ratio >= MIN_VISIBLE_RATIO
+    e => getTweetContainer(e) === tweetContainer && e.ratio >= MIN_KEEP_VISIBLE_RATIO
   )
   if (!tweetStillVisible) return
 

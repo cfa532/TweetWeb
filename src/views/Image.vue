@@ -1,22 +1,54 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { PropType } from 'vue'
+import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({
     media: {type: Object as PropType<MimeiFileType>, required: true },
     title: {type: String, required: false},
     index: {type: Number, required: false},
+    mediaLoadState: {type: String as PropType<MediaLoadState>, required: false, default: 'visible'},
 })
 
 const isLoaded = ref(false);
+const shouldLoad = computed(() => props.mediaLoadState !== 'idle');
+
+function debugImageLoad(message: string) {
+    if (!import.meta.env.DEV) return;
+    console.debug(`[MEDIA IMAGE] ${message}`, {
+        mediaId: props.media.mid,
+        fileName: props.media.fileName,
+        state: props.mediaLoadState,
+    });
+}
+
+watch(() => props.media.mid, () => {
+    isLoaded.value = false;
+});
+
+watch(shouldLoad, (load, wasLoading) => {
+    if (!load) {
+        if (wasLoading) debugImageLoad('cancel');
+        isLoaded.value = false;
+        return;
+    }
+    debugImageLoad(props.mediaLoadState === 'visible' ? 'load visible' : 'preload');
+}, { immediate: true });
 </script>
 
 <template>
     <div class="img-wrapper">
-        <div v-if="!isLoaded" class="img-loading-overlay">
+        <div v-if="shouldLoad && !isLoaded" class="img-loading-overlay">
             <div class="img-spinner"></div>
         </div>
-        <img :src="props.media.mid" loading="lazy" decoding="async" @load="isLoaded = true" @error="isLoaded = true"/>
+        <img
+            v-if="shouldLoad"
+            :src="props.media.mid"
+            :loading="props.mediaLoadState === 'visible' ? 'eager' : 'lazy'"
+            decoding="async"
+            @load="isLoaded = true"
+            @error="isLoaded = true"
+        />
     </div>
 </template>
 
