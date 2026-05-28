@@ -189,6 +189,11 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
 
   function setTweetElement(tweet: Tweet, element: Element | null) {
     const existing = entries.get(tweet.mid)
+    if (existing && existing.element === element) {
+      existing.tweet = tweet
+      return
+    }
+
     if (existing && existing.element !== element) {
       observer?.unobserve(existing.element)
       entries.delete(tweet.mid)

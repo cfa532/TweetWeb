@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { toRef } from 'vue'
-import type { PropType } from 'vue'
+import type { ComponentPublicInstance, PropType } from 'vue'
 import { TweetView } from '@/views'
 import { useTweetMediaLoadingCoordinator } from '@/composables/useTweetMediaLoadingCoordinator'
 
@@ -11,13 +11,27 @@ const props = defineProps({
 })
 
 const { setTweetElement, getMediaLoadState } = useTweetMediaLoadingCoordinator(toRef(props, 'tweets'))
+type TweetRowRef = Element | ComponentPublicInstance | null
+
+const tweetRefCallbacks = new Map<string, (el: TweetRowRef) => void>()
+
+function tweetRefFor(tweet: Tweet) {
+    const existing = tweetRefCallbacks.get(tweet.mid)
+    if (existing) return existing
+
+    const callback = (el: TweetRowRef) => {
+        setTweetElement(tweet, el instanceof Element ? el : null)
+    }
+    tweetRefCallbacks.set(tweet.mid, callback)
+    return callback
+}
 </script>
 
 <template>
     <div
         v-for="tweet in props.tweets"
         :key="tweet.mid"
-        :ref="(el) => setTweetElement(tweet, el as Element | null)"
+        :ref="tweetRefFor(tweet)"
         class="tweet-list-row"
     >
         <TweetView
