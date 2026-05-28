@@ -3,7 +3,7 @@ import { onMounted, ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { MediaView, ItemHeader, TweetActionBar } from '@/views';
+import { AudioPlaylistPlayer, MediaView, ItemHeader, TweetActionBar } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
 import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
@@ -226,14 +226,22 @@ const isLandscape = (attachment: MimeiFileType) => {
   return ar > 1.0;
 };
 
-// Filter media attachments (image, video, audio only)
+// Filter audio into a compact playlist separate from the visual media grid.
+const audioAttachments = computed(() => {
+  const attachments = displayedTweet.value.attachments || [];
+  return attachments.filter((attachment: MimeiFileType) => {
+    const normalizedType = normalizeMediaType(attachment.type);
+    return normalizedType.includes('audio');
+  });
+});
+
+// Filter visual media attachments (image, video only)
 const mediaAttachments = computed(() => {
   const attachments = displayedTweet.value.attachments || [];
   return attachments.filter((attachment: MimeiFileType) => {
     const normalizedType = normalizeMediaType(attachment.type);
     return normalizedType.includes('image') || 
-           normalizedType.includes('video') || 
-           normalizedType.includes('audio');
+           normalizedType.includes('video');
   });
 });
 
@@ -401,6 +409,11 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       >
         <p class='tweet-content-clamp' v-html='truncatedContentHtml'></p>
       </div>
+      <AudioPlaylistPlayer
+        v-if='audioAttachments.length > 0'
+        class='tweet-audio-player'
+        :media-list='audioAttachments'
+      />
       <div v-if='mediaAttachments.length > 0' class='media-attachments' :style='{ aspectRatio: gridAspectRatio }'>
         <!-- 1 item -->
         <div v-if='mediaAttachments.length === 1' class='single-attachment'>
@@ -1028,6 +1041,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   text-decoration: none;
   white-space: nowrap;
   margin-left: 0.25em;
+}
+
+.tweet-audio-player {
+  margin-top: 8px;
+  margin-left: 8px;
+  margin-right: 8px;
+  width: calc(100% - 16px);
 }
 
 .icon-item {

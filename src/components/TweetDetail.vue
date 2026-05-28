@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, watch, computed, nextTick, triggerRef, pro
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
-import { MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
+import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
 import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
@@ -403,18 +403,27 @@ function shouldAutoplay(media: MimeiFileType, mediaList?: MimeiFileType[]) {
     return videoItems[0].mid === media.mid;
 }
 
-// Filter media attachments (image, video, audio only) for the displayed tweet
 const displayedTweet = computed(() => {
     return isRetweet.value && originTweet.value ? originTweet.value : tweet.value;
 });
+
+// Filter audio attachments into a compact playlist above visual media
+const audioAttachments = computed(() => {
+    const attachments = displayedTweet.value?.attachments || [];
+    return attachments.filter((attachment: MimeiFileType) => {
+        const normalizedType = normalizeMediaType(attachment.type);
+        return normalizedType.includes('audio');
+    });
+});
+
+// Filter media attachments (image, video only) for the displayed tweet
 
 const mediaAttachments = computed(() => {
     const attachments = displayedTweet.value?.attachments || [];
     return attachments.filter((attachment: MimeiFileType) => {
         const normalizedType = normalizeMediaType(attachment.type);
         return normalizedType.includes('image') ||
-               normalizedType.includes('video') ||
-               normalizedType.includes('audio');
+               normalizedType.includes('video');
     });
 });
 
@@ -777,6 +786,11 @@ function retryLoad() {
                 } : undefined"
             ></p>
 
+            <AudioPlaylistPlayer
+                v-if="audioAttachments.length > 0"
+                class="detail-audio-player"
+                :media-list="audioAttachments"
+            />
             <div v-if="mediaAttachments.length > 0"
                 :class="['media-attachments', {
                     'media-attachments--multi': mediaAttachments.length > 1,
@@ -807,6 +821,11 @@ function retryLoad() {
                 v-html="linkify(tweet.content)"
             ></p>
 
+            <AudioPlaylistPlayer
+                v-if="audioAttachments.length > 0"
+                class="detail-audio-player"
+                :media-list="audioAttachments"
+            />
             <div v-if="mediaAttachments.length > 0"
                 :class="['media-attachments', {
                     'media-attachments--multi': mediaAttachments.length > 1,
@@ -1005,6 +1024,11 @@ function retryLoad() {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+.detail-audio-player {
+    margin: 8px 8px 8px 3px;
+    width: calc(100% - 11px);
 }
 
 .media-attachments :deep(.container) {
