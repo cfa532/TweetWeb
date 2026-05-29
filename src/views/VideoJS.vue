@@ -155,8 +155,10 @@ const showFeedMuteButton = computed(
 const showFeedFullscreenButton = computed(
   () =>
     showFeedMuteButton.value &&
+    hasUserPausedInFeed.value &&
     !isPlaying.value,
 );
+const hasUserPausedInFeed = ref(false);
 
 function syncMutedState() {
   if (!video.value) return;
@@ -314,6 +316,7 @@ onMounted(() => {
         // Add play/pause event listeners to track state
         video.value.addEventListener('play', () => {
           isPlaying.value = true;
+          hasUserPausedInFeed.value = false;
           showPlayOverlay.value = false;
           isBuffering.value = true; // Show spinner when play starts, hide when actually playing
           updateTimeRemaining();
@@ -334,11 +337,20 @@ onMounted(() => {
             isBuffering.value = false;
           }
         });
-        video.value.addEventListener('pause', () => {
+        video.value.addEventListener('pause', (event: Event) => {
           isPlaying.value = false;
           isBuffering.value = false;
           coordinatorAutoplayPending.value = false;
           updateTimeRemaining();
+          if (
+            isInTweetList.value &&
+            event.isTrusted &&
+            video.value &&
+            video.value.currentTime > 0 &&
+            !video.value.ended
+          ) {
+            hasUserPausedInFeed.value = true;
+          }
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
