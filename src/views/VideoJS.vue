@@ -128,7 +128,8 @@ const videoWrapperStyle = computed(() => {
 });
 
 const timeRemainingText = ref('0:00');
-const isMuted = ref(false);
+const FEED_VIDEO_MUTED_STORAGE_KEY = 'feedVideoMuted';
+const isMuted = ref(true);
 
 const isSoleMediaInGrid = computed(() => {
   if (!props.mediaList || props.mediaList.length === 0) return true;
@@ -139,9 +140,9 @@ const showFeedTimeRemaining = computed(
   () =>
     isInTweetList.value &&
     isSoleMediaInGrid.value &&
-    isPlaying.value &&
     !isAudio &&
-    !showVideoError.value,
+    !showVideoError.value &&
+    timeRemainingText.value !== '0:00',
 );
 
 const showFeedMuteButton = computed(
@@ -151,9 +152,28 @@ const showFeedMuteButton = computed(
     !showVideoError.value,
 );
 
+const showFeedFullscreenButton = computed(
+  () =>
+    showFeedMuteButton.value &&
+    !isPlaying.value,
+);
+
 function syncMutedState() {
   if (!video.value) return;
   isMuted.value = video.value.muted;
+  try {
+    localStorage.setItem(FEED_VIDEO_MUTED_STORAGE_KEY, isMuted.value ? '1' : '0');
+  } catch {}
+}
+
+function getInitialMutedState(): boolean {
+  try {
+    const persisted = localStorage.getItem(FEED_VIDEO_MUTED_STORAGE_KEY);
+    if (persisted === null) return true; // Default to muted
+    return persisted === '1';
+  } catch {
+    return true;
+  }
 }
 
 function updateTimeRemaining() {
@@ -176,7 +196,18 @@ function handleMuteOverlayClick(event: Event) {
   event.preventDefault();
   if (!video.value) return;
   video.value.muted = !video.value.muted;
+  if (!video.value.muted && video.value.volume === 0) {
+    // Feed autoplay previously drove volume to 0 for policy compliance.
+    // Restore audible output when the user explicitly unmutes.
+    video.value.volume = 1;
+  }
   syncMutedState();
+}
+
+function handleFullscreenOverlayClick(event: Event) {
+  event.stopPropagation();
+  event.preventDefault();
+  requestFullscreen();
 }
 
 // Hardware acceleration detection – cached once per page load.
@@ -273,6 +304,8 @@ onMounted(() => {
   
     // Setup video element immediately
     if (video.value && !isHLSInitialized) {
+        video.value.muted = getInitialMutedState();
+        syncMutedState();
         // Clear initial spinner if video is already in a playable state (e.g. from cache)
         if (video.value.readyState >= 3) {
           isBuffering.value = false;
@@ -305,6 +338,7 @@ onMounted(() => {
           isPlaying.value = false;
           isBuffering.value = false;
           coordinatorAutoplayPending.value = false;
+          updateTimeRemaining();
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {
             showPlayOverlay.value = true;
@@ -1992,6 +2026,19 @@ function stopVideo() {
           <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
         </svg>
       </button>
+
+      <button
+        v-if="showFeedFullscreenButton"
+        class="fullscreen-overlay-button"
+        type="button"
+        aria-label="Enter fullscreen"
+        @click="handleFullscreenOverlayClick"
+        @touchend.prevent="handleFullscreenOverlayClick"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        </svg>
+      </button>
       
       <div 
         class="video-tap-handler"
@@ -2389,6 +2436,38 @@ function stopVideo() {
   height: 18px;
 }
 
+.fullscreen-overlay-button {
+  position: absolute;
+  right: 12px;
+  bottom: 60px;
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 17;
+  transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+.fullscreen-overlay-button:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: scale(1.05);
+}
+
+.fullscreen-overlay-button:active {
+  transform: scale(0.95);
+}
+
+.fullscreen-overlay-button svg {
+  width: 18px;
+  height: 18px;
+}
+
 .feed-video-time-remaining {
   position: absolute;
   left: 12px;
@@ -2404,20 +2483,6 @@ function stopVideo() {
   background: rgba(0, 0, 0, 0.2);
   border: none;
   border-radius: 999px;
-}
-
-/* Desktop: keep fullscreen button hidden until hover/focus */
-@media (hover: hover) and (pointer: fine) {
-  .feed-mute-button {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .video-wrapper:hover .feed-mute-button,
-  .feed-mute-button:focus-visible {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 
 /* Detail view: the wrapper carries the aspect-ratio (from measured metadata,

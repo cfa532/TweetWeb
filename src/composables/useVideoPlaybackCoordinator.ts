@@ -180,16 +180,21 @@ function selectPrimary() {
 function autoplayElement(el: HTMLVideoElement) {
   if (!el.paused) return
   if (el.ended) return
-  el.muted = true
-  el.volume = 0
   if (el.readyState >= 1) {
-    el.play().catch(() => {})
+    el.play().catch(() => {
+      // Autoplay fallback for browsers that block unmuted autoplay.
+      el.muted = true
+      el.play().catch(() => {})
+    })
   } else {
     el.addEventListener(
       'loadedmetadata',
       () => {
         if (primaryVideo === el) {
-          el.play().catch(() => {})
+          el.play().catch(() => {
+            el.muted = true
+            el.play().catch(() => {})
+          })
         }
       },
       { once: true }
