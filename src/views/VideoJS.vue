@@ -2361,12 +2361,12 @@ function stopVideo() {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  width: 40px;
-  height: 40px;
-  border: 1px solid rgba(255, 255, 255, 0.65);
+  width: 30px;
+  height: 30px;
+  border: none;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2376,7 +2376,7 @@ function stopVideo() {
 }
 
 .feed-mute-button:hover {
-  background: rgba(0, 0, 0, 0.85);
+  background: rgba(0, 0, 0, 0.2);
   transform: scale(1.05);
 }
 
@@ -2398,11 +2398,11 @@ function stopVideo() {
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
-  color: #fff;
-  padding: 4px 8px;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 6px 8px;
   line-height: 1;
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.65);
+  background: rgba(0, 0, 0, 0.2);
+  border: none;
   border-radius: 999px;
 }
 
