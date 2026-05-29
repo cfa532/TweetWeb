@@ -128,14 +128,33 @@ const videoWrapperStyle = computed(() => {
 });
 
 const timeRemainingText = ref('0:00');
+const isMuted = ref(false);
+
+const isSoleMediaInGrid = computed(() => {
+  if (!props.mediaList || props.mediaList.length === 0) return true;
+  return props.mediaList.length === 1;
+});
 
 const showFeedTimeRemaining = computed(
   () =>
     isInTweetList.value &&
+    isSoleMediaInGrid.value &&
     isPlaying.value &&
     !isAudio &&
     !showVideoError.value,
 );
+
+const showFeedMuteButton = computed(
+  () =>
+    isInTweetList.value &&
+    !isAudio &&
+    !showVideoError.value,
+);
+
+function syncMutedState() {
+  if (!video.value) return;
+  isMuted.value = video.value.muted;
+}
 
 function updateTimeRemaining() {
   const el = video.value;
@@ -150,6 +169,14 @@ function updateTimeRemaining() {
   const minutes = Math.floor(remaining / 60);
   const seconds = Math.floor(remaining % 60);
   timeRemainingText.value = `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function handleMuteOverlayClick(event: Event) {
+  event.stopPropagation();
+  event.preventDefault();
+  if (!video.value) return;
+  video.value.muted = !video.value.muted;
+  syncMutedState();
 }
 
 // Hardware acceleration detection – cached once per page load.
@@ -262,8 +289,10 @@ onMounted(() => {
           isBuffering.value = false;
           coordinatorAutoplayPending.value = false;
           updateTimeRemaining();
+          syncMutedState();
         });
         video.value.addEventListener('timeupdate', updateTimeRemaining);
+        video.value.addEventListener('volumechange', syncMutedState);
         video.value.addEventListener('waiting', () => {
           isBuffering.value = true; // Video is buffering
         });
@@ -357,6 +386,7 @@ onMounted(() => {
               }
             }
             updateTimeRemaining();
+            syncMutedState();
           }
         }, { once: true });
         
@@ -1470,12 +1500,6 @@ function handlePlayOverlayClick(event: Event) {
   }
 }
 
-function handleFullscreenOverlayClick(event: Event) {
-  event.stopPropagation();
-  event.preventDefault();
-  requestFullscreen();
-}
-
 function checkVideoOrientation() {
   const videoElement = video.value;
   if (videoElement && (videoElement.videoWidth < videoElement.videoHeight)) {
@@ -1950,15 +1974,22 @@ function stopVideo() {
 
       <!-- Fullscreen shortcut for tweet feed when video is paused/not playing -->
       <button
-        v-if="isInTweetList && canShowPausedOverlays"
-        class="fullscreen-overlay-button"
+        v-if="showFeedMuteButton"
+        class="feed-mute-button"
         type="button"
-        aria-label="Enter fullscreen"
-        @click="handleFullscreenOverlayClick"
-        @touchend.prevent="handleFullscreenOverlayClick"
+        :aria-label="isMuted ? 'Unmute video' : 'Mute video'"
+        @click="handleMuteOverlayClick"
+        @touchend.prevent="handleMuteOverlayClick"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        <svg v-if="isMuted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <line x1="23" y1="9" x2="17" y2="15"></line>
+          <line x1="17" y1="9" x2="23" y2="15"></line>
+        </svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
         </svg>
       </button>
       
@@ -2326,7 +2357,7 @@ function stopVideo() {
   margin-left: 4px; /* optical center for play triangle */
 }
 
-.fullscreen-overlay-button {
+.feed-mute-button {
   position: absolute;
   right: 12px;
   bottom: 12px;
@@ -2344,16 +2375,16 @@ function stopVideo() {
   transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
 }
 
-.fullscreen-overlay-button:hover {
+.feed-mute-button:hover {
   background: rgba(0, 0, 0, 0.85);
   transform: scale(1.05);
 }
 
-.fullscreen-overlay-button:active {
+.feed-mute-button:active {
   transform: scale(0.95);
 }
 
-.fullscreen-overlay-button svg {
+.feed-mute-button svg {
   width: 18px;
   height: 18px;
 }
@@ -2364,25 +2395,26 @@ function stopVideo() {
   bottom: 12px;
   z-index: 18;
   pointer-events: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
+  color: #fff;
   padding: 4px 8px;
   line-height: 1;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: 999px;
 }
 
 /* Desktop: keep fullscreen button hidden until hover/focus */
 @media (hover: hover) and (pointer: fine) {
-  .fullscreen-overlay-button {
+  .feed-mute-button {
     opacity: 0;
     pointer-events: none;
   }
 
-  .video-wrapper:hover .fullscreen-overlay-button,
-  .fullscreen-overlay-button:focus-visible {
+  .video-wrapper:hover .feed-mute-button,
+  .feed-mute-button:focus-visible {
     opacity: 1;
     pointer-events: auto;
   }
