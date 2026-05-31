@@ -159,6 +159,37 @@ const showFeedFullscreenButton = computed(
     !isPlaying.value,
 );
 const hasUserPausedInFeed = ref(false);
+const hasPlayableFutureData = computed(() => {
+  const el = video.value;
+  if (!el) return false;
+  return el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+});
+const isActuallyPlaying = computed(() => {
+  const el = video.value;
+  if (!el) return false;
+  return !el.paused && !el.ended;
+});
+
+const showBufferingOverlay = computed(() => {
+  // Feed: show spinner both while actively buffering and during initial fetch
+  // before metadata arrives (prevents black tile on first load).
+  if (isInTweetList.value) {
+    const isInitialFeedLoad = props.mediaLoadState !== 'idle' && !hasMetadata.value && !showVideoError.value;
+    if (isInitialFeedLoad) return true;
+
+    // Once playing, trust actual media readiness so stale buffering flags do
+    // not leave the spinner stuck on top of a playing video.
+    if (isActuallyPlaying.value) {
+      return !hasPlayableFutureData.value;
+    }
+
+    return isBuffering.value;
+  }
+
+  if (!isBuffering.value) return false;
+  // Detail on mobile: avoid spinner before user starts playback.
+  return !isMobile || isPlaying.value;
+});
 
 function syncMutedState() {
   if (!video.value) return;
@@ -308,6 +339,12 @@ onMounted(() => {
     if (video.value && !isHLSInitialized) {
         video.value.muted = getInitialMutedState();
         syncMutedState();
+        // If browser restored metadata/frame from cache before listeners were
+        // attached, mark metadata ready immediately so initial-load spinner
+        // logic does not get stuck.
+        if (video.value.readyState >= HTMLMediaElement.HAVE_METADATA) {
+          hasMetadata.value = true;
+        }
         // Clear initial spinner if video is already in a playable state (e.g. from cache)
         if (video.value.readyState >= 3) {
           isBuffering.value = false;
@@ -333,6 +370,9 @@ onMounted(() => {
           isBuffering.value = true; // Video is buffering
         });
         video.value.addEventListener('canplay', () => {
+          if (!hasMetadata.value && video.value?.readyState >= HTMLMediaElement.HAVE_METADATA) {
+            hasMetadata.value = true;
+          }
           if (!coordinatorAutoplayPending.value) {
             isBuffering.value = false;
           }
@@ -2002,7 +2042,7 @@ function stopVideo() {
            detail view (where the native loading indicator is barely visible
            against the black wrapper). On mobile, suppress before the user
            starts playback so it doesn't compete with the play overlay. -->
-      <div v-if="isBuffering && (!isMobile || isPlaying)" class="buffering-overlay">
+      <div v-if="showBufferingOverlay" class="buffering-overlay">
         <div class="buffering-spinner"></div>
       </div>
 
