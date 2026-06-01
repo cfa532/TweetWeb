@@ -1490,9 +1490,9 @@ export const useTweetStore = defineStore('tweetStore', {
         async getUser(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
             // check if the user has been cached (unless forcing refresh)
             if (!forceRefresh && this.loginUser && this.loginUser.mid == userId)
-                return this.loginUser
+                return await this._ensureUserRootHost(this.loginUser)
             if (!forceRefresh && this.users.get(userId))
-                return this.users.get(userId)
+                return await this._ensureUserRootHost(this.users.get(userId) as User)
 
             // Deduplicate concurrent fetches for the same user.
             // Use separate keys for forced vs normal fetches so a cached (fast)
@@ -1501,7 +1501,11 @@ export const useTweetStore = defineStore('tweetStore', {
             const pending = this._pendingUserFetches.get(pendingKey)
             if (pending) return pending
 
-            const fetchPromise = this._fetchUser(userId, forceRefresh)
+            const fetchPromise = (async () => {
+                const fetched = await this._fetchUser(userId, forceRefresh)
+                if (!fetched) return undefined
+                return await this._ensureUserRootHost(fetched as User)
+            })()
             this._pendingUserFetches.set(pendingKey, fetchPromise)
             try {
                 return await fetchPromise
@@ -1511,57 +1515,39 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Ensures a user object's providerIp/client point at hostIds[0]'s IP.
+         */
+        async _ensureUserRootHost(user: User): Promise<User> {
+            if (!user.hostIds?.[0]) return user
+            try {
+                const rootIp = await this.resolveWritableHostIp(user)
+                if (user.providerIp !== rootIp) {
+                    user.providerIp = rootIp
+                }
+                user.client = createPooledClient(rootIp, this.lapi.connectionPool)
+                if (user.avatar) {
+                    user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${rootIp}`)
+                }
+                user.writableHostIp = rootIp
+
+                this.users.set(user.mid, user)
+                this._rewriteUserMediaHosts(user.mid, rootIp)
+                const cachedUser = { ...(user as any) }
+                delete cachedUser.client
+                sessionStorage.setItem(user.mid, JSON.stringify(cachedUser))
+                return user
+            } catch (error) {
+                console.warn(`[ensureUserRootHost] Failed for ${user.mid}:`, error)
+                return user
+            }
+        },
+
+        /**
          * Fetch user core data from the user's root host (hostIds[0]).
          * This is used by profile surfaces that must read from source-of-truth.
          */
         async getUserFromRootHost(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
-            let user = this.users.get(userId)
-                ?? (this.loginUser?.mid === userId ? this.loginUser : undefined)
-                ?? await this.getUser(userId, forceRefresh)
-            if (!user) return undefined
-            if (!user.hostIds?.[0]) return user
-
-            try {
-                const rootIp = await this.resolveWritableHostIp(user)
-                const rootClient = createPooledClient(rootIp, this.lapi.connectionPool)
-                const result = await rootClient.RunMApp("get_user", {
-                    aid: this.appId,
-                    ver: "last",
-                    version: "v3",
-                    userid: userId,
-                })
-                const payload = (result && typeof result === "object" && "success" in result)
-                    ? (result.success ? result.data : undefined)
-                    : result
-                if (!payload || typeof payload !== "object" || !(payload as any).mid || !(payload as any).hostIds) {
-                    return user
-                }
-
-                const merged: any = { ...payload }
-                merged.providerIp = rootIp
-                merged.client = createPooledClient(rootIp, this.lapi.connectionPool)
-                merged.avatar = this.getMediaUrl(merged.avatar, `http://${rootIp}`)
-                if (merged.writableHostIp === undefined || merged.writableHostIp === null) {
-                    merged.writableHostIp = rootIp
-                }
-
-                const existing = this.users.get(userId)
-                if (existing) {
-                    Object.assign(existing as any, merged as any)
-                    user = existing
-                } else {
-                    this.users.set(userId, merged as User)
-                    user = merged as User
-                }
-                this._rewriteUserMediaHosts(userId, rootIp)
-                const cachedUser = { ...(user as any) }
-                delete cachedUser.client
-                sessionStorage.setItem(userId, JSON.stringify(cachedUser))
-                return user
-            } catch (error) {
-                console.warn(`[getUserFromRootHost] Failed for ${userId}:`, error)
-                return user
-            }
+            return await this.getUser(userId, forceRefresh)
         },
 
         async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {
@@ -1575,7 +1561,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         const cachedUser = JSON.parse(cached)
                         if (cachedUser && cachedUser.mid && cachedUser.hostIds && cachedUser.providerIp) {
                             cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
-                            cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
+                            cachedUser.avatar = this.normalizeAvatarUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
                             if (cachedUser.writableHostIp === undefined) {
                                 cachedUser.writableHostIp = null
                             }
@@ -1637,7 +1623,7 @@ export const useTweetStore = defineStore('tweetStore', {
             user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
             sessionStorage.setItem(userId, JSON.stringify(user))
             user.client = createPooledClient(providerIp, this.lapi.connectionPool)
-            user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
+            user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
             delete user.baseUrl
             delete user.writableUrl
             // Initialize writableHostIp if not already set
@@ -2084,10 +2070,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (ud?.mid && ud?.hostIds) {
                                     ud.providerIp = tweetProvider
                                     ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                    ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
                                     if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                    this.users.set(authorId, ud)
-                                    setCommentAuthor(commentMid, ud)
+                                    const rooted = await this._ensureUserRootHost(ud as User)
+                                    this.users.set(authorId, rooted)
+                                    setCommentAuthor(commentMid, rooted)
                                     return
                                 }
                             } catch (err) {
@@ -2283,10 +2270,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (ud?.mid && ud?.hostIds) {
                                     ud.providerIp = tweetProvider
                                     ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                    ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
                                     if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                    this.users.set(authorId, ud)
-                                    setCommentAuthor(commentMid, ud)
+                                    const rooted = await this._ensureUserRootHost(ud as User)
+                                    this.users.set(authorId, rooted)
+                                    setCommentAuthor(commentMid, rooted)
                                     return
                                 }
                             } catch (err) {
@@ -2323,6 +2311,27 @@ export const useTweetStore = defineStore('tweetStore', {
                 return import.meta.env.VITE_APP_LOGO
             }
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
+        },
+
+        /**
+         * Normalize user avatar to a concrete URL on the given base URL.
+         * - If avatar is already a full URL, keep path and only swap host.
+         * - If avatar is a raw mimei hash/id, build URL via getMediaUrl.
+         */
+        normalizeAvatarUrl(avatar: string | undefined, baseUrl: string): string {
+            if (!avatar) return import.meta.env.VITE_APP_LOGO
+            if (/^https?:\/\//i.test(avatar)) {
+                // Only swap host for node-scoped media URLs.
+                // Keep static/default avatar URLs (e.g. app CDN/logo) unchanged.
+                if (/^https?:\/\/[^/]+\/(?:ipfs|mm)\//i.test(avatar)) {
+                    return avatar.replace(/^https?:\/\/[^/]+/i, baseUrl)
+                }
+                return avatar
+            }
+            if (avatar.startsWith('/')) {
+                return `${baseUrl}${avatar}`
+            }
+            return this.getMediaUrl(avatar, baseUrl)
         },
 
         /**
