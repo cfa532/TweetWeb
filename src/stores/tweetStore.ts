@@ -1177,12 +1177,13 @@ export const useTweetStore = defineStore('tweetStore', {
         async getTweet(
             tweetId: MimeiId,
             authorId: MimeiId | undefined = undefined,
-            useRacing: boolean = false
+            useRacing: boolean = false,
+            forceRefresh: boolean = false
         ): Promise<Tweet | null> {
-            let tweet = await this.fetchTweet(tweetId, authorId, useRacing)
+            let tweet = await this.fetchTweet(tweetId, authorId, useRacing, forceRefresh)
             if (!tweet ) {
                 // Author node has not data, try to load the tweet by id alone from some other provider.
-                tweet = await this.fetchTweet(tweetId, undefined, useRacing)
+                tweet = await this.fetchTweet(tweetId, undefined, useRacing, forceRefresh)
                 if (!tweet) return null
             }
 
@@ -1202,16 +1203,17 @@ export const useTweetStore = defineStore('tweetStore', {
         async fetchTweet(
             tweetId: MimeiId,
             authorId: MimeiId | undefined = undefined,
-            useRacing: boolean = false
+            useRacing: boolean = false,
+            forceRefresh: boolean = false
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
-            if (cachedTweet) {
+            if (!forceRefresh && cachedTweet) {
                 console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
             }
 
-            if (sessionStorage.getItem(tweetId)) {
+            if (!forceRefresh && sessionStorage.getItem(tweetId)) {
                 console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
                 if (t.author && t.author.providerIp) {
@@ -1443,6 +1445,44 @@ export const useTweetStore = defineStore('tweetStore', {
 
             sessionStorage.setItem(tweetData.mid, JSON.stringify(tweet))
             return tweet
+        },
+
+        /**
+         * Mirrors iOS ProfileView.refreshProfileData background resync:
+         * ask the read node to sync the target user's root object from hostIds[0],
+         * then force-refresh user data from the provider route.
+         */
+        async resyncUser(userId: MimeiId, seedUser?: User): Promise<User | undefined> {
+            const user = seedUser ?? this.users.get(userId) ?? await this.getUser(userId, true)
+            if (!user?.client) return undefined
+            try {
+                const ret = await user.client.RunMApp("resync_user", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v2",
+                    userid: userId,
+                })
+                if (ret && typeof ret === "object" && "success" in ret) {
+                    if (ret.success === false) {
+                        console.warn(`[resyncUser] resync_user failed for ${userId}:`, ret.message || ret)
+                    } else {
+                        const freshData = ret.data
+                        if (freshData && typeof freshData === "object") {
+                            Object.assign(user as any, freshData as any)
+                            if (user.providerIp) {
+                                user.avatar = this.getMediaUrl(user.avatar, `http://${user.providerIp}`)
+                            }
+                            this.users.set(userId, user)
+                            const cachedUser = { ...(user as any) }
+                            delete cachedUser.client
+                            sessionStorage.setItem(userId, JSON.stringify(cachedUser))
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn(`[resyncUser] resync_user RPC failed for ${userId}:`, error)
+            }
+            return user
         },
 
         /**

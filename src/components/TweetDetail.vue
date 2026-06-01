@@ -237,13 +237,15 @@ async function showTweet(timeoutId?: number) {
         setupCommentObserver()
 
         // Mirrors iOS TweetDetailView.setupInitialData: when the author's write node
-        // (hostIds[0]) and read node (hostIds[1]) differ, kick off a background sync
-        // for any failed comment IDs and schedule a 5-minute repeat (same as iOS).
+        // (hostIds[0]) and read node (hostIds[1]) differ, refresh tweet detail and
+        // sync failed comments immediately, then repeat every 5 minutes.
         if (commentOwner && authorNodesDiffer(commentOwner)) {
             const owner = commentOwner
+            void resyncDetailTweets()
             void syncMissingComments(owner)
             if (syncTimer) clearInterval(syncTimer)
             syncTimer = setInterval(() => {
+                void resyncDetailTweets()
                 void syncMissingComments(owner)
             }, 5 * 60 * 1000)
         }
@@ -575,6 +577,9 @@ const commentBottomSentinel = ref<HTMLElement | null>(null)
 let commentObserver: IntersectionObserver | null = null
 const failedCommentIds = ref<Set<string>>(new Set())
 let syncTimer: ReturnType<typeof setInterval> | null = null
+let detailResyncInFlight = false
+let lastDetailResyncAt = 0
+const DETAIL_RESYNC_MIN_INTERVAL_MS = 60 * 1000
 
 function setupCommentObserver() {
     if (commentObserver) {
@@ -604,6 +609,78 @@ async function loadMoreComments() {
         commentPage.value = nextPage
     } finally {
         isLoadingMoreComments.value = false
+    }
+}
+
+function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
+    // Keep existing comments (including optimistic/local synced entries) and
+    // update detail fields from refresh_tweet.
+    const existingComments = target.comments ?? []
+    tweetStore.refreshCachedTweet(target, refreshed)
+    target.title = refreshed.title
+    target.content = refreshed.content
+    target.attachments = refreshed.attachments
+    target.author = refreshed.author
+    target.provider = refreshed.provider
+    target.originalTweetId = refreshed.originalTweetId
+    target.originalAuthorId = refreshed.originalAuthorId
+    target.originalTweet = refreshed.originalTweet
+    target.comments = existingComments
+}
+
+// Mirrors iOS TweetDetailView.doResyncTweet: refresh_tweet on the read node so
+// detail payload is pulled from hostIds[0] when nodes differ.
+async function resyncDetailTweets() {
+    if (detailResyncInFlight) return
+    const now = Date.now()
+    if (now - lastDetailResyncAt < DETAIL_RESYNC_MIN_INTERVAL_MS) return
+    detailResyncInFlight = true
+    lastDetailResyncAt = now
+    try {
+    if (!tweet.value) return
+    const isPureRetweet = !!tweet.value.originalTweetId && !tweet.value.content && !tweet.value.attachments?.length
+    if (tweet.value.originalTweetId && tweet.value.originalAuthorId) {
+        if (isPureRetweet) {
+            const refreshedOriginal = await tweetStore.getTweet(
+                tweet.value.originalTweetId as MimeiId,
+                tweet.value.originalAuthorId as MimeiId,
+                false,
+                true
+            )
+            if (refreshedOriginal && originTweet.value) {
+                applyRefreshedTweet(originTweet.value, refreshedOriginal)
+                triggerRef(originTweet)
+            }
+            return
+        }
+
+        const [refreshedTweet, refreshedOriginal] = await Promise.all([
+            tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true),
+            tweetStore.getTweet(
+                tweet.value.originalTweetId as MimeiId,
+                tweet.value.originalAuthorId as MimeiId,
+                false,
+                true
+            ),
+        ])
+        if (refreshedTweet && tweet.value) {
+            applyRefreshedTweet(tweet.value, refreshedTweet)
+            triggerRef(tweet)
+        }
+        if (refreshedOriginal && originTweet.value) {
+            applyRefreshedTweet(originTweet.value, refreshedOriginal)
+            triggerRef(originTweet)
+        }
+        return
+    }
+
+    const refreshed = await tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true)
+    if (refreshed && tweet.value) {
+        applyRefreshedTweet(tweet.value, refreshed)
+        triggerRef(tweet)
+    }
+    } finally {
+        detailResyncInFlight = false
     }
 }
 
