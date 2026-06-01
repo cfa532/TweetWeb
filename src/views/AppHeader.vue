@@ -326,7 +326,7 @@ watch(
             // Use cache when available — racing provider IPs on every profile
             // visit was wasteful. If the cached IP is dead, the avatar's
             // @error handler force-refreshes to recover (see onAvatarError).
-            const u = await tweetStore.getUser(requestedId)
+            const u = await tweetStore.getUserFromRootHost(requestedId)
             if (userId.value !== requestedId) return
             user.value = u ?? syncPeek
         } catch (e) {
@@ -369,7 +369,7 @@ function onAvatarError(event: Event) {
     const id = userId.value
     if (!id) return
     img.dataset.refreshed = '1'
-    tweetStore.getUser(id, true).catch(() => undefined)
+    tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
 }
 </script>
 

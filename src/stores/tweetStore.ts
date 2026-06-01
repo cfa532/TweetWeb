@@ -935,7 +935,7 @@ export const useTweetStore = defineStore('tweetStore', {
             pageSize: number = 20
         ): Promise<Tweet[]> {
             const user = await this.getUser(userId)
-            if (!user || !user.client) return []
+            if (!user) return []
 
             const params = {
                 aid: this.appId,
@@ -950,7 +950,9 @@ export const useTweetStore = defineStore('tweetStore', {
 
             let raw: any
             try {
-                raw = await user.client.RunMApp("get_user_meta", params)
+                const writableIp = await this.resolveWritableHostIp(user)
+                const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                raw = await profileClient.RunMApp("get_user_meta", params)
             } catch (e) {
                 console.warn(`[loadUserTweetsByType] ${type} RPC failed for ${userId}:`, e)
                 return []
@@ -1505,6 +1507,60 @@ export const useTweetStore = defineStore('tweetStore', {
                 return await fetchPromise
             } finally {
                 this._pendingUserFetches.delete(pendingKey)
+            }
+        },
+
+        /**
+         * Fetch user core data from the user's root host (hostIds[0]).
+         * This is used by profile surfaces that must read from source-of-truth.
+         */
+        async getUserFromRootHost(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
+            let user = this.users.get(userId)
+                ?? (this.loginUser?.mid === userId ? this.loginUser : undefined)
+                ?? await this.getUser(userId, forceRefresh)
+            if (!user) return undefined
+            if (!user.hostIds?.[0]) return user
+
+            try {
+                const rootIp = await this.resolveWritableHostIp(user)
+                const rootClient = createPooledClient(rootIp, this.lapi.connectionPool)
+                const result = await rootClient.RunMApp("get_user", {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v3",
+                    userid: userId,
+                })
+                const payload = (result && typeof result === "object" && "success" in result)
+                    ? (result.success ? result.data : undefined)
+                    : result
+                if (!payload || typeof payload !== "object" || !(payload as any).mid || !(payload as any).hostIds) {
+                    return user
+                }
+
+                const merged: any = { ...payload }
+                merged.providerIp = rootIp
+                merged.client = createPooledClient(rootIp, this.lapi.connectionPool)
+                merged.avatar = this.getMediaUrl(merged.avatar, `http://${rootIp}`)
+                if (merged.writableHostIp === undefined || merged.writableHostIp === null) {
+                    merged.writableHostIp = rootIp
+                }
+
+                const existing = this.users.get(userId)
+                if (existing) {
+                    Object.assign(existing as any, merged as any)
+                    user = existing
+                } else {
+                    this.users.set(userId, merged as User)
+                    user = merged as User
+                }
+                this._rewriteUserMediaHosts(userId, rootIp)
+                const cachedUser = { ...(user as any) }
+                delete cachedUser.client
+                sessionStorage.setItem(userId, JSON.stringify(cachedUser))
+                return user
+            } catch (error) {
+                console.warn(`[getUserFromRootHost] Failed for ${userId}:`, error)
+                return user
             }
         },
 
