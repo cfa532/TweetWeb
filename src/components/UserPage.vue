@@ -25,7 +25,6 @@ const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
-const resyncedUsersThisSession = new Set<string>();
 
 function isNearBottom(threshold = scrollThreshold) {
     const scrollBottom = window.innerHeight + window.scrollY;
@@ -539,21 +538,9 @@ watch(authorId, async (nv, ov) => {
 
     // Force-refresh user data from its host (keeps cache for instant display
     // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
-    // Then run one background resync using the same resolved user to avoid duplicate
-    // provider-IP resolution/health-check bursts.
-    void (async () => {
-        const freshUser = await tweetStore.getUser(nv, true)
-        console.log(`[UserPage] providerIp for ${nv}:`, freshUser?.providerIp ?? 'not resolved')
-        if (!resyncedUsersThisSession.has(nv)) {
-            resyncedUsersThisSession.add(nv)
-            try {
-                await tweetStore.resyncUser(nv, freshUser)
-                console.log(`[UserPage] Background resync completed for ${nv}`)
-            } catch (error) {
-                console.warn(`[UserPage] Background resync failed for ${nv}:`, error)
-            }
-        }
-    })()
+    tweetStore.getUser(nv, true).then(u => {
+        console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
+    });
     await initialLoadTweets(nv);
     // Deep link to a tweet, or restore list position / scroll top on author switch
     await maybeScrollOrRestoreProfile(nv, ov)

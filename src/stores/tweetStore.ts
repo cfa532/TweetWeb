@@ -549,7 +549,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 params.userid = user.mid
 
                 try {
-                    const response = await user.client.RunMApp("get_tweets_by_user", params)
+                    if (attempt > 1) {
+                        const hostId = user.hostIds?.[0]
+                        if (hostId) this._writableHostCache.delete(hostId)
+                        user.writableHostIp = null
+                    }
+                    const writableIp = await this.resolveWritableHostIp(user)
+                    const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                    const response = await profileClient.RunMApp("get_tweets_by_user", params)
 
                     // Check success status first
                     const success = response?.success
@@ -824,7 +831,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 try {
-                    const raw = await user.client.RunMApp("get_pinned_tweets", params)
+                    if (attempt > 1) {
+                        const hostId = user.hostIds?.[0]
+                        if (hostId) this._writableHostCache.delete(hostId)
+                        user.writableHostIp = null
+                    }
+                    const writableIp = await this.resolveWritableHostIp(user)
+                    const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                    const raw = await profileClient.RunMApp("get_pinned_tweets", params)
 
                     // v2 wraps payloads as { success, data, message }. Unwrap.
                     pinned = (raw && typeof raw === 'object' && 'success' in raw)
@@ -979,7 +993,16 @@ export const useTweetStore = defineStore('tweetStore', {
             pageNumber: number,
             pageSize: number
         ): Promise<number | null> {
-            try {
+            let lastError: unknown = null
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                if (attempt > 1) {
+                    const hostId = user.hostIds?.[0]
+                    if (hostId) this._writableHostCache.delete(hostId)
+                    user.writableHostIp = null
+                }
+                const writableIp = await this.resolveWritableHostIp(user)
+                const feedClient = createPooledClient(writableIp, this.lapi.connectionPool)
                 const params = {
                     aid: this.appId,
                     ver: "last",
@@ -988,7 +1011,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     userid: user.mid,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                 }
-                const response = await user.client.RunMApp("get_tweet_feed", params)
+                const response = await feedClient.RunMApp("get_tweet_feed", params)
 
                 // Check success status first
                 const success = response?.success
@@ -1077,10 +1100,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 return tweetsData?.length || null
-            } catch (e) {
-                console.error("Error fetching tweet feed:", e)
-                return null
+                } catch (e) {
+                    lastError = e
+                    console.error(`Error fetching tweet feed (attempt ${attempt}/2):`, e)
+                    if (attempt === 1) continue
+                }
             }
+            if (lastError) {
+                console.error("Error fetching tweet feed:", lastError)
+            }
+            return null
         },
 
         /**
@@ -1104,7 +1133,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     hostid: this.loginUser.hostIds?.[0]
                 }
 
-                const response = await this.loginUser.client.RunMApp("update_following_tweets", params)
+                const writableIp = await this.resolveWritableHostIp(this.loginUser)
+                const updateClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                const response = await updateClient.RunMApp("update_following_tweets", params)
 
                 // Check success status first
                 const success = response?.success
@@ -1445,44 +1476,6 @@ export const useTweetStore = defineStore('tweetStore', {
 
             sessionStorage.setItem(tweetData.mid, JSON.stringify(tweet))
             return tweet
-        },
-
-        /**
-         * Mirrors iOS ProfileView.refreshProfileData background resync:
-         * ask the read node to sync the target user's root object from hostIds[0],
-         * then force-refresh user data from the provider route.
-         */
-        async resyncUser(userId: MimeiId, seedUser?: User): Promise<User | undefined> {
-            const user = seedUser ?? this.users.get(userId) ?? await this.getUser(userId, true)
-            if (!user?.client) return undefined
-            try {
-                const ret = await user.client.RunMApp("resync_user", {
-                    aid: this.appId,
-                    ver: "last",
-                    version: "v2",
-                    userid: userId,
-                })
-                if (ret && typeof ret === "object" && "success" in ret) {
-                    if (ret.success === false) {
-                        console.warn(`[resyncUser] resync_user failed for ${userId}:`, ret.message || ret)
-                    } else {
-                        const freshData = ret.data
-                        if (freshData && typeof freshData === "object") {
-                            Object.assign(user as any, freshData as any)
-                            if (user.providerIp) {
-                                user.avatar = this.getMediaUrl(user.avatar, `http://${user.providerIp}`)
-                            }
-                            this.users.set(userId, user)
-                            const cachedUser = { ...(user as any) }
-                            delete cachedUser.client
-                            sessionStorage.setItem(userId, JSON.stringify(cachedUser))
-                        }
-                    }
-                }
-            } catch (error) {
-                console.warn(`[resyncUser] resync_user RPC failed for ${userId}:`, error)
-            }
-            return user
         },
 
         /**
