@@ -927,12 +927,11 @@ async function processVideoUpload(req, res) {
     // Register this temp directory to prevent cleanup
     activeTempDirs.add(tempDir);
 
-    // Get video dimensions if resampling is needed
+    // Get video dimensions (always needed for routing and normalization decisions)
     let videoInfo = null;
-    
-    if (!noResample) {
-      console.log(`\n[${requestId}] [STEP 3] Getting video dimensions for resampling...`);
-      const getVideoInfo = () => {
+
+    console.log(`\n[${requestId}] [STEP 3] Getting video dimensions${noResample ? ' (noResample=true, will preserve original)' : ''}...`);
+    const getVideoInfoSync = () => {
         return new Promise((resolve, reject) => {
           const ffprobeCommand = `ffprobe -v quiet -print_format json -show_format -show_streams ${escapeShellArg(uploadedFile.tempFilePath)}`;
           
@@ -1040,19 +1039,13 @@ async function processVideoUpload(req, res) {
             })
             .catch(reject);
         });
-      };
+    };
 
-      videoInfo = await getVideoInfo();
-      console.log(`[${requestId}] [INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
-      
-      const displayWidth = videoInfo.displayWidth || videoInfo.width;
-      const displayHeight = videoInfo.displayHeight || videoInfo.height;
-      console.log(`[${requestId}] [INFO] Display orientation: ${displayHeight > displayWidth ? 'Portrait' : 'Landscape'} (${displayWidth}x${displayHeight})`);
-      if (videoInfo.rotation !== 0) {
-        console.log(`[${requestId}] [INFO] Video has rotation: ${videoInfo.rotation}°`);
-      }
-    } else {
-      console.log(`\n[${requestId}] [STEP 3] Skipping video dimension analysis (noResample=true)`);
+    videoInfo = await getVideoInfoSync();
+    console.log(`[${requestId}] [INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
+    console.log(`[${requestId}] [INFO] Display orientation: ${(videoInfo.displayHeight || videoInfo.height) > (videoInfo.displayWidth || videoInfo.width) ? 'Portrait' : 'Landscape'} (${videoInfo.displayWidth || videoInfo.width}x${videoInfo.displayHeight || videoInfo.height})`);
+    if (videoInfo.rotation !== 0) {
+      console.log(`[${requestId}] [INFO] Video has rotation: ${videoInfo.rotation}°`);
     }
 
     // Normalize video to MP4 format
@@ -1074,8 +1067,15 @@ async function processVideoUpload(req, res) {
     
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, calculatedBitrateK;
-    
-    if (videoResolution > 720) {
+
+    if (noResample) {
+      // Preserve original dimensions and bitrate (user selected "preserve quality")
+      console.log(`[${requestId}] [NORMALIZE] noResample=true, preserving original dimensions: ${displayWidth}x${displayHeight}`);
+      const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
+      targetWidth = evenDims.width;
+      targetHeight = evenDims.height;
+      calculatedBitrateK = sourceBitrateK || 2000;
+    } else if (videoResolution > 720) {
       // >720p: normalize to 720p with 1500k bitrate
       console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with 1500k bitrate`);
       const isPortrait = displayHeight > displayWidth;
@@ -1626,12 +1626,11 @@ async function processVideoUploadInternal(req, jobId) {
     // Register this temp directory to prevent cleanup
     activeTempDirs.add(tempDir);
 
-    // Get video dimensions if resampling is needed
+    // Get video dimensions (always needed for routing and normalization decisions)
     let videoInfo = null;
-    
-    if (!noResample) {
-      console.log(`\n[${jobId}] [STEP 3] Getting video dimensions for resampling...`);
-      const getVideoInfo = () => {
+
+    console.log(`\n[${jobId}] [STEP 3] Getting video dimensions${noResample ? ' (noResample=true, will preserve original)' : ''}...`);
+    const getVideoInfoInternal = () => {
         return new Promise((resolve, reject) => {
           const ffprobeCommand = `ffprobe -v quiet -print_format json -show_format -show_streams ${escapeShellArg(uploadedFile.tempFilePath)}`;
           
@@ -1725,17 +1724,14 @@ async function processVideoUploadInternal(req, jobId) {
         });
       };
 
-      videoInfo = await getVideoInfo();
-      console.log(`[${jobId}] [INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
-      
-      displayWidth = videoInfo.displayWidth || videoInfo.width;
-      displayHeight = videoInfo.displayHeight || videoInfo.height;
-      console.log(`[${jobId}] [INFO] Display orientation: ${displayHeight > displayWidth ? 'Portrait' : 'Landscape'} (${displayWidth}x${displayHeight})`);
-      if (videoInfo.rotation !== 0) {
-        console.log(`[${jobId}] [INFO] Video has rotation: ${videoInfo.rotation}°`);
-      }
-    } else {
-      console.log(`\n[${jobId}] [STEP 3] Skipping video dimension analysis (noResample=true)`);
+    videoInfo = await getVideoInfoInternal();
+    console.log(`[${jobId}] [INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
+
+    displayWidth = videoInfo.displayWidth || videoInfo.width;
+    displayHeight = videoInfo.displayHeight || videoInfo.height;
+    console.log(`[${jobId}] [INFO] Display orientation: ${displayHeight > displayWidth ? 'Portrait' : 'Landscape'} (${displayWidth}x${displayHeight})`);
+    if (videoInfo.rotation !== 0) {
+      console.log(`[${jobId}] [INFO] Video has rotation: ${videoInfo.rotation}°`);
     }
 
     // Normalize video to MP4 format
@@ -1752,10 +1748,20 @@ async function processVideoUploadInternal(req, jobId) {
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
     console.log(`[${jobId}] [INFO] Video resolution: ${videoResolution}p`);
     
+    // Get source video bitrate (in bps, convert to kbps)
+    const sourceBitrateKInternal = videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : null;
+
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, bitrate;
-    
-    if (videoResolution > 720) {
+
+    if (noResample) {
+      // Preserve original dimensions and bitrate (user selected "preserve quality")
+      console.log(`[${jobId}] [NORMALIZE] noResample=true, preserving original dimensions: ${displayWidth}x${displayHeight}`);
+      const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
+      targetWidth = evenDims.width;
+      targetHeight = evenDims.height;
+      bitrate = sourceBitrateKInternal || 2000;
+    } else if (videoResolution > 720) {
       // >720p: normalize to 720p with 1500k bitrate
       console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with 1500k bitrate`);
       const isPortrait = displayHeight > displayWidth;

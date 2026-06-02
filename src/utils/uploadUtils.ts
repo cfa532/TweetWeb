@@ -437,58 +437,179 @@ async function tryVideoElementAnalysis(file: File): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const video = document.createElement('video');
     const url = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      video.src = '';
+      if (err) reject(err); else resolve(video.videoWidth / video.videoHeight);
+    };
+
+    const timer = setTimeout(() => cleanup(new Error('Video element metadata timeout')), 8000);
+
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
-      URL.revokeObjectURL(url);
+      clearTimeout(timer);
       if (video.videoWidth && video.videoHeight) {
-        resolve(video.videoWidth / video.videoHeight);
+        cleanup();
       } else {
-        reject(new Error('Video element reported zero dimensions'));
+        cleanup(new Error('Video element reported zero dimensions'));
       }
     };
     video.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Video element failed to load metadata'));
+      clearTimeout(timer);
+      cleanup(new Error('Video element failed to load metadata'));
     };
     video.src = url;
   });
 }
 
-// Method 1: Analyze file header for common video formats
+// Method 1: Parse MP4/MOV box structure to extract video dimensions
 async function tryFileHeaderAnalysis(file: File): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
+  // Try the first 1MB (covers faststart-optimized files where moov is at the front)
+  const firstChunk = await readFileSlice(file, 0, Math.min(file.size, 1024 * 1024));
+  if (isMP4OrQuickTimeData(firstChunk)) {
+    const ratio = extractAspectRatioFromMP4Boxes(firstChunk);
+    if (ratio) return ratio;
+
+    // moov not in first 1MB — try last 2MB (common for non-faststart files)
+    if (file.size > 1024 * 1024) {
+      const tailStart = Math.max(0, file.size - 2 * 1024 * 1024);
+      const tailChunk = await readFileSlice(file, tailStart, file.size);
+      const ratio2 = extractAspectRatioFromMP4Boxes(tailChunk);
+      if (ratio2) return ratio2;
+    }
+  }
+  throw new Error('No valid dimensions found in file header');
+}
+
+function readFileSlice(file: File, start: number, end: number): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const arrayBuffer = e.target?.result as ArrayBuffer;
-        const uint8Array = new Uint8Array(arrayBuffer);
-        
-        // Check for QuickTime/MOV format (starts with specific atoms)
-        if (isQuickTimeFile(uint8Array)) {
-          const aspectRatio = parseQuickTimeDimensions(uint8Array);
-          if (aspectRatio && aspectRatio > 0) {
-            resolve(aspectRatio);
-            return;
-          }
-        }
-        
-        // Check for MP4 format
-        if (isMP4File(uint8Array)) {
-          const aspectRatio = parseMP4Dimensions(uint8Array);
-          if (aspectRatio && aspectRatio > 0) {
-            resolve(aspectRatio);
-            return;
-          }
-        }
-        
-        reject(new Error('No valid dimensions found in file header'));
-      } catch (error) {
-        reject(error);
-      }
-    };
+    reader.onload = (e) => resolve(new Uint8Array(e.target!.result as ArrayBuffer));
     reader.onerror = () => reject(new Error('FileReader failed'));
-    reader.readAsArrayBuffer(file.slice(0, 1024 * 1024)); // Read first 1MB
+    reader.readAsArrayBuffer(file.slice(start, end));
   });
+}
+
+function isMP4OrQuickTimeData(data: Uint8Array): boolean {
+  if (data.length < 8) return false;
+  const type = String.fromCharCode(data[4], data[5], data[6], data[7]);
+  return type === 'ftyp' || type === 'moov' || type === 'mdat' || type === 'wide' || type === 'free';
+}
+
+function mp4Uint32BE(data: Uint8Array, offset: number): number {
+  return ((data[offset] << 24) | (data[offset+1] << 16) | (data[offset+2] << 8) | data[offset+3]) >>> 0;
+}
+
+function mp4FindBox(data: Uint8Array, start: number, end: number, target: string): { dataStart: number; dataEnd: number } | null {
+  const cap = Math.min(end, data.length);
+  let offset = start;
+  while (offset + 8 <= cap) {
+    let size = mp4Uint32BE(data, offset);
+    const type = String.fromCharCode(data[offset+4], data[offset+5], data[offset+6], data[offset+7]);
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > cap) break;
+      size = mp4Uint32BE(data, offset + 12); // lower 32 bits of 64-bit size
+      headerSize = 16;
+    } else if (size === 0) {
+      size = cap - offset;
+    }
+    if (size < headerSize) break;
+    if (type === target) return { dataStart: offset + headerSize, dataEnd: Math.min(offset + size, cap) };
+    offset += size;
+  }
+  return null;
+}
+
+function mp4ParseTkhd(data: Uint8Array, start: number, end: number): { width: number; height: number } | null {
+  if (start + 4 > data.length) return null;
+  const version = data[start];
+  // version 0: creation(4)+modification(4)+track_id(4)+reserved(4)+duration(4) = 20 bytes
+  // version 1: creation(8)+modification(8)+track_id(4)+reserved(4)+duration(8) = 32 bytes
+  const varSize = version === 1 ? 32 : 20;
+  // After version(1)+flags(3)+varFields: reserved(8)+layer(2)+altGroup(2)+volume(2)+reserved(2) = 16 bytes, then matrix(36)
+  const matrixOff = start + 4 + varSize + 16;
+  const dimOff = matrixOff + 36;
+  if (dimOff + 8 > Math.min(end, data.length)) return null;
+
+  // Width/height are 16.16 fixed-point big-endian; integer part is the upper 2 bytes
+  let w = (data[dimOff] << 8) | data[dimOff + 1];
+  let h = (data[dimOff + 4] << 8) | data[dimOff + 5];
+  if (w <= 0 || h <= 0) return null;
+
+  // Read rotation from the 3×3 matrix (9 × 4-byte 16.16 fixed-point values, big-endian).
+  // Matrix layout: [a b u / c d v / tx ty w] where u=v=0, w=0x40000000.
+  // Identity:  a=0x00010000, b=0, c=0, d=0x00010000
+  // 90° CW:    a=0, b=0x00010000, c=0xFFFF0000, d=0
+  // 90° CCW:   a=0, b=0xFFFF0000, c=0x00010000, d=0
+  // 180°:      a=0xFFFF0000, b=0, c=0, d=0xFFFF0000
+  const ma = mp4Uint32BE(data, matrixOff);      // a  (signed: 0x00010000=1, 0xFFFF0000=-1)
+  const mb = mp4Uint32BE(data, matrixOff + 4);  // b
+  const isRotated90 = (ma === 0 && mb !== 0);   // a==0 means 90° or 270° rotation
+  if (isRotated90) { const tmp = w; w = h; h = tmp; }
+
+  return { width: w, height: h };
+}
+
+// Scan for an atom type anywhere in data (robust for mid-file tail chunks)
+function findAtomAnywhere(data: Uint8Array, atomType: string): number {
+  const b0 = atomType.charCodeAt(0), b1 = atomType.charCodeAt(1);
+  const b2 = atomType.charCodeAt(2), b3 = atomType.charCodeAt(3);
+  for (let i = 0; i + 8 <= data.length; i++) {
+    if (data[i+4] === b0 && data[i+5] === b1 && data[i+6] === b2 && data[i+7] === b3) {
+      const size = mp4Uint32BE(data, i);
+      if (size >= 8 || size === 1) return i;
+    }
+  }
+  return -1;
+}
+
+function extractAspectRatioFromMP4Boxes(data: Uint8Array): number | null {
+  // Scan for moov anywhere (handles both faststart head chunk and non-faststart tail chunk)
+  const moovOffset = findAtomAnywhere(data, 'moov');
+  if (moovOffset < 0) return null;
+
+  let moovSize = mp4Uint32BE(data, moovOffset);
+  let moovHeaderSize = 8;
+  if (moovSize === 1 && moovOffset + 16 <= data.length) {
+    moovSize = mp4Uint32BE(data, moovOffset + 12);
+    moovHeaderSize = 16;
+  } else if (moovSize === 0) {
+    moovSize = data.length - moovOffset;
+  }
+  const moovDataStart = moovOffset + moovHeaderSize;
+  const moovDataEnd = Math.min(moovOffset + moovSize, data.length);
+
+  let offset = moovDataStart;
+  let bestRatio: number | null = null;
+  let bestPixels = 0;
+
+  while (offset + 8 <= moovDataEnd) {
+    let size = mp4Uint32BE(data, offset);
+    const type = String.fromCharCode(data[offset+4], data[offset+5], data[offset+6], data[offset+7]);
+    if (size === 1 && offset + 16 <= moovDataEnd) size = mp4Uint32BE(data, offset + 12);
+    else if (size === 0) size = moovDataEnd - offset;
+    if (size < 8) break;
+
+    if (type === 'trak') {
+      const tkhdRange = mp4FindBox(data, offset + 8, Math.min(offset + size, moovDataEnd), 'tkhd');
+      if (tkhdRange) {
+        const dims = mp4ParseTkhd(data, tkhdRange.dataStart, tkhdRange.dataEnd);
+        if (dims) {
+          const px = dims.width * dims.height;
+          if (px > bestPixels) { bestPixels = px; bestRatio = dims.width / dims.height; }
+        }
+      }
+    }
+    offset += size;
+  }
+
+  if (bestRatio) console.log(`[ASPECT-RATIO] MP4 box parser found ratio ${Math.round(bestRatio * 1000) / 1000} from tkhd`);
+  return bestRatio;
 }
 
 // Method 2: Analyze filename for common aspect ratios
@@ -558,97 +679,6 @@ async function tryFileExtensionAnalysis(file: File): Promise<number> {
   throw new Error('No aspect ratio hint found in file extension or MIME type');
 }
 
-// Helper functions for file format detection
-function isQuickTimeFile(uint8Array: Uint8Array): boolean {
-  // QuickTime files start with 'ftyp' atom or contain 'moov' atom
-  const str = String.fromCharCode.apply(null, Array.from(uint8Array.slice(0, 64)));
-  return str.includes('ftyp') || str.includes('moov') || str.includes('mdat');
-}
-
-function isMP4File(uint8Array: Uint8Array): boolean {
-  // MP4 files start with 'ftyp' atom
-  const str = String.fromCharCode.apply(null, Array.from(uint8Array.slice(0, 32)));
-  return str.includes('ftyp') && (str.includes('mp41') || str.includes('mp42') || str.includes('isom'));
-}
-
-function parseQuickTimeDimensions(uint8Array: Uint8Array): number | null {
-  console.log(`[ASPECT-RATIO] Analyzing QuickTime file header (${uint8Array.length} bytes)`);
-  
-  // Look for common video dimensions in the binary data
-  const commonDimensions = [
-    // 4:3 aspect ratio
-    { width: 640, height: 480 },   // VGA
-    { width: 800, height: 600 },   // SVGA
-    { width: 1024, height: 768 },  // XGA
-    { width: 1152, height: 864 },  // XGA+
-    { width: 1280, height: 960 },  // SXGA-
-    { width: 1400, height: 1050 }, // SXGA+
-    { width: 1600, height: 1200 }, // UXGA
-    
-    // 3:2 aspect ratio
-    { width: 720, height: 480 },   // NTSC DVD
-    { width: 1440, height: 960 },  // 3:2 HD
-    { width: 1920, height: 1280 }, // 3:2 Full HD
-    
-    // 16:9 aspect ratio
-    { width: 1920, height: 1080 }, // Full HD
-    { width: 1280, height: 720 },  // HD
-    { width: 3840, height: 2160 }, // 4K
-    { width: 2560, height: 1440 }, // QHD
-    { width: 1366, height: 768 },  // Common laptop
-    
-    // 16:10 aspect ratio
-    { width: 1920, height: 1200 }, // WUXGA
-    { width: 2560, height: 1600 }, // WQXGA
-    
-    // Portrait orientations
-    { width: 1080, height: 1920 }, // Portrait HD
-    { width: 720, height: 1280 },  // Portrait HD
-    { width: 480, height: 640 },   // Portrait VGA
-  ];
-  
-  for (const dim of commonDimensions) {
-    if (containsDimension(uint8Array, dim.width, dim.height)) {
-      const ratio = dim.width / dim.height;
-      console.log(`[ASPECT-RATIO] Found dimensions ${dim.width}x${dim.height} = ${ratio.toFixed(3)} (${getAspectRatioName(ratio)})`);
-      return ratio;
-    }
-  }
-  
-  console.log('[ASPECT-RATIO] No common dimensions found in binary data');
-  return null;
-}
-
-function parseMP4Dimensions(uint8Array: Uint8Array): number | null {
-  // Similar to QuickTime parsing, look for dimension patterns
-  return parseQuickTimeDimensions(uint8Array);
-}
-
-function containsDimension(uint8Array: Uint8Array, width: number, height: number): boolean {
-  // Convert dimensions to little-endian bytes and search for them
-  const widthBytes = new Uint8Array(new Uint32Array([width]).buffer);
-  const heightBytes = new Uint8Array(new Uint32Array([height]).buffer);
-  
-  // Search for width followed by height (or vice versa) in the binary data
-  for (let i = 0; i < uint8Array.length - 8; i++) {
-    // Check for width then height
-    if (uint8Array[i] === widthBytes[0] && uint8Array[i+1] === widthBytes[1] &&
-        uint8Array[i+2] === widthBytes[2] && uint8Array[i+3] === widthBytes[3] &&
-        uint8Array[i+4] === heightBytes[0] && uint8Array[i+5] === heightBytes[1] &&
-        uint8Array[i+6] === heightBytes[2] && uint8Array[i+7] === heightBytes[3]) {
-      return true;
-    }
-    // Check for height then width
-    if (uint8Array[i] === heightBytes[0] && uint8Array[i+1] === heightBytes[1] &&
-        uint8Array[i+2] === heightBytes[2] && uint8Array[i+3] === heightBytes[3] &&
-        uint8Array[i+4] === widthBytes[0] && uint8Array[i+5] === widthBytes[1] &&
-        uint8Array[i+6] === widthBytes[2] && uint8Array[i+7] === widthBytes[3]) {
-      return true;
-    }
-  }
-  
-  return false;
-}
 
 /**
  * Gets the aspect ratio of an image file

@@ -131,17 +131,19 @@ const updateAspectRatio = (file: MimeiFileType, event: Event) => {
     }
 };
 
-const emitSelectFiles = () => {
-    // Check if all selected files have a non-empty 'mid'
-    const allMidsFilled = selectedFiles.value.every(file => file.mid.trim() !== '');
+// Valid Mimei/IPFS IDs: base64url chars only (no spaces), min 10 chars
+function isValidMid(mid: string): boolean {
+    return mid.trim().length >= 10 && /^[A-Za-z0-9_\-+=\/]+$/.test(mid.trim());
+}
 
-    if (allMidsFilled) {
-        console.log(selectedFiles.value);
-        emit('save', selectedFiles.value);
-    } else {
-        // Optionally, provide user feedback that all 'mid' fields must be filled.
-        useAlertStore().error(t('cid.fillCidFields'));
+const emitSelectFiles = () => {
+    const invalid = selectedFiles.value.find(file => !isValidMid(file.mid));
+    if (invalid) {
+        useAlertStore().error(`Invalid CID for "${invalid.fileName}": must be a valid Mimei or IPFS ID`);
+        return;
     }
+    console.log(selectedFiles.value);
+    emit('save', selectedFiles.value);
 };
 const cancel = () => {
     selectedFiles.value = [];
