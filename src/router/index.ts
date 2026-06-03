@@ -46,7 +46,7 @@ function scrollBehavior(
 }
 
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   scrollBehavior,
   routes: [
     { 
