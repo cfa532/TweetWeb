@@ -164,11 +164,10 @@ const hasPlayableFutureData = computed(() => {
   if (!el) return false;
   return el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
 });
-const isActuallyPlaying = computed(() => {
-  const el = video.value;
-  if (!el) return false;
-  return !el.paused && !el.ended;
-});
+// isPlaying tracks the 'play'/'pause' events reactively. isActuallyPlaying
+// combines it with isBuffering so the spinner branch works correctly: the
+// video is "actually playing" only when it has started AND is not stalled.
+const isActuallyPlaying = computed(() => isPlaying.value && !isBuffering.value);
 
 const showBufferingOverlay = computed(() => {
   // Feed: show spinner both while actively buffering and during initial fetch
@@ -355,7 +354,12 @@ onMounted(() => {
           isPlaying.value = true;
           hasUserPausedInFeed.value = false;
           showPlayOverlay.value = false;
-          isBuffering.value = true; // Show spinner when play starts, hide when actually playing
+          // Only show spinner if the video doesn't already have enough buffered data.
+          // If it was preloaded, readyState >= HAVE_FUTURE_DATA means playback can
+          // start immediately — no spinner needed.
+          if (!video.value || video.value.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+            isBuffering.value = true;
+          }
           updateTimeRemaining();
         });
         video.value.addEventListener('playing', () => {
