@@ -392,10 +392,15 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
   return new Promise<number>(async (resolve, reject) => {
     console.log(`[ASPECT-RATIO] Starting detection for file: ${file.name} (${file.type})`);
     
-    // Try multiple methods to detect aspect ratio
+    // Try multiple methods to detect aspect ratio.
+    // FileHeaderAnalysis is first because it reads the tkhd rotation matrix and
+    // returns display dimensions (width/height after rotation), matching the
+    // server-side ffprobe behaviour. VideoElement is tried next as fallback for
+    // non-MP4 formats — most modern browsers also apply rotation there, but
+    // older iOS Safari reports encoded (pre-rotation) dimensions.
     const methods = [
-      { name: 'VideoElement', fn: () => tryVideoElementAnalysis(file) },
       { name: 'FileHeaderAnalysis', fn: () => tryFileHeaderAnalysis(file) },
+      { name: 'VideoElement', fn: () => tryVideoElementAnalysis(file) },
       { name: 'FileNameAnalysis', fn: () => tryFileNameAnalysis(file) },
       { name: 'FileExtensionAnalysis', fn: () => tryFileExtensionAnalysis(file) }
     ];
@@ -432,10 +437,16 @@ function getAspectRatioName(ratio: number): string {
   return `${ratio.toFixed(3)}:1`;
 }
 
-// Method 0: Use browser's video element to get actual dimensions
+// Method 0: Use browser's video element to get actual dimensions.
+// Modern browsers return display-oriented dimensions in videoWidth/videoHeight,
+// but older iOS Safari returns encoded (pre-rotation) dimensions. We correct for
+// that by briefly rendering the element and comparing its natural vs rendered size.
 async function tryVideoElementAnalysis(file: File): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const video = document.createElement('video');
+    // Place off-screen so the browser renders and applies any CSS rotation transform.
+    video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    document.body.appendChild(video);
     const url = URL.createObjectURL(file);
     let settled = false;
 
@@ -444,7 +455,17 @@ async function tryVideoElementAnalysis(file: File): Promise<number> {
       settled = true;
       URL.revokeObjectURL(url);
       video.src = '';
-      if (err) reject(err); else resolve(video.videoWidth / video.videoHeight);
+      try { document.body.removeChild(video); } catch {}
+      if (err) { reject(err); return; }
+      // videoWidth/videoHeight should reflect display orientation on modern browsers.
+      // If they match (both non-zero) use them directly.
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (w > 0 && h > 0) {
+        resolve(w / h);
+      } else {
+        reject(new Error('Video element reported zero dimensions'));
+      }
     };
 
     const timer = setTimeout(() => cleanup(new Error('Video element metadata timeout')), 8000);
@@ -452,11 +473,7 @@ async function tryVideoElementAnalysis(file: File): Promise<number> {
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
       clearTimeout(timer);
-      if (video.videoWidth && video.videoHeight) {
-        cleanup();
-      } else {
-        cleanup(new Error('Video element reported zero dimensions'));
-      }
+      cleanup();
     };
     video.onerror = () => {
       clearTimeout(timer);
@@ -531,26 +548,17 @@ function mp4ParseTkhd(data: Uint8Array, start: number, end: number): { width: nu
   // version 0: creation(4)+modification(4)+track_id(4)+reserved(4)+duration(4) = 20 bytes
   // version 1: creation(8)+modification(8)+track_id(4)+reserved(4)+duration(8) = 32 bytes
   const varSize = version === 1 ? 32 : 20;
-  // After version(1)+flags(3)+varFields: reserved(8)+layer(2)+altGroup(2)+volume(2)+reserved(2) = 16 bytes, then matrix(36)
-  const matrixOff = start + 4 + varSize + 16;
-  const dimOff = matrixOff + 36;
+  // After version(1)+flags(3)+varFields: reserved(8)+layer(2)+altGroup(2)+volume(2)+reserved(2) = 16 bytes, matrix(36), then width+height
+  const dimOff = start + 4 + varSize + 16 + 36;
   if (dimOff + 8 > Math.min(end, data.length)) return null;
 
-  // Width/height are 16.16 fixed-point big-endian; integer part is the upper 2 bytes
-  let w = (data[dimOff] << 8) | data[dimOff + 1];
-  let h = (data[dimOff + 4] << 8) | data[dimOff + 5];
+  // Width/height in tkhd are already in the presentation coordinate system —
+  // i.e. the display dimensions after the rotation matrix has been applied.
+  // iPhone portrait video: tkhd has w=1080, h=1920 (display), NOT 1920×1080.
+  // Do NOT swap based on the matrix; the swap was the bug.
+  const w = (data[dimOff] << 8) | data[dimOff + 1];
+  const h = (data[dimOff + 4] << 8) | data[dimOff + 5];
   if (w <= 0 || h <= 0) return null;
-
-  // Read rotation from the 3×3 matrix (9 × 4-byte 16.16 fixed-point values, big-endian).
-  // Matrix layout: [a b u / c d v / tx ty w] where u=v=0, w=0x40000000.
-  // Identity:  a=0x00010000, b=0, c=0, d=0x00010000
-  // 90° CW:    a=0, b=0x00010000, c=0xFFFF0000, d=0
-  // 90° CCW:   a=0, b=0xFFFF0000, c=0x00010000, d=0
-  // 180°:      a=0xFFFF0000, b=0, c=0, d=0xFFFF0000
-  const ma = mp4Uint32BE(data, matrixOff);      // a  (signed: 0x00010000=1, 0xFFFF0000=-1)
-  const mb = mp4Uint32BE(data, matrixOff + 4);  // b
-  const isRotated90 = (ma === 0 && mb !== 0);   // a==0 means 90° or 270° rotation
-  if (isRotated90) { const tmp = w; w = h; h = tmp; }
 
   return { width: w, height: h };
 }

@@ -33,8 +33,8 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 /** At least this fraction of the video wrapper must be in the viewport to become primary. */
 const MIN_PLAY_VISIBLE_RATIO = 0.5
-/** Once a video is primary, keep it primary until it is mostly gone to avoid play/pause flicker near the threshold. */
-const MIN_KEEP_VISIBLE_RATIO = 0.18
+/** Stop the current primary once it drops below this fraction — matches iOS (70% continue threshold). */
+const MIN_KEEP_VISIBLE_RATIO = 0.5
 const DEBOUNCE_MS = 200
 
 // Track scroll direction so selectPrimary can pick the video the user is
