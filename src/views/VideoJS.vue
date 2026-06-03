@@ -2437,8 +2437,8 @@ function stopVideo() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 72px;
-  height: 72px;
+  width: 48px;
+  height: 48px;
   background: rgba(0, 0, 0, 0.65);
   border: 2px solid rgba(255, 255, 255, 0.6);
   border-radius: 50%;
@@ -2455,9 +2455,9 @@ function stopVideo() {
 }
 
 .play-overlay-button svg {
-  width: 40px;
-  height: 40px;
-  margin-left: 4px; /* optical center for play triangle */
+  width: 26px;
+  height: 26px;
+  margin-left: 3px; /* optical center for play triangle */
 }
 
 .feed-mute-button {
@@ -2595,13 +2595,13 @@ function stopVideo() {
   }
   
   .play-overlay-button {
-    width: 64px;
-    height: 64px;
+    width: 42px;
+    height: 42px;
   }
 
   .play-overlay-button svg {
-    width: 36px;
-    height: 36px;
+    width: 22px;
+    height: 22px;
   }
 }
 </style>
