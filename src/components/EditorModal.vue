@@ -42,6 +42,13 @@ const showCidModal = ref(false);
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 const SMALL_VIDEO_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50MB
 
+const avatarRetry = ref(0)
+async function onAvatarError() {
+  if (avatarRetry.value >= 3) return
+  await tweetStore.getUser(author.mid)
+  avatarRetry.value++  // key change remounts the img, forcing browser to re-request the (possibly updated) URL
+}
+
 // Retry configuration for uploads
 const UPLOAD_RETRY_CONFIG = {
   maxRetries: 3,
@@ -293,7 +300,6 @@ async function onSubmit() {
     tweetTitle.value = null
     filesUpload.value = []
     mmFiles.value = []
-    noResample.value = false
 
     // Fetch parent tweet once — used for both quote tweet and navigation
     let parentTweet = null
@@ -546,7 +552,7 @@ function handleDragEnd() {
 
   <div style='background-color:aliceblue;'>
       <div class='editor-header'>
-        <img :src='author.avatar' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer'>
+        <img :key='avatarRetry' :src='author.avatar' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer' @error='onAvatarError'>
         <div class='editor-author' @click='openUserPage' style='cursor:pointer'>
           <div class='fw-bold'>{{ author.name }}</div>
           <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>

@@ -1211,13 +1211,18 @@ async function processVideoUpload(req, res) {
       const referenceDim = isPortrait ? targetWidth : targetHeight;
 
       // Check if this video should use single variant mode
+      // noResample videos: single variant at original resolution (preserve quality)
       // 480p videos: single variant (like iOS singleVariant480p=true)
       // Videos with resolution <= 480p that would create identical variants: single variant (optimization)
       const is480pVideo = referenceDim === 480;
       const wouldCreateIdenticalVariants = referenceDim <= 480 && !is480pVideo; // 360p, 240p, etc. create identical variants
 
       let variantCount, variantType;
-      if (is480pVideo || wouldCreateIdenticalVariants) {
+      if (noResample) {
+        variantCount = 1;
+        variantType = `single (${referenceDim}p original quality)`;
+        console.log(`[${requestId}] [HLS] noResample=true - using single variant mode at original resolution ${targetWidth}x${targetHeight}`);
+      } else if (is480pVideo || wouldCreateIdenticalVariants) {
         variantCount = 1;
         variantType = `single (${referenceDim}p only)`;
         const reason = is480pVideo ? 'like iOS' : 'identical variants optimization';
@@ -1301,8 +1306,13 @@ async function processVideoUpload(req, res) {
       }
       console.log(`[${requestId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (proportional: ${variant480Pixels}/${REFERENCE_720P_PIXELS} * ${REFERENCE_720P_BITRATE})`);
 
+      // For noResample single variant, use original dimensions instead of 480p
+      const singleVariantWidth = noResample ? targetWidth : variant480Width;
+      const singleVariantHeight = noResample ? targetHeight : variant480Height;
+      const singleVariantBitrate = noResample ? (calculatedBitrateK || MIN_BITRATE) : variant480Bitrate;
+
       // Get encoder config (use variant dimensions for single variant videos, high quality for dual variant)
-      const isSingleVariant = is480pVideo || wouldCreateIdenticalVariants;
+      const isSingleVariant = noResample || is480pVideo || wouldCreateIdenticalVariants;
 
       // Create directories based on variant mode
       if (isSingleVariant) {
@@ -1324,12 +1334,12 @@ async function processVideoUpload(req, res) {
       const normalizedIsPortrait = targetHeight > targetWidth;
       const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
       
-      const canUseCopySingle = isSingleVariant && (normalizedReferenceDim <= 480);
+      const canUseCopySingle = isSingleVariant && (noResample || normalizedReferenceDim <= 480);
       const canUseCopyDual720 = !isSingleVariant && (normalizedReferenceDim > 480 && normalizedReferenceDim <= 720);
-      
+
       console.log(`[${requestId}] [HLS] Normalized video: ${targetWidth}x${targetHeight} (${normalizedReferenceDim}p)`);
       if (isSingleVariant) {
-        console.log(`[${requestId}] [HLS] Single variant target: ${variant480Width}x${variant480Height}, can use COPY: ${canUseCopySingle} (normalized ≤480p)`);
+        console.log(`[${requestId}] [HLS] Single variant target: ${singleVariantWidth}x${singleVariantHeight}, can use COPY: ${canUseCopySingle} (${noResample ? 'noResample' : 'normalized ≤480p'})`);
       } else {
         console.log(`[${requestId}] [HLS] Dual variant 720p target: ${highQualityWidth}x${highQualityHeight}, can use COPY: ${canUseCopyDual720} (normalized >480p and ≤720p)`);
         console.log(`[${requestId}] [HLS] Dual variant 480p target: ${variant480Width}x${variant480Height}, needs scaling`);
@@ -1338,12 +1348,12 @@ async function processVideoUpload(req, res) {
       // Use hardware encoder if available for better performance (server advantage over iOS)
       const availableEncoders = await detectHardwareEncoders();
       let encoderConfig = await getOptimalEncoder(availableEncoders, {
-        width: isSingleVariant ? variant480Width : highQualityWidth,
-        height: isSingleVariant ? variant480Height : highQualityHeight,
-        displayWidth: isSingleVariant ? variant480Width : highQualityWidth,
-        displayHeight: isSingleVariant ? variant480Height : highQualityHeight
+        width: isSingleVariant ? singleVariantWidth : highQualityWidth,
+        height: isSingleVariant ? singleVariantHeight : highQualityHeight,
+        displayWidth: isSingleVariant ? singleVariantWidth : highQualityWidth,
+        displayHeight: isSingleVariant ? singleVariantHeight : highQualityHeight
       }, false);
-      
+
       // Safety check: ensure encoderConfig is valid
       if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
         console.warn(`[${requestId}] [HARDWARE] Invalid encoder config, falling back to libx264`);
@@ -1354,17 +1364,17 @@ async function processVideoUpload(req, res) {
       const softwareParams = encoderConfig.hardware ? '' : `-preset ${encoderConfig.preset || 'fast'} -tune zerolatency -threads 2`;
 
       // Calculate segment durations
-      const segmentDuration480 = calculateOptimalSegmentDuration({
-        displayWidth: variant480Width,
-        displayHeight: variant480Height,
+      const segmentDurationSingle = calculateOptimalSegmentDuration({
+        displayWidth: singleVariantWidth,
+        displayHeight: singleVariantHeight,
         duration: videoInfo ? videoInfo.duration : null
-      }, variant480Bitrate);
+      }, singleVariantBitrate);
 
       // Get frame rate for GOP size calculation (default to 30fps if not available)
       const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
-      
+
       // Calculate keyframe parameters for smooth HLS playback
-      const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
+      const keyframeParamsSingle = getHLSKeyframeParams(segmentDurationSingle, frameRate);
 
       let commands = [];
       let masterPlaylist = '';
@@ -1375,22 +1385,20 @@ async function processVideoUpload(req, res) {
         if (canUseCopySingle) {
           // Use COPY encoder - no scaling, no re-encoding
           console.log(`[${requestId}] [HLS] Using COPY encoder for single variant (no scaling needed)`);
-          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
         } else {
           // Use libx264 encoder with scaling
           console.log(`[${requestId}] [HLS] Using libx264 encoder for single variant (scaling needed)`);
-          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${singleVariantWidth}:${singleVariantHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParamsSingle} -b:v ${singleVariantBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
         }
 
         commands = [
           { cmd: cmd, variant: `${referenceDim}p`, progressStart: 50, progressEnd: 80 }
         ];
 
-        // For single variant, use the playlist directly as master (no separate master.m3u8 needed)
-        // But for API consistency, we'll create master.m3u8 as a redirect to playlist.m3u8
         masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=${variant480Bitrate * 1000 + 128000},RESOLUTION=${variant480Width}x${variant480Height}
+#EXT-X-STREAM-INF:BANDWIDTH=${singleVariantBitrate * 1000 + 128000},RESOLUTION=${singleVariantWidth}x${singleVariantHeight}
 playlist.m3u8`;
 
         console.log(`[${requestId}] [HLS] Executing single-variant HLS conversion for ${referenceDim}p video...`);
@@ -1404,6 +1412,12 @@ playlist.m3u8`;
 
         // Calculate keyframe parameters for both variants
         const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
+        const segmentDuration480 = calculateOptimalSegmentDuration({
+          displayWidth: variant480Width,
+          displayHeight: variant480Height,
+          duration: videoInfo ? videoInfo.duration : null
+        }, variant480Bitrate);
+        const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
 
         // 720p variant: use COPY if dimensions match, otherwise libx264
         let cmd720p;
@@ -1734,10 +1748,55 @@ async function processVideoUploadInternal(req, jobId) {
       console.log(`[${jobId}] [INFO] Video has rotation: ${videoInfo.rotation}°`);
     }
 
+    // noResample fast path: skip normalization entirely, segment with stream copy
+    if (noResample) {
+      console.log(`[${jobId}] [noResample] Skipping normalization, converting to HLS with stream copy`);
+      updateProgressSafe(jobId, 40, 'Converting to HLS...');
+
+      const srcWidth = videoInfo.displayWidth || videoInfo.width;
+      const srcHeight = videoInfo.displayHeight || videoInfo.height;
+      const srcBitrateK = videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : 2000;
+      const srcDuration = videoInfo.duration || 0;
+
+      const segmentDuration = calculateOptimalSegmentDuration(
+        { displayWidth: srcWidth, displayHeight: srcHeight, duration: srcDuration },
+        srcBitrateK
+      );
+
+      const hlsCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+
+      await executeWithProgress(hlsCmd, jobId, 40, 80, 'Converting to HLS...', uploadedFile.size, srcDuration);
+
+      const masterPlaylist = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=${srcBitrateK * 1000 + 128000},RESOLUTION=${srcWidth}x${srcHeight}\nplaylist.m3u8`;
+      fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+      console.log(`[${jobId}] [noResample] HLS conversion complete`);
+
+      updateProgressSafe(jobId, 80, 'Storing HLS stream...');
+      const cidOutput = await executeLeitherOperationWithProgress(
+        `ipfs add ${escapeShellArg(tempDir)}`,
+        jobId, 80, 100, 'Storing HLS stream...', 6 * 60 * 60 * 1000
+      );
+
+      const trimmedOut = cidOutput.trim();
+      let cid;
+      const okMatch = trimmedOut.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+      if (okMatch) {
+        cid = okMatch[1];
+      } else {
+        const cidMatch = trimmedOut.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+        if (cidMatch) cid = cidMatch[1];
+      }
+      if (!cid) throw new Error('Failed to extract CID from IPFS add output');
+
+      console.log(`[${jobId}] [noResample] Uploaded to IPFS, CID: ${cid}`);
+      updateProgressSafe(jobId, 100, 'Processing complete');
+      return { cid, tempDir };
+    }
+
     // Normalize video to MP4 format
     console.log(`\n[${jobId}] [STEP 4] Normalizing video...`);
     console.time(`[${jobId}] video-normalization`);
-    
+
     // Update progress (safe - never decreases)
     updateProgressSafe(jobId, 40, 'Normalizing video...');
     
@@ -1968,10 +2027,10 @@ async function processVideoUploadInternal(req, jobId) {
       // Matches iOS logic: COPY is used based on resolution ranges, not exact dimensions
       const normalizedIsPortrait = targetHeight > targetWidth;
       const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
-      
+
       const canUseCopySingle = isSingleVariant && (normalizedReferenceDim <= 480);
       const canUseCopyDual720 = !isSingleVariant && (normalizedReferenceDim > 480 && normalizedReferenceDim <= 720);
-      
+
       console.log(`[${jobId}] [HLS] Normalized video: ${targetWidth}x${targetHeight} (${normalizedReferenceDim}p)`);
       if (isSingleVariant) {
         console.log(`[${jobId}] [HLS] Single variant target: ${variant480Width}x${variant480Height}, can use COPY: ${canUseCopySingle} (normalized ≤480p)`);
@@ -1988,7 +2047,7 @@ async function processVideoUploadInternal(req, jobId) {
         displayWidth: isSingleVariant ? variant480Width : highQualityWidth,
         displayHeight: isSingleVariant ? variant480Height : highQualityHeight
       }, false);
-      
+
       // Safety check
       if (!encoderConfig || !encoderConfig.encoder || typeof encoderConfig.encoder !== 'string') {
         console.warn(`[${jobId}] [HARDWARE] Invalid encoder config, falling back to libx264`);
@@ -2007,7 +2066,7 @@ async function processVideoUploadInternal(req, jobId) {
 
       // Get frame rate for GOP size calculation (default to 30fps if not available)
       const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
-      
+
       // Calculate keyframe parameters for smooth HLS playback
       const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
 
@@ -2029,8 +2088,6 @@ async function processVideoUploadInternal(req, jobId) {
           { cmd: cmd, variant: `${referenceDim}p`, progressStart: 60, progressEnd: 80 }
         ];
 
-        // For single variant, use the playlist directly as master (no separate master.m3u8 needed)
-        // But for API consistency, we'll create master.m3u8 as a redirect to playlist.m3u8
         masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-STREAM-INF:BANDWIDTH=${variant480Bitrate * 1000 + 128000},RESOLUTION=${variant480Width}x${variant480Height}
@@ -2048,6 +2105,12 @@ playlist.m3u8`;
 
         // Calculate keyframe parameters for both variants
         const keyframeParams720 = getHLSKeyframeParams(segmentDuration720, frameRate);
+        const segmentDuration480 = calculateOptimalSegmentDuration({
+          displayWidth: variant480Width,
+          displayHeight: variant480Height,
+          duration: videoInfo ? videoInfo.duration : null
+        }, variant480Bitrate);
+        const keyframeParams480 = getHLSKeyframeParams(segmentDuration480, frameRate);
 
         // 720p variant: use COPY if dimensions match, otherwise libx264
         let cmd720p;
