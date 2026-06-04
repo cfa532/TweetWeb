@@ -431,7 +431,7 @@ const mediaAttachments = computed(() => {
 
 // When the only attachment is a landscape video, shape the container to
 // match its aspect ratio instead of the default tall (≥80vh) box used
-// for portrait videos and images. Returns the ratio (width/height) or null.
+// for portrait videos. Returns the ratio (width/height) or null.
 const landscapeVideoRatio = computed<number | null>(() => {
     const items = mediaAttachments.value;
     if (items.length !== 1) return null;
@@ -439,6 +439,13 @@ const landscapeVideoRatio = computed<number | null>(() => {
     if (!isVideoMedia(item)) return null;
     const ar = (item as any).aspectRatio;
     return typeof ar === 'number' && ar > 1 ? ar : null;
+});
+
+// True only when the sole attachment is a video — height is capped to fit
+// the viewport in that case. Images and multi-attachment layouts render normally.
+const isSingleVideo = computed<boolean>(() => {
+    const items = mediaAttachments.value;
+    return items.length === 1 && isVideoMedia(items[0]);
 });
 
 // Filter out media attachments (image, video, audio) to get documents
@@ -872,6 +879,7 @@ function retryLoad() {
                 :class="['media-attachments', {
                     'media-attachments--multi': mediaAttachments.length > 1,
                     'media-attachments--landscape': landscapeVideoRatio,
+                    'media-attachments--video-only': isSingleVideo,
                 }]"
                 :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -907,6 +915,7 @@ function retryLoad() {
                 :class="['media-attachments', {
                     'media-attachments--multi': mediaAttachments.length > 1,
                     'media-attachments--landscape': landscapeVideoRatio,
+                    'media-attachments--video-only': isSingleVideo,
                 }]"
                 :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
                 <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
@@ -1096,11 +1105,15 @@ function retryLoad() {
     margin-top: 0;
     margin-bottom: 0;
     padding: 0;
-    overflow: hidden;
-    max-height: 80vh;
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+/* Only constrain height when the sole attachment is a video */
+.media-attachments--video-only {
+    max-height: 80vh;
+    overflow: hidden;
 }
 
 .detail-audio-player {
@@ -1110,8 +1123,9 @@ function retryLoad() {
 
 .media-attachments :deep(.container) {
     width: 100% !important;
-    height: 100% !important;
-    max-height: 80vh !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
     margin: 0 !important;
     padding: 0 !important;
     display: flex !important;
@@ -1119,9 +1133,22 @@ function retryLoad() {
     justify-content: center !important;
 }
 
+/* img-wrapper uses height:100% which resolves to 0 when parent has height:auto in flex;
+   force auto so the image's natural size drives layout */
+.media-attachments :deep(.img-wrapper) {
+    height: auto !important;
+    max-height: none !important;
+}
+
+.media-attachments--video-only :deep(.container) {
+    height: 100% !important;
+    max-height: 80vh !important;
+    overflow: hidden !important;
+}
+
 .media-attachments :deep(img) {
     max-width: 100% !important;
-    max-height: 80vh !important;
+    max-height: none !important;
     width: auto !important;
     height: auto !important;
     display: block;
@@ -1133,7 +1160,6 @@ function retryLoad() {
 .media-attachments :deep(.video-container),
 .media-attachments :deep(.video-wrapper) {
     width: 100% !important;
-    max-height: 80vh !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
@@ -1143,13 +1169,21 @@ function retryLoad() {
 
 .media-attachments :deep(video) {
     max-width: 100% !important;
-    max-height: 80vh !important;
     width: auto !important;
     height: auto !important;
     display: block;
     margin: 0 auto !important;
     padding: 0 !important;
     object-fit: contain;
+}
+
+.media-attachments--video-only :deep(.video-container),
+.media-attachments--video-only :deep(.video-wrapper) {
+    max-height: 80vh !important;
+}
+
+.media-attachments--video-only :deep(video) {
+    max-height: 80vh !important;
 }
 
 /* Single landscape video: shape the container to the video's aspect ratio
@@ -1194,19 +1228,19 @@ function retryLoad() {
     content-visibility: auto;
 }
 
-/* Desktop: ensure video takes at least 80vh — but only for portrait videos
-   and images. Landscape videos use their natural aspect ratio (set inline). */
+/* Desktop: portrait-only single video fills at least 80vh.
+   Landscape videos use their natural aspect ratio (set inline). */
 @media (min-width: 768px) {
-    .media-attachments:has(video):not(.media-attachments--landscape) {
+    .media-attachments--video-only:not(.media-attachments--landscape) {
         min-height: 80vh;
     }
 
-    .media-attachments:not(.media-attachments--landscape) :deep(.video-container),
-    .media-attachments:not(.media-attachments--landscape) :deep(.video-wrapper) {
+    .media-attachments--video-only:not(.media-attachments--landscape) :deep(.video-container),
+    .media-attachments--video-only:not(.media-attachments--landscape) :deep(.video-wrapper) {
         min-height: 80vh !important;
     }
 
-    .media-attachments:not(.media-attachments--landscape) :deep(video) {
+    .media-attachments--video-only:not(.media-attachments--landscape) :deep(video) {
         min-height: 80vh !important;
     }
 }
