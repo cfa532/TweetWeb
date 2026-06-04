@@ -1117,29 +1117,49 @@ async function processVideoUpload(req, res) {
     
     // Check if scaling is needed (target dimensions differ from original)
     const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
-    
-    // Get encoder config - force re-encoding if scaling is needed (copy encoder can't use filters)
+
+    // Build transpose filter to physically bake in rotation when the source has
+    // a rotation flag. Without this, copy-mode remuxing strips the flag and
+    // the output plays sideways; even re-encode paths lose it in HLS segments.
+    const rotation = videoInfo ? (videoInfo.rotation || 0) : 0;
+    const transposeFilter = rotation === 90 ? 'transpose=1'
+                          : rotation === -90 || rotation === 270 ? 'transpose=2'
+                          : rotation === 180 ? 'transpose=2,transpose=2'
+                          : '';
+    const needsRotation = transposeFilter !== '';
+
+    // Get encoder config - force re-encoding if scaling or rotation is needed
     const availableEncoders = await detectHardwareEncoders();
-    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, !needsScaling);
-    
-    // If copy encoder was selected but we need scaling, force re-encoding
+    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, !needsScaling && !needsRotation);
+
+    // If copy encoder was selected but we need scaling or rotation, force re-encoding
     let finalEncoder = encoderConfig.encoder;
-    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && needsScaling) {
-      console.log(`[${requestId}] [NORMALIZE] Scaling needed but copy encoder selected, forcing re-encoding with libx264`);
+    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && (needsScaling || needsRotation)) {
+      console.log(`[${requestId}] [NORMALIZE] Filter needed (scaling=${needsScaling}, rotation=${needsRotation}) but copy encoder selected, forcing re-encoding with libx264`);
       finalEncoder = 'libx264';
       encoderConfig.hardware = false;
       encoderConfig.preset = 'fast';
     }
-    
+
     const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(finalEncoder, encoderConfig.is10Bit) : '';
     const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
-    
-    // Build scale filter only if needed
-    const scaleFilter = needsScaling ? `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"` : '';
-    
+
+    // Build combined video filter: rotation (transpose) first, then scale
+    let vfFilter = '';
+    if (needsRotation && needsScaling) {
+      vfFilter = `-vf "${transposeFilter},scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"`;
+    } else if (needsRotation) {
+      vfFilter = `-vf "${transposeFilter}"`;
+    } else if (needsScaling) {
+      vfFilter = `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"`;
+    }
+    if (needsRotation) {
+      console.log(`[${requestId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${rotation}°)`);
+    }
+
     // Normalize to MP4
     const normalizedFilePath = path.join(tempDir, 'normalized.mp4');
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${scaleFilter ? ` ${scaleFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
     
     console.log(`[${requestId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, requestId, 0, 50, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
@@ -1799,30 +1819,46 @@ async function processVideoUploadInternal(req, jobId) {
     
     // Check if scaling is needed (target dimensions differ from original)
     const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
-    
-    // Get encoder config - force re-encoding if scaling is needed (copy encoder can't use filters)
+
+    const rotation = videoInfo ? (videoInfo.rotation || 0) : 0;
+    const transposeFilter = rotation === 90 ? 'transpose=1'
+                          : rotation === -90 || rotation === 270 ? 'transpose=2'
+                          : rotation === 180 ? 'transpose=2,transpose=2'
+                          : '';
+    const needsRotation = transposeFilter !== '';
+
+    // Get encoder config - force re-encoding if scaling or rotation is needed
     const availableEncoders = await detectHardwareEncoders();
-    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, !needsScaling);
-    
-    // If copy encoder was selected but we need scaling, force re-encoding
+    const encoderConfig = await getOptimalEncoder(availableEncoders, videoInfo, !needsScaling && !needsRotation);
+
+    // If copy encoder was selected but we need scaling or rotation, force re-encoding
     let finalEncoder = encoderConfig.encoder;
-    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && needsScaling) {
-      console.log(`[${jobId}] [NORMALIZE] Scaling needed but copy encoder selected, forcing re-encoding with libx264`);
+    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && (needsScaling || needsRotation)) {
+      console.log(`[${jobId}] [NORMALIZE] Filter needed (scaling=${needsScaling}, rotation=${needsRotation}) but copy encoder selected, forcing re-encoding with libx264`);
       finalEncoder = 'libx264';
       encoderConfig.hardware = false;
       encoderConfig.preset = 'fast';
     }
-    
+
     const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(finalEncoder, encoderConfig.is10Bit) : '';
     const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
-    
-    // Build scale filter only if needed
-    const scaleFilter = needsScaling ? `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"` : '';
-    
+
+    let vfFilter = '';
+    if (needsRotation && needsScaling) {
+      vfFilter = `-vf "${transposeFilter},scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"`;
+    } else if (needsRotation) {
+      vfFilter = `-vf "${transposeFilter}"`;
+    } else if (needsScaling) {
+      vfFilter = `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"`;
+    }
+    if (needsRotation) {
+      console.log(`[${jobId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${rotation}°)`);
+    }
+
     // Normalize to MP4
     const normalizedFilePath = path.join(tempDir, 'normalized.mp4');
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${scaleFilter ? ` ${scaleFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
-    
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, jobId, 40, 60, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
     
@@ -2550,6 +2586,7 @@ async function processNormalizeVideoInternal(req, jobId) {
     // Handle rotation to get display dimensions
     displayWidth = originalWidth;
     displayHeight = originalHeight;
+    let sourceRotation = 0;
 
     // Check for rotation metadata
     if (streamInfo.side_data_list) {
@@ -2560,12 +2597,14 @@ async function processNormalizeVideoInternal(req, jobId) {
             displayWidth = originalHeight;
             displayHeight = originalWidth;
           }
+          sourceRotation = matrix || 0;
           break;
         }
       }
     }
 
     console.log(`[${jobId}] [INFO] Display dimensions (after rotation): ${displayWidth}x${displayHeight}`);
+    if (sourceRotation !== 0) console.log(`[${jobId}] [INFO] Source rotation: ${sourceRotation}°`);
 
     // Determine video resolution using the new algorithm
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
@@ -2636,20 +2675,26 @@ async function processNormalizeVideoInternal(req, jobId) {
 
     // Check if scaling is needed (target dimensions differ from original)
     const needsScaling = targetWidth !== displayWidth || targetHeight !== displayHeight;
-    
-    // Use hardware encoding if available - force re-encoding if scaling is needed (copy encoder can't use filters)
+
+    const transposeFilter = sourceRotation === 90 ? 'transpose=1'
+                          : sourceRotation === -90 || sourceRotation === 270 ? 'transpose=2'
+                          : sourceRotation === 180 ? 'transpose=2,transpose=2'
+                          : '';
+    const needsRotation = transposeFilter !== '';
+
+    // Use hardware encoding if available - force re-encoding if scaling or rotation is needed
     const availableEncoders = await detectHardwareEncoders();
     const encoderConfig = await getOptimalEncoder(availableEncoders, {
       width: originalWidth,
       height: originalHeight,
       displayWidth: displayWidth,
       displayHeight: displayHeight
-    }, !needsScaling);
-    
-    // If copy encoder was selected but we need scaling, force re-encoding
+    }, !needsScaling && !needsRotation);
+
+    // If copy encoder was selected but we need scaling or rotation, force re-encoding
     let finalEncoder = encoderConfig.encoder;
-    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && needsScaling) {
-      console.log(`[${jobId}] [NORMALIZE] Scaling needed but copy encoder selected, forcing re-encoding with libx264`);
+    if ((encoderConfig.useCopy || encoderConfig.encoder === 'copy') && (needsScaling || needsRotation)) {
+      console.log(`[${jobId}] [NORMALIZE] Filter needed (scaling=${needsScaling}, rotation=${needsRotation}) but copy encoder selected, forcing re-encoding with libx264`);
       finalEncoder = 'libx264';
       encoderConfig.hardware = false;
       encoderConfig.preset = 'fast';
@@ -2657,11 +2702,20 @@ async function processNormalizeVideoInternal(req, jobId) {
 
     const hwParams = encoderConfig.hardware ? getHardwareEncodingParams(finalEncoder, encoderConfig.is10Bit) : '';
     const softwareParams = encoderConfig.hardware ? '' : '-preset fast -tune zerolatency -threads 2';
-    
-    // Build scale filter only if needed
-    const scaleFilter = needsScaling ? `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"` : '';
 
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${scaleFilter ? ` ${scaleFilter}` : ''} -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    let vfFilter = '';
+    if (needsRotation && needsScaling) {
+      vfFilter = `-vf "${transposeFilter},scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"`;
+    } else if (needsRotation) {
+      vfFilter = `-vf "${transposeFilter}"`;
+    } else if (needsScaling) {
+      vfFilter = `-vf "scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2"`;
+    }
+    if (needsRotation) {
+      console.log(`[${jobId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${sourceRotation}°)`);
+    }
+
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
   
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await execAsync(ffmpegCmd);
