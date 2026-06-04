@@ -29,6 +29,8 @@ const router = useRouter();
 const tweetStore = useTweetStore();
 const vdiv = ref();
 const video = ref();
+const coverCanvas = ref<HTMLCanvasElement | null>(null);
+const hasCoverFrame = ref(false);
 const isPlaying = ref(false);
 const isPortrait = ref(false);
 const autoplayBlocked = ref(false);
@@ -308,9 +310,40 @@ function cleanupHlsInstance() {
   }
 }
 
+function captureAndShowCoverFrame() {
+  const el = video.value;
+  const canvas = coverCanvas.value;
+  if (!el || !canvas || el.readyState < 2 || !el.videoWidth || !el.videoHeight) return;
+  const container = canvas.parentElement;
+  const w = container?.clientWidth || el.clientWidth || el.videoWidth;
+  const h = container?.clientHeight || el.clientHeight || el.videoHeight;
+  if (!w || !h) return;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const videoAspect = el.videoWidth / el.videoHeight;
+  const containerAspect = w / h;
+  let sx = 0, sy = 0, sw = el.videoWidth, sh = el.videoHeight;
+  if (videoAspect > containerAspect) {
+    sw = el.videoHeight * containerAspect;
+    sx = (el.videoWidth - sw) / 2;
+  } else {
+    sh = el.videoWidth / containerAspect;
+    sy = (el.videoHeight - sh) / 2;
+  }
+  ctx.drawImage(el, sx, sy, sw, sh, 0, 0, w, h);
+  hasCoverFrame.value = true;
+}
+
+function clearCoverFrame() {
+  hasCoverFrame.value = false;
+}
+
 function releaseFeedMedia(reason: string) {
   debugVideoLoad(reason);
   hlsSetupToken += 1;
+  captureAndShowCoverFrame();
   regularVideoActive.value = false;
   cleanupHlsInstance();
   isHLSInitialized = false;
@@ -365,6 +398,7 @@ onMounted(() => {
         video.value.addEventListener('playing', () => {
           isBuffering.value = false;
           coordinatorAutoplayPending.value = false;
+          clearCoverFrame();
           updateTimeRemaining();
           syncMutedState();
         });
@@ -1031,6 +1065,7 @@ function setupRegularVideo() {
   // Add load event to confirm video loaded
   videoElement.addEventListener('loadeddata', () => {
     isBuffering.value = false;
+    clearCoverFrame();
   }, { once: true });
 
   // Add canplay event and start playing if autoplay is enabled
@@ -2124,6 +2159,12 @@ function stopVideo() {
             <source v-if="shouldRenderRegularSource" :src="getVideoSource()" type="video/mp4" />
           Your browser does not support the video tag.
         </video>
+        <canvas
+          v-show="hasCoverFrame"
+          ref="coverCanvas"
+          class="video-cover-frame"
+          aria-hidden="true"
+        />
       </div>
 
       <div
@@ -2160,6 +2201,15 @@ function stopVideo() {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.video-cover-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .video {
