@@ -1068,7 +1068,31 @@ async function processVideoUpload(req, res) {
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, calculatedBitrateK;
 
-    if (videoResolution > 720) {
+    if (noResample) {
+      // Preserve Quality: cap at 1080p, keep original if already ≤1080p
+      if (videoResolution > 1080) {
+        console.log(`[${requestId}] [NORMALIZE] noResample=true, video (${videoResolution}p) > 1080p, normalizing to 1080p`);
+        const isPortrait = displayHeight > displayWidth;
+        if (isPortrait) {
+          targetWidth = 1080;
+          targetHeight = Math.round((1080 * displayHeight) / displayWidth);
+        } else {
+          targetHeight = 1080;
+          targetWidth = Math.round((1080 * displayWidth) / displayHeight);
+        }
+        const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
+        targetWidth = evenDims.width;
+        targetHeight = evenDims.height;
+        calculatedBitrateK = 4000;
+      } else {
+        console.log(`[${requestId}] [NORMALIZE] noResample=true, video (${videoResolution}p) ≤ 1080p, keeping original resolution`);
+        const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
+        targetWidth = evenDims.width;
+        targetHeight = evenDims.height;
+        const REFERENCE_1080P_BITRATE = 4000;
+        calculatedBitrateK = Math.round((videoResolution / 1080) * REFERENCE_1080P_BITRATE);
+      }
+    } else if (videoResolution > 720) {
       // >720p: normalize to 720p with 1500k bitrate
       console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with 1500k bitrate`);
       const isPortrait = displayHeight > displayWidth;
@@ -1781,7 +1805,30 @@ async function processVideoUploadInternal(req, jobId) {
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, bitrate;
 
-    if (videoResolution > 720) {
+    if (noResample) {
+      // Preserve Quality: cap at 1080p, keep original if already ≤1080p
+      if (videoResolution > 1080) {
+        console.log(`[${jobId}] [NORMALIZE] noResample=true, video (${videoResolution}p) > 1080p, normalizing to 1080p`);
+        const isPortrait = displayHeight > displayWidth;
+        if (isPortrait) {
+          targetWidth = 1080;
+          targetHeight = Math.round((1080 * displayHeight) / displayWidth);
+        } else {
+          targetHeight = 1080;
+          targetWidth = Math.round((1080 * displayWidth) / displayHeight);
+        }
+        const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
+        targetWidth = evenDims.width;
+        targetHeight = evenDims.height;
+        bitrate = 4000;
+      } else {
+        console.log(`[${jobId}] [NORMALIZE] noResample=true, video (${videoResolution}p) ≤ 1080p, keeping original resolution`);
+        const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
+        targetWidth = evenDims.width;
+        targetHeight = evenDims.height;
+        bitrate = Math.round((videoResolution / 1080) * 4000);
+      }
+    } else if (videoResolution > 720) {
       // >720p: normalize to 720p with 1500k bitrate
       console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with 1500k bitrate`);
       const isPortrait = displayHeight > displayWidth;
@@ -1814,7 +1861,7 @@ async function processVideoUploadInternal(req, jobId) {
       const REFERENCE_720P_BITRATE = 1000; // 1000 kbps
       bitrate = Math.round(((targetWidth * targetHeight) / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
     }
-    
+
     console.log(`[${jobId}] [INFO] Normalization target: ${targetWidth}x${targetHeight}, bitrate: ${bitrate}k`);
     
     // Check if scaling is needed (target dimensions differ from original)
