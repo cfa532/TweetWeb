@@ -47,7 +47,7 @@ function excerptFromTweet(t: Tweet): string | null {
 /** Excerpts paired with tweet ids for the rotating strip (tap opens profile at that tweet). */
 const carouselItems = ref<{ excerpt: string; tweetId: string }[]>([]);
 const currentIdx = ref(0);
-/** After mount / author change: strip appears only after this is true (3s delay on first paint). */
+/** After mount / author change: strip appears only after this is true (5s delay on first paint). */
 const stripReady = ref(false);
 let ticker: number | null = null;
 let revealTimer: number | null = null;
@@ -116,7 +116,7 @@ async function loadPeerTweets() {
 onMounted(() => {
   rebuildCarousel();
   void loadPeerTweets();
-  scheduleStripReveal(3000);
+  scheduleStripReveal(5000);
 });
 
 onUnmounted(() => {
