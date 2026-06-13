@@ -34,6 +34,14 @@ const canShowFollowButton = computed(() => {
     user.value.mid !== tweetStore.loginUser.mid
 })
 
+const avatarTooltip = computed(() => {
+  if (!user.value) return ''
+  const u = user.value
+  const hostId = u.hostIds?.[0] ?? 'N/A'
+  const baseIp = u.providerIp ?? 'N/A'
+  return `User ID: ${u.mid}\nHost ID: ${hostId}\nBase IP: ${baseIp}`
+})
+
 /** Bold name — use username when display name is missing (same as ItemHeader). */
 const rowDisplayName = computed(() => {
   const u = user.value
@@ -119,7 +127,7 @@ async function onToggleFollow(event: Event) {
   <div v-else-if="user" class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="user.avatar" alt="User Avatar" class="rounded-circle">
+      <img :src="user.avatar" :title="avatarTooltip" alt="User Avatar" class="rounded-circle">
     </div>
 
     <!-- User Info -->

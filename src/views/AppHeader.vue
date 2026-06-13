@@ -128,6 +128,7 @@ async function onProfileToggleFollow(event: Event) {
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
+const appVersion = ref<number | null>(null)
 
 const openDownloadModal = () => {
     showDownloadModal.value = true
@@ -296,8 +297,7 @@ const startDirectDownload = async () => {
     }
 }
 
-onMounted(() => {
-    // Show download prompt after 2 seconds
+onMounted(async () => {
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
@@ -305,6 +305,24 @@ onMounted(() => {
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
+
+    const cached = sessionStorage.getItem('appVersion')
+    if (cached) appVersion.value = Number(cached)
+
+    try {
+        const res = await tweetStore.lapi.client.RunMApp("check_upgrade", {
+            aid: tweetStore.appId,
+            ver: "last",
+            version: "v2",
+        })
+        const data = res?.success ? res.data : res
+        if (data?.version != null) {
+            appVersion.value = data.version
+            sessionStorage.setItem('appVersion', String(data.version))
+        }
+    } catch (e) {
+        console.warn('[AppHeader] check_upgrade failed', e)
+    }
 })
 watch(
     userId,
@@ -436,6 +454,7 @@ function onAvatarError(event: Event) {
                         <a href="#" class="account-dropdown-item" @click.prevent="goToAccount">{{ $t('auth.account') }}</a>
                         <a href="#" class="account-dropdown-item" @click.prevent="logout">{{ $t('auth.logout') }}</a>
                     </template>
+                    <div v-if="appVersion !== null" class="account-dropdown-version">v{{ appVersion }}</div>
                 </div>
             </div>
         </div>
@@ -836,6 +855,14 @@ function onAvatarError(event: Event) {
 
 .account-dropdown-item:hover {
     background: #ecf3f8;
+}
+
+.account-dropdown-version {
+    padding: 6px 12px;
+    color: #aaa;
+    font-size: 0.78rem;
+    text-align: right;
+    border-top: 1px solid #e6ecf0;
 }
 
 @keyframes slideDown {
