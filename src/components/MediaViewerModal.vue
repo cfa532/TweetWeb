@@ -297,12 +297,12 @@ function goToMedia(index: number) {
           :key="media.mid"
           class="thumbnail"
           :class="{ 'active': index === currentMediaIndex }"
-          @click="goToMedia(index)"
+          @click="goToMedia(Number(index))"
         >
-          <img 
+          <img
             v-if="media.type?.toLowerCase().includes('image')"
-            :src="media.mid" 
-            :alt="`Thumbnail ${index + 1}`"
+            :src="media.mid"
+            :alt="`Thumbnail ${Number(index) + 1}`"
           />
           <div 
             v-else
