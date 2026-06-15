@@ -1010,7 +1010,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 }
 .card-header {
   margin: 0;
-  padding: 0 4px;
+  padding: 0 4px 0 0;
   cursor: pointer;
   background-color: solid #888;
 }
