@@ -22,6 +22,7 @@ const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
 const agentRouter = require('./agentRoutes');
 const commentRouter = require('./commentRoutes');
+const createShareRoutes = require('./shareRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
 
@@ -46,7 +47,13 @@ app.use((req, res, next) => {
     'Accept',
     'Cache-Control',
     'Connection',
-    'Keep-Alive'
+    'Keep-Alive',
+    'X-Share-Password',
+    'x-share-password',
+    'X-Download-Token',
+    'x-download-token',
+    'Range',
+    'If-Range'
   ].join(', '));
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -408,6 +415,17 @@ function checkAuthorizedUser(req, res, next) {
   if (req.path === '/health') {
     return next();
   }
+
+  // Public share downloads are gated by shareRoutes itself.
+  if (req.path === '/download') {
+    return next();
+  }
+
+  // Public share metadata is needed so clients can decide whether to prompt
+  // for a password before redirecting to IPFS.
+  if (req.method === 'GET' && req.path.startsWith('/shares/')) {
+    return next();
+  }
   
   // Skip authorization for the register endpoint
   if (req.path === '/files/register') {
@@ -598,7 +616,13 @@ app.use(cors({
     'Accept',
     'Cache-Control',
     'Connection',
-    'Keep-Alive'
+    'Keep-Alive',
+    'X-Share-Password',
+    'x-share-password',
+    'X-Download-Token',
+    'x-download-token',
+    'Range',
+    'If-Range'
   ],
   exposedHeaders: [
     'Location',
@@ -606,7 +630,11 @@ app.use(cors({
     'Upload-Offset',
     'Upload-Length',
     'x-username',
-    'X-Username'
+    'X-Username',
+    'Accept-Ranges',
+    'Content-Range',
+    'Content-Length',
+    'X-Download-Token'
   ],
   credentials: true,
   maxAge: 86400 // 24 hours
@@ -617,6 +645,7 @@ app.use(checkAuthorizedUser);
 
 // Mount the routers
 app.use('/', uploadRouter);     // TUS upload handling
+app.use('/', createShareRoutes(uploadRouter.registries)); // File sharing and gated downloads
 app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
@@ -658,5 +687,6 @@ app.listen(port, '::', async () => {
   
   // Initialize services on startup
   await initializeLeither();
+  uploadRouter.resumePendingIpfsConversions();
   await initializeHardwareEncoders();
 });

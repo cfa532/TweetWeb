@@ -379,7 +379,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div :class="['tweet-container', isQuoted ? '' : 'card']" :data-tweet-mid='props.tweet.mid'>
+  <div :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']" :data-tweet-mid='props.tweet.mid'>
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -622,12 +622,16 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   /* Profile deep links: scrollIntoView clears fixed AppHeader overlap */
   scroll-margin-top: 52px;
 }
+.tweet-container.is-quoted {
+  background-color: #d0d8e4;
+}
 .quoted-tweet {
   margin: 8px 0 8px 32px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;
   overflow: hidden;
+  background-color: #f0f2f5;
 }
 
 /* Remove card styling on mobile for flush layout */

@@ -1007,6 +1007,10 @@ function retryLoad() {
     border: 1px solid #e6ecf0;
     border-radius: 8px;
     overflow: hidden;
+    background-color: #d0d8e4;
+}
+.quoted-tweet :deep(.tweet-container) {
+    background-color: #d0d8e4;
 }
 
 .comment-list {
