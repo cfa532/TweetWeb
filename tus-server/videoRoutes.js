@@ -16,8 +16,21 @@ const maxConcurrentUploads = 3;
 const uploadQueue = [];
 let isProcessingQueue = false;
 
-// Video quality constants
-const MIN_BITRATE = 500; // Minimum bitrate in kbps for quality (matches Android implementation)
+// Video quality constants. Preserve-quality mode is the source of truth:
+// 1080p => 4000k, scaled by reference resolution, with a 600k floor.
+const MIN_BITRATE = 600;
+const REFERENCE_1080P_RESOLUTION = 1080;
+const REFERENCE_1080P_BITRATE = 4000;
+const HLS_AUDIO_BITRATE = 128;
+const HLS_AUDIO_BITRATE_BPS = HLS_AUDIO_BITRATE * 1000;
+
+function calculateVideoBitrateK(referenceResolution) {
+  const resolution = Math.max(1, Number(referenceResolution) || 0);
+  return Math.max(
+    MIN_BITRATE,
+    Math.round((resolution / REFERENCE_1080P_RESOLUTION) * REFERENCE_1080P_BITRATE)
+  );
+}
 
 // Track active temporary directories to prevent cleanup during processing
 const activeTempDirs = new Set();
@@ -708,8 +721,8 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
   const originalBitrate480 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate480, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate480;
   
-  const bitrate720 = 1500;  // Set to 1500k as requested
-  const bitrate480 = 750;  // Adjusted proportionally
+  const bitrate720 = calculateVideoBitrateK(720);
+  const bitrate480 = calculateVideoBitrateK(480);
   
   // Calculate optimal segment durations for each quality
   const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);
@@ -756,13 +769,13 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
 
   // Use simplified commands based on Android implementation
   console.log('[HLS-CONVERSION] Using simplified commands based on Android implementation');
-  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${bitrate720}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
-  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${bitrate480}k -b:a 128k${formattedSoftwareParams} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+  cmd720p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim720.width}:${dim720.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${bitrate720}k -b:a ${HLS_AUDIO_BITRATE}k${formattedSoftwareParams} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+  cmd480p = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${encoderConfig.encoder}${formattedHwParams} -c:a aac -vf "scale=${dim480.width}:${dim480.height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${bitrate480}k -b:a ${HLS_AUDIO_BITRATE}k${formattedSoftwareParams} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
   commands.push(cmd720p, cmd480p);
   
-  const bandwidth720 = 1500000;  // Matches 1500k
-  const bandwidth480 = 750000;  // Matches 750k
+  const bandwidth720 = bitrate720 * 1000;
+  const bandwidth480 = bitrate480 * 1000;
   
   const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
@@ -803,7 +816,7 @@ function calculateOptimalSegmentDuration(videoInfo, bitrate) {
   // Adjust based on bitrate (higher bitrate = longer segments)
   if (bitrate > 2000) {
     segmentDuration = Math.min(segmentDuration + 2, 15); // Cap at 15 seconds
-  } else if (bitrate < 500) {
+  } else if (bitrate < MIN_BITRATE) {
     segmentDuration = Math.max(segmentDuration - 2, 4); // Cap at 4 seconds
   }
   
@@ -1083,18 +1096,17 @@ async function processVideoUpload(req, res) {
         const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
         targetWidth = evenDims.width;
         targetHeight = evenDims.height;
-        calculatedBitrateK = 4000;
+        calculatedBitrateK = calculateVideoBitrateK(1080);
       } else {
         console.log(`[${requestId}] [NORMALIZE] noResample=true, video (${videoResolution}p) ≤ 1080p, keeping original resolution`);
         const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
         targetWidth = evenDims.width;
         targetHeight = evenDims.height;
-        const REFERENCE_1080P_BITRATE = 4000;
-        calculatedBitrateK = Math.round((videoResolution / 1080) * REFERENCE_1080P_BITRATE);
+        calculatedBitrateK = calculateVideoBitrateK(videoResolution);
       }
     } else if (videoResolution > 720) {
-      // >720p: normalize to 720p with 1500k bitrate
-      console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with 1500k bitrate`);
+      // >720p: normalize to 720p with shared bitrate
+      console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with shared bitrate`);
       const isPortrait = displayHeight > displayWidth;
       if (isPortrait) {
         targetWidth = 720;
@@ -1106,23 +1118,21 @@ async function processVideoUpload(req, res) {
       const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      calculatedBitrateK = 1500;
+      calculatedBitrateK = calculateVideoBitrateK(720);
     } else if (videoResolution === 720) {
-      // =720p: keep resolution, set bitrate to 1000k
-      console.log(`[${requestId}] [NORMALIZE] Video resolution is 720p, keeping resolution with 1000k bitrate`);
+      // =720p: keep resolution, use shared bitrate
+      console.log(`[${requestId}] [NORMALIZE] Video resolution is 720p, keeping resolution with shared bitrate`);
       const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      calculatedBitrateK = 1000;
+      calculatedBitrateK = calculateVideoBitrateK(720);
     } else {
-      // <720p: keep resolution, set bitrate proportional to 720p at 1000k
-      console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) < 720p, keeping resolution with proportional bitrate`);
+      // <720p: keep resolution, use shared bitrate
+      console.log(`[${requestId}] [NORMALIZE] Video resolution (${videoResolution}p) < 720p, keeping resolution with shared bitrate`);
       const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      // Proportional bitrate: (resolution / 720) * REFERENCE_720P_BITRATE (matches iOS algorithm)
-      const REFERENCE_720P_BITRATE = 1000; // 1000 kbps
-      calculatedBitrateK = Math.round((videoResolution / 720) * REFERENCE_720P_BITRATE);
+      calculatedBitrateK = calculateVideoBitrateK(videoResolution);
     }
     
     // Determine final target bitrate:
@@ -1183,7 +1193,7 @@ async function processVideoUpload(req, res) {
 
     // Normalize to MP4
     const normalizedFilePath = path.join(tempDir, 'normalized.mp4');
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a ${HLS_AUDIO_BITRATE}k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
     
     console.log(`[${requestId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, requestId, 0, 50, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
@@ -1232,16 +1242,9 @@ async function processVideoUpload(req, res) {
 
       // HLS conversion: single variant for 480p videos, dual variant for others (like iOS)
       // - Resolution =480p: Single 480p variant (like iOS singleVariant480p=true)
-      // - Resolution >720p: High quality 720p @ 1500k + 480p @ 667k
-      // - Resolution =720p: High quality 720p @ 1000k + 480p @ 667k
-      // - Resolution <720p & !=480p: High quality at original resolution @ proportional bitrate + 480p @ 667k
-
-      // 720p reference: 1280x720 = 921,600 pixels
-      const REFERENCE_720P_PIXELS = 921600;
-      const REFERENCE_720P_BITRATE = 1000;
-
-      // Calculate original resolution in pixels
-      const origPixels = targetWidth * targetHeight;
+      // - Resolution >720p: High quality 720p + 480p using shared bitrate
+      // - Resolution =720p: High quality 720p + 480p using shared bitrate
+      // - Resolution <720p & !=480p: High quality at original resolution + 480p using shared bitrate
 
       // Determine if portrait or landscape
       const isPortrait = targetHeight > targetWidth;
@@ -1275,10 +1278,10 @@ async function processVideoUpload(req, res) {
       let variant480Width, variant480Height, variant480Bitrate;
 
       if (!(is480pVideo || wouldCreateIdenticalVariants)) {
-        // High-quality variant (720p or proportional)
+        // High-quality variant (720p or original resolution)
         if (referenceDim > 720) {
-          // Resolution >720p: normalize to 720p @ 1500k
-          console.log(`[${requestId}] [HLS] Video resolution >720p, high quality: 720p @ 1500k`);
+          // Resolution >720p: normalize to 720p @ shared bitrate
+          console.log(`[${requestId}] [HLS] Video resolution >720p, high quality: 720p @ shared bitrate`);
           if (isPortrait) {
             highQualityWidth = 720;
             highQualityHeight = Math.round((720 * targetHeight) / targetWidth);
@@ -1286,26 +1289,20 @@ async function processVideoUpload(req, res) {
             highQualityHeight = 720;
             highQualityWidth = Math.round((720 * targetWidth) / targetHeight);
           }
-          highQualityBitrate = 1500;
+          highQualityBitrate = calculateVideoBitrateK(720);
         } else if (referenceDim === 720) {
-          // Resolution =720p: keep at 720p @ REFERENCE_720P_BITRATE
-          console.log(`[${requestId}] [HLS] Video resolution =720p, high quality: 720p @ ${REFERENCE_720P_BITRATE}k`);
+          // Resolution =720p: keep at 720p using shared bitrate
+          console.log(`[${requestId}] [HLS] Video resolution =720p, high quality: 720p @ ${calculateVideoBitrateK(720)}k`);
           highQualityWidth = targetWidth;
           highQualityHeight = targetHeight;
-          highQualityBitrate = 1000;
+          highQualityBitrate = calculateVideoBitrateK(720);
         } else {
-          // Resolution <720p: keep original resolution with proportional bitrate
-          console.log(`[${requestId}] [HLS] Video resolution <720p, high quality: original @ proportional bitrate`);
+          // Resolution <720p: keep original resolution with shared bitrate
+          console.log(`[${requestId}] [HLS] Video resolution <720p, high quality: original @ shared bitrate`);
           highQualityWidth = targetWidth;
           highQualityHeight = targetHeight;
 
-          // Calculate proportional bitrate based on pixel count ratio to 720p
-          highQualityBitrate = Math.round((origPixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-
-          // Ensure minimum bitrate
-          if (highQualityBitrate < MIN_BITRATE) {
-            highQualityBitrate = MIN_BITRATE;
-          }
+          highQualityBitrate = calculateVideoBitrateK(referenceDim);
         }
 
         // Ensure even dimensions for high quality
@@ -1330,18 +1327,13 @@ async function processVideoUpload(req, res) {
       variant480Width = variant480EvenDims.width;
       variant480Height = variant480EvenDims.height;
 
-      // 480p bitrate: proportional to 720p @ REFERENCE_720P_BITRATE based on actual pixel count
-      const variant480Pixels = variant480Width * variant480Height;
-      variant480Bitrate = Math.round((variant480Pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-      // Ensure minimum bitrate
-      if (variant480Bitrate < MIN_BITRATE) {
-        variant480Bitrate = MIN_BITRATE;
-      }
+      // 480p bitrate follows the shared preserve-quality curve
+      variant480Bitrate = calculateVideoBitrateK(target480Dim);
 
       if (!(is480pVideo || wouldCreateIdenticalVariants)) {
         console.log(`[${requestId}] [HLS] High quality variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
       }
-      console.log(`[${requestId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (proportional: ${variant480Pixels}/${REFERENCE_720P_PIXELS} * ${REFERENCE_720P_BITRATE})`);
+      console.log(`[${requestId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (shared bitrate curve, ${target480Dim}p reference)`);
 
       // For noResample single variant, use original dimensions instead of 480p
       const singleVariantWidth = noResample ? targetWidth : variant480Width;
@@ -1422,11 +1414,11 @@ async function processVideoUpload(req, res) {
         if (canUseCopySingle) {
           // Use COPY encoder - no scaling, no re-encoding
           console.log(`[${requestId}] [HLS] Using COPY encoder for single variant (no scaling needed)`);
-          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a ${HLS_AUDIO_BITRATE}k -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
         } else {
           // Use libx264 encoder with scaling
           console.log(`[${requestId}] [HLS] Using libx264 encoder for single variant (scaling needed)`);
-          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${singleVariantWidth}:${singleVariantHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParamsSingle} -b:v ${singleVariantBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${singleVariantWidth}:${singleVariantHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParamsSingle} -b:v ${singleVariantBitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
         }
 
         commands = [
@@ -1435,7 +1427,7 @@ async function processVideoUpload(req, res) {
 
         masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=${singleVariantBitrate * 1000 + 128000},RESOLUTION=${singleVariantWidth}x${singleVariantHeight}
+#EXT-X-STREAM-INF:BANDWIDTH=${singleVariantBitrate * 1000 + HLS_AUDIO_BITRATE_BPS},RESOLUTION=${singleVariantWidth}x${singleVariantHeight}
 playlist.m3u8`;
 
         console.log(`[${requestId}] [HLS] Executing single-variant HLS conversion for ${referenceDim}p video...`);
@@ -1460,15 +1452,15 @@ playlist.m3u8`;
         let cmd720p;
         if (canUseCopyDual720) {
           console.log(`[${requestId}] [HLS] Using COPY encoder for 720p variant (no scaling needed)`);
-          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a ${HLS_AUDIO_BITRATE}k -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
         } else {
           console.log(`[${requestId}] [HLS] Using libx264 encoder for 720p variant (scaling needed)`);
-          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
         }
 
         // 480p variant: always use libx264 (always needs scaling)
         console.log(`[${requestId}] [HLS] Using libx264 encoder for 480p variant (scaling needed)`);
-        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd720p, variant: '720p', progressStart: 50, progressEnd: 65 },
@@ -1476,8 +1468,8 @@ playlist.m3u8`;
         ];
 
         // Create master playlist for dual variant
-        const bandwidth720 = highQualityBitrate * 1000 + 128000; // video + audio
-        const bandwidth480 = variant480Bitrate * 1000 + 128000;
+        const bandwidth720 = highQualityBitrate * 1000 + HLS_AUDIO_BITRATE_BPS; // video + audio
+        const bandwidth480 = variant480Bitrate * 1000 + HLS_AUDIO_BITRATE_BPS;
 
         masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
@@ -1820,17 +1812,17 @@ async function processVideoUploadInternal(req, jobId) {
         const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
         targetWidth = evenDims.width;
         targetHeight = evenDims.height;
-        bitrate = 4000;
+        bitrate = calculateVideoBitrateK(1080);
       } else {
         console.log(`[${jobId}] [NORMALIZE] noResample=true, video (${videoResolution}p) ≤ 1080p, keeping original resolution`);
         const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
         targetWidth = evenDims.width;
         targetHeight = evenDims.height;
-        bitrate = Math.round((videoResolution / 1080) * 4000);
+        bitrate = calculateVideoBitrateK(videoResolution);
       }
     } else if (videoResolution > 720) {
-      // >720p: normalize to 720p with 1500k bitrate
-      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with 1500k bitrate`);
+      // >720p: normalize to 720p with shared bitrate
+      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p with shared bitrate`);
       const isPortrait = displayHeight > displayWidth;
       if (isPortrait) {
         targetWidth = 720;
@@ -1842,24 +1834,21 @@ async function processVideoUploadInternal(req, jobId) {
       const evenDims = ensureEvenDimensions(targetWidth, targetHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      bitrate = 1500;
+      bitrate = calculateVideoBitrateK(720);
     } else if (videoResolution === 720) {
-      // =720p: keep resolution, set bitrate to 1000k
-      console.log(`[${jobId}] [NORMALIZE] Video resolution is 720p, keeping resolution with 1000k bitrate`);
+      // =720p: keep resolution, use shared bitrate
+      console.log(`[${jobId}] [NORMALIZE] Video resolution is 720p, keeping resolution with shared bitrate`);
       const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      bitrate = 1000;
+      bitrate = calculateVideoBitrateK(720);
     } else {
-      // <720p: keep resolution, set bitrate proportional to 720p at 1000k
-      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) < 720p, keeping resolution with proportional bitrate`);
+      // <720p: keep resolution, use shared bitrate
+      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) < 720p, keeping resolution with shared bitrate`);
       const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
-      // Proportional bitrate: (pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE
-      const REFERENCE_720P_PIXELS = 921600; // 1280x720 = 921,600 pixels
-      const REFERENCE_720P_BITRATE = 1000; // 1000 kbps
-      bitrate = Math.round(((targetWidth * targetHeight) / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
+      bitrate = calculateVideoBitrateK(videoResolution);
     }
 
     console.log(`[${jobId}] [INFO] Normalization target: ${targetWidth}x${targetHeight}, bitrate: ${bitrate}k`);
@@ -1904,7 +1893,7 @@ async function processVideoUploadInternal(req, jobId) {
 
     // Normalize to MP4
     const normalizedFilePath = path.join(tempDir, 'normalized.mp4');
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(uploadedFile.tempFilePath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a ${HLS_AUDIO_BITRATE}k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(normalizedFilePath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
 
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, jobId, 40, 60, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
@@ -1928,16 +1917,9 @@ async function processVideoUploadInternal(req, jobId) {
 
       // HLS conversion: single variant for 480p videos, dual variant for others (like iOS)
       // - Resolution =480p: Single 480p variant (like iOS singleVariant480p=true)
-      // - Resolution >720p: High quality 720p @ 1500k + 480p @ 667k
-      // - Resolution =720p: High quality 720p @ 1000k + 480p @ 667k
-      // - Resolution <720p & !=480p: High quality at original resolution @ proportional bitrate + 480p @ 667k
-
-      // 720p reference: 1280x720 = 921,600 pixels
-      const REFERENCE_720P_PIXELS = 921600;
-      const REFERENCE_720P_BITRATE = 1000;
-
-      // Calculate original resolution in pixels
-      const origPixels = targetWidth * targetHeight;
+      // - Resolution >720p: High quality 720p + 480p using shared bitrate
+      // - Resolution =720p: High quality 720p + 480p using shared bitrate
+      // - Resolution <720p & !=480p: High quality at original resolution + 480p using shared bitrate
 
       // Determine if portrait or landscape
       const isPortrait = targetHeight > targetWidth;
@@ -1970,10 +1952,10 @@ async function processVideoUploadInternal(req, jobId) {
       let variant480Width, variant480Height, variant480Bitrate;
 
       if (!(is480pVideo || wouldCreateIdenticalVariants)) {
-        // High-quality variant (720p or proportional)
+        // High-quality variant (720p or original resolution)
         if (referenceDim > 720) {
-          // Resolution >720p: normalize to 720p @ 1500k
-          console.log(`[${jobId}] [HLS] Video resolution >720p, high quality: 720p @ 1500k`);
+          // Resolution >720p: normalize to 720p @ shared bitrate
+          console.log(`[${jobId}] [HLS] Video resolution >720p, high quality: 720p @ shared bitrate`);
           if (isPortrait) {
             highQualityWidth = 720;
             highQualityHeight = Math.round((720 * targetHeight) / targetWidth);
@@ -1981,26 +1963,20 @@ async function processVideoUploadInternal(req, jobId) {
             highQualityHeight = 720;
             highQualityWidth = Math.round((720 * targetWidth) / targetHeight);
           }
-          highQualityBitrate = 1500;
+          highQualityBitrate = calculateVideoBitrateK(720);
         } else if (referenceDim === 720) {
-          // Resolution =720p: keep at 720p @ REFERENCE_720P_BITRATE
-          console.log(`[${jobId}] [HLS] Video resolution =720p, high quality: 720p @ ${REFERENCE_720P_BITRATE}k`);
+          // Resolution =720p: keep at 720p using shared bitrate
+          console.log(`[${jobId}] [HLS] Video resolution =720p, high quality: 720p @ ${calculateVideoBitrateK(720)}k`);
           highQualityWidth = targetWidth;
           highQualityHeight = targetHeight;
-          highQualityBitrate = 1000;
+          highQualityBitrate = calculateVideoBitrateK(720);
         } else {
-          // Resolution <720p: keep original resolution with proportional bitrate
-          console.log(`[${jobId}] [HLS] Video resolution <720p, high quality: original @ proportional bitrate`);
+          // Resolution <720p: keep original resolution with shared bitrate
+          console.log(`[${jobId}] [HLS] Video resolution <720p, high quality: original @ shared bitrate`);
           highQualityWidth = targetWidth;
           highQualityHeight = targetHeight;
 
-          // Calculate proportional bitrate based on pixel count ratio to 720p
-          highQualityBitrate = Math.round((origPixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-
-          // Ensure minimum bitrate
-          if (highQualityBitrate < MIN_BITRATE) {
-            highQualityBitrate = MIN_BITRATE;
-          }
+          highQualityBitrate = calculateVideoBitrateK(referenceDim);
         }
 
         // Ensure even dimensions for high quality
@@ -2025,19 +2001,14 @@ async function processVideoUploadInternal(req, jobId) {
       variant480Width = variant480EvenDims.width;
       variant480Height = variant480EvenDims.height;
 
-      // 480p bitrate: proportional to 720p @ REFERENCE_720P_BITRATE based on actual pixel count
-      const variant480Pixels = variant480Width * variant480Height;
-      variant480Bitrate = Math.round((variant480Pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-      // Ensure minimum bitrate
-      if (variant480Bitrate < MIN_BITRATE) {
-        variant480Bitrate = MIN_BITRATE;
-      }
+      // 480p bitrate follows the shared preserve-quality curve
+      variant480Bitrate = calculateVideoBitrateK(target480Dim);
 
       if (!is480pVideo && !noResample) {
         console.log(`[${jobId}] [HLS] High quality variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
       }
       if (!noResample) {
-        console.log(`[${jobId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (proportional: ${variant480Pixels}/${REFERENCE_720P_PIXELS} * ${REFERENCE_720P_BITRATE})`);
+        console.log(`[${jobId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (shared bitrate curve, ${target480Dim}p reference)`);
       }
 
       const isSingleVariant = noResample || is480pVideo || wouldCreateIdenticalVariants;
@@ -2110,10 +2081,10 @@ async function processVideoUploadInternal(req, jobId) {
         let cmd;
         if (canUseCopySingle) {
           console.log(`[${jobId}] [HLS] Using COPY encoder for single variant (no scaling needed)`);
-          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a ${HLS_AUDIO_BITRATE}k -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
         } else {
           console.log(`[${jobId}] [HLS] Using libx264 encoder for single variant (scaling needed)`);
-          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${singleVarWidth}:${singleVarHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParamsSingle} -b:v ${singleVarBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
+          cmd = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${singleVarWidth}:${singleVarHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParamsSingle} -b:v ${singleVarBitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDurationSingle} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, 'playlist.m3u8'))}`;
         }
 
         commands = [
@@ -2122,7 +2093,7 @@ async function processVideoUploadInternal(req, jobId) {
 
         masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=${singleVarBitrate * 1000 + 128000},RESOLUTION=${singleVarWidth}x${singleVarHeight}
+#EXT-X-STREAM-INF:BANDWIDTH=${singleVarBitrate * 1000 + HLS_AUDIO_BITRATE_BPS},RESOLUTION=${singleVarWidth}x${singleVarHeight}
 playlist.m3u8`;
 
         updateProgressSafe(jobId, 60, 'Converting to single-variant HLS...');
@@ -2148,15 +2119,15 @@ playlist.m3u8`;
         let cmd720p;
         if (canUseCopyDual720) {
           console.log(`[${jobId}] [HLS] Using COPY encoder for 720p variant (no scaling needed)`);
-          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v copy -c:a aac -b:a ${HLS_AUDIO_BITRATE}k -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
         } else {
           console.log(`[${jobId}] [HLS] Using libx264 encoder for 720p variant (scaling needed)`);
-          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
+          cmd720p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '720p/playlist.m3u8'))}`;
         }
 
         // 480p variant: always use libx264 (always needs scaling)
         console.log(`[${jobId}] [HLS] Using libx264 encoder for 480p variant (scaling needed)`);
-        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
+        const cmd480p = `ffmpeg -i ${escapeShellArg(normalizedFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(tempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(tempDir, '480p/playlist.m3u8'))}`;
 
         commands = [
           { cmd: cmd720p, variant: '720p', progressStart: 60, progressEnd: 70 },
@@ -2164,8 +2135,8 @@ playlist.m3u8`;
         ];
 
         // Create master playlist for dual variant
-        const bandwidth720 = highQualityBitrate * 1000 + 128000; // video + audio
-        const bandwidth480 = variant480Bitrate * 1000 + 128000;
+        const bandwidth720 = highQualityBitrate * 1000 + HLS_AUDIO_BITRATE_BPS; // video + audio
+        const bandwidth480 = variant480Bitrate * 1000 + HLS_AUDIO_BITRATE_BPS;
 
         masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3
@@ -2677,23 +2648,20 @@ async function processNormalizeVideoInternal(req, jobId) {
     let targetWidth, targetHeight, bitrate;
 
     if (videoResolution <= 720) {
-      // Normalize videos ≤ 720p at their original resolution with proportional bitrate
-      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) ≤ 720p, normalizing at original resolution with proportional bitrate`);
+      // Normalize videos ≤ 720p at their original resolution with shared bitrate
+      console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) ≤ 720p, normalizing at original resolution with shared bitrate`);
 
       // Keep original dimensions but ensure even
       const evenDims = ensureEvenDimensions(displayWidth, displayHeight);
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
       
-      // Calculate proportional bitrate based on pixel count
-      // Base bitrate for 720p is 1000k, scale proportionally
-      const REFERENCE_720P_PIXELS = 921600; // 1280x720 = 921,600 pixels
-      bitrate = Math.round(((targetWidth * targetHeight) / REFERENCE_720P_PIXELS) * 1000);
+      bitrate = calculateVideoBitrateK(videoResolution);
       normalizedResolution = videoResolution;
       
-      console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}, Proportional bitrate: ${bitrate}k`);
+      console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}, Bitrate: ${bitrate}k`);
     } else {
-      // Normalize videos > 720p to 720p with 1500k bitrate
+      // Normalize videos > 720p to 720p with shared bitrate
       console.log(`[${jobId}] [NORMALIZE] Video resolution (${videoResolution}p) > 720p, normalizing to 720p`);
 
       // Calculate 720p dimensions maintaining aspect ratio
@@ -2714,7 +2682,7 @@ async function processNormalizeVideoInternal(req, jobId) {
       targetWidth = evenDims.width;
       targetHeight = evenDims.height;
       
-      bitrate = 1500; // Standard bitrate for 720p
+      bitrate = calculateVideoBitrateK(720); // Standard bitrate for 720p
       normalizedResolution = 720;
 
       console.log(`[${jobId}] [INFO] Target dimensions: ${targetWidth}x${targetHeight}, Bitrate: ${bitrate}k`);
@@ -2762,7 +2730,7 @@ async function processNormalizeVideoInternal(req, jobId) {
       console.log(`[${jobId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${sourceRotation}°)`);
     }
 
-    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a 128k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
+    const ffmpegCmd = `ffmpeg -i ${escapeShellArg(inputPath)} -c:v ${finalEncoder}${hwParams ? ` ${hwParams}` : ''} -c:a aac -b:v ${bitrate}k -b:a ${HLS_AUDIO_BITRATE}k${vfFilter ? ` ${vfFilter}` : ''} -movflags +faststart ${escapeShellArg(outputPath)} -y${softwareParams ? ` ${softwareParams}` : ''}`;
   
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await execAsync(ffmpegCmd);
@@ -2822,19 +2790,12 @@ async function processNormalizeVideoInternal(req, jobId) {
       console.log(`[${jobId}] [ROUTE] File size (${fileSizeMB.toFixed(2)}MB) > 32MB, converting to HLS`);
 
       // Dual-variant HLS conversion with normalization bitrates:
-      // - Resolution >720p: High quality 720p @ 1500k
-      // - Resolution =720p: High quality 720p @ REFERENCE_720P_BITRATE
-      // - Resolution <720p: High quality at original resolution @ proportional bitrate
-      // - 480p variant: Always at proportional bitrate based on actual resolution
+      // - Resolution >720p: High quality 720p @ shared bitrate
+      // - Resolution =720p: High quality 720p using shared bitrate
+      // - Resolution <720p: High quality at original resolution using shared bitrate
+      // - 480p variant: Always using shared bitrate based on target resolution
       
       console.log(`[${jobId}] [HLS] Creating dual-variant HLS - Original resolution: ${videoResolution}p, Normalized resolution: ${normalizedResolution}p`);
-      
-      // 720p reference: 1280x720 = 921,600 pixels
-      const REFERENCE_720P_PIXELS = 921600;
-      const REFERENCE_720P_BITRATE = 1000;
-      
-      // Calculate original resolution in pixels
-      const origPixels = displayWidth * displayHeight;
       
       // Determine if portrait or landscape
       const isPortrait = displayHeight > displayWidth;
@@ -2844,8 +2805,8 @@ async function processNormalizeVideoInternal(req, jobId) {
       let highQualityWidth, highQualityHeight, highQualityBitrate;
       
       if (referenceDim > 720) {
-        // Resolution >720p: normalize to 720p @ 1500k
-        console.log(`[${jobId}] [HLS] Video resolution >720p, high quality: 720p @ 1500k`);
+        // Resolution >720p: normalize to 720p @ shared bitrate
+        console.log(`[${jobId}] [HLS] Video resolution >720p, high quality: 720p @ shared bitrate`);
         if (isPortrait) {
           highQualityWidth = 720;
           highQualityHeight = Math.round((720 * displayHeight) / displayWidth);
@@ -2853,26 +2814,20 @@ async function processNormalizeVideoInternal(req, jobId) {
           highQualityHeight = 720;
           highQualityWidth = Math.round((720 * displayWidth) / displayHeight);
         }
-        highQualityBitrate = 1500;
+        highQualityBitrate = calculateVideoBitrateK(720);
       } else if (referenceDim === 720) {
-        // Resolution =720p: keep at 720p @ REFERENCE_720P_BITRATE
-        console.log(`[${jobId}] [HLS] Video resolution =720p, high quality: 720p @ ${REFERENCE_720P_BITRATE}k`);
+        // Resolution =720p: keep at 720p using shared bitrate
+        console.log(`[${jobId}] [HLS] Video resolution =720p, high quality: 720p @ ${calculateVideoBitrateK(720)}k`);
         highQualityWidth = displayWidth;
         highQualityHeight = displayHeight;
-        highQualityBitrate = 1000;
+        highQualityBitrate = calculateVideoBitrateK(720);
       } else {
-        // Resolution <720p: keep original resolution with proportional bitrate
-        console.log(`[${jobId}] [HLS] Video resolution <720p, high quality: original @ proportional bitrate`);
+        // Resolution <720p: keep original resolution with shared bitrate
+        console.log(`[${jobId}] [HLS] Video resolution <720p, high quality: original @ shared bitrate`);
         highQualityWidth = displayWidth;
         highQualityHeight = displayHeight;
         
-        // Calculate proportional bitrate based on pixel count ratio to 720p
-        highQualityBitrate = Math.round((origPixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-        
-        // Ensure minimum bitrate
-        if (highQualityBitrate < MIN_BITRATE) {
-          highQualityBitrate = MIN_BITRATE;
-        }
+        highQualityBitrate = calculateVideoBitrateK(referenceDim);
       }
       
       // Ensure even dimensions for high quality
@@ -2897,16 +2852,11 @@ async function processNormalizeVideoInternal(req, jobId) {
       variant480Width = variant480EvenDims.width;
       variant480Height = variant480EvenDims.height;
 
-      // 480p bitrate: proportional to 720p @ REFERENCE_720P_BITRATE based on actual pixel count
-      const variant480Pixels = variant480Width * variant480Height;
-      let variant480Bitrate = Math.round((variant480Pixels / REFERENCE_720P_PIXELS) * REFERENCE_720P_BITRATE);
-      // Ensure minimum bitrate
-      if (variant480Bitrate < MIN_BITRATE) {
-        variant480Bitrate = MIN_BITRATE;
-      }
+      // 480p bitrate follows the shared preserve-quality curve
+      let variant480Bitrate = calculateVideoBitrateK(target480Dim);
 
       console.log(`[${jobId}] [HLS] High quality variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
-      console.log(`[${jobId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (proportional: ${variant480Pixels}/${REFERENCE_720P_PIXELS} * ${REFERENCE_720P_BITRATE})`);
+      console.log(`[${jobId}] [HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k (shared bitrate curve, ${target480Dim}p reference)`);
 
       // Create HLS conversion
       const hlsTempDir = path.join(tempDir, 'hls');
@@ -2979,15 +2929,15 @@ async function processNormalizeVideoInternal(req, jobId) {
       let cmd720p;
       if (canUseCopy720) {
         console.log(`[${jobId}] [HLS] Using COPY encoder for 720p variant (no scaling needed)`);
-        cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v copy -c:a aac -b:a 128k -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+        cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v copy -c:a aac -b:a ${HLS_AUDIO_BITRATE}k -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
       } else {
         console.log(`[${jobId}] [HLS] Using libx264 encoder for 720p variant (scaling needed)`);
-        cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
+        cmd720p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams720} -b:v ${highQualityBitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration720} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '720p/segment%03d.ts'))} ${escapeShellArg(path.join(hlsTempDir, '720p/playlist.m3u8'))}`;
       }
       
       // 480p variant: always use libx264 (always needs scaling)
       console.log(`[${jobId}] [HLS] Using libx264 encoder for 480p variant (scaling needed)`);
-      const cmd480p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a 128k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts+flush_packets -avoid_negative_ts make_zero -max_interleave_delta 0 -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '480p/segment%03d.ts'))} -hls_flags discont_start+split_by_time ${escapeShellArg(path.join(hlsTempDir, '480p/playlist.m3u8'))}`;
+      const cmd480p = `ffmpeg -i ${escapeShellArg(finalFilePath)} -c:v ${encoderConfig.encoder} -c:a aac -vf "scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2" ${keyframeParams480} -b:v ${variant480Bitrate}k -b:a ${HLS_AUDIO_BITRATE}k${softwareParams ? ` ${softwareParams}` : ''} -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero -f hls -hls_time ${segmentDuration480} -hls_list_size 0 -hls_playlist_type vod -start_number 0 -hls_segment_filename ${escapeShellArg(path.join(hlsTempDir, '480p/segment%03d.ts'))} ${escapeShellArg(path.join(hlsTempDir, '480p/playlist.m3u8'))}`;
 
       const commands = [cmd720p, cmd480p];
 
@@ -3006,8 +2956,8 @@ async function processNormalizeVideoInternal(req, jobId) {
       await execAsync(commands[1]);
       
       // Create master playlist
-      const bandwidth720 = highQualityBitrate * 1000 + 128000; // video + audio
-      const bandwidth480 = variant480Bitrate * 1000 + 128000;
+      const bandwidth720 = highQualityBitrate * 1000 + HLS_AUDIO_BITRATE_BPS; // video + audio
+      const bandwidth480 = variant480Bitrate * 1000 + HLS_AUDIO_BITRATE_BPS;
       
       const masterPlaylist = `#EXTM3U
 #EXT-X-VERSION:3

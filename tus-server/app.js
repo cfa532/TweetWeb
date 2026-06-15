@@ -541,6 +541,12 @@ app.use((req, res, next) => {
 
 // Configure file upload middleware with different limits for different routes
 app.use((req, res, next) => {
+  // /process-zip streams multipart data directly in zipRoutes.js so the
+  // server can accept chunked Android uploads without buffering in memory.
+  if (req.path === '/process-zip') {
+    return next();
+  }
+
   // Use 1GB limit for video conversion, 500MB for zip processing, 50MB for other routes
   let fileSizeLimit = 50 * 1024 * 1024; // Default 50MB
   if (req.path === '/convert-video') {

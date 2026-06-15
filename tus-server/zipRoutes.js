@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const AdmZip = require('adm-zip');
 const { exec } = require('child_process');
+const busboy = require('busboy');
 
 // Concurrency management
 let activeUploads = 0;
@@ -922,6 +923,127 @@ async function processZipUploadInternal(req, jobId) {
 // Store for tracking ZIP processing status
 const processingJobs = new Map();
 
+function parseZipUploadToTempFile(req, jobId) {
+  return new Promise((resolve, reject) => {
+    const maxFileSize = 500 * 1024 * 1024;
+    const bb = busboy({
+      headers: req.headers,
+      limits: {
+        files: 1,
+        fileSize: maxFileSize,
+      },
+    });
+
+    const fields = {};
+    let zipFile = null;
+    let writeStream = null;
+    let uploadError = null;
+    let fileLimitHit = false;
+    const fileWritePromises = [];
+
+    bb.on('field', (name, value) => {
+      fields[name] = value;
+    });
+
+    bb.on('file', (fieldName, file, info) => {
+      const originalName = info.filename || `${jobId}.zip`;
+      const mimeType = info.mimeType || 'application/octet-stream';
+
+      if (fieldName !== 'zipFile') {
+        file.resume();
+        return;
+      }
+
+      const safeName = path.basename(originalName).replace(/[^\w.\-]/g, '_') || `${jobId}.zip`;
+      const tempFilePath = path.join(os.tmpdir(), `zip-upload-${jobId}-${Date.now()}-${safeName}`);
+      let bytesWritten = 0;
+
+      zipFile = {
+        name: originalName,
+        mimetype: mimeType,
+        size: 0,
+        tempFilePath,
+      };
+
+      writeStream = fs.createWriteStream(tempFilePath);
+      fileWritePromises.push(new Promise((resolveWrite, rejectWrite) => {
+        writeStream.on('finish', resolveWrite);
+        writeStream.on('error', rejectWrite);
+      }));
+
+      file.on('data', chunk => {
+        bytesWritten += chunk.length;
+      });
+
+      file.on('limit', () => {
+        fileLimitHit = true;
+        uploadError = new Error(`File size exceeds the maximum allowed size of ${(maxFileSize / (1024 * 1024)).toFixed(0)}MB.`);
+        file.unpipe(writeStream);
+        writeStream.destroy(uploadError);
+        file.resume();
+      });
+
+      file.on('error', error => {
+        uploadError = error;
+        writeStream.destroy(error);
+      });
+
+      writeStream.on('error', error => {
+        uploadError = uploadError || error;
+      });
+
+      file.pipe(writeStream);
+    });
+
+    bb.on('error', error => {
+      uploadError = error;
+      reject(error);
+    });
+
+    bb.on('close', async () => {
+      try {
+        await Promise.all(fileWritePromises);
+      } catch (error) {
+        uploadError = uploadError || error;
+      }
+
+      if (zipFile) {
+        zipFile.size = fs.existsSync(zipFile.tempFilePath)
+          ? fs.statSync(zipFile.tempFilePath).size
+          : 0;
+      }
+
+      if (uploadError) {
+        if (zipFile && zipFile.tempFilePath && fs.existsSync(zipFile.tempFilePath)) {
+          try {
+            fs.unlinkSync(zipFile.tempFilePath);
+          } catch (cleanupError) {
+            console.error(`[${jobId}] [ERROR] Failed to cleanup failed ZIP upload:`, cleanupError);
+          }
+        }
+        reject(uploadError);
+        return;
+      }
+
+      if (fileLimitHit) {
+        reject(new Error(`File size exceeds the maximum allowed size of ${(maxFileSize / (1024 * 1024)).toFixed(0)}MB.`));
+        return;
+      }
+
+      if (!zipFile) {
+        reject(new Error('No zip file uploaded. Please use the "zipFile" field name.'));
+        return;
+      }
+
+      req.body = fields;
+      req.files = { zipFile };
+      resolve(zipFile);
+    });
+
+    req.pipe(bb);
+  });
+}
+
 // ZIP processing endpoint
 router.post('/process-zip', async (req, res) => {
   // Set longer timeout for ZIP processing
@@ -951,16 +1073,44 @@ router.post('/process-zip', async (req, res) => {
     message: 'Starting ZIP upload...',
     startTime: Date.now()
   });
-  
-  // Send immediate response with job ID
-  res.json({
-    success: true,
-    message: 'ZIP upload started',
-    jobId: jobId
-  });
-  
-  // Process ZIP in background
-  processZipUploadAsync(req, jobId);
+
+  try {
+    const uploadedFile = await parseZipUploadToTempFile(req, jobId);
+    console.log(`[${jobId}] [UPLOAD] ZIP upload complete: name='${uploadedFile.name}', size=${uploadedFile.size}, path='${uploadedFile.tempFilePath}'`);
+
+    processingJobs.set(jobId, {
+      status: 'processing',
+      progress: 5,
+      message: 'ZIP upload complete, processing started',
+      startTime: processingJobs.get(jobId).startTime
+    });
+
+    res.json({
+      success: true,
+      message: 'ZIP upload started',
+      jobId: jobId
+    });
+
+    processZipUploadAsync(req, jobId);
+  } catch (error) {
+    console.error(`[${jobId}] [ERROR] ZIP upload failed:`, error);
+    processingJobs.set(jobId, {
+      status: 'failed',
+      progress: 0,
+      message: error.message || 'ZIP upload failed',
+      error: error.message,
+      startTime: processingJobs.get(jobId).startTime,
+      endTime: Date.now()
+    });
+
+    if (!res.headersSent) {
+      res.status(400).json({
+        success: false,
+        message: error.message || 'ZIP upload failed',
+        jobId: jobId
+      });
+    }
+  }
 });
 
 // Async ZIP processing function
