@@ -23,4 +23,13 @@
   max-width: 100%;
   height: auto;
 }
+
+.tweet-list-row .card-header {
+  padding: 0 !important;
+}
+
+.tweet-list-row .tweet-content-wrapper {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
 </style>

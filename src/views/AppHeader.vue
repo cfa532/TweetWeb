@@ -356,10 +356,12 @@ watch(
     { immediate: true },
 )
 
-/** Active profile view tab — driven by the `view` query param so it's
- *  deep-linkable and the browser back button works as expected.
- *  Default (no query) maps to 'tweets'. */
-const activeView = computed<'tweets' | 'bookmarks' | 'favorites'>(() => {
+/** Active profile view tab — covers all five stat tabs.
+ *  Fans/followings are separate routes; tweets/bookmarks/favorites are
+ *  ?view= variants of UserPage. */
+const activeView = computed<'fans' | 'followings' | 'tweets' | 'bookmarks' | 'favorites'>(() => {
+    if (route.name === 'followers') return 'fans'
+    if (route.name === 'followings') return 'followings'
     const v = route.query.view
     return v === 'bookmarks' || v === 'favorites' ? v : 'tweets'
 })
@@ -461,16 +463,14 @@ function onAvatarError(event: Event) {
         <!-- Followers and Friends Links -->
         <div v-if="user" class="user-actions">
             <div v-if="user" class="links">
-                <a href="#" @click.prevent="router.push(`/followers/${user.mid}`)" class="text-muted">{{
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'fans' }"
+                    @click.prevent="router.push(`/followers/${user.mid}`)">{{
                     user.followersCount }} {{ $t('profile.fans') }}</a>
-                <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'followings' }"
+                    @click.prevent="router.push(`/followings/${user.mid}`)">{{
                     user.followingCount }} {{ $t('profile.following') }}</a>
-                <!-- Tweets count: plain text for other users, an active-able
-                     tab when viewing the appUser's own profile so the user
-                     can switch back from the Bookmarks/Favorites views. -->
-                <a v-if="isViewingSelf" href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
                     @click.prevent="setView(undefined)">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
-                <a v-else href="#" class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
 
                 <!-- Bookmarks / Favorites are personal: appUser only. -->
                 <template v-if="isViewingSelf">

@@ -647,8 +647,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   }
 
   .tweet-container .card-header {
-    padding: 0;
-    padding-left: 8px; /* Add left padding for item header breathing room */
+    padding: 0 4px;
   }
 }
 
@@ -1011,7 +1010,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 }
 .card-header {
   margin: 0;
-  padding: 0 8px;
+  padding: 0 4px;
   cursor: pointer;
   background-color: solid #888;
 }
@@ -1023,7 +1022,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .tweet-content-wrapper {
   text-align: left;
   font-size: medium;
-  padding: 4px 12px 0 8px;
+  padding: 4px 4px 0 4px;
   cursor: pointer;
 }
 

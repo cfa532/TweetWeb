@@ -28,17 +28,45 @@ function tweetRefFor(tweet: Tweet) {
 </script>
 
 <template>
-    <div
-        v-for="tweet in props.tweets"
-        :key="tweet.mid"
-        :ref="tweetRefFor(tweet)"
-        class="tweet-list-row"
-    >
-        <TweetView
-            :tweet="tweet"
-            :is-comment="props.isComment"
-            :parent-tweet="props.parentTweet"
-            :media-load-state-for="(media) => getMediaLoadState(tweet.mid, media)"
-        />
+    <div class="feed-container">
+        <div
+            v-for="tweet in props.tweets"
+            :key="tweet.mid"
+            :ref="tweetRefFor(tweet)"
+            class="tweet-list-row"
+        >
+            <TweetView
+                :tweet="tweet"
+                :is-comment="props.isComment"
+                :parent-tweet="props.parentTweet"
+                :media-load-state-for="(media) => getMediaLoadState(tweet.mid, media)"
+            />
+        </div>
     </div>
 </template>
+
+<style scoped>
+.feed-container {
+    padding: 10px;
+}
+
+.tweet-list-row {
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    margin: 10px 0;
+    background-color: #f9f9f9;
+    overflow: hidden;
+    transition: background-color 0.3s ease;
+}
+
+.tweet-list-row:hover {
+    background-color: #e9e9e9;
+}
+
+.tweet-list-row :deep(.tweet-container.card) {
+    border: none;
+    margin: 0;
+    background-color: transparent;
+}
+</style>
+
