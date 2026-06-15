@@ -182,6 +182,7 @@ function openDetailView() {
 .avatar {
   display: flex;
   align-items: center;
+  padding-left: 4px;
 }
 
 .loading-avatar, .author-avatar .loading-avatar {

@@ -626,7 +626,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #d0d8e4;
 }
 .quoted-tweet {
-  margin: 8px 0 8px 32px;
+  margin: 8px 0 8px 44px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;
