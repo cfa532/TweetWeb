@@ -185,7 +185,7 @@ function openDetailView() {
 }
 
 .author-avatar {
-  padding-left: 0;
+  padding-left: 4px;
 }
 
 .loading-avatar, .author-avatar .loading-avatar {

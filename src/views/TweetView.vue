@@ -626,7 +626,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #d0d8e4;
 }
 .quoted-tweet {
-  margin: 8px 0 8px 44px;
+  margin: 8px 0 8px 48px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;
@@ -1010,7 +1010,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 }
 .card-header {
   margin: 0;
-  padding: 0 4px 0 0;
+  padding: 0;
   cursor: pointer;
   background-color: solid #888;
 }
