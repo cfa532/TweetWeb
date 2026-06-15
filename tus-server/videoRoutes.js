@@ -837,6 +837,112 @@ function getHLSKeyframeParams(segmentDuration, frameRate = 30) {
   return `-g ${gopSize} -keyint_min ${gopSize} -sc_threshold 0`;
 }
 
+function getRotationFilter(rotation) {
+  return rotation === 90 ? 'transpose=1'
+       : rotation === -90 || rotation === 270 ? 'transpose=2'
+       : rotation === 180 ? 'transpose=2,transpose=2'
+       : '';
+}
+
+function extractCidFromLeitherOutput(output) {
+  const trimmedOutput = String(output || '').trim();
+  const ipfsAddOkMatch = trimmedOutput.match(/ipfs\s+add\s+ok\s+(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/i);
+  if (ipfsAddOkMatch) {
+    return ipfsAddOkMatch[1];
+  }
+
+  const cidMatch = trimmedOutput.match(/(Qm[a-zA-Z0-9]{44}|baf[a-z0-9]{56,})/);
+  return cidMatch ? cidMatch[1] : null;
+}
+
+function cleanupPartialHLSOutput(tempDir) {
+  for (const entry of ['720p', '480p', 'master.m3u8', 'playlist.m3u8']) {
+    const entryPath = path.join(tempDir, entry);
+    if (fs.existsSync(entryPath)) {
+      fs.rmSync(entryPath, { recursive: true, force: true });
+    }
+  }
+
+  for (const file of fs.readdirSync(tempDir)) {
+    if (/^segment\d+\.ts$/.test(file)) {
+      fs.rmSync(path.join(tempDir, file), { force: true });
+    }
+  }
+}
+
+function createSinglePassDualHLSCommand({
+  inputPath,
+  tempDir,
+  videoInfo,
+  highQualityWidth,
+  highQualityHeight,
+  highQualityBitrate,
+  variant480Width,
+  variant480Height,
+  variant480Bitrate,
+  segmentDuration,
+  frameRate,
+  hasAudio
+}) {
+  fs.mkdirSync(path.join(tempDir, '720p'), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, '480p'), { recursive: true });
+
+  const rotationFilter = getRotationFilter(videoInfo.rotation || 0);
+  const baseFilters = rotationFilter
+    ? `[0:v]${rotationFilter},split=2[v720in][v480in]`
+    : '[0:v]split=2[v720in][v480in]';
+  const filterComplex = [
+    baseFilters,
+    `[v720in]scale=${highQualityWidth}:${highQualityHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[v720]`,
+    `[v480in]scale=${variant480Width}:${variant480Height}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[v480]`
+  ].join(';');
+
+  const gopSize = Math.max(30, Math.min(600, Math.round(segmentDuration * frameRate)));
+  const audioMap = hasAudio ? `-map ${escapeShellArg('0:a:0?')}` : '';
+  const audioEncoding = hasAudio ? ` -c:a aac -b:a ${HLS_AUDIO_BITRATE}k` : '';
+  const streamMap = hasAudio
+    ? 'v:0,a:0,name:720p v:1,a:1,name:480p'
+    : 'v:0,name:720p v:1,name:480p';
+
+  return [
+    'ffmpeg',
+    '-y',
+    '-fflags +genpts+igndts',
+    `-i ${escapeShellArg(inputPath)}`,
+    `-filter_complex ${escapeShellArg(filterComplex)}`,
+    '-map "[v720]"',
+    audioMap,
+    '-map "[v480]"',
+    audioMap,
+    '-c:v libx264',
+    '-profile:v main',
+    '-level 4.1',
+    '-pix_fmt yuv420p',
+    '-preset fast',
+    '-tune zerolatency',
+    '-threads 2',
+    `-b:v:0 ${highQualityBitrate}k`,
+    `-b:v:1 ${variant480Bitrate}k`,
+    `-g ${gopSize}`,
+    `-keyint_min ${gopSize}`,
+    '-sc_threshold 0',
+    `-force_key_frames ${escapeShellArg(`expr:gte(t,n_forced*${segmentDuration})`)}`,
+    audioEncoding,
+    '-avoid_negative_ts make_zero',
+    '-max_muxing_queue_size 1024',
+    '-f hls',
+    `-hls_time ${segmentDuration}`,
+    '-hls_list_size 0',
+    '-hls_playlist_type vod',
+    '-hls_segment_type mpegts',
+    '-start_number 0',
+    '-master_pl_name master.m3u8',
+    `-hls_segment_filename ${escapeShellArg(path.join(tempDir, '%v/segment%03d.ts'))}`,
+    `-var_stream_map ${escapeShellArg(streamMap)}`,
+    escapeShellArg(path.join(tempDir, '%v/playlist.m3u8'))
+  ].filter(Boolean).join(' ');
+}
+
 // Helper function to get hardware-specific encoding parameters (now uses global from app.js)
 function getHardwareEncodingParams(encoder, is10Bit = false) {
   try {
@@ -1742,8 +1848,10 @@ async function processVideoUploadInternal(req, jobId) {
                 const bitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
                 const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
                 const originalBitrate = bitrate || formatBitrate;
+                const hasAudio = metadata.streams.some(stream => stream.codec_type === 'audio');
                 
                 console.log(`[${jobId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
+                console.log(`[${jobId}] [INFO] Audio stream detected: ${hasAudio}`);
                 
                 resolve({
                   width: videoStream.width,
@@ -1756,7 +1864,8 @@ async function processVideoUploadInternal(req, jobId) {
                   pixelFormat: videoStream.pix_fmt,
                   profile: videoStream.profile,
                   codec: videoStream.codec_name,
-                  bitrate: originalBitrate
+                  bitrate: originalBitrate,
+                  hasAudio: hasAudio
                 });
               } catch (parseError) {
                 console.error(`[${jobId}] [ERROR] Failed to parse ffprobe JSON:`, parseError);
@@ -1889,6 +1998,114 @@ async function processVideoUploadInternal(req, jobId) {
     }
     if (needsRotation) {
       console.log(`[${jobId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${rotation}°)`);
+    }
+
+    // Keep the proven normalize-then-HLS pipeline as the default. The single-pass
+    // filter graph is available as an experimental opt-in path.
+    const singlePassHlsEnabled = process.env.HLS_SINGLE_PASS_FILTER_COMPLEX === 'true';
+    const normalizedIsPortrait = targetHeight > targetWidth;
+    const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
+    const shouldCreateDualVariantHLS = !noResample && normalizedReferenceDim > 480;
+
+    if (singlePassHlsEnabled && shouldCreateDualVariantHLS) {
+      console.log(`[${jobId}] [HLS-SINGLE-PASS] Trying direct filter_complex dual-variant HLS from original upload`);
+      try {
+        const highQualityWidth = targetWidth;
+        const highQualityHeight = targetHeight;
+        const highQualityBitrate = calculateVideoBitrateK(normalizedReferenceDim);
+        const target480Dim = Math.min(normalizedReferenceDim, 480);
+        let variant480Width, variant480Height;
+
+        if (normalizedIsPortrait) {
+          variant480Width = target480Dim;
+          variant480Height = Math.round((target480Dim * targetHeight) / targetWidth);
+        } else {
+          variant480Height = target480Dim;
+          variant480Width = Math.round((target480Dim * targetWidth) / targetHeight);
+        }
+
+        const variant480EvenDims = ensureEvenDimensions(variant480Width, variant480Height);
+        variant480Width = variant480EvenDims.width;
+        variant480Height = variant480EvenDims.height;
+        const variant480Bitrate = calculateVideoBitrateK(target480Dim);
+
+        const segmentDurationHigh = calculateOptimalSegmentDuration({
+          displayWidth: highQualityWidth,
+          displayHeight: highQualityHeight,
+          duration: videoInfo ? videoInfo.duration : null
+        }, highQualityBitrate);
+        const segmentDuration480 = calculateOptimalSegmentDuration({
+          displayWidth: variant480Width,
+          displayHeight: variant480Height,
+          duration: videoInfo ? videoInfo.duration : null
+        }, variant480Bitrate);
+        // Keep both variants on the same segment cadence for smoother HLS level switches.
+        const segmentDuration = Math.max(segmentDurationHigh, segmentDuration480);
+        const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
+
+        console.log(`[${jobId}] [HLS-SINGLE-PASS] 720p variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
+        console.log(`[${jobId}] [HLS-SINGLE-PASS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k`);
+        console.log(`[${jobId}] [HLS-SINGLE-PASS] Segment duration: ${segmentDuration}s, audio: ${videoInfo.hasAudio ? 'yes' : 'no'}`);
+
+        const directHlsCommand = createSinglePassDualHLSCommand({
+          inputPath: uploadedFile.tempFilePath,
+          tempDir,
+          videoInfo,
+          highQualityWidth,
+          highQualityHeight,
+          highQualityBitrate,
+          variant480Width,
+          variant480Height,
+          variant480Bitrate,
+          segmentDuration,
+          frameRate,
+          hasAudio: videoInfo.hasAudio
+        });
+
+        updateProgressSafe(jobId, 40, 'Converting directly to HLS...');
+        await executeWithProgress(
+          directHlsCommand,
+          jobId,
+          40,
+          80,
+          'Converting directly to dual-variant HLS...',
+          uploadedFile.size,
+          videoInfo && videoInfo.duration ? videoInfo.duration : 0
+        );
+
+        const expectedHlsFiles = [
+          path.join(tempDir, 'master.m3u8'),
+          path.join(tempDir, '720p/playlist.m3u8'),
+          path.join(tempDir, '480p/playlist.m3u8')
+        ];
+        const missingHlsFile = expectedHlsFiles.find(filePath => !fs.existsSync(filePath));
+        if (missingHlsFile) {
+          throw new Error(`Single-pass HLS output missing expected file: ${missingHlsFile}`);
+        }
+
+        updateProgressSafe(jobId, 80, 'Storing HLS stream...');
+        const cidOutput = await executeLeitherOperationWithProgress(
+          `ipfs add ${escapeShellArg(tempDir)}`,
+          jobId,
+          80,
+          100,
+          'Storing HLS stream...',
+          6 * 60 * 60 * 1000
+        );
+        const cid = extractCidFromLeitherOutput(cidOutput);
+        if (!cid) {
+          throw new Error('Failed to extract CID from IPFS add output for single-pass HLS content');
+        }
+
+        console.log(`[${jobId}] [SUCCESS] Single-pass dual-variant HLS uploaded to IPFS, CID: ${cid}`);
+        return { cid, tempDir };
+      } catch (singlePassError) {
+        console.warn(`[${jobId}] [HLS-SINGLE-PASS] Direct filter_complex HLS failed, falling back to normalized pipeline: ${singlePassError.message}`);
+        cleanupPartialHLSOutput(tempDir);
+        updateProgressSafe(jobId, 40, 'Single-pass HLS failed, falling back to normalized pipeline...');
+      }
+    } else if (!singlePassHlsEnabled) {
+      console.log(`[${jobId}] [HLS-SINGLE-PASS] Disabled; set HLS_SINGLE_PASS_FILTER_COMPLEX=true to enable`);
     }
 
     // Normalize to MP4
