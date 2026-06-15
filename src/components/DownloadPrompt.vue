@@ -33,7 +33,7 @@ const handleClick = () => {
     width: 100%;
     background: #1a1a1a;
     color: #ffffff;
-    padding: 0 15px 0 0;
+    padding: 0 15px 0 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-top: 10px;
     cursor: pointer;
