@@ -713,6 +713,18 @@ export const useTweetStore = defineStore('tweetStore', {
                         t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
                     }
                     t.comments = []
+
+                    // Align cached tweet.author with the users-Map reference so that
+                    // Object.assign() in _fetchUser (triggered by getUserFromRootHost)
+                    // propagates the fresh avatar directly into displayedTweets items.
+                    if (t.author) {
+                        const mapRef = this.users.get(t.authorId)
+                        if (mapRef) {
+                            t.author = mapRef
+                        } else {
+                            this.users.set(t.authorId, t.author)
+                        }
+                    }
                 }
                 return tweets
             } catch (e) {
@@ -765,6 +777,15 @@ export const useTweetStore = defineStore('tweetStore', {
                         t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
                     }
                     t.comments = []
+
+                    if (t.author) {
+                        const mapRef = this.users.get(t.authorId)
+                        if (mapRef) {
+                            t.author = mapRef
+                        } else {
+                            this.users.set(t.authorId, t.author)
+                        }
+                    }
                 }
                 return tweets
             } catch (e) {

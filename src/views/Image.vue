@@ -150,11 +150,11 @@ div.media-attachments div.grid-item div.container img {
 
 /* Full-screen image styles */
 .fullscreen-image {
-    width: 100vw !important;
+    width: auto !important;
     height: auto !important;
-    max-height: 100vh;
-    object-fit: contain;
-    object-position: center;
+    max-width: 100vw !important;
+    max-height: none !important;
+    object-fit: unset !important;
     display: block;
 }
 </style>

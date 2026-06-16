@@ -415,7 +415,17 @@ function goToMedia(index: number) {
   margin: 0;
 }
 
-.image-container,
+.image-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .video-container {
   width: 100%;
   height: 100%;
@@ -430,27 +440,25 @@ function goToMedia(index: number) {
   width: auto !important;
   height: auto !important;
   max-width: 100vw !important;
-  max-height: 100vh !important;
-  object-fit: contain;
-  object-position: center;
+  max-height: none !important;
+  object-fit: unset !important;
   display: block;
 }
 
 .image-container :deep(.img-wrapper) {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: auto;
+  max-width: 100vw;
+  height: auto;
+  display: block;
 }
 
 .image-container :deep(.img-wrapper img) {
   width: auto !important;
   height: auto !important;
   max-width: 100vw !important;
-  max-height: 100vh !important;
-  object-fit: contain !important;
-  object-position: center !important;
+  max-height: none !important;
+  object-fit: unset !important;
+  display: block;
 }
 
 .video-container :deep(.video-container) {
