@@ -402,7 +402,19 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.warn("Author not found for tweet:", tweet.mid, "authorId:", tweet.authorId)
                     return
                 }
-                
+
+                // Always point tweet.author at the same object that lives in
+                // this.users so that Object.assign() in _fetchUser (triggered by
+                // handleAvatarError) propagates directly here without needing
+                // _rewriteUserMediaHosts to find the tweet by iteration.
+                const mapRef = this.users.get(tweet.authorId)
+                if (mapRef) {
+                    author = mapRef
+                } else {
+                    // Register so future getUser() calls share the same reference.
+                    this.users.set(tweet.authorId, author)
+                }
+
                 tweet.comments = []     // load comments only on detail page
                 tweet.author = author
                 tweet.provider = author.providerIp
