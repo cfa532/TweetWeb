@@ -667,7 +667,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   position: relative;
   border-radius: 8px;
   overflow: hidden;
-  background-color: #000;
+  box-sizing: border-box;
+  border: 1px solid gray;
+  background-color: gray;
 }
 
 /* iOS MediaGrid Algorithm Styles */
