@@ -166,6 +166,10 @@ const hasPlayableFutureData = computed(() => {
   if (!el) return false;
   return el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
 });
+const hasLoadedMetadata = computed(() => {
+  const el = video.value;
+  return hasMetadata.value || (!!el && el.readyState >= HTMLMediaElement.HAVE_METADATA);
+});
 // isPlaying tracks the 'play'/'pause' events reactively. isActuallyPlaying
 // combines it with isBuffering so the spinner branch works correctly: the
 // video is "actually playing" only when it has started AND is not stalled.
@@ -175,7 +179,7 @@ const showBufferingOverlay = computed(() => {
   // Feed: show spinner both while actively buffering and during initial fetch
   // before metadata arrives (prevents black tile on first load).
   if (isInTweetList.value) {
-    const isInitialFeedLoad = props.mediaLoadState !== 'idle' && !hasMetadata.value && !showVideoError.value;
+    const isInitialFeedLoad = props.mediaLoadState !== 'idle' && !hasLoadedMetadata.value && !showVideoError.value;
     if (isInitialFeedLoad) return true;
 
     // Once playing, trust actual media readiness so stale buffering flags do
@@ -191,6 +195,17 @@ const showBufferingOverlay = computed(() => {
   // Detail on mobile: avoid spinner before user starts playback.
   return !isMobile || isPlaying.value;
 });
+
+function syncVideoReadyState() {
+  const el = video.value;
+  if (!el) return;
+  if (el.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    hasMetadata.value = true;
+  }
+  if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+    isBuffering.value = false;
+  }
+}
 
 function syncMutedState() {
   if (!video.value) return;
@@ -374,13 +389,7 @@ onMounted(() => {
         // If browser restored metadata/frame from cache before listeners were
         // attached, mark metadata ready immediately so initial-load spinner
         // logic does not get stuck.
-        if (video.value.readyState >= HTMLMediaElement.HAVE_METADATA) {
-          hasMetadata.value = true;
-        }
-        // Clear initial spinner if video is already in a playable state (e.g. from cache)
-        if (video.value.readyState >= 3) {
-          isBuffering.value = false;
-        }
+        syncVideoReadyState();
 
         // Add play/pause event listeners to track state
         video.value.addEventListener('play', () => {
@@ -1064,12 +1073,14 @@ function setupRegularVideo() {
 
   // Add load event to confirm video loaded
   videoElement.addEventListener('loadeddata', () => {
+    syncVideoReadyState();
     isBuffering.value = false;
     clearCoverFrame();
   }, { once: true });
 
   // Add canplay event and start playing if autoplay is enabled
   videoElement.addEventListener('canplay', () => {
+    syncVideoReadyState();
     isBuffering.value = false;
     if (props.autoplay && !isInTweetList.value) {
       videoElement.play().catch(() => {
@@ -1083,6 +1094,7 @@ function setupRegularVideo() {
   // Vue may have rendered the <source> element AFTER the <video> mounted —
   // without this call the browser sometimes never starts loading.
   try { videoElement.load(); } catch {}
+  window.requestAnimationFrame(syncVideoReadyState);
 
   // Try to play immediately if autoplay is enabled
   if (props.autoplay && !isInTweetList.value) {

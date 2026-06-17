@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { PropType } from 'vue'
 import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
+import { cacheMediaUrl, getCachedMediaObjectUrl, releaseMediaObjectUrl } from '@/utils/mediaCache'
 
 const props = defineProps({
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -11,7 +12,10 @@ const props = defineProps({
 })
 
 const isLoaded = ref(false);
+const imageElement = ref<HTMLImageElement | null>(null);
+const imageSrc = ref('');
 const shouldLoad = computed(() => props.mediaLoadState !== 'idle');
+let sourceRequestId = 0;
 
 function debugImageLoad(message: string) {
     if (!import.meta.env.DEV) return;
@@ -22,18 +26,67 @@ function debugImageLoad(message: string) {
     });
 }
 
-watch(() => props.media.mid, () => {
+function markLoadedIfImageSettled() {
+    const img = imageElement.value;
+    if (!img) return;
+    if (img.complete) {
+        isLoaded.value = true;
+    }
+}
+
+function handleImageSettled() {
+    isLoaded.value = true;
+    if (imageSrc.value === props.media.mid) {
+        void cacheMediaUrl(props.media.mid);
+    }
+}
+
+async function resolveImageSource() {
+    const requestId = ++sourceRequestId;
+    const previousSrc = imageSrc.value;
+
+    if (!shouldLoad.value) {
+        imageSrc.value = '';
+        releaseMediaObjectUrl(previousSrc);
+        return;
+    }
+
     isLoaded.value = false;
+    const cachedSrc = await getCachedMediaObjectUrl(props.media.mid);
+    if (requestId !== sourceRequestId) {
+        releaseMediaObjectUrl(cachedSrc);
+        return;
+    }
+
+    imageSrc.value = cachedSrc || props.media.mid;
+    releaseMediaObjectUrl(previousSrc);
+
+    await nextTick();
+    markLoadedIfImageSettled();
+}
+
+watch(() => props.media.mid, async () => {
+    await resolveImageSource();
 });
 
-watch(shouldLoad, (load, wasLoading) => {
+watch(shouldLoad, async (load, wasLoading) => {
     if (!load) {
         if (wasLoading) debugImageLoad('cancel');
-        isLoaded.value = false;
+        await resolveImageSource();
         return;
     }
     debugImageLoad(props.mediaLoadState === 'visible' ? 'load visible' : 'preload');
+    await resolveImageSource();
 }, { immediate: true });
+
+onMounted(() => {
+    markLoadedIfImageSettled();
+});
+
+onBeforeUnmount(() => {
+    sourceRequestId += 1;
+    releaseMediaObjectUrl(imageSrc.value);
+});
 </script>
 
 <template>
@@ -42,12 +95,13 @@ watch(shouldLoad, (load, wasLoading) => {
             <div class="img-spinner"></div>
         </div>
         <img
-            v-if="shouldLoad"
-            :src="props.media.mid"
+            v-if="shouldLoad && imageSrc"
+            ref="imageElement"
+            :src="imageSrc"
             :loading="props.mediaLoadState === 'visible' ? 'eager' : 'lazy'"
             decoding="async"
-            @load="isLoaded = true"
-            @error="isLoaded = true"
+            @load="handleImageSettled"
+            @error="handleImageSettled"
         />
     </div>
 </template>
