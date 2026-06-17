@@ -1220,8 +1220,13 @@ function retryLoad() {
     align-items: stretch;
     max-height: none;
     overflow: visible;
-    gap: 2px;
+    gap: 1px;
     width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    box-sizing: border-box;
+    border: 1px solid gray;
+    background-color: gray;
 }
 
 .media-attachments--multi :deep(.container),
