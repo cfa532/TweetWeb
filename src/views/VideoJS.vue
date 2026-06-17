@@ -12,9 +12,8 @@ import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinat
 // feed and once in the tweet detail view) on different copies of the
 // media object — the per-prop cache (props.media.playlist) doesn't survive
 // the JSON.parse round trip from sessionStorage. Caching globally lets the
-// detail view skip the parallel master.m3u8 + playlist.m3u8 probe and go
-// straight to whichever filename the feed already validated. Avoids
-// re-issuing the playlist.m3u8 request that often returns 500.
+// detail view skip playlist selection when the feed already resolved the same
+// stream. HLS setup tries one playlist at a time and falls back if needed.
 const globalPlaylistFilenameCache = new Map<string, 'master.m3u8' | 'playlist.m3u8'>();
 
 const props = defineProps({
@@ -166,6 +165,11 @@ const hasPlayableFutureData = computed(() => {
   if (!el) return false;
   return el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
 });
+const hasCurrentFrame = computed(() => {
+  const el = video.value;
+  if (!el) return false;
+  return el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+});
 const hasLoadedMetadata = computed(() => {
   const el = video.value;
   return hasMetadata.value || (!!el && el.readyState >= HTMLMediaElement.HAVE_METADATA);
@@ -179,7 +183,8 @@ const showBufferingOverlay = computed(() => {
   // Feed: show spinner both while actively buffering and during initial fetch
   // before metadata arrives (prevents black tile on first load).
   if (isInTweetList.value) {
-    const isInitialFeedLoad = props.mediaLoadState !== 'idle' && !hasLoadedMetadata.value && !showVideoError.value;
+    const isActivelyStarting = isBuffering.value || coordinatorAutoplayPending.value;
+    const isInitialFeedLoad = props.mediaLoadState !== 'idle' && isActivelyStarting && !hasCurrentFrame.value && !showVideoError.value;
     if (isInitialFeedLoad) return true;
 
     // Once playing, trust actual media readiness so stale buffering flags do
@@ -188,7 +193,7 @@ const showBufferingOverlay = computed(() => {
       return !hasPlayableFutureData.value;
     }
 
-    return isBuffering.value;
+    return isBuffering.value && !hasCurrentFrame.value;
   }
 
   if (!isBuffering.value) return false;
@@ -205,6 +210,24 @@ function syncVideoReadyState() {
   if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
     isBuffering.value = false;
   }
+  if (el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    hasRenderedVideoFrame = true;
+    isBuffering.value = false;
+    coordinatorAutoplayPending.value = false;
+  }
+}
+
+function playFeedPrimaryVideo(videoElement: HTMLVideoElement) {
+  if (!isInTweetList.value || !isCoordinatorPrimary(videoElement) || videoElement.ended) return;
+  requestPlay(videoElement);
+  videoElement.play().catch(() => {
+    videoElement.muted = true;
+    videoElement.play().catch(() => {
+      isBuffering.value = false;
+      coordinatorAutoplayPending.value = false;
+      showPlayOverlay.value = true;
+    });
+  });
 }
 
 function syncMutedState() {
@@ -283,13 +306,13 @@ const MEDIA_ERROR_COOLDOWN = 2000; // 2 seconds cooldown between media error rec
 let currentPlaylistType: 'master' | 'playlist' | null = null;
 let hasTriedPlaylistFallback = false;
 let failedFragments = new Set<string>(); // Track fragments that have failed to avoid infinite loops
-const MANIFEST_PROBE_TIMEOUT_MS = 12000;
 let pendingUserPlayRequest = false;
 let hlsSetupToken = 0;
+let hasRenderedVideoFrame = false;
 
 function shouldLoadFeedMedia(): boolean {
   if (!isInTweetList.value) return true;
-  return props.mediaLoadState !== 'idle';
+  return props.mediaLoadState !== 'idle' || hasRenderedVideoFrame;
 }
 
 function debugVideoLoad(message: string) {
@@ -355,7 +378,27 @@ function clearCoverFrame() {
   hasCoverFrame.value = false;
 }
 
+function softReleaseFeedMedia(reason: string) {
+  debugVideoLoad(reason);
+  captureAndShowCoverFrame();
+  isPlaying.value = false;
+  isBuffering.value = false;
+  coordinatorAutoplayPending.value = false;
+  showVideoError.value = false;
+  try {
+    if (!video.value?.paused) video.value.pause();
+  } catch {}
+  if (hls && !pendingUserPlayRequest) {
+    hls.stopLoad();
+  }
+}
+
 function releaseFeedMedia(reason: string) {
+  if (hasRenderedVideoFrame || hasCurrentFrame.value) {
+    softReleaseFeedMedia(reason);
+    return;
+  }
+
   debugVideoLoad(reason);
   hlsSetupToken += 1;
   captureAndShowCoverFrame();
@@ -417,13 +460,16 @@ onMounted(() => {
           isBuffering.value = true; // Video is buffering
         });
         video.value.addEventListener('canplay', () => {
-          if (!hasMetadata.value && video.value?.readyState >= HTMLMediaElement.HAVE_METADATA) {
-            hasMetadata.value = true;
-          }
+          syncVideoReadyState();
           if (!coordinatorAutoplayPending.value) {
             isBuffering.value = false;
           }
         });
+        video.value.addEventListener('loadeddata', () => {
+          syncVideoReadyState();
+          clearCoverFrame();
+        });
+        video.value.addEventListener('canplaythrough', syncVideoReadyState);
         video.value.addEventListener('pause', (event: Event) => {
           isPlaying.value = false;
           isBuffering.value = false;
@@ -609,7 +655,10 @@ onMounted(() => {
                 });
                 return;
               }
-              if (hls) hls.startLoad(-1);
+              if (hls) {
+                hls.startLoad(-1);
+                playFeedPrimaryVideo(video.value);
+              }
             } else {
               coordinatorAutoplayPending.value = false;
               // Pause non-primary playback, but keep visible/preloaded media
@@ -662,15 +711,22 @@ watch(() => props.mediaLoadState, (state) => {
   }
 
   if (isHLS.value && !isHLSInitialized) {
-    isBuffering.value = state === 'visible';
+    isBuffering.value = state === 'visible' && isCoordinatorPrimary(video.value);
     debugVideoLoad(state === 'visible' ? 'load visible hls' : 'preload hls');
     setupHLS();
     return;
   }
 
+  if (isHLS.value && hls) {
+    debugVideoLoad(state === 'visible' ? 'resume visible hls' : 'resume preload hls');
+    hls.startLoad(-1);
+    syncVideoReadyState();
+    return;
+  }
+
   if (isRegularVideo.value && !regularVideoActive.value) {
     regularVideoActive.value = true;
-    isBuffering.value = state === 'visible';
+    isBuffering.value = state === 'visible' && isCoordinatorPrimary(video.value);
     debugVideoLoad(state === 'visible' ? 'load visible mp4' : 'preload mp4');
     nextTick(() => {
       if (!shouldLoadFeedMedia()) return;
@@ -857,21 +913,63 @@ function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
           isBuffering.value = false;
         }
         failedFragments.clear();
+        if (isInTweetList.value && isCoordinatorPrimary(videoElement)) {
+          pendingUserPlayRequest = false;
+          playFeedPrimaryVideo(videoElement);
+          return;
+        }
         if (props.autoplay || pendingUserPlayRequest) {
           pendingUserPlayRequest = false;
           if (isInTweetList.value) {
-            if (!isCoordinatorPrimary(videoElement)) return;
-            requestPlay(videoElement);
+            if (!isCoordinatorPrimary(videoElement)) {
+              isBuffering.value = false;
+              coordinatorAutoplayPending.value = false;
+              return;
+            }
+            playFeedPrimaryVideo(videoElement);
+            return;
           }
           videoElement.play().catch(() => {
-            showPlayOverlay.value = false;
+            isBuffering.value = false;
+            coordinatorAutoplayPending.value = false;
+            showPlayOverlay.value = true;
           });
         }
+      });
+
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        syncVideoReadyState();
+      });
+
+      hls.on(Hls.Events.BUFFER_APPENDED, () => {
+        syncVideoReadyState();
       });
       
       // Error handling for the instance
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.log(`HLS Error (${sourceName}):`, data);
+
+        if (data.fatal && sourceName === 'master' && !hasTriedPlaylistFallback) {
+          console.log('HLS.js: master playlist failed, trying playlist.m3u8');
+          hasTriedPlaylistFallback = true;
+          clearCachedPlaylistFilename('master.m3u8');
+          cleanupHlsInstance();
+          mediaErrorRecoveryCount = 0;
+          lastMediaErrorTime = 0;
+          createHLSInstance(getHLSSource(), 'playlist');
+          return;
+        }
+
+        if (data.fatal && sourceName === 'playlist' && !hasTriedSinglePlaylist) {
+          console.log('HLS.js: playlist.m3u8 failed, trying master.m3u8');
+          hasTriedSinglePlaylist = true;
+          clearCachedPlaylistFilename('playlist.m3u8');
+          cleanupHlsInstance();
+          mediaErrorRecoveryCount = 0;
+          lastMediaErrorTime = 0;
+          createHLSInstance(getHLSMasterSource(), 'master');
+          return;
+        }
 
         // For non-fatal errors, try to recover
         if (!data.fatal) {
@@ -974,85 +1072,17 @@ function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
       });
     };
     
-    const probeManifest = (url: string, sourceName: 'master' | 'playlist') => {
-      let probeHls: Hls | null = new Hls(hlsConfig);
-      let settled = false;
-      let timeoutId: number;
-
-      const cancel = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        try { probeHls?.destroy(); } catch {}
-        probeHls = null;
-      };
-
-      const promise = new Promise<boolean>((resolve) => {
-        const finish = (ok: boolean) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeoutId);
-          try { probeHls?.destroy(); } catch {}
-          probeHls = null;
-          resolve(ok);
-        };
-
-        timeoutId = window.setTimeout(() => finish(false), MANIFEST_PROBE_TIMEOUT_MS);
-
-        probeHls!.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log(`HLS.js: ${sourceName} playlist loaded successfully`);
-          cacheResolvedPlaylistFilename(sourceName === 'master' ? 'master.m3u8' : 'playlist.m3u8');
-          finish(true);
-        });
-
-        probeHls!.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) finish(false);
-        });
-
-        probeHls!.loadSource(url);
-      });
-
-      return { promise, cancel };
-    };
-
     const cachedFilename = getCachedPlaylistFilename();
-    if (cachedFilename) {
-      const cachedUrl = cachedFilename === 'master.m3u8' ? masterUrl : playlistUrl;
-      const sourceName = cachedFilename === 'master.m3u8' ? 'master' : 'playlist';
-      console.log(`HLS.js: Using cached playlist ${cachedFilename}`);
-      createHLSInstance(cachedUrl, sourceName);
+    if (cachedFilename === 'playlist.m3u8') {
+      console.log('HLS.js: Using cached playlist playlist.m3u8');
+      createHLSInstance(playlistUrl, 'playlist');
     } else {
-      // Probe both playlists in parallel — first success wins, loser is cancelled
-      (async () => {
-        if (isUnmounting) return;
-
-        const masterProbe = probeManifest(masterUrl, 'master');
-        const playlistProbe = probeManifest(playlistUrl, 'playlist');
-
-        try {
-          const winner = await Promise.any([
-            masterProbe.promise.then(ok => {
-              if (!ok) throw new Error('master probe failed');
-              playlistProbe.cancel();
-              return { url: masterUrl, sourceName: 'master' as const };
-            }),
-            playlistProbe.promise.then(ok => {
-              if (!ok) throw new Error('playlist probe failed');
-              masterProbe.cancel();
-              return { url: playlistUrl, sourceName: 'playlist' as const };
-            }),
-          ]);
-
-          if (isUnmounting) return;
-          if (setupToken !== hlsSetupToken || !shouldLoadFeedMedia()) return;
-          createHLSInstance(winner.url, winner.sourceName);
-        } catch {
-          if (isUnmounting) return;
-          if (setupToken !== hlsSetupToken || !shouldLoadFeedMedia()) return;
-          console.warn('HLS.js: Both manifest probes failed; falling back to direct attach with master');
-          createHLSInstance(masterUrl, 'master');
-        }
-      })();
+      if (cachedFilename === 'master.m3u8') {
+        console.log('HLS.js: Using cached playlist master.m3u8');
+      } else {
+        console.log('HLS.js: Trying master playlist first');
+      }
+      createHLSInstance(masterUrl, 'master');
     }
 }
 
@@ -1209,6 +1239,16 @@ function cacheResolvedPlaylistFilename(fileName: 'master.m3u8' | 'playlist.m3u8'
   if (props.media.playlist !== fileName) {
     props.media.playlist = fileName;
     console.log(`[HLS Playlist Cache] STORE for media ${props.media.mid}: ${fileName}`);
+  }
+}
+
+function clearCachedPlaylistFilename(fileName: 'master.m3u8' | 'playlist.m3u8') {
+  const baseUrl = getBaseMediaUrl();
+  if (globalPlaylistFilenameCache.get(baseUrl) === fileName) {
+    globalPlaylistFilenameCache.delete(baseUrl);
+  }
+  if (props.media.playlist === fileName) {
+    delete props.media.playlist;
   }
 }
 
@@ -1985,6 +2025,11 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
         // Reset media error recovery counter on successful retry
         mediaErrorRecoveryCount = 0;
         lastMediaErrorTime = 0;
+        if (isInTweetList.value && isCoordinatorPrimary(videoElement)) {
+          pendingUserPlayRequest = false;
+          playFeedPrimaryVideo(videoElement);
+          return;
+        }
         if (props.autoplay || pendingUserPlayRequest) {
           pendingUserPlayRequest = false;
           if (isInTweetList.value) {
