@@ -3,9 +3,9 @@ const renderedImageUrls = new Set<string>();
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { PropType } from 'vue'
-import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
+import { TWEET_MEDIA_PRELOAD_STALE_EVENT, type MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -19,6 +19,8 @@ const imageElement = ref<HTMLImageElement | null>(null);
 const imageSrc = ref('');
 const resolvedMediaMid = ref('');
 const shouldLoad = computed(() => props.mediaLoadState !== 'idle');
+let imageLoadEpoch = 0;
+let lastStalePreloadCancelEpoch = -1;
 
 function debugImageLoad(message: string) {
     if (!import.meta.env.DEV) return;
@@ -38,18 +40,47 @@ function markLoadedIfImageSettled() {
     }
 }
 
-function handleImageSettled() {
+function handleImageSettled(event?: Event) {
+    const img = event?.target instanceof HTMLImageElement ? event.target : imageElement.value;
+    if (!img || img !== imageElement.value) return;
+    if (img.getAttribute('src') !== imageSrc.value) return;
     isLoaded.value = true;
     renderedImageUrls.add(props.media.mid);
+}
+
+function cancelImageLoad() {
+    imageLoadEpoch += 1;
+    const img = imageElement.value;
+    if (renderedImageUrls.has(props.media.mid) || img?.complete) {
+        isLoaded.value = true;
+        return;
+    }
+
+    if (img) {
+        img.removeAttribute('src');
+    }
+    imageSrc.value = '';
+    resolvedMediaMid.value = '';
+    isLoaded.value = false;
+}
+
+function cancelStalePreload() {
+    if (props.mediaLoadState !== 'preload') return;
+    if (lastStalePreloadCancelEpoch === imageLoadEpoch) return;
+    debugImageLoad('cancel stale preload');
+    cancelImageLoad();
+    lastStalePreloadCancelEpoch = imageLoadEpoch;
 }
 
 async function resolveImageSource() {
     if (!shouldLoad.value) {
         return;
     }
+    const loadEpoch = ++imageLoadEpoch;
 
     if (imageSrc.value && resolvedMediaMid.value === props.media.mid) {
         await nextTick();
+        if (loadEpoch !== imageLoadEpoch || !shouldLoad.value) return;
         markLoadedIfImageSettled();
         return;
     }
@@ -59,28 +90,37 @@ async function resolveImageSource() {
     resolvedMediaMid.value = props.media.mid;
 
     await nextTick();
+    if (loadEpoch !== imageLoadEpoch || !shouldLoad.value) return;
     markLoadedIfImageSettled();
 }
 
 watch(() => props.media.mid, async () => {
+    if (imageElement.value && !imageElement.value.complete) {
+        imageElement.value.removeAttribute('src');
+    }
     imageSrc.value = '';
     resolvedMediaMid.value = '';
     isLoaded.value = renderedImageUrls.has(props.media.mid);
     await resolveImageSource();
 });
 
-watch(shouldLoad, async (load, wasLoading) => {
-    if (!load) {
-        if (wasLoading) debugImageLoad('cancel');
-        await resolveImageSource();
+watch(() => props.mediaLoadState, async (state, previousState) => {
+    if (state === 'idle') {
+        if (previousState !== 'idle') debugImageLoad('cancel');
+        cancelImageLoad();
         return;
     }
-    debugImageLoad(props.mediaLoadState === 'visible' ? 'load visible' : 'preload');
+    debugImageLoad(state === 'visible' ? 'load visible' : 'preload');
     await resolveImageSource();
 }, { immediate: true });
 
 onMounted(() => {
     markLoadedIfImageSettled();
+    window.addEventListener(TWEET_MEDIA_PRELOAD_STALE_EVENT, cancelStalePreload);
+});
+
+onUnmounted(() => {
+    window.removeEventListener(TWEET_MEDIA_PRELOAD_STALE_EVENT, cancelStalePreload);
 });
 </script>
 

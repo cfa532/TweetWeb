@@ -49,8 +49,12 @@ const carouselItems = ref<{ excerpt: string; tweetId: string }[]>([]);
 const currentIdx = ref(0);
 /** After mount / author change: strip appears only after this is true (5s delay on first paint). */
 const stripReady = ref(false);
+const TWEET_DETAIL_MEDIA_READY_EVENT = 'tweet-detail-media-ready';
+const PEER_TWEETS_FALLBACK_DELAY_MS = 12000;
 let ticker: number | null = null;
 let revealTimer: number | null = null;
+let peerTweetsTimer: number | null = null;
+let removePeerTweetsReadyListener: (() => void) | null = null;
 
 function clearCarouselTicker() {
   if (ticker !== null) {
@@ -113,9 +117,38 @@ async function loadPeerTweets() {
   rebuildCarousel();
 }
 
+function clearPeerTweetsSchedule() {
+  if (peerTweetsTimer !== null) {
+    clearTimeout(peerTweetsTimer);
+    peerTweetsTimer = null;
+  }
+  if (removePeerTweetsReadyListener) {
+    removePeerTweetsReadyListener();
+    removePeerTweetsReadyListener = null;
+  }
+}
+
+function schedulePeerTweetsLoad() {
+  clearPeerTweetsSchedule();
+  const scheduledAuthorId = props.author.mid;
+  let started = false;
+  const start = () => {
+    if (started || props.author.mid !== scheduledAuthorId) return;
+    started = true;
+    clearPeerTweetsSchedule();
+    void loadPeerTweets();
+  };
+  const onMediaReady = () => start();
+  window.addEventListener(TWEET_DETAIL_MEDIA_READY_EVENT, onMediaReady, { once: true });
+  removePeerTweetsReadyListener = () => {
+    window.removeEventListener(TWEET_DETAIL_MEDIA_READY_EVENT, onMediaReady);
+  };
+  peerTweetsTimer = window.setTimeout(start, PEER_TWEETS_FALLBACK_DELAY_MS);
+}
+
 onMounted(() => {
   rebuildCarousel();
-  void loadPeerTweets();
+  schedulePeerTweetsLoad();
   scheduleStripReveal(5000);
 });
 
@@ -124,6 +157,7 @@ onUnmounted(() => {
     clearTimeout(revealTimer);
     revealTimer = null;
   }
+  clearPeerTweetsSchedule();
   clearCarouselTicker();
 });
 
@@ -132,7 +166,7 @@ watch(
   () => {
     currentIdx.value = 0;
     rebuildCarousel();
-    void loadPeerTweets();
+    schedulePeerTweetsLoad();
     if (revealTimer !== null) {
       clearTimeout(revealTimer);
       revealTimer = null;

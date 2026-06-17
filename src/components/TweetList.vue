@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { toRef } from 'vue'
+import { provide, toRef } from 'vue'
 import type { ComponentPublicInstance, PropType } from 'vue'
 import { TweetView } from '@/views'
-import { useTweetMediaLoadingCoordinator } from '@/composables/useTweetMediaLoadingCoordinator'
+import {
+    TWEET_MEDIA_ELEMENT_REGISTRY_KEY,
+    useTweetMediaLoadingCoordinator,
+} from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({
     tweets: { type: Array as PropType<Tweet[]>, required: true },
@@ -10,8 +13,10 @@ const props = defineProps({
     parentTweet: { type: Object as PropType<Tweet>, default: undefined },
 })
 
-const { setTweetElement, getMediaLoadState } = useTweetMediaLoadingCoordinator(toRef(props, 'tweets'))
+const { setTweetElement, setMediaElement, getMediaLoadState } = useTweetMediaLoadingCoordinator(toRef(props, 'tweets'))
 type TweetRowRef = Element | ComponentPublicInstance | null
+
+provide(TWEET_MEDIA_ELEMENT_REGISTRY_KEY, setMediaElement)
 
 const tweetRefCallbacks = new Map<string, (el: TweetRowRef) => void>()
 
@@ -69,4 +74,3 @@ function tweetRefFor(tweet: Tweet) {
     background-color: transparent;
 }
 </style>
-
