@@ -563,7 +563,15 @@ onMounted(() => {
           updateTimeRemaining();
           syncMutedState();
         });
-        video.value.addEventListener('timeupdate', updateTimeRemaining);
+        video.value.addEventListener('timeupdate', () => {
+          updateTimeRemaining();
+          // HLS.js sometimes resumes playback internally without re-firing 'playing',
+          // leaving isBuffering stuck at true. If time is advancing, the video is
+          // clearly playing — clear any stale buffering flag.
+          if (isBuffering.value && isPlaying.value) {
+            isBuffering.value = false;
+          }
+        });
         video.value.addEventListener('volumechange', syncMutedState);
         video.value.addEventListener('waiting', () => {
           isBuffering.value = true; // Video is buffering
