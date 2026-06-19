@@ -208,7 +208,9 @@ const showBufferingOverlay = computed(() => {
   }
 
   if (!isBuffering.value) return false;
-  // Detail on mobile: avoid spinner before user starts playback.
+  // Mobile detail: suppress spinner before the user starts playback so it
+  // doesn't stack on top of the play overlay and confuse interaction.
+  // Once isPlaying is true the play overlay is hidden and the spinner is safe.
   return !isMobile || isPlaying.value;
 });
 
@@ -568,7 +570,8 @@ onMounted(() => {
           // HLS.js sometimes resumes playback internally without re-firing 'playing',
           // leaving isBuffering stuck at true. If time is advancing, the video is
           // clearly playing — clear any stale buffering flag.
-          if (isBuffering.value && isPlaying.value) {
+          // Use native paused state as the ground truth — isPlaying can lag.
+          if (isBuffering.value && (isPlaying.value || !video.value?.paused)) {
             isBuffering.value = false;
           }
         });
@@ -1051,51 +1054,44 @@ async function selectHLSPlaylistSimultaneously(candidates: HLSPlaylistCandidate[
 function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
     // Configure HLS.js based on context (list vs detail) with hardware acceleration
     const hlsConfig = isInTweetList.value ? {
-      // Low quality settings for tweet list with hardware acceleration
       enableWorker: true,
-      lowLatencyMode: false, // Disable low latency for list view
-      // Start modestly, but keep enough buffer for smooth primary playback.
+      lowLatencyMode: false,
       abrEwmaDefaultEstimate: 500000,
       abrBandWidthFactor: 0.9,
       abrBandWidthUpFactor: 0.65,
       abrMaxWithRealBitrate: true,
-      // Start with the lowest quality for list view (safe for single-level streams)
       startLevel: 0,
       capLevelToPlayerSize: true,
-      maxBufferLength: 30,
-      maxMaxBufferLength: 180,
-      maxBufferSize: 60 * 1000 * 1000,
+      maxBufferLength: isMobile ? 15 : 30,
+      maxMaxBufferLength: isMobile ? 60 : 180,
+      // Mobile keeps a smaller buffer to reduce initial-load latency.
+      maxBufferSize: isMobile ? 10 * 1000 * 1000 : 60 * 1000 * 1000,
       maxBufferHole: 0.5,
-      // Hardware acceleration settings
-      enableSoftwareAES: false, // Use hardware AES if available
-      enableStashBuffer: true, // Enable stash buffer for smoother playback
-      stashInitialSize: 768 * 1024,
+      enableSoftwareAES: false,
+      enableStashBuffer: true,
+      stashInitialSize: isMobile ? 128 * 1024 : 512 * 1024,
     } : {
-      // High quality settings for detail view with hardware acceleration
       enableWorker: true,
-      lowLatencyMode: true,
-      // Auto quality selection settings
-      abrEwmaDefaultEstimate: 500000, // 500kbps default bandwidth estimate
-      abrBandWidthFactor: 0.95, // Conservative bandwidth factor
-      abrBandWidthUpFactor: 0.7, // More conservative for bandwidth increases
-      abrMaxWithRealBitrate: true, // Use real bitrate for ABR decisions
-      // Quality selection preferences
-      startLevel: -1, // Auto-select starting quality level
-      capLevelToPlayerSize: true, // Cap quality to player size
-      // Buffer settings for smooth playback
-      maxBufferLength: 30, // Max buffer length in seconds
-      maxMaxBufferLength: 600, // Absolute max buffer length
-      maxBufferSize: 60 * 1000 * 1000, // 60MB max buffer size
-      maxBufferHole: 0.5, // Max buffer hole in seconds
+      // lowLatencyMode causes aggressive pre-fetching that hurts first-load on mobile.
+      lowLatencyMode: !isMobile,
+      abrEwmaDefaultEstimate: 500000,
+      abrBandWidthFactor: 0.95,
+      abrBandWidthUpFactor: 0.7,
+      abrMaxWithRealBitrate: true,
+      // Start at lowest quality on mobile for faster initial frame.
+      startLevel: isMobile ? 0 : -1,
+      capLevelToPlayerSize: true,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 600,
+      maxBufferSize: isMobile ? 15 * 1000 * 1000 : 60 * 1000 * 1000,
+      maxBufferHole: 0.5,
       progressive: true,
       startFragPrefetch: true,
-      // Hardware acceleration settings
-      enableSoftwareAES: false, // Use hardware AES if available
-      enableStashBuffer: true, // Enable stash buffer for smoother playback
-      stashInitialSize: 384 * 1024, // Initial stash buffer size
-      // Advanced hardware acceleration
-      enableWebAssembly: true, // Enable WebAssembly for better performance
-      backBufferLength: 90, // Back buffer length for smooth seeking
+      enableSoftwareAES: false,
+      enableStashBuffer: true,
+      stashInitialSize: isMobile ? 128 * 1024 : 384 * 1024,
+      enableWebAssembly: true,
+      backBufferLength: 90,
     };
     
     const masterUrl = getHLSMasterSource();
@@ -1738,60 +1734,15 @@ function handleVideoTap(event: Event) {
     return;
   }
   
-  // On mobile, check if touch is on video controls
+  // Mobile: any tap that reaches this handler means the user tapped the video
+  // area (not an overlay control, which intercepts its own touches via DOM
+  // order). Always open fullscreen — showControls is always false on mobile so
+  // there are no native control rows to protect.
   if (isMobileBrowser()) {
-    console.log('VideoJS: Mobile browser detected, processing tap');
-
-    // Get touch position
-    let clickY = 0;
-    const videoHeight = video.value.offsetHeight || video.value.clientHeight;
-
-    if (mouseEvent instanceof TouchEvent) {
-      if (mouseEvent.changedTouches && mouseEvent.changedTouches.length > 0) {
-        const touch = mouseEvent.changedTouches[0];
-        const rect = video.value.getBoundingClientRect();
-        clickY = touch.clientY - rect.top;
-      }
-    } else if (mouseEvent instanceof MouseEvent) {
-      const rect = video.value.getBoundingClientRect();
-      clickY = mouseEvent.clientY - rect.top;
-    }
-
-    // Check if touch is on controls area (bottom 20% for mobile - controls are larger)
-    const isOnControls = clickY > videoHeight * 0.8;
-
-    // Check if controls are visible (video is playing or has been interacted with)
-    const controlsVisible = !video.value.paused || video.value.currentTime > 0;
-
-    // If touch is directly on video element (not wrapper), it might be on controls
-    if (target === video.value || target.closest('video') === video.value) {
-      // Check if it's in the controls area
-      if (isOnControls) {
-        console.log('VideoJS: Touch on video controls, letting native handle');
-        return; // Let native controls handle it
-      }
-    }
-
-    // Request fullscreen when controls are not visible, or when tapping on empty space
-    if (!controlsVisible) {
-      console.log('VideoJS: Mobile browser - controls not visible, requesting fullscreen');
-      event.preventDefault();
-      event.stopPropagation();
-      requestFullscreen();
-      return;
-    } else {
-      // Controls are visible
-      if (isOnControls) {
-        console.log('VideoJS: Mobile browser - tapping on controls, letting native handle');
-        return; // Let native controls handle it
-      } else {
-        console.log('VideoJS: Mobile browser - tapping on empty space with controls visible, requesting fullscreen');
-        event.preventDefault();
-        event.stopPropagation();
-        requestFullscreen();
-        return;
-      }
-    }
+    event.preventDefault();
+    event.stopPropagation();
+    requestFullscreen();
+    return;
   }
   
   // Desktop behavior - get click position
@@ -1972,65 +1923,50 @@ function handleVisibilityChange() {
 async function requestFullscreen() {
   if (!video.value) return;
 
-  console.log('VideoJS: Requesting fullscreen for video element');
+  // Lock the current HLS quality level before the player resizes.
+  // capLevelToPlayerSize would otherwise trigger an immediate quality switch
+  // to the fullscreen resolution, causing a rebuffer just as the video expands.
+  // Restore auto-ABR after a few seconds once the transition has settled.
+  if (hls && hls.currentLevel >= 0) {
+    const lockedLevel = hls.currentLevel;
+    hls.currentLevel = lockedLevel;
+    setTimeout(() => { if (hls) hls.currentLevel = -1; }, 4000);
+  }
 
-  // For mobile browsers, try multiple approaches
-  if (isMobileBrowser()) {
-    console.log('VideoJS: Mobile browser detected, trying mobile-specific fullscreen');
-
+  // Prefer container fullscreen over video-element fullscreen on all platforms.
+  // On iOS, video.webkitEnterFullscreen() hands off to the system's native
+  // player which re-fetches the manifest and restarts buffering. Using the
+  // container's requestFullscreen() (supported on iOS 16.4+) keeps the same
+  // HTMLVideoElement and MediaSource active throughout.
+  const container = vdiv.value as HTMLElement | null;
+  if (container?.requestFullscreen) {
     try {
-      // Try iOS-specific fullscreen first
-      if ((video.value as any).webkitEnterFullscreen) {
-        console.log('VideoJS: Using iOS webkitEnterFullscreen()');
-        (video.value as any).webkitEnterFullscreen();
-        return;
-      }
-
-      // Try standard fullscreen API
-      if (video.value.requestFullscreen) {
-        console.log('VideoJS: Using requestFullscreen()');
-        await video.value.requestFullscreen();
-        return;
-      }
-
-      // Try webkit fullscreen
-      if ((video.value as any).webkitRequestFullscreen) {
-        console.log('VideoJS: Using webkitRequestFullscreen()');
-        (video.value as any).webkitRequestFullscreen();
-        return;
-      }
-
-      console.log('VideoJS: No mobile fullscreen API available, ensuring video plays');
-      // If fullscreen isn't available, at least make sure video plays
-      if (video.value.paused) {
-        video.value.play().catch((e: any) => console.log('VideoJS: Play failed:', e));
-      }
-
-    } catch (error) {
-      console.log('VideoJS: Mobile fullscreen failed:', error);
-      // Fallback: just play the video
-      try {
-        if (video.value.paused) {
-          video.value.play().catch((e: any) => console.log('VideoJS: Fallback play failed:', e));
-        }
-      } catch (playError) {
-        console.log('VideoJS: All mobile fullscreen attempts failed');
-      }
+      await container.requestFullscreen();
+      return;
+    } catch (_) {
+      // fall through to video-element / webkit fallbacks
     }
-  } else {
-    // Desktop fullscreen
-    try {
-      if (video.value.requestFullscreen) {
-        await video.value.requestFullscreen();
-      } else if ((video.value as any).webkitRequestFullscreen) {
-        await (video.value as any).webkitRequestFullscreen();
-      } else if ((video.value as any).mozRequestFullScreen) {
-        await (video.value as any).mozRequestFullScreen();
-      } else if ((video.value as any).msRequestFullscreen) {
-        await (video.value as any).msRequestFullscreen();
-      }
-    } catch (error) {
-      console.log('VideoJS: Desktop fullscreen failed:', error);
+  }
+
+  try {
+    if (video.value.requestFullscreen) {
+      await video.value.requestFullscreen();
+    } else if ((video.value as any).webkitRequestFullscreen) {
+      await (video.value as any).webkitRequestFullscreen();
+    } else if ((video.value as any).mozRequestFullScreen) {
+      await (video.value as any).mozRequestFullScreen();
+    } else if ((video.value as any).msRequestFullscreen) {
+      await (video.value as any).msRequestFullscreen();
+    } else if ((video.value as any).webkitEnterFullscreen) {
+      // Last resort: iOS native fullscreen — causes a native-player reload.
+      (video.value as any).webkitEnterFullscreen();
+    } else if (video.value.paused) {
+      video.value.play().catch(() => {});
+    }
+  } catch (error) {
+    console.log('VideoJS: Fullscreen failed:', error);
+    if (video.value?.paused) {
+      video.value.play().catch(() => {});
     }
   }
 }
@@ -2383,82 +2319,10 @@ function stopVideo() {
 <template>
   <div ref="vdiv" hidden class="video-container" :class="{ 'tweet-list': isInTweetList }">
     <div class="video-wrapper" :style="videoWrapperStyle">
-      
-      <!-- Video error overlay -->
-      <div v-if="showVideoError" class="video-error-overlay">
-        <div class="video-error-content">
-          <div class="error-icon">⚠️</div>
-          <p class="error-message">Video playback error</p>
-          <p class="error-hint">This video format may not be supported in your browser</p>
-        </div>
-      </div>
 
-      <!-- Autoplay blocked overlay -->
-      <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
-        <div class="autoplay-blocked-content">
-          <div class="play-button">
-            <font-awesome-icon icon="play" />
-          </div>
-          <p class="autoplay-message">Click to play video</p>
-        </div>
-      </div>
-      
-      <!-- Loading spinner overlay: always shown when buffering. Sits on top of
-           the native browser controls so the spinner is visible even on Safari
-           detail view (where the native loading indicator is barely visible
-           against the black wrapper). On mobile, suppress before the user
-           starts playback so it doesn't compete with the play overlay. -->
-      <div v-if="showBufferingOverlay" class="buffering-overlay">
-        <div class="buffering-spinner"></div>
-      </div>
-
-      <!-- Centered play button shown whenever video is paused/not playing -->
-      <div v-if="canShowPausedOverlays"
-           class="play-overlay"
-           @click="handlePlayOverlayClick"
-           @touchend.prevent="handlePlayOverlayClick">
-        <div class="play-overlay-button">
-          <svg viewBox="0 0 24 24" fill="white">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-        </div>
-      </div>
-
-      <!-- Fullscreen shortcut for tweet feed when video is paused/not playing -->
-      <button
-        v-if="showFeedMuteButton"
-        class="feed-mute-button"
-        type="button"
-        :aria-label="isMuted ? 'Unmute video' : 'Mute video'"
-        @click="handleMuteOverlayClick"
-        @touchend.prevent="handleMuteOverlayClick"
-      >
-        <svg v-if="isMuted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-          <line x1="23" y1="9" x2="17" y2="15"></line>
-          <line x1="17" y1="9" x2="23" y2="15"></line>
-        </svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-        </svg>
-      </button>
-
-      <button
-        v-if="showFeedFullscreenButton"
-        class="fullscreen-overlay-button"
-        type="button"
-        aria-label="Enter fullscreen"
-        @click="handleFullscreenOverlayClick"
-        @touchend.prevent="handleFullscreenOverlayClick"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
-        </svg>
-      </button>
-      
-      <div 
+      <!-- Video and canvas sit FIRST in DOM so overlay buttons (which follow)
+           win in iOS Safari's DOM-order hit-testing and receive their taps. -->
+      <div
         class="video-tap-handler"
         @click="handleVideoTap"
         @touchstart="handleTouchStart"
@@ -2493,6 +2357,78 @@ function stopVideo() {
           aria-hidden="true"
         />
       </div>
+
+      <!-- All overlays come AFTER the tap handler in DOM so iOS routes taps correctly. -->
+
+      <!-- Video error overlay -->
+      <div v-if="showVideoError" class="video-error-overlay">
+        <div class="video-error-content">
+          <div class="error-icon">⚠️</div>
+          <p class="error-message">Video playback error</p>
+          <p class="error-hint">This video format may not be supported in your browser</p>
+        </div>
+      </div>
+
+      <!-- Autoplay blocked overlay -->
+      <div v-if="autoplayBlocked && props.autoplay" class="autoplay-blocked-overlay" @click="handleManualPlay">
+        <div class="autoplay-blocked-content">
+          <div class="play-button">
+            <font-awesome-icon icon="play" />
+          </div>
+          <p class="autoplay-message">Click to play video</p>
+        </div>
+      </div>
+
+      <!-- Loading spinner overlay -->
+      <div v-if="showBufferingOverlay" class="buffering-overlay">
+        <div class="buffering-spinner"></div>
+      </div>
+
+      <!-- Centered play button shown whenever video is paused/not playing -->
+      <div v-if="canShowPausedOverlays"
+           class="play-overlay"
+           @click="handlePlayOverlayClick"
+           @touchend.prevent="handlePlayOverlayClick">
+        <div class="play-overlay-button">
+          <svg viewBox="0 0 24 24" fill="white">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Mute / fullscreen shortcut buttons for feed -->
+      <button
+        v-if="showFeedMuteButton"
+        class="feed-mute-button"
+        type="button"
+        :aria-label="isMuted ? 'Unmute video' : 'Mute video'"
+        @click="handleMuteOverlayClick"
+        @touchend.prevent="handleMuteOverlayClick"
+      >
+        <svg v-if="isMuted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <line x1="23" y1="9" x2="17" y2="15"></line>
+          <line x1="17" y1="9" x2="23" y2="15"></line>
+        </svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+        </svg>
+      </button>
+
+      <button
+        v-if="showFeedFullscreenButton"
+        class="fullscreen-overlay-button"
+        type="button"
+        aria-label="Enter fullscreen"
+        @click="handleFullscreenOverlayClick"
+        @touchend.prevent="handleFullscreenOverlayClick"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        </svg>
+      </button>
 
       <div
         v-if="showFeedTimeRemaining"
