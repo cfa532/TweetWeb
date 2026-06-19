@@ -102,7 +102,9 @@ const canShowPausedOverlays = computed(() => {
     !(autoplayBlocked.value && props.autoplay) &&
     !isPlaying.value &&
     !coordinatorAutoplayPending.value &&
-    (!isBuffering.value || isMobile);
+    // On mobile hide the play overlay while the loading spinner is up so
+    // the two never stack on top of each other.
+    (!isBuffering.value || (isMobile && !showBufferingOverlay.value));
 });
 
 const controls = computed(()=>{
@@ -171,11 +173,6 @@ const showFeedFullscreenButton = computed(
     !isPlaying.value,
 );
 const hasUserPausedInFeed = ref(false);
-const hasPlayableFutureData = computed(() => {
-  const el = video.value;
-  if (!el) return false;
-  return el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
-});
 const hasCurrentFrame = computed(() => {
   const el = video.value;
   if (!el) return false;
@@ -185,33 +182,26 @@ const hasLoadedMetadata = computed(() => {
   const el = video.value;
   return hasMetadata.value || (!!el && el.readyState >= HTMLMediaElement.HAVE_METADATA);
 });
-// isPlaying tracks the 'play'/'pause' events reactively. isActuallyPlaying
-// combines it with isBuffering so the spinner branch works correctly: the
-// video is "actually playing" only when it has started AND is not stalled.
-const isActuallyPlaying = computed(() => isPlaying.value && !isBuffering.value);
 
 const showBufferingOverlay = computed(() => {
   // Feed: show spinner both while actively buffering and during initial fetch
   // before metadata arrives (prevents black tile on first load).
   if (isInTweetList.value) {
     const isActivelyStarting = isBuffering.value || coordinatorAutoplayPending.value;
-    const isInitialFeedLoad = props.mediaLoadState !== 'idle' && isActivelyStarting && !hasCurrentFrame.value && !showVideoError.value;
-    if (isInitialFeedLoad) return true;
-
-    // Once playing, trust actual media readiness so stale buffering flags do
-    // not leave the spinner stuck on top of a playing video.
-    if (isActuallyPlaying.value) {
-      return !hasPlayableFutureData.value;
-    }
-
-    return isBuffering.value && !hasCurrentFrame.value;
+    // Show during initial load before first frame arrives.
+    if (props.mediaLoadState !== 'idle' && isActivelyStarting && !hasCurrentFrame.value && !showVideoError.value) return true;
+    // Show during mid-play stalls signalled by the 'waiting' event.
+    // Avoid reading non-reactive readyState here — hasPlayableFutureData cannot
+    // trigger Vue updates on its own, which left the spinner stuck after buffer
+    // recovered without any reactive dep changing.
+    return isBuffering.value;
   }
 
   if (!isBuffering.value) return false;
-  // Mobile detail: suppress spinner before the user starts playback so it
-  // doesn't stack on top of the play overlay and confuse interaction.
-  // Once isPlaying is true the play overlay is hidden and the spinner is safe.
-  return !isMobile || isPlaying.value;
+  // Always show the spinner in detail/fullscreen view when buffering.
+  // canShowPausedOverlays hides the play overlay while the spinner is up,
+  // so the two never appear simultaneously.
+  return true;
 });
 
 function syncVideoReadyState() {
@@ -1866,33 +1856,15 @@ function handlePlayOverlayClick(event: Event) {
     if (isPlaying.value) {
       video.value.pause();
     } else {
-      // On mobile, open fullscreen when play button is tapped
-      if (isMobileBrowser()) {
-        // Start playing before requesting fullscreen
-        if (video.value.paused) {
-          video.value.play().catch(() => {
-            // If play fails, try muted
-            video.value.muted = true;
-            video.value.play().catch(() => {});
-          });
-        }
-        // Request fullscreen
-        requestFullscreen();
-        return;
-      }
-
-      // Desktop: play inline
-      // If video has ended, reset to beginning
+      // Play inline on all platforms — fullscreen is triggered by tapping
+      // the video area (handleVideoTap), not the play button.
       if (video.value.ended || video.value.currentTime >= video.value.duration) {
         video.value.currentTime = 0;
       }
-
-      // Tell coordinator this is now the active video (pauses all others)
       requestPlay(video.value);
-
       video.value.play().catch(() => {
-        video.value.muted = true;
-        video.value.play().catch(() => {});
+        video.value!.muted = true;
+        video.value!.play().catch(() => {});
       });
     }
   }
