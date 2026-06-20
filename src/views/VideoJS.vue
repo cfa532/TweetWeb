@@ -56,6 +56,7 @@ const isBuffering = ref(!isAudio && !!props.autoplay);
 // spinner visible between MANIFEST_PARSED and actual playback.
 const coordinatorAutoplayPending = ref(false);
 const showVideoError = ref(false); // Show error message when video fails to play
+const isFullscreenActive = ref(false);
 const isMobile = isMobileBrowser(); // cached at setup time
 
 // Touch handling for mobile scroll detection
@@ -95,10 +96,16 @@ const hasMetadata = ref(false);
 // Show native controls on desktop detail view after metadata loads, but hide
 // them while our own loading indicator is active so the browser spinner does
 // not appear alongside it.
-const showControls = computed(() => !isMobileBrowser() && !isInTweetList.value && hasMetadata.value && !showBufferingOverlay.value)
+// Native controls: always in fullscreen (browser handles tap-to-show), otherwise
+// only on desktop detail view once metadata is ready.
+const showControls = computed(() =>
+  isFullscreenActive.value ||
+  (!isMobileBrowser() && !isInTweetList.value && hasMetadata.value && !showBufferingOverlay.value)
+)
 
 const canShowPausedOverlays = computed(() => {
-  return !showVideoError.value &&
+  return !isFullscreenActive.value && // Native controls handle play in fullscreen
+    !showVideoError.value &&
     !(autoplayBlocked.value && props.autoplay) &&
     !isPlaying.value &&
     !coordinatorAutoplayPending.value &&
@@ -153,6 +160,7 @@ const isSoleMediaInGrid = computed(() => {
 const showFeedTimeRemaining = computed(
   () =>
     isInTweetList.value &&
+    !isFullscreenActive.value &&
     isSoleMediaInGrid.value &&
     !isAudio &&
     !showVideoError.value &&
@@ -162,6 +170,7 @@ const showFeedTimeRemaining = computed(
 const showFeedMuteButton = computed(
   () =>
     isInTweetList.value &&
+    !isFullscreenActive.value &&
     !isAudio &&
     !showVideoError.value,
 );
@@ -210,11 +219,14 @@ function syncVideoReadyState() {
   if (el.readyState >= HTMLMediaElement.HAVE_METADATA) {
     hasMetadata.value = true;
   }
-  if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-    isBuffering.value = false;
-  }
   if (el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
     hasRenderedVideoFrame = true;
+    // Do NOT clear isBuffering here. HAVE_CURRENT_DATA means one frame is
+    // available but the video would immediately stall — clearing the spinner
+    // at this point creates a visible gap before 'waiting' fires again.
+  }
+  if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+    // Video can play forward without immediately stalling — safe to hide spinner.
     isBuffering.value = false;
     coordinatorAutoplayPending.value = false;
   }
@@ -459,6 +471,7 @@ function softReleaseFeedMedia(reason: string, options: { preserveRegularSource?:
   showVideoError.value = false;
   try {
     if (!video.value?.paused) video.value.pause();
+    if (video.value) video.value.muted = true; // Reset to muted for next play
   } catch {}
   if (hls && !pendingUserPlayRequest) {
     hls.stopLoad();
@@ -528,7 +541,8 @@ onMounted(() => {
   
     // Setup video element immediately
     if (video.value && !isHLSInitialized) {
-        video.value.muted = getInitialMutedState();
+        // Feed videos are always muted; detail view restores persisted state.
+        video.value.muted = isInTweetList.value ? true : getInitialMutedState();
         syncMutedState();
         // If browser restored metadata/frame from cache before listeners were
         // attached, mark metadata ready immediately so initial-load spinner
@@ -1360,7 +1374,6 @@ function setupRegularVideo() {
   // Add load event to confirm video loaded
   videoElement.addEventListener('loadeddata', () => {
     syncVideoReadyState();
-    isBuffering.value = false;
     clearCoverFrame();
   }, { once: true });
 
@@ -1724,6 +1737,10 @@ function handleVideoTap(event: Event) {
     return;
   }
   
+  // In fullscreen the browser's native controls handle tap-to-show/hide.
+  // Don't intercept — let the event fall through to the video element.
+  if (isFullscreenActive.value) return;
+
   // Mobile: any tap that reaches this handler means the user tapped the video
   // area (not an overlay control, which intercepts its own touches via DOM
   // order). Always open fullscreen — showControls is always false on mobile so
@@ -1945,21 +1962,21 @@ async function requestFullscreen() {
 
 // Handle fullscreen change
 function handleFullscreenChange() {
-  const isFullscreen = !!(
+  const fs = !!(
     document.fullscreenElement ||
     (document as any).webkitFullscreenElement ||
     (document as any).mozFullScreenElement ||
     (document as any).msFullscreenElement
   );
 
-  if (!isFullscreen && video.value) {
-    // Exited fullscreen - stop the video and hide controls
+  isFullscreenActive.value = fs;
+
+  if (!fs && video.value) {
     video.value.pause();
-    // Controls remain enabled
-    video.value.muted = false; // Restore unmuted state
+    // Feed videos are always muted; detail view keeps whatever state the user set.
+    if (isInTweetList.value) video.value.muted = true;
     isPlaying.value = false;
-  } else if (isFullscreen && video.value) {
-    // Entered fullscreen - ensure video is playing
+  } else if (fs && video.value) {
     if (video.value.paused) {
       video.value.play().catch(() => {
         video.value!.muted = true;
