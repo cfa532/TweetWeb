@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
-import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
 import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
@@ -33,6 +32,7 @@ const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
 const isQuoting = ref(false)    // whether to also post as a quote tweet (comment mode only)
+const showEditorOptions = ref(false)
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
@@ -557,9 +557,9 @@ function handleDragEnd() {
           <div class='fw-bold'>{{ author.name }}</div>
           <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>
         </div>
-        <div class='cancel-btn' @click='goBack'>
-          <font-awesome-icon icon="circle-xmark" size="xl" />
-        </div>
+        <button class='cancel-btn' type='button' @click='goBack' :aria-label="$t('common.cancel')">
+          <font-awesome-icon icon="circle-xmark" />
+        </button>
       </div>
       <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
@@ -573,26 +573,59 @@ function handleDragEnd() {
         </div>
         <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
           <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
-          <div class='button-container'>
-            <span>
-              <button class='btn' @click.prevent='selectFiles.click()'>{{ $t('editor.files') }}</button>&nbsp;
-              <label class="bottom-btn" @click.prevent="openModal">
-                <IconLink />
+          <div class='editor-toolbar'>
+            <div class='toolbar-files'>
+              <button
+                class='toolbar-icon-button'
+                type='button'
+                @click.prevent='selectFiles.click()'
+                :title="$t('editor.files')"
+                :aria-label="$t('editor.files')"
+              >
+                <font-awesome-icon icon="paperclip" />
+              </button>
+              <button
+                class='toolbar-link-button'
+                type='button'
+                @click.prevent='openModal'
+                :title="$t('editor.link')"
+                :aria-label="$t('editor.link')"
+              >
+                <font-awesome-icon icon="link" />
+              </button>
+              <button
+                class='toolbar-icon-button toolbar-options-button'
+                :class="{ 'is-open': showEditorOptions }"
+                type='button'
+                @click.prevent='showEditorOptions = !showEditorOptions'
+                :title="$t('editor.options')"
+                :aria-label="$t('editor.options')"
+                :aria-expanded='showEditorOptions'
+              >
+                <font-awesome-icon icon="sliders" />
+              </button>
+            </div>
+            <div class='toolbar-actions'>
+              <button class='btn submit-button' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
+            </div>
+            <div v-if='showEditorOptions' class='toolbar-options-panel'>
+              <label class='toolbar-option' for='downloadable-checkbox'>
+                <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>
+                <span>{{ $t('editor.downloadable') }}</span>
               </label>
-            </span>
-            <span>
-              <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>&nbsp;
-              <label for='downloadable-checkbox'>{{ $t('editor.downloadable') }}</label>&nbsp;&nbsp;&nbsp;
-              <input type='checkbox' v-model='isPrivate' id='private-checkbox'>&nbsp;
-              <label for='private-checkbox'>{{ $t('editor.private') }}</label>&nbsp;&nbsp;&nbsp;
-              <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
-              <label for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">{{ $t('editor.preserveQuality') }}</label>&nbsp;&nbsp;&nbsp;
-              <template v-if='tweetId'>
-                <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>&nbsp;
-                <label for='quoting-checkbox'>{{ $t('editor.quoteTweet') }}</label>&nbsp;&nbsp;&nbsp;
-              </template>
-              <button class='btn' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
-            </span>
+              <label class='toolbar-option' for='private-checkbox'>
+                <input type='checkbox' v-model='isPrivate' id='private-checkbox'>
+                <span>{{ $t('editor.private') }}</span>
+              </label>
+              <label class='toolbar-option' for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">
+                <input type='checkbox' v-model='noResample' id='noresample-checkbox'>
+                <span>{{ $t('editor.preserveQuality') }}</span>
+              </label>
+              <label v-if='tweetId' class='toolbar-option' for='quoting-checkbox'>
+                <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>
+                <span>{{ $t('editor.quoteTweet') }}</span>
+              </label>
+            </div>
           </div>
           <Loading :visible='loading' />
         </form>
@@ -644,10 +677,26 @@ function handleDragEnd() {
 }
 
 .cancel-btn {
-  cursor: pointer;
-  color: #e0245e;
-  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: #495057;
+  background: transparent;
+  border: 1px solid #adb5bd;
+  border-radius: 6px;
+  padding: 0;
   margin-right: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.cancel-btn:hover,
+.cancel-btn:focus-visible {
+  color: #212529;
+  border-color: #6c757d;
+  background: #f8f9fa;
 }
 
 .editor-content {
@@ -701,11 +750,64 @@ function handleDragEnd() {
   flex: 1;
 }
 
-.button-container {
-  height: auto;
+.editor-toolbar {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 104px;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 8px;
+  margin: 10px;
+}
+
+.toolbar-files {
   display: flex;
-  justify-content: space-between;
-  margin: 10px
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.toolbar-actions {
+  grid-column: 3;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.toolbar-options-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(104px, max-content));
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #c8d0d8;
+  border-radius: 6px;
+  background: #f8fbfd;
+}
+
+.toolbar-option {
+  display: inline-grid;
+  grid-template-columns: 16px minmax(0, max-content);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: #343a40;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.toolbar-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.toolbar-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .btn {
@@ -714,21 +816,87 @@ function handleDragEnd() {
   padding: 3px 10px;
 }
 
-.bottom-btn {
-  display: inline-flex;
-  align-items: center;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 16px;
-  fill: rgb(48, 46, 46);
-  transition: background-color 0.3s;
+.submit-button {
+  width: 104px;
+  min-height: 36px;
 }
 
-.bottom-btn svg {
-  padding-top: 6px;
-  margin-right: 10px;
-  width: 24px;
-  height: 24px;
+.toolbar-icon-button,
+.toolbar-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px solid #b8c2cc;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #fff;
+  color: #2f3a45;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.toolbar-icon-button {
+  width: 38px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.toolbar-link-button {
+  width: 38px;
+  padding: 0;
+  border-color: #9ec5fe;
+  background: #f0f7ff;
+  color: #0d6efd;
+}
+
+.toolbar-icon-button:hover,
+.toolbar-icon-button:focus-visible {
+  border-color: #6c757d;
+  background: #f8f9fa;
+}
+
+.toolbar-link-button:hover,
+.toolbar-link-button:focus-visible {
+  border-color: #0d6efd;
+  background: #e7f1ff;
+}
+
+.toolbar-options-button.is-open {
+  border-color: #198754;
+  background: #e9f7ef;
+  color: #146c43;
+}
+
+@media (max-width: 760px) {
+  .editor-toolbar {
+    grid-template-columns: 130px minmax(0, 1fr) 104px;
+    align-items: start;
+  }
+
+  .toolbar-options-panel {
+    grid-template-columns: repeat(2, minmax(104px, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .editor-toolbar {
+    grid-template-columns: minmax(0, 1fr) 104px;
+  }
+
+  .toolbar-files {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .toolbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .toolbar-options-panel {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

@@ -436,6 +436,10 @@ function goBack() {
 
                 <!-- Info rows -->
                 <div class="info-section mb-3">
+                    <div v-if="user?.mid" class="info-row">
+                        <span class="info-label">{{ $t('auth.userId') }}</span>
+                        <span class="info-value text-muted">{{ user.mid }}</span>
+                    </div>
                     <div v-if="user?.hostIds?.[0]" class="info-row">
                         <span class="info-label">{{ $t('auth.hostId') }}</span>
                         <span class="info-value text-muted">{{ user.hostIds[0] }}</span>
