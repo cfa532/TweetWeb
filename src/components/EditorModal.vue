@@ -719,9 +719,9 @@ function handleDragEnd() {
 }
 
 .input-textarea {
-  margin: 5px;
+  margin: 2px;
   border: 1px solid lightgrey;
-  width: calc(100% - 10px);
+  width: calc(100% - 4px);
   height: 40vh;
   border-radius: 5px;
   box-sizing: border-box;
