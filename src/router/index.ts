@@ -7,6 +7,10 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
 import { useAlertStore } from '@/stores';
 import { USER_PAGE_SCROLL_PREFIX, MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
 
+function getStoredLoginUser() {
+  return sessionStorage.getItem("user")
+}
+
 function scrollBehavior(
   to: RouteLocationNormalized,
   from: RouteLocationNormalized,
@@ -79,7 +83,7 @@ export const router = createRouter({
     {
       path: '/post/:tweetId?', name: "post", component: AddPost,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user) {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else
@@ -98,7 +102,7 @@ export const router = createRouter({
       name: 'netdisk',
       component: CloudFileList,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user) {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else
@@ -111,7 +115,7 @@ export const router = createRouter({
       name: "uploadFile",
       component: UploadFile,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user) {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else {
@@ -125,7 +129,7 @@ export const router = createRouter({
       name: "uploadApk",
       component: UploadPackage,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user || JSON.parse(user)["username"]!="admin") {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else

@@ -343,14 +343,14 @@ async function onSubmit() {
     submitFailed.value = true
 
     // Refresh loginUser: clear per-user cache and re-fetch, overwriting
-    // _user and sessionStorage['user'] in place (never null them first).
+    // _user and persisted login cache in place (never null them first).
     const mid = tweetStore.loginUser?.mid
     if (mid) {
       tweetStore.removeUser(mid)
       const freshUser = await tweetStore.getUser(mid, true)
       if (freshUser) {
         tweetStore._user = freshUser
-        sessionStorage.setItem('user', JSON.stringify(freshUser))
+        tweetStore.persistLoginUser(freshUser)
       }
     }
   } finally {
