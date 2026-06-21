@@ -721,9 +721,10 @@ function handleDragEnd() {
 .input-textarea {
   margin: 5px;
   border: 1px solid lightgrey;
-  width: 99%;
+  width: calc(100% - 10px);
   height: 40vh;
   border-radius: 5px;
+  box-sizing: border-box;
 }
 
 .drop-here {
