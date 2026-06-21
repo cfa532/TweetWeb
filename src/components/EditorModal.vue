@@ -661,7 +661,7 @@ function handleDragEnd() {
 .editor-header {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
+  padding: 8px 10px 4px;
 }
 
 .editor-avatar {
@@ -707,7 +707,7 @@ function handleDragEnd() {
   border-radius: 10px;
   background-color: #ebf0f3;
   border: 1px solid #888;
-  margin: 10px 0 0 0;
+  margin: 4px 0 0 0;
   flex-direction: column;
   flex: 1;
 }
