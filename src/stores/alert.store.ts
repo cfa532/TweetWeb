@@ -15,6 +15,10 @@ export const useAlertStore = defineStore({
             this.alert = { message, type: 'alert-success' };
         },
         error(message: any) {
+            // PoolTimeoutError (and any object with isTimeout:true) is a
+            // network-level signal — not a user-action failure. Suppress it
+            // here; diagnostics remain in the console via console.warn.
+            if (message?.isTimeout) return
             this.alert = { message, type: 'alert-danger' };
         },
         warning(message: string) {

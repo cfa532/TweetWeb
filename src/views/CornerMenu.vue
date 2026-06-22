@@ -149,6 +149,7 @@ async function submitEdit() {
     target.content = editContent.value
     showEditor.value = false
   } catch (error: any) {
+    if (error?.isTimeout) return
     alertStore.error(error.message || t('tweet.failedUpdateTweet'))
   }
 }
@@ -195,6 +196,7 @@ async function deleteItem() {
       }
     }
   } catch (error: any) {
+    if (error?.isTimeout) return
     alertStore.error(error?.message || t('tweet.failedDeleteTweet'))
   }
 }

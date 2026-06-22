@@ -339,6 +339,7 @@ async function onSubmit() {
     }
   } catch (err) {
     console.error('onSubmit err:', err)
+    if ((err as any)?.isTimeout) return
     useAlertStore().error(err instanceof Error ? err.message : String(err))
     submitFailed.value = true
 

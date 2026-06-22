@@ -7,6 +7,19 @@
 
 import type ConnectionPoolManager from './connectionPool';
 
+/**
+ * Thrown when a pooled RPC call exceeds its timeout.
+ * Caught silently by the alert store — the raw IP/method detail is only
+ * kept in the console; the UI should not surface network internals.
+ */
+export class PoolTimeoutError extends Error {
+  readonly isTimeout = true as const
+  constructor(method: string, ip: string, ms: number) {
+    super(`[clientProxy] ${method} to ${ip} timed out after ${ms}ms`)
+    this.name = 'PoolTimeoutError'
+  }
+}
+
 // Type for the connection pool interface that matches what lapi.connectionPool provides
 export type ConnectionPoolInterface = Pick<ConnectionPoolManager, 'getConnection' | 'releaseConnection' | 'getStats' | 'clearAll'>;
 
@@ -70,9 +83,11 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
               const result = await Promise.race([
                 method.apply(client, args),
                 new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error(
-                    `Pooled call ${String(prop)} to ${ip} timed out after ${timeoutMs}ms`
-                  )), timeoutMs)
+                  setTimeout(() => {
+                    const err = new PoolTimeoutError(String(prop), ip, timeoutMs)
+                    console.warn(err.message)
+                    reject(err)
+                  }, timeoutMs)
                 )
               ]);
               return result;
