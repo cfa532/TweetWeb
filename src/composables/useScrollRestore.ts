@@ -132,9 +132,11 @@ export function useScrollRestore(storageKey: string | (() => string), opts: Scro
     })
     // Authoritative save point: fires before vue-router resolves the navigation
     // (and before it scrolls for the next route), so window.scrollY is still the
-    // user's real position on this page.
+    // user's real position on this page. Clear the pending debounce so it can't
+    // overwrite this value with a later (post-scroll) sample.
     onBeforeRouteLeave(() => {
         persist()
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
     })
     onUnmounted(() => {
         window.removeEventListener('scroll', onScroll)

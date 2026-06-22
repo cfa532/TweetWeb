@@ -18,12 +18,13 @@ function scrollBehavior(
   // Deep link to a specific tweet on a profile: start at top, UserPage scrolls
   // it into view itself.
   if (to.query.scrollTweet) return { left: 0, top: 0 }
-  // The keep-alive list pages (main feed, user profile) restore their own scroll
-  // synchronously in onActivated (see composables/useScrollRestore). Returning
-  // false keeps vue-router from applying a delayed scroll — that delay was the
-  // cause of the top-then-position flash on back-navigation and reload. It also
-  // supersedes the old scrollTweet-stripping special case (no scroll = no jump).
-  if (to.name === 'main' || to.name === 'UserPage') return false
+  // The keep-alive list pages (main feed, user profile, followers/followings)
+  // restore their own scroll synchronously in onActivated (see
+  // composables/useScrollRestore). Returning false keeps vue-router from applying
+  // a delayed scroll — that delay was the cause of the top-then-position flash on
+  // back-navigation and reload. It also supersedes the old scrollTweet-stripping
+  // special case (no scroll = no jump).
+  if (to.name === 'main' || to.name === 'UserPage' || to.name === 'followers' || to.name === 'followings') return false
   // Back/forward navigation: restore the previous scroll. The list pages are
   // kept alive (<keep-alive>), so their DOM is intact at full height and this
   // restores instantly without any flash.

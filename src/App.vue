@@ -6,7 +6,7 @@ import { Alert } from './views';
   <div class="container-fluid">
     <Alert/>
     <router-view v-slot="{ Component }">
-      <keep-alive :include="['MainPage', 'UserPage']">
+      <keep-alive :include="['MainPage', 'UserPage', 'Followers', 'Followings']">
         <component :is="Component" />
       </keep-alive>
     </router-view>
