@@ -8,6 +8,7 @@ import { LOAD_TIMEOUT_MS } from '@/constants';
 import { AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
+import { useScrollRestore } from '@/composables/useScrollRestore';
 
 const { t } = useI18n();
 
@@ -34,6 +35,7 @@ function isNearBottom(threshold = scrollThreshold) {
 
 /** After a page loads, scroll position is unchanged — no scroll event. Chain loads while still near the bottom. */
 function scheduleLoadMoreIfStillNearBottom() {
+    if (isRestoringFeed.value) return;
     void (async () => {
         await nextTick();
         await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -57,6 +59,7 @@ function setupLoadMoreObserver() {
             if (!entries[0]?.isIntersecting) return;
             if (isLoading.value || !hasMoreTweets.value) return;
             if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+            if (isRestoringFeed.value) return;
             void loadMoreTweets();
         },
         { root: null, rootMargin: '0px 0px 320px 0px', threshold: 0 },
@@ -367,6 +370,14 @@ async function loadMoreTweets() {
     }
 }
 
+// Persist & restore this profile's scroll position, keyed per-author so one
+// user's spot never bleeds onto another's. Back-nav restores synchronously
+// (keep-alive DOM); reload pages content in then jumps. See useScrollRestore.
+const { restoring: isRestoringFeed, restoreAfterLoad } = useScrollRestore(
+    () => `userPage:${authorId.value}`,
+    { hasMore: () => hasMoreTweets.value, loadMore: loadMoreTweets },
+);
+
 const displayedTweets = ref<Tweet[]>([]);
 const pendingCount = ref(0);
 
@@ -499,8 +510,14 @@ watch(authorId, async (nv, ov) => {
     tweetStore.getUserFromRootHost(nv, true).then(u => {
         console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
     });
+    // A scrollTweet deep link owns the scroll target. Otherwise suppress the
+    // scroll-save race and hide the feed while we page back into this author's
+    // saved position (reload / author switch).
+    const hasScrollTweet = route.query.scrollTweet != null;
+    isRestoringFeed.value = !hasScrollTweet;
     await initialLoadTweets(nv);
-    await maybeScrollToDeepLinkedTweet()
+    await maybeScrollToDeepLinkedTweet();
+    if (!hasScrollTweet) await restoreAfterLoad();
 }, { immediate: true });
 
 onBeforeRouteUpdate(async (to, from) => {
@@ -521,6 +538,9 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 <template>
     <PageLayout>
         <AppHeader :userId='authorId' />
+        <div v-if="isRestoringFeed" class="feed-restoring-overlay" aria-live="polite">
+            <LoadingSpinner />
+        </div>
 
         <!-- Bookmarks / Favorites view: replaces pinned + own-tweets list. -->
         <template v-if="userView !== 'tweets'">
@@ -544,7 +564,9 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
                 {{ $t('tweet.showNewTweets', pendingCount) }}
             </div>
-            <TweetList :tweets="displayedTweets" />
+            <div :class="{ 'feed-restoring': isRestoringFeed }">
+                <TweetList :tweets="displayedTweets" />
+            </div>
             <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
             <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
                 <LoadingSpinner size="sm" />
@@ -585,6 +607,23 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
     width: 100%;
     height: 1px;
     pointer-events: none;
+}
+
+/* While paging in content to reach a saved scroll offset (deep reload / author
+   switch), keep the feed's layout for measurement but hide it so the top of the
+   list never flashes before content catches up. */
+.feed-restoring {
+    visibility: hidden;
+}
+
+.feed-restoring-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1030;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.8);
 }
 
 .tweet-feed-loading-fixed {

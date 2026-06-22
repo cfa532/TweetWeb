@@ -27,4 +27,12 @@ app.component('font-awesome-icon', FontAwesomeIcon);
 app.use(createPinia())
 app.use(i18n)
 app.use(router)
+
+// vue-router does not disable the browser's native scroll restoration. Left on
+// 'auto', the browser fires a late async restore on back/forward that competes
+// with our own restore (see composables/useScrollRestore) and — because
+// vue-router rewrites history.state — parks the page at the top. Take manual
+// control so our synchronous restore is the only one that runs.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
+
 app.mount('#app')

@@ -7,6 +7,7 @@ import { useTweetStore } from '@/stores';
 import { AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { isWeChatBrowser } from '@/lib';
+import { useScrollRestore } from '@/composables/useScrollRestore';
 
 
 const { t } = useI18n();
@@ -51,6 +52,7 @@ function isNearBottom(threshold = scrollThreshold) {
 
 /** After a page loads, the scroll position does not change — no scroll event fires. Chain loads while the user is still near the bottom. */
 function scheduleLoadMoreIfStillNearBottom() {
+    if (isRestoringFeed.value) return;
     void (async () => {
         await nextTick();
         await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -74,6 +76,7 @@ function setupLoadMoreObserver() {
             if (!entries[0]?.isIntersecting) return;
             if (isLoading.value || !hasMoreTweets.value) return;
             if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+            if (isRestoringFeed.value) return;
             void loadMoreTweets();
         },
         { root: null, rootMargin: '0px 0px 320px 0px', threshold: 0 },
@@ -116,6 +119,14 @@ async function loadMoreTweets() {
     }
 }
 
+// Persist & restore the feed's scroll position without the top-then-position
+// flash on back-navigation (synchronous, keep-alive DOM) and reload (page in
+// content first). See composables/useScrollRestore.ts.
+const { restoring: isRestoringFeed, restoreAfterLoad } = useScrollRestore('main', {
+    hasMore: () => hasMoreTweets.value,
+    loadMore: loadMoreTweets,
+});
+
 // The mid the currently-displayed feed was loaded for. Used by onActivated to
 // detect a login-user change while this component is kept alive (<keep-alive>).
 const loadedForUser = ref<string | null>(null)
@@ -154,6 +165,7 @@ onMounted(async () => {
             appendNewToDisplayed();
         }
     }
+    await restoreAfterLoad();
     nextTick(() => setupLoadMoreObserver());
 });
 
@@ -248,10 +260,15 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 <template>
     <PageLayout>
         <AppHeader />
+        <div v-if="isRestoringFeed" class="feed-restoring-overlay" aria-live="polite">
+            <LoadingSpinner />
+        </div>
         <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
             {{ $t('tweet.showNewTweets', pendingCount) }}
         </div>
-        <TweetList :tweets="displayedTweets" />
+        <div :class="{ 'feed-restoring': isRestoringFeed }">
+            <TweetList :tweets="displayedTweets" />
+        </div>
         <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
         <div v-if='showLoadMoreSpinner && isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
             <LoadingSpinner size="sm" />
@@ -291,6 +308,22 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
     width: 100%;
     height: 1px;
     pointer-events: none;
+}
+
+/* While paging in content to reach a saved scroll offset (deep reload), keep the
+   feed's layout for measurement but hide it so the top of the list never flashes. */
+.feed-restoring {
+    visibility: hidden;
+}
+
+.feed-restoring-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1030;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.8);
 }
 
 .tweet-feed-loading-fixed {
