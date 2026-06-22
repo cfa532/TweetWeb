@@ -400,6 +400,7 @@ export async function getVideoAspectRatio(file: File): Promise<number> {
     // older iOS Safari reports encoded (pre-rotation) dimensions.
     const methods = [
       { name: 'FileHeaderAnalysis', fn: () => tryFileHeaderAnalysis(file) },
+      { name: 'ASFHeaderAnalysis',  fn: () => tryASFHeaderAnalysis(file) },
       { name: 'VideoElement', fn: () => tryVideoElementAnalysis(file) },
       { name: 'FileNameAnalysis', fn: () => tryFileNameAnalysis(file) },
       { name: 'FileExtensionAnalysis', fn: () => tryFileExtensionAnalysis(file) }
@@ -442,6 +443,17 @@ function getAspectRatioName(ratio: number): string {
 // but older iOS Safari returns encoded (pre-rotation) dimensions. We correct for
 // that by briefly rendering the element and comparing its natural vs rendered size.
 async function tryVideoElementAnalysis(file: File): Promise<number> {
+  // Ask the browser whether it can actually play this format before attempting to
+  // load it.  Formats like WMV, older AVI codecs, and FLV are not supported by
+  // Chromium/Firefox, so the video element will always fire onerror — skip early
+  // to avoid the noisy failure.
+  const probe = document.createElement('video')
+  const mimeForProbe = file.type || `video/${file.name.toLowerCase().split('.').pop()}`
+  const canPlay = probe.canPlayType(mimeForProbe)
+  if (!canPlay || canPlay === '') {
+    throw new Error(`Browser cannot play type "${mimeForProbe}" — skipping VideoElement analysis`)
+  }
+
   return new Promise<number>((resolve, reject) => {
     const video = document.createElement('video');
     // Place off-screen so the browser renders and applies any CSS rotation transform.
@@ -485,6 +497,15 @@ async function tryVideoElementAnalysis(file: File): Promise<number> {
 
 // Method 1: Parse MP4/MOV box structure to extract video dimensions
 async function tryFileHeaderAnalysis(file: File): Promise<number> {
+  // Skip immediately for types that are definitely not MP4/QuickTime containers —
+  // avoids a pointless 1MB read and a guaranteed throw for e.g. WMV, AVI, MKV.
+  const mime = (file.type || '').toLowerCase()
+  const ext  = file.name.toLowerCase().split('.').pop() ?? ''
+  const isMP4Like =
+    mime.includes('mp4') || mime.includes('quicktime') || mime.includes('m4v') ||
+    ext === 'mp4' || ext === 'm4v' || ext === 'mov'
+  if (!isMP4Like) throw new Error('Not an MP4/QuickTime container — skipping header analysis')
+
   // Try the first 1MB (covers faststart-optimized files where moov is at the front)
   const firstChunk = await readFileSlice(file, 0, Math.min(file.size, 1024 * 1024));
   if (isMP4OrQuickTimeData(firstChunk)) {
@@ -500,6 +521,80 @@ async function tryFileHeaderAnalysis(file: File): Promise<number> {
     }
   }
   throw new Error('No valid dimensions found in file header');
+}
+
+// Method 1b: Parse ASF (WMV/WMA) container header to extract video dimensions.
+// ASF Header Object always begins with a fixed 16-byte GUID at offset 0.
+// Inside the header, Stream Properties Objects carry the encoded width/height.
+async function tryASFHeaderAnalysis(file: File): Promise<number> {
+  // ASF header is always at the start of the file and is typically < 64 KB.
+  const chunk = await readFileSlice(file, 0, Math.min(file.size, 65536))
+
+  // ASF Header Object GUID (little-endian mixed-endian per spec):
+  // {75B22630-668E-11CF-A6D9-00AA0062CE6C}
+  const ASF_HEADER_GUID    = [0x30,0x26,0xB2,0x75,0x8E,0x66,0xCF,0x11,0xA6,0xD9,0x00,0xAA,0x00,0x62,0xCE,0x6C]
+  // {B7DC0791-A9B7-11CF-8EE6-00C00C205365}
+  const ASF_STREAM_PROPS_GUID = [0x91,0x07,0xDC,0xB7,0xB7,0xA9,0xCF,0x11,0x8E,0xE6,0x00,0xC0,0x0C,0x20,0x53,0x65]
+  // {BC19EFC0-7B18-9648-A94D-23563D1FDBC6}  — ASF video stream type
+  const ASF_VIDEO_MEDIA_GUID  = [0xC0,0xEF,0x19,0xBC,0x18,0x7B,0x48,0x96,0xA9,0x4D,0x23,0x56,0x3D,0x1F,0xDB,0xC6]
+
+  const guidEq = (off: number, guid: number[]) => {
+    if (off + 16 > chunk.length) return false
+    for (let i = 0; i < 16; i++) if (chunk[off + i] !== guid[i]) return false
+    return true
+  }
+  const u32LE = (off: number) =>
+    ((chunk[off] | (chunk[off+1] << 8) | (chunk[off+2] << 16) | (chunk[off+3] << 24)) >>> 0)
+  // Read a QWORD (64-bit LE) — safe for sizes < 2^53 (all realistic ASF files)
+  const u64LE = (off: number) => u32LE(off) + u32LE(off + 4) * 0x100000000
+
+  if (!guidEq(0, ASF_HEADER_GUID)) throw new Error('Not an ASF file')
+
+  // ASF Header Object layout (bytes from file start):
+  //   0-15  GUID
+  //  16-23  Object size (QWORD LE, includes GUID + size fields)
+  //  24-27  Number of sub-objects (DWORD LE)
+  //  28-29  Reserved (0x01 0x02)
+  //  30+    Sub-objects
+  const numObjects = u32LE(24)
+  let offset = 30
+
+  for (let i = 0; i < numObjects; i++) {
+    if (offset + 24 > chunk.length) break
+    const objSize = u64LE(offset + 16)
+    if (objSize < 24) break // corrupt
+
+    if (guidEq(offset, ASF_STREAM_PROPS_GUID)) {
+      // Stream Properties Object data (after the 24-byte object header):
+      //   0-15   Stream Type GUID
+      //  16-31   Error Correction Type GUID
+      //  32-39   Time Offset (QWORD)
+      //  40-43   Type-Specific Data Length (DWORD)
+      //  44-47   Error Correction Data Length (DWORD)
+      //  48-49   Flags (WORD)
+      //  50-53   Reserved (DWORD)
+      //  54+     Type-Specific Data
+      const dataStart = offset + 24
+      if (guidEq(dataStart, ASF_VIDEO_MEDIA_GUID)) {
+        // Video Type-Specific Data layout:
+        //   0-3   Encoded Image Width  (DWORD LE)
+        //   4-7   Encoded Image Height (DWORD LE)
+        //   8     Reserved flags byte
+        //   9-10  Format Data Size (WORD LE)
+        //  11+    BITMAPINFOHEADER
+        const tsData = dataStart + 54
+        if (tsData + 8 <= chunk.length) {
+          const w = u32LE(tsData)
+          const h = u32LE(tsData + 4)
+          if (w > 0 && h > 0) return w / h
+        }
+      }
+    }
+
+    offset += objSize
+  }
+
+  throw new Error('No video dimensions found in ASF header')
 }
 
 function readFileSlice(file: File, start: number, end: number): Promise<Uint8Array> {
