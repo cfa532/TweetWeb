@@ -5,7 +5,11 @@ import { Alert } from './views';
 <template>
   <div class="container-fluid">
     <Alert/>
-    <router-view />
+    <router-view v-slot="{ Component }">
+      <keep-alive :include="['MainPage', 'UserPage']">
+        <component :is="Component" />
+      </keep-alive>
+    </router-view>
   </div>
 </template>
 

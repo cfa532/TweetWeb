@@ -5,7 +5,6 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
   MediaViewerModal, UserAccount, LeitherSetupNotice
 } from "@/components"
 import { useAlertStore } from '@/stores';
-import { USER_PAGE_SCROLL_PREFIX, MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
 
 function getStoredLoginUser() {
   return sessionStorage.getItem("user")
@@ -16,7 +15,7 @@ function scrollBehavior(
   from: RouteLocationNormalized,
   savedPosition: { left: number; top: number } | null
 ) {
-  // Stripping scrollTweet after scrollIntoView must not jump back to top (default behavior).
+  // Stripping scrollTweet after scrollIntoView must not jump back to top.
   if (to.name === 'UserPage' && from.name === 'UserPage') {
     const had = from.query.scrollTweet
     const has = to.query.scrollTweet
@@ -25,25 +24,11 @@ function scrollBehavior(
       return false
     }
   }
-  if (from.name === 'TweetDetail' && to.name === 'UserPage') {
-    // Deep link from detail carousel: scroll position is resolved in UserPage via #id / scrollIntoView
-    if (to.query.scrollTweet) return { left: 0, top: 0 }
-    const id = to.params.authorId as string | undefined
-    if (id) {
-      const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + id)
-      if (raw != null) {
-        const top = parseInt(raw, 10)
-        if (!Number.isNaN(top)) return { left: 0, top }
-      }
-    }
-  }
-  if (from.name === 'TweetDetail' && to.name === 'main') {
-    const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
-    if (raw != null) {
-      const top = parseInt(raw, 10)
-      if (!Number.isNaN(top)) return { left: 0, top }
-    }
-  }
+  // Deep link to a specific tweet: start at top, UserPage scrolls it into view.
+  if (to.query.scrollTweet) return { left: 0, top: 0 }
+  // Back/forward navigation: restore the previous scroll. The list pages are
+  // kept alive (<keep-alive>), so their DOM is intact at full height and this
+  // restores instantly without any flash.
   if (savedPosition) return savedPosition
   if (to.hash) return { el: to.hash, behavior: 'smooth' as const }
   return { left: 0, top: 0 }

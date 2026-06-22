@@ -449,8 +449,8 @@ async function tryVideoElementAnalysis(file: File): Promise<number> {
   // to avoid the noisy failure.
   const probe = document.createElement('video')
   const mimeForProbe = file.type || `video/${file.name.toLowerCase().split('.').pop()}`
-  const canPlay = probe.canPlayType(mimeForProbe)
-  if (!canPlay || canPlay === '') {
+  // canPlayType returns 'probably' | 'maybe' | '' — empty means unsupported.
+  if (!probe.canPlayType(mimeForProbe)) {
     throw new Error(`Browser cannot play type "${mimeForProbe}" — skipping VideoElement analysis`)
   }
 

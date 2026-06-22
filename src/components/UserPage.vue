@@ -1,10 +1,10 @@
 <script setup lang='ts'>
 import { onMounted, ref, onUnmounted, watch, computed, nextTick } from 'vue';
+defineOptions({ name: 'UserPage' })
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
-import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
+import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router';
 import { LOAD_TIMEOUT_MS } from '@/constants';
-import { USER_PAGE_SCROLL_PREFIX } from '@/constants/scrollRestore';
 import { AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
@@ -64,39 +64,6 @@ function setupLoadMoreObserver() {
     loadMoreObserver.observe(el);
 }
 
-function restoreUserPageScroll(authorId: MimeiId) {
-    const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + authorId)
-    if (raw === null) {
-        window.scrollTo(0, 0)
-        return
-    }
-    const y = parseInt(raw, 10)
-    if (Number.isNaN(y)) {
-        window.scrollTo(0, 0)
-        return
-    }
-    const apply = () => {
-        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
-        window.scrollTo(0, Math.min(Math.max(0, y), maxScroll))
-    }
-    // Layout grows after tweets/images paint — retry so we don't clamp to 0.
-    nextTick(() => {
-        requestAnimationFrame(() => {
-            apply()
-            requestAnimationFrame(apply)
-        })
-        setTimeout(apply, 50)
-        setTimeout(apply, 200)
-    })
-}
-
-function saveUserPageScrollPosition() {
-    const id = authorId.value
-    if (id) {
-        sessionStorage.setItem(USER_PAGE_SCROLL_PREFIX + id, String(window.scrollY))
-    }
-}
-
 const SCROLL_TWEET_MAX_PAGES = 40
 
 async function clearScrollTweetQuery() {
@@ -144,25 +111,16 @@ async function tryScrollToTweet(tweetId: MimeiId) {
     await clearScrollTweetQuery()
 }
 
-async function maybeScrollOrRestoreProfile(nv: MimeiId, ov: MimeiId | undefined) {
+// Deep link to a specific tweet on the profile (scrollTweet query). Normal scroll
+// position on back-navigation is preserved by <keep-alive> + the router's saved
+// scroll position, so no manual restore is needed here.
+async function maybeScrollToDeepLinkedTweet() {
     const raw = route.query.scrollTweet
     const tid = raw === undefined || raw === null ? undefined : Array.isArray(raw) ? raw[0] : raw
     if (tid) {
         await tryScrollToTweet(tid as MimeiId)
-        return
-    }
-    if (ov !== undefined && nv !== ov) {
-        window.scrollTo(0, 0)
-    } else {
-        restoreUserPageScroll(nv)
     }
 }
-
-// Save while still on this route — onUnmounted runs after the next view mounts,
-// so window.scrollY is often already 0 (detail page scrolled to top).
-onBeforeRouteLeave(() => {
-    saveUserPageScrollPosition()
-})
 
 onMounted(() => {
     nextTick(() => setupLoadMoreObserver());
@@ -542,8 +500,7 @@ watch(authorId, async (nv, ov) => {
         console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
     });
     await initialLoadTweets(nv);
-    // Deep link to a tweet, or restore list position / scroll top on author switch
-    await maybeScrollOrRestoreProfile(nv, ov)
+    await maybeScrollToDeepLinkedTweet()
 }, { immediate: true });
 
 onBeforeRouteUpdate(async (to, from) => {

@@ -1,7 +1,7 @@
 <script setup lang='ts'>
-import { onMounted, ref, onUnmounted, watch, nextTick } from 'vue';
-import { useRouter, onBeforeRouteLeave } from 'vue-router';
-import { MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
+import { onMounted, onActivated, ref, onUnmounted, watch, nextTick } from 'vue';
+defineOptions({ name: 'MainPage' })
+import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { AppHeader } from '@/views';
@@ -42,33 +42,6 @@ function clearLoadMoreSpinnerDelay() {
     }
     showLoadMoreSpinner.value = false;
 }
-
-function restoreMainFeedScroll() {
-    const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
-    if (raw === null) return
-    const y = parseInt(raw, 10)
-    if (Number.isNaN(y)) return
-    const apply = () => {
-        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
-        window.scrollTo(0, Math.min(Math.max(0, y), maxScroll))
-    }
-    nextTick(() => {
-        requestAnimationFrame(() => {
-            apply()
-            requestAnimationFrame(apply)
-        })
-        setTimeout(apply, 50)
-        setTimeout(apply, 200)
-    })
-}
-
-function saveMainFeedScrollPosition() {
-    sessionStorage.setItem(MAIN_FEED_SCROLL_KEY, String(window.scrollY))
-}
-
-onBeforeRouteLeave(() => {
-    saveMainFeedScrollPosition()
-})
 
 function isNearBottom(threshold = scrollThreshold) {
     const scrollBottom = window.innerHeight + window.scrollY;
@@ -143,12 +116,17 @@ async function loadMoreTweets() {
     }
 }
 
+// The mid the currently-displayed feed was loaded for. Used by onActivated to
+// detect a login-user change while this component is kept alive (<keep-alive>).
+const loadedForUser = ref<string | null>(null)
+
 onMounted(async () => {
     // Guest user: redirect to the default user's profile page
     if (!tweetStore.loginUser) {
         router.replace(`/author/${tweetStore.followings[0]}`);
         return;
     }
+    loadedForUser.value = tweetStore.loginUser.mid
 
     // Only load tweets if we don't have any yet or if this is a fresh session
     const shouldLoad = tweetStore.tweets.length === 0 || initialLoad.value;
@@ -177,7 +155,23 @@ onMounted(async () => {
         }
     }
     nextTick(() => setupLoadMoreObserver());
-    restoreMainFeedScroll();
+});
+
+// Kept alive across navigation, so onMounted won't re-run on return. Guard the
+// auth-coupled cases: a logged-out user must be redirected, and a changed login
+// user must get a fresh feed. The common case (same user returning) does nothing,
+// preserving scroll position.
+onActivated(() => {
+    if (!tweetStore.loginUser) {
+        router.replace(`/author/${tweetStore.followings[0]}`);
+        return;
+    }
+    if (loadedForUser.value !== tweetStore.loginUser.mid) {
+        loadedForUser.value = tweetStore.loginUser.mid;
+        displayedTweets.value = [];
+        initialLoad.value = true;
+        loadTweetsWithMinimum();
+    }
 });
 
 onUnmounted(() => {
