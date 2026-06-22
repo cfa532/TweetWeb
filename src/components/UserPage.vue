@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, ref, onUnmounted, watch, computed, nextTick } from 'vue';
+import { onMounted, onActivated, ref, onUnmounted, watch, computed, nextTick } from 'vue';
 defineOptions({ name: 'UserPage' })
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
@@ -375,8 +375,26 @@ async function loadMoreTweets() {
 // (keep-alive DOM); reload pages content in then jumps. See useScrollRestore.
 const { restoring: isRestoringFeed, restoreAfterLoad, hasDeepSavedScroll } = useScrollRestore(
     () => `userPage:${authorId.value}`,
-    { hasMore: () => hasMoreTweets.value, loadMore: loadMoreTweets },
+    {
+        hasMore: () => hasMoreTweets.value,
+        loadMore: loadMoreTweets,
+        skipRestore: () => route.query.scrollTweet != null,
+    },
 );
+
+// UserPage is keep-alive. Returning from TweetDetail with ?scrollTweet= only
+// changes the query — authorId does not change, so the authorId watch does not
+// re-run. Handle that activation here (onBeforeRouteUpdate does not fire when
+// the component was deactivated for TweetDetail).
+onActivated(async () => {
+    const raw = route.query.scrollTweet
+    const tid = raw === undefined || raw === null ? undefined : Array.isArray(raw) ? raw[0] : raw
+    if (!tid) return
+    while (isLoading.value) {
+        await new Promise((r) => setTimeout(r, 40))
+    }
+    await tryScrollToTweet(tid as MimeiId)
+});
 
 const displayedTweets = ref<Tweet[]>([]);
 const pendingCount = ref(0);

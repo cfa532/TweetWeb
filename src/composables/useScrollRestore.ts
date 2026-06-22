@@ -10,6 +10,8 @@ interface ScrollRestoreOptions {
     minRestoreOffset?: number
     /** Safety cap on how many pages restoreAfterLoad will pull in. */
     maxRestorePages?: number
+    /** When true, skip the synchronous restore on re-activation (e.g. scrollTweet deep link). */
+    skipRestore?: () => boolean
 }
 
 /**
@@ -120,8 +122,9 @@ export function useScrollRestore(storageKey: string | (() => string), opts: Scro
         active = true
         // Skip the very first activation: the page's onMounted/watch owns the
         // fresh-load path (content may still be loading). Every later activation
-        // is a return from a sub-route, so restore synchronously.
-        if (didInitialRestore) restoreSync()
+        // is a return from a sub-route, so restore synchronously — unless a deep
+        // link (scrollTweet) owns the scroll target for this visit.
+        if (didInitialRestore && !opts.skipRestore?.()) restoreSync()
         didInitialRestore = true
     })
     onDeactivated(() => {
