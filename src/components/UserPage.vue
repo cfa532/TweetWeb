@@ -373,7 +373,7 @@ async function loadMoreTweets() {
 // Persist & restore this profile's scroll position, keyed per-author so one
 // user's spot never bleeds onto another's. Back-nav restores synchronously
 // (keep-alive DOM); reload pages content in then jumps. See useScrollRestore.
-const { restoring: isRestoringFeed, restoreAfterLoad } = useScrollRestore(
+const { restoring: isRestoringFeed, restoreAfterLoad, hasDeepSavedScroll } = useScrollRestore(
     () => `userPage:${authorId.value}`,
     { hasMore: () => hasMoreTweets.value, loadMore: loadMoreTweets },
 );
@@ -510,11 +510,11 @@ watch(authorId, async (nv, ov) => {
     tweetStore.getUserFromRootHost(nv, true).then(u => {
         console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
     });
-    // A scrollTweet deep link owns the scroll target. Otherwise suppress the
-    // scroll-save race and hide the feed while we page back into this author's
-    // saved position (reload / author switch).
+    // A scrollTweet deep link owns the scroll target. Otherwise only hide the feed
+    // while paging back to a previously saved deep scroll position; a fresh load
+    // with no saved spot (e.g. tapping the Tweets tab) loads normally — no veil.
     const hasScrollTweet = route.query.scrollTweet != null;
-    isRestoringFeed.value = !hasScrollTweet;
+    isRestoringFeed.value = !hasScrollTweet && hasDeepSavedScroll();
     await initialLoadTweets(nv);
     await maybeScrollToDeepLinkedTweet();
     if (!hasScrollTweet) await restoreAfterLoad();

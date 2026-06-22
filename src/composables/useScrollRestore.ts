@@ -144,5 +144,10 @@ export function useScrollRestore(storageKey: string | (() => string), opts: Scro
         if (saveTimer) clearTimeout(saveTimer)
     })
 
-    return { restoring, restoreAfterLoad }
+    /** True when there is a saved scroll deep enough to warrant pre-hiding the feed. */
+    function hasDeepSavedScroll() {
+        return readSaved() > minOffset
+    }
+
+    return { restoring, restoreAfterLoad, hasDeepSavedScroll }
 }
