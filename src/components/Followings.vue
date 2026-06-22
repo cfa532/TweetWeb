@@ -224,7 +224,7 @@ onUnmounted(() => {
 /* Inset the row boxes from the screen edges (both sides) and add a little gap
    below the header. */
 .users-list {
-    padding: 8px 8px 0px;
+    padding: 8px 6px 0px;
 }
 
 .user-row {
