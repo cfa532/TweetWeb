@@ -397,12 +397,27 @@ async function checkServiceAvailability(baseUrl: string): Promise<boolean> {
 }
 
 async function onSelect(e: Event) {
-  let files =
+  let files: FileList | File[] | null | undefined =
     (e as HTMLInputEvent).target.files ||       // select input file
-    (e as DragEvent).dataTransfer?.files ||     // drag and drop
-    (e as ClipboardEvent).clipboardData?.files  // copy and paste
+    (e as DragEvent).dataTransfer?.files        // drag and drop
+
+  // For clipboard paste, prefer clipboardData.files; fall back to items (covers OS-copied files)
+  if (!files?.length && e.type === 'paste') {
+    const clipboard = (e as ClipboardEvent).clipboardData
+    if (clipboard?.files?.length) {
+      files = clipboard.files
+    } else if (clipboard?.items?.length) {
+      files = Array.from(clipboard.items)
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter((f): f is File => f !== null)
+    }
+  }
 
   if (files && files.length > 0) {
+    // Prevent the browser from pasting the file as text/path into the textarea
+    e.preventDefault()
+
     let totalSize = 0;
     filesUpload.value.forEach(f => totalSize += f.size);
 
@@ -433,13 +448,8 @@ async function onSelect(e: Event) {
     divAttach.value!.hidden = false;
     textArea.value!.hidden = false;
     dropHere.value!.hidden = true;
-  } else {
-    // Clipboard works only with HTTPS
-    if ((e.target as HTMLTextAreaElement) === textArea.value) {
-      // Paste into text area
-      document.execCommand('paste');
-    }
   }
+  // No files — let the default paste behaviour handle text insertion into the textarea
 }
 
 function dragOver() {
@@ -561,7 +571,7 @@ function handleDragEnd() {
           <font-awesome-icon icon="circle-xmark" />
         </button>
       </div>
-      <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
+        <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect' @paste='onSelect'>
         <div>
           <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
@@ -571,7 +581,7 @@ function handleDragEnd() {
             <p>{{ $t('editor.dropHere') }}</p>
           </div>
         </div>
-        <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
+        <form @submit.prevent='onSubmit' enctype='multipart/form-data' class='form-container'>
           <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
           <div class='editor-toolbar'>
             <div class='toolbar-files'>

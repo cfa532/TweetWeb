@@ -116,7 +116,7 @@ async function onProfileToggleFollow(event: Event) {
         }
     } catch (error) {
         localIsFollowing.value = previous
-        console.error('Failed to toggle following:', error)
+        console.error('Failed to toggle following:', error, { mid: user.value?.mid, username: user.value?.username })
         alertStore.error(t('profile.followActionFailed'))
     } finally {
         isTogglingProfileFollow.value = false
