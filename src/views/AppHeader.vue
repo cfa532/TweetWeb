@@ -203,8 +203,8 @@ async function countOriginalTweetsByUser(userId: string): Promise<number> {
     const user = tweetStore.loginUser
     if (!user?.client) return 0
 
-    const pageSize = 50
-    const maxPages = 20
+    const pageSize = 5
+    const maxPages = 4
     let originalTweetCount = 0
 
     for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
@@ -267,7 +267,7 @@ const uploadTweet = async () => {
                 return
             }
         } catch (error) {
-            console.error('[publish pre-check] Failed to validate original tweet threshold:', error)
+            console.error('[publish pre-check] Failed to validate original tweet threshold for user:', loginUser.mid, error)
         }
     }
 

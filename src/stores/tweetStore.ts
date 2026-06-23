@@ -1476,7 +1476,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             tweetid: tweetId,
                             appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                         })
-                    })
+                    }, `tweet ${tweetId}`)
                     if (!raceResult) {
                         console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
                         return null
@@ -1780,7 +1780,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     throw new Error(result.message || 'get_user failed')
                 }
                 return result
-            })
+            }, `user ${userId}`)
 
             if (!raceResult) {
                 console.error(`[_fetchUser] All provider IPs failed for user ${userId}`)
@@ -1945,13 +1945,15 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async raceProviderIps<T>(
             ips: string[],
-            apiCall: (ip: string, client: any) => Promise<T>
+            apiCall: (ip: string, client: any) => Promise<T>,
+            context?: string
         ): Promise<{ result: T, ip: string } | null> {
             if (ips.length === 0) {
                 return null;
             }
 
-            console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
+            const contextLabel = context ? ` for ${context}` : ''
+            console.log(`[raceProviderIps] Racing ${ips.length} IP(s)${contextLabel}:`, ips);
 
             // Create promises for each IP with individual timeouts.
             //
@@ -1974,10 +1976,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         )
                     ]);
 
-                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}`);
+                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}${contextLabel}`);
                     return { result, ip };
                 } catch (error) {
-                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
+                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}${contextLabel}`, error);
                     throw error; // Re-throw so Promise.any sees this as a rejection
                 }
             });
@@ -1989,7 +1991,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const winner = await Promise.any(racePromises);
                 return winner;
             } catch (error) {
-                console.error(`[raceProviderIps] All IPs failed:`, error);
+                console.error(`[raceProviderIps] All IPs failed${contextLabel}:`, error);
                 return null;
             }
         },
@@ -2377,16 +2379,15 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
 
-                        // 3. User's own provider — checks sessionStorage then network, with retries
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                            if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
-                            try {
-                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
-                                if (author) { setCommentAuthor(commentMid, author); return }
-                            } catch (error: any) {
-                                if (!error?.message?.includes('timeout'))
-                                    console.warn("Error loading comment author:", authorId, error)
-                            }
+                        // 3. User's own provider — one fallback attempt. Comment
+                        // text can render without repeatedly blocking on author
+                        // decoration when a node is slow.
+                        try {
+                            const author = await this._getUserForProviderRetryAttempt(authorId, 1)
+                            if (author) { setCommentAuthor(commentMid, author); return }
+                        } catch (error: any) {
+                            if (!error?.message?.includes('timeout'))
+                                console.warn("Error loading comment author:", authorId, error)
                         }
                     })()
                 }
@@ -2577,15 +2578,12 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
 
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                            if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
-                            try {
-                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
-                                if (author) { setCommentAuthor(commentMid, author); return }
-                            } catch (error: any) {
-                                if (!error?.message?.includes('timeout'))
-                                    console.warn("[loadMoreComments] Error loading author:", authorId, error)
-                            }
+                        try {
+                            const author = await this._getUserForProviderRetryAttempt(authorId, 1)
+                            if (author) { setCommentAuthor(commentMid, author); return }
+                        } catch (error: any) {
+                            if (!error?.message?.includes('timeout'))
+                                console.warn("[loadMoreComments] Error loading author:", authorId, error)
                         }
                     })()
                 }

@@ -85,7 +85,6 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
                 new Promise((_, reject) =>
                   setTimeout(() => {
                     const err = new PoolTimeoutError(String(prop), ip, timeoutMs)
-                    console.warn(err.message)
                     reject(err)
                   }, timeoutMs)
                 )
@@ -154,4 +153,3 @@ export async function executeWithPool(
 export function isPooledClient(client: any): boolean {
   return client && client.isPooledClient === true;
 }
-

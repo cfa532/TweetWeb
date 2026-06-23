@@ -13,7 +13,9 @@
     "publish": "发布",
     "submit": "提交",
     "ok": "确定",
-    "done": "完成"
+    "done": "完成",
+    "connectionTimeout": "连接超时，请重试。",
+    "operationFailed": "操作失败，请重试。"
   },
   "auth": {
     "login": "登录",
@@ -95,6 +97,9 @@
     "loadingUsername": "加载中",
     "editTweet": "编辑推文",
     "failedUpdateTweet": "更新推文失败",
+    "updateSuccess": "推文已更新。",
+    "deleteSuccess": "推文已删除。",
+    "commentDeleted": "评论已删除。",
     "unknownFile": "未知文件",
     "tweetNotFound": "推文未找到",
     "tweetNotFoundDesc": "该推文不存在或已被删除。",
@@ -116,7 +121,8 @@
     "linkCopied": "链接已复制!",
     "showMore": "更多",
     "likeFailed": "点赞失败，请重试。",
-    "bookmarkFailed": "收藏失败，请重试。"
+    "bookmarkFailed": "收藏失败，请重试。",
+    "retweetFailed": "转发失败，请重试。"
   },
   "time": {
     "secondsAgo": "{n}秒前",

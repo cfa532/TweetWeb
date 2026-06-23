@@ -6,7 +6,7 @@ import { useTweetStore } from "@/stores";
 import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isWeChatBrowser } from '@/lib';
-import { LOAD_TIMEOUT_MS, MAX_REFRESH_ATTEMPTS } from '@/constants';
+import { LOAD_TIMEOUT_MS } from '@/constants';
 
 const { t } = useI18n();
 
@@ -120,13 +120,9 @@ async function loadDetail() {
     tweetNotFound.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: if the detail view hasn't loaded successfully after
-    // LOAD_TIMEOUT_MS, reload the page once to recover (e.g. when the
-    // connection pool is saturated by a prior followers-list visit).
-    // Capped at MAX_REFRESH_ATTEMPTS via sessionStorage so a tweet that
-    // genuinely cannot load doesn't bounce forever; the counter is cleared
-    // on a successful load (see showTweet).
-    const refreshCount = parseInt(sessionStorage.getItem('tweetDetailRefreshCount') || '0')
+    // Safety timeout: stop the spinner and show the existing retry UI instead
+    // of reloading the page. Reload-based recovery multiplied retries and made
+    // transient node slowness feel much worse.
     const timeoutId: number = window.setTimeout(() => {
         if (tweet.value) {
             // Tweet content rendered (cached path). Just stop the spinner.
@@ -134,16 +130,9 @@ async function loadDetail() {
             isLoading.value = false
             return
         }
-        if (refreshCount < MAX_REFRESH_ATTEMPTS) {
-            console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms — reloading (${refreshCount + 1}/${MAX_REFRESH_ATTEMPTS})`)
-            sessionStorage.setItem('tweetDetailRefreshCount', String(refreshCount + 1))
-            window.location.reload()
-        } else {
-            console.warn(`[TweetDetail] Max refresh attempts (${MAX_REFRESH_ATTEMPTS}) reached, giving up`)
-            sessionStorage.removeItem('tweetDetailRefreshCount')
-            isLoading.value = false
-            loadError.value = true
-        }
+        console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms; showing retry UI`)
+        isLoading.value = false
+        loadError.value = true
     }, LOAD_TIMEOUT_MS)
 
     try {
@@ -181,7 +170,6 @@ async function showTweet(timeoutId?: number) {
         document.title = formattedTitle.value
         if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
-        sessionStorage.removeItem('tweetDetailRefreshCount') // Clear refresh count on success
 
         // Load comments and additional data in parallel (truly non-blocking)
         // Track which tweet owns the comments so we can sync after load.

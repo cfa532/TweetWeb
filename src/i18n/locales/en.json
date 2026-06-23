@@ -13,7 +13,9 @@
     "publish": "Publish",
     "submit": "Submit",
     "ok": "OK",
-    "done": "Done"
+    "done": "Done",
+    "connectionTimeout": "Connection timed out. Please try again.",
+    "operationFailed": "Something went wrong. Please try again."
   },
   "auth": {
     "login": "Login",
@@ -95,6 +97,9 @@
     "loadingUsername": "loading",
     "editTweet": "Edit Tweet",
     "failedUpdateTweet": "Failed to update tweet",
+    "updateSuccess": "Tweet updated successfully.",
+    "deleteSuccess": "Tweet deleted.",
+    "commentDeleted": "Comment deleted.",
     "unknownFile": "Unknown file",
     "tweetNotFound": "Tweet Not Found",
     "tweetNotFoundDesc": "This tweet doesn't exist or may have been deleted.",
@@ -116,7 +121,8 @@
     "linkCopied": "Link copied!",
     "showMore": "show more",
     "likeFailed": "Failed to like. Please try again.",
-    "bookmarkFailed": "Failed to bookmark. Please try again."
+    "bookmarkFailed": "Failed to bookmark. Please try again.",
+    "retweetFailed": "Failed to retweet. Please try again."
   },
   "time": {
     "secondsAgo": "{n} seconds ago",

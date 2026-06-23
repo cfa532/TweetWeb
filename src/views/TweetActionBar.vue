@@ -3,22 +3,15 @@ import { computed, ref } from 'vue';
 import type { PropType } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { useTweetStore } from '@/stores';
+import { useAlertStore, useTweetStore } from '@/stores';
 
 const router = useRouter();
 const route = useRoute();
 const { t } = useI18n();
 const tweetStore = useTweetStore();
+const alertStore = useAlertStore();
 const showShareMenu = ref(false);
 const copied = ref(false);
-const errorMsg = ref('');
-let errorTimer: ReturnType<typeof setTimeout> | null = null;
-
-function showError(msg: string) {
-  errorMsg.value = msg;
-  if (errorTimer) clearTimeout(errorTimer);
-  errorTimer = setTimeout(() => { errorMsg.value = ''; }, 3000);
-}
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
@@ -80,6 +73,7 @@ async function onRetweet() {
   } catch (e) {
     emit('updated', original);
     console.error('[onRetweet] failed:', e);
+    alertStore.error(e, { fallbackMessage: t('tweet.retweetFailed') });
   }
 }
 
@@ -110,8 +104,8 @@ async function onLike() {
     emit('updated', serverResult);
   } catch (e) {
     emit('updated', original);
-    showError(t('tweet.likeFailed'));
     console.error('[onLike] failed:', e);
+    alertStore.error(e, { fallbackMessage: t('tweet.likeFailed') });
   }
 }
 
@@ -132,8 +126,8 @@ async function onBookmark() {
     emit('updated', serverResult);
   } catch (e) {
     emit('updated', original);
-    showError(t('tweet.bookmarkFailed'));
     console.error('[onBookmark] failed:', e);
+    alertStore.error(e, { fallbackMessage: t('tweet.bookmarkFailed') });
   }
 }
 
@@ -169,9 +163,6 @@ function closeShareMenu() {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="errorMsg" class="action-bar-toast">{{ errorMsg }}</div>
-  </Teleport>
   <div class="action-bar" @click.stop>
     <button class="action-btn" @click="onComment" :title="$t('tweet.comment')">
       <font-awesome-icon :icon="['far', 'comment']" />
@@ -296,22 +287,5 @@ function closeShareMenu() {
   right: 0;
   bottom: 0;
   z-index: 99;
-}
-</style>
-
-<style>
-.action-bar-toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.78);
-  color: #fff;
-  padding: 8px 18px;
-  border-radius: 20px;
-  font-size: 14px;
-  white-space: nowrap;
-  z-index: 9999;
-  pointer-events: none;
 }
 </style>

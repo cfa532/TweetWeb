@@ -148,9 +148,9 @@ async function submitEdit() {
     await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
     target.content = editContent.value
     showEditor.value = false
+    alertStore.success(t('tweet.updateSuccess'))
   } catch (error: any) {
-    if (error?.isTimeout) return
-    alertStore.error(error.message || t('tweet.failedUpdateTweet'))
+    alertStore.error(error, { fallbackMessage: t('tweet.failedUpdateTweet') })
   }
 }
 
@@ -162,6 +162,7 @@ async function deleteItem() {
   
   closeMenu()
   const isAdmin = tweetStore.loginUser.username === 'admin'
+  let didDelete = false
   try {
     if (props.isComment && props.parentTweet) {
       // Delete comment - requires comment author OR parent tweet author OR admin
@@ -188,16 +189,18 @@ async function deleteItem() {
           // Force Vue to update by using nextTick
           await nextTick()
         }
+        didDelete = true
       }
     } else {
       // Delete regular tweet - requires tweet author OR admin
       if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId) {
         await tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
+        didDelete = true
       }
     }
+    if (didDelete) alertStore.success(t(props.isComment ? 'tweet.commentDeleted' : 'tweet.deleteSuccess'))
   } catch (error: any) {
-    if (error?.isTimeout) return
-    alertStore.error(error?.message || t('tweet.failedDeleteTweet'))
+    alertStore.error(error, { fallbackMessage: t('tweet.failedDeleteTweet') })
   }
 }
 </script>

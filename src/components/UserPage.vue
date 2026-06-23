@@ -237,11 +237,13 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
     const pinnedPromiseOuter = loadPinnedTweetsForUser(authorId);
 
     try {
-        // Keep loading more pages until we have at least 6 tweets or no more tweets
+        // Keep loading a couple of pages for first paint, but do not let initial
+        // profile render chain many retry windows when nodes are slow.
         const minTweets = 6;
+        const maxInitialRounds = 3;
         let tweetsLoaded = 0;
         let round = 0;
-        while (isLoading.value && round < 10) {
+        while (isLoading.value && round < maxInitialRounds) {
             // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
             const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
 
