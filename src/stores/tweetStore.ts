@@ -11,6 +11,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 const GUEST_ID = "000000000000000000000000000"
 const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
+const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
 const LOGIN_USER_STORAGE_KEY = "user"
 
 type ExpiringLocalCache<T> = {
@@ -1694,6 +1695,12 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async _ensureUserRootHost(user: User): Promise<User> {
             if (!user.hostIds?.length) return user
+            if (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true) {
+                if (!user.client) {
+                    user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
+                }
+                return user
+            }
             try {
                 const readIp = await this.getUserReadIp(user, false)
                 if (!readIp) return user
@@ -1887,12 +1894,8 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns True if server responds, false otherwise
          */
         async isServerHealthy(ip: string, timeoutMs: number = 5000): Promise<boolean> {
-            const cacheTTL = 30 * 60 * 1000;
-            const cached = this.healthCheckCache.get(ip);
-            if (cached && (Date.now() - cached.timestamp) < cacheTTL) {
-                console.log(`[isServerHealthy] cached ${ip}: ${cached.isHealthy ? 'healthy' : 'unhealthy'}`);
-                return cached.isHealthy;
-            }
+            const cachedStatus = this.getFreshHealthStatus(ip);
+            if (cachedStatus !== undefined) return cachedStatus;
 
             const inProgress = this.healthCheckInProgress.get(ip);
             if (inProgress) return await inProgress;
@@ -1924,6 +1927,14 @@ export const useTweetStore = defineStore('tweetStore', {
 
             this.healthCheckInProgress.set(ip, probe);
             return probe;
+        },
+
+        getFreshHealthStatus(ip: string): boolean | undefined {
+            const cached = this.healthCheckCache.get(ip);
+            if (cached && (Date.now() - cached.timestamp) < HEALTH_CHECK_CACHE_TTL) {
+                return cached.isHealthy;
+            }
+            return undefined;
         },
 
         async isServerHealthyWithTimeout(ip: string, timeout: number = 5000): Promise<boolean> {
@@ -2036,13 +2047,21 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!refresh) {
                 const pooledIp = nodePool.getIPForNode(mid)
                 if (pooledIp) {
-                    console.log(`[getProviderIps] Found pooled IP for ${mid}: ${pooledIp}, testing health`)
-                    const healthy = await this.isServerHealthyWithTimeout(pooledIp, 3000)
-                    if (healthy) {
-                        return [pooledIp]
+                    const cachedStatus = this.getFreshHealthStatus(pooledIp)
+                    if (cachedStatus === true) return [pooledIp]
+
+                    if (cachedStatus === false) {
+                        console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(mid, pooledIp)
+                    } else {
+                        console.log(`[getProviderIps] Found pooled IP for ${mid}: ${pooledIp}, testing health`)
+                        const healthy = await this.isServerHealthyWithTimeout(pooledIp, 3000)
+                        if (healthy) {
+                            return [pooledIp]
+                        }
+                        console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(mid, pooledIp)
                     }
-                    console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                    nodePool.removeIP(mid, pooledIp)
                 }
             }
             return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, refresh), true);
@@ -2067,13 +2086,21 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!refresh) {
                 const pooledIp = nodePool.getIPForNode(hostId)
                 if (pooledIp) {
-                    console.log(`[getNodeIp] Found pooled IP for node ${hostId}: ${pooledIp}, testing health`)
-                    const healthy = await this.isServerHealthyWithTimeout(pooledIp, 5000)
-                    if (healthy) {
-                        return pooledIp
+                    const cachedStatus = this.getFreshHealthStatus(pooledIp)
+                    if (cachedStatus === true) return pooledIp
+
+                    if (cachedStatus === false) {
+                        console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(hostId, pooledIp)
+                    } else {
+                        console.log(`[getNodeIp] Found pooled IP for node ${hostId}: ${pooledIp}, testing health`)
+                        const healthy = await this.isServerHealthyWithTimeout(pooledIp, 5000)
+                        if (healthy) {
+                            return pooledIp
+                        }
+                        console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(hostId, pooledIp)
                     }
-                    console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
-                    nodePool.removeIP(hostId, pooledIp)
                 }
             }
 

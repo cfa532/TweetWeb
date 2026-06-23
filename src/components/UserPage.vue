@@ -35,6 +35,7 @@ function isNearBottom(threshold = scrollThreshold) {
 
 /** After a page loads, scroll position is unchanged — no scroll event. Chain loads while still near the bottom. */
 function scheduleLoadMoreIfStillNearBottom() {
+    if (userView.value !== 'tweets') return;
     if (isRestoringFeed.value) return;
     void (async () => {
         await nextTick();
@@ -57,6 +58,7 @@ function setupLoadMoreObserver() {
     loadMoreObserver = new IntersectionObserver(
         (entries) => {
             if (!entries[0]?.isIntersecting) return;
+            if (userView.value !== 'tweets') return;
             if (isLoading.value || !hasMoreTweets.value) return;
             if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
             if (isRestoringFeed.value) return;
@@ -343,6 +345,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 }
 
 async function loadMoreTweets() {
+    if (userView.value !== 'tweets') return;
     if (isLoading.value || !hasMoreTweets.value) return;
 
     isLoading.value = true;
@@ -506,9 +509,23 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
     pendingCount.value = count;
 });
 
-// Single entry point for loading tweets — covers both initial mount and route changes
-watch(authorId, async (nv, ov) => {
-    if (!nv || nv === ov) return;
+// Single entry point for loading profile tweets — covers initial mount, route
+// changes, and switching back from bookmark/favorite views.
+watch(() => [authorId.value, userView.value] as const, async ([nv, view], oldValue) => {
+    const [ov, previousView] = oldValue ?? [undefined, undefined];
+    if (!nv) return;
+
+    if (view !== 'tweets') {
+        loadError.value = '';
+        retryMessage.value = '';
+        hasMoreTweets.value = false;
+        initialLoad.value = false;
+        isLoading.value = false;
+        isRestoringFeed.value = false;
+        return;
+    }
+
+    if (nv === ov && previousView === 'tweets') return;
 
     console.log('UserPage loading authorId:', nv);
     pageNumber.value = 0;

@@ -159,6 +159,11 @@ onUnmounted(() => {
     pointer-events: none;
 }
 
+.img-wrapper > img {
+    position: relative;
+    z-index: 2;
+}
+
 .img-spinner {
     width: 32px;
     height: 32px;
