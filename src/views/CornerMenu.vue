@@ -219,28 +219,31 @@ async function deleteItem() {
     >
         &#8226;&#8226;&bull;
     </button>
-    <div v-if="isMenuOpen" class="menu-backdrop" @click="closeMenu" />
-    <div
-        v-show="isMenuOpen"
-        ref="shareMenu"
-        class="menu"
-        @click.stop
-    >
-        <div class="item copy-item" @click.stop="copyLink">
-            <span class="menu-text">
-                <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
-            </span>
-        </div>
-        <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
-            <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
-        </div>
-        <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem">
-            <span class="menu-text"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
-        </div>
-    </div>
+    <Teleport to="body">
+      <div v-if="isMenuOpen" class="menu-backdrop" @click="closeMenu" />
+      <div
+          v-show="isMenuOpen"
+          ref="shareMenu"
+          class="menu"
+          @click.stop
+      >
+          <div class="item copy-item" @click.stop="copyLink">
+              <span class="menu-text">
+                  <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
+              </span>
+          </div>
+          <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
+              <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
+          </div>
+          <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem">
+              <span class="menu-text"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
+          </div>
+      </div>
+    </Teleport>
 </div>
 
 <!-- Edit Modal -->
+<Teleport to="body">
 <div v-if="showEditor" class="edit-overlay" @click.self="showEditor = false">
     <div class="edit-modal" @click.stop>
         <div class="edit-header">
@@ -254,6 +257,7 @@ async function deleteItem() {
         </div>
     </div>
 </div>
+</Teleport>
 </template>
 
 <style scoped>
