@@ -49,13 +49,17 @@ interface VideoEntry {
 }
 
 const registry = new Map<HTMLVideoElement, VideoEntry>()
+// Videos that stopped because they dropped below the keep threshold. They won't
+// be re-promoted while still in the [play, keep) band (50–70%), which is what
+// makes "stop below 70%" hold instead of flapping; cleared once back ≥ 70%.
+const yieldedVideos = new Set<HTMLVideoElement>()
 let primaryVideo: HTMLVideoElement | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-/** At least this fraction of a video's TWEET container must be in the viewport to become primary. */
+/** A video starts playing once this fraction of its TWEET container is visible. */
 const MIN_PLAY_VISIBLE_RATIO = 0.5
-/** Keep the current primary until its tweet container drops below this fraction (hysteresis). */
-const MIN_KEEP_VISIBLE_RATIO = 0.3
+/** The current primary stops once its tweet container drops below this fraction. */
+const MIN_KEEP_VISIBLE_RATIO = 0.7
 const DEBOUNCE_MS = 200
 
 // Track scroll direction so selectPrimary can pick the video the user is
@@ -67,6 +71,9 @@ if (typeof window !== 'undefined') {
     const y = window.scrollY
     if (y !== lastScrollY) scrollDirection = y > lastScrollY ? 'down' : 'up'
     lastScrollY = y
+    // Re-evaluate primary on scroll so the keep/demote thresholds (measured
+    // fresh) actually take effect as the user scrolls, not only at IO thresholds.
+    scheduleSelection()
   }, { passive: true })
 }
 
@@ -74,6 +81,11 @@ if (typeof window !== 'undefined') {
 export function registerVideo(el: HTMLVideoElement, wrapper: HTMLElement, onPrimaryChange?: PrimaryChangeCallback) {
   registry.set(el, { el, wrapper, ratio: 0, top: Infinity, onPrimaryChange })
   setupObserver(el, wrapper)
+  // Consider this video immediately — embedded/quote-tweet videos mount late
+  // (after the quoted tweet resolves) and would otherwise wait for an
+  // IntersectionObserver tick before they can be picked, so a fully-visible
+  // one wouldn't autoplay right away.
+  scheduleSelection()
 }
 
 /** Unregister a video. Call from onUnmounted. */
@@ -86,6 +98,7 @@ export function unregisterVideo(el: HTMLVideoElement) {
       observers.delete(el)
     }
     registry.delete(el)
+    yieldedVideos.delete(el)
     if (primaryVideo === el) {
       el.removeEventListener('ended', handlePrimaryEnded)
       primaryVideo = null
@@ -120,21 +133,9 @@ function setupObserver(el: HTMLVideoElement, wrapper: HTMLElement) {
           reg.top = entry.boundingClientRect.top
         }
       }
-      // Keep the current primary while its TWEET container is still meaningfully
-      // visible. Measuring the tweet (with hysteresis) instead of the small video
-      // wrapper stops a tall/partially-scrolled video from flapping primary.
-      if (el === primaryVideo) {
-        const reg = registry.get(el)
-        const tweetRatio = reg ? (tweetVisibility(reg)?.ratio ?? 0) : 0
-        if (reg && tweetRatio < MIN_KEEP_VISIBLE_RATIO && !el.ended) {
-          if (!el.paused) el.pause()
-          primaryVideo.removeEventListener('ended', handlePrimaryEnded)
-          primaryVideo = null
-          hasPrimaryVideo.value = false
-          primaryVideoHealthy.value = false
-          reg.onPrimaryChange?.(false)
-        }
-      }
+      // Promote/demote decisions live in selectPrimary (which reads fresh tweet
+      // geometry); the observer just keeps the wrapper cache current and kicks
+      // a (debounced) re-evaluation.
       scheduleSelection()
     },
     { threshold: [0, 0.25, 0.5, 0.75, 1.0] }
@@ -185,8 +186,18 @@ function selectPrimary() {
     if (current && !current.el.ended) {
       const tweetRatio = tweetVisibility(current)?.ratio ?? 0
       if (tweetRatio >= MIN_KEEP_VISIBLE_RATIO) {
-        return
+        return // still mostly visible — keep playing
       }
+      // Dropped below the keep threshold: stop and yield to the next video.
+      yieldedVideos.add(primaryVideo)
+      if (!current.el.paused) current.el.pause()
+      primaryVideo.removeEventListener('ended', handlePrimaryEnded)
+      const cb = current.onPrimaryChange
+      primaryVideo = null
+      hasPrimaryVideo.value = false
+      primaryVideoHealthy.value = false
+      cb?.(false)
+      // fall through and pick a new primary
     }
   }
 
@@ -203,7 +214,14 @@ function selectPrimary() {
     // could be promoted.
     if (entry.ratio <= 0) continue
     const info = tweetVisibility(entry)
-    if (!info || info.ratio < MIN_PLAY_VISIBLE_RATIO) continue
+    if (!info) continue
+    // A yielded video stopped below the keep threshold; it must climb back to
+    // ≥ keep before it is eligible again (prevents flapping in the 50–70% band).
+    if (yieldedVideos.has(entry.el)) {
+      if (info.ratio >= MIN_KEEP_VISIBLE_RATIO) yieldedVideos.delete(entry.el)
+      else continue
+    }
+    if (info.ratio < MIN_PLAY_VISIBLE_RATIO) continue
     const tweet = getTweetContainer(entry)
 
     if (!best) {
@@ -317,6 +335,7 @@ function setPrimary(el: HTMLVideoElement) {
   }
 
   primaryVideo = el
+  yieldedVideos.delete(el)
   hasPrimaryVideo.value = true
   // A newly promoted primary must earn healthy status before preloads resume.
   primaryVideoHealthy.value = false
