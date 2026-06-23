@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
 import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 import { TWEET_MEDIA_PRELOAD_STALE_EVENT, type MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
+import { useFeedVideoMuteSession } from '@/composables/useFeedVideoMuteSession';
 
 // Cross-instance HLS playlist cache, keyed by base media URL. The same
 // stream may be opened by multiple VideoJS instances (e.g. once in the
@@ -149,7 +150,12 @@ const videoWrapperStyle = computed(() => {
 });
 
 const timeRemainingText = ref('0:00');
-const FEED_VIDEO_MUTED_STORAGE_KEY = 'feedVideoMuted';
+const VIDEO_MUTED_STORAGE_KEY = 'feedVideoMuted';
+const {
+  isFeedVideoMuted,
+  setFeedVideoMuted,
+  applyFeedVideoMutedState,
+} = useFeedVideoMuteSession();
 const isMuted = ref(true);
 
 const isSoleMediaInGrid = computed(() => {
@@ -250,19 +256,33 @@ function syncMutedState() {
   if (!video.value) return;
   isMuted.value = video.value.muted;
   try {
-    localStorage.setItem(FEED_VIDEO_MUTED_STORAGE_KEY, isMuted.value ? '1' : '0');
+    if (isInTweetList.value) {
+      setFeedVideoMuted(isMuted.value);
+    } else {
+      localStorage.setItem(VIDEO_MUTED_STORAGE_KEY, isMuted.value ? '1' : '0');
+    }
   } catch {}
 }
 
 function getInitialMutedState(): boolean {
   try {
-    const persisted = localStorage.getItem(FEED_VIDEO_MUTED_STORAGE_KEY);
+    const persisted = localStorage.getItem(VIDEO_MUTED_STORAGE_KEY);
     if (persisted === null) return true; // Default to muted
     return persisted === '1';
   } catch {
     return true;
   }
 }
+
+function applyCurrentFeedMutedState() {
+  if (!isInTweetList.value || !video.value) return;
+  applyFeedVideoMutedState(video.value);
+  isMuted.value = video.value.muted;
+}
+
+watch(isFeedVideoMuted, () => {
+  applyCurrentFeedMutedState();
+});
 
 function updateTimeRemaining() {
   const el = video.value;
@@ -471,7 +491,7 @@ function softReleaseFeedMedia(reason: string, options: { preserveRegularSource?:
   showVideoError.value = false;
   try {
     if (!video.value?.paused) video.value.pause();
-    if (video.value) video.value.muted = true; // Reset to muted for next play
+    applyCurrentFeedMutedState();
   } catch {}
   if (hls && !pendingUserPlayRequest) {
     hls.stopLoad();
@@ -541,8 +561,11 @@ onMounted(() => {
   
     // Setup video element immediately
     if (video.value && !isHLSInitialized) {
-        // Feed videos are always muted; detail view restores persisted state.
-        video.value.muted = isInTweetList.value ? true : getInitialMutedState();
+        if (isInTweetList.value) {
+          applyCurrentFeedMutedState();
+        } else {
+          video.value.muted = getInitialMutedState();
+        }
         syncMutedState();
         // If browser restored metadata/frame from cache before listeners were
         // attached, mark metadata ready immediately so initial-load spinner
@@ -1973,8 +1996,7 @@ function handleFullscreenChange() {
 
   if (!fs && video.value) {
     video.value.pause();
-    // Feed videos are always muted; detail view keeps whatever state the user set.
-    if (isInTweetList.value) video.value.muted = true;
+    applyCurrentFeedMutedState();
     isPlaying.value = false;
   } else if (fs && video.value) {
     if (video.value.paused) {
