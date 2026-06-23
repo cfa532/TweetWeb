@@ -4,7 +4,7 @@ import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
-import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
+import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, setPrimaryVideoHealthy, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 import { TWEET_MEDIA_PRELOAD_STALE_EVENT, type MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
 import { useFeedVideoMuteSession } from '@/composables/useFeedVideoMuteSession';
 
@@ -235,6 +235,8 @@ function syncVideoReadyState() {
     // Video can play forward without immediately stalling — safe to hide spinner.
     isBuffering.value = false;
     coordinatorAutoplayPending.value = false;
+    // Primary now has enough forward buffer — offscreen preloads may resume.
+    reportPrimaryHealth(true);
   }
 }
 
@@ -250,6 +252,15 @@ function playFeedPrimaryVideo(videoElement: HTMLVideoElement) {
       showPlayOverlay.value = true;
     });
   });
+}
+
+// Tell the loading coordinator whether the feed primary has enough forward data
+// to play without stalling, so offscreen preloads can be deferred until it does.
+// Only the current primary reports; the guard makes a demoted instance a no-op.
+function reportPrimaryHealth(healthy: boolean) {
+  const el = video.value;
+  if (!el || !isInTweetList.value || !isCoordinatorPrimary(el)) return;
+  setPrimaryVideoHealthy(el, healthy);
 }
 
 function syncMutedState() {
@@ -349,6 +360,10 @@ let lastStalePreloadCancelEpoch = -1;
 let hasRenderedVideoFrame = false;
 let keepCoverUntilNextFragment = false;
 let hlsPlaylistProbeAbortController: AbortController | null = null;
+// Last currentTime seen on a timeupdate — used to tell a genuine stall (time not
+// advancing) from playback progress, so the buffering spinner isn't hidden the
+// instant a freeze starts.
+let lastProgressTime = -1;
 
 function shouldLoadFeedMedia(): boolean {
   if (!isInTweetList.value) return true;
@@ -594,11 +609,16 @@ onMounted(() => {
         });
         video.value.addEventListener('timeupdate', () => {
           updateTimeRemaining();
-          // HLS.js sometimes resumes playback internally without re-firing 'playing',
-          // leaving isBuffering stuck at true. If time is advancing, the video is
-          // clearly playing — clear any stale buffering flag.
-          // Use native paused state as the ground truth — isPlaying can lag.
-          if (isBuffering.value && (isPlaying.value || !video.value?.paused)) {
+          // Clear a stale buffering flag ONLY when playback is genuinely
+          // progressing (currentTime advanced). A buffer-underrun freeze fires
+          // 'waiting' (isBuffering=true) but also emits a final timeupdate at the
+          // buffer's edge — clearing on the isPlaying flag alone hid the spinner
+          // the instant the freeze started. (Still unsticks isBuffering when
+          // hls.js resumes without re-firing 'playing', since time then advances.)
+          const t = video.value?.currentTime ?? 0;
+          const advanced = t > lastProgressTime + 1e-3;
+          lastProgressTime = t;
+          if (isBuffering.value && advanced) {
             isBuffering.value = false;
           }
         });
@@ -2291,6 +2311,7 @@ async function handleHLSFatalError(data: any, sourceName: string, currentUrl: st
 function stopVideo() {
   const currentVideo = video.value;
   hlsSetupToken += 1;
+  reportPrimaryHealth(false);
   if (isInTweetList.value) {
     debugVideoLoad('stop and release');
   }

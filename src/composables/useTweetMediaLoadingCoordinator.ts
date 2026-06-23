@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type InjectionKey, type Ref } from 'vue'
 import { isImageType, isVideoType, normalizeMediaType } from '@/lib'
+import { hasPrimaryVideo, primaryVideoHealthy } from './useVideoPlaybackCoordinator'
 
 export type MediaLoadState = 'idle' | 'preload' | 'visible'
 export const TWEET_MEDIA_PRELOAD_STALE_EVENT = 'tweet-media-preload-stale'
@@ -24,7 +25,7 @@ interface MediaEntry {
 
 const TWEET_VISIBLE_THRESHOLD = 0.01
 const DIRECTIONAL_IMAGE_TWEETS = 2
-const DIRECTIONAL_VIDEOS = 2
+const DIRECTIONAL_VIDEOS = 1
 const REVERSE_TWEETS = 1
 const SCROLL_SETTLE_PRELOAD_DELAY_MS = 180
 const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
@@ -114,6 +115,15 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     return keys
   }
 
+  // Offscreen preloads (video or image) only run once scroll has settled AND
+  // the primary video is buffered enough to play without stalling. When there
+  // is no primary video there is nothing to prioritize, so preloads proceed —
+  // this also covers image-only stretches and comment threads (which don't
+  // register a playback-coordinator primary).
+  const preloadAllowed = computed(() =>
+    canPreloadIdleMedia.value && (!hasPrimaryVideo.value || primaryVideoHealthy.value)
+  )
+
   const loadingPlan = computed(() => {
     const ordered = sortedEntries()
     const visibleMediaIds = visibleMediaKeys()
@@ -131,7 +141,7 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
       .map((entry, index) => entry.ratio >= TWEET_VISIBLE_THRESHOLD ? index : -1)
       .filter(index => index >= 0)
 
-    if (ordered.length > 0 && canPreloadIdleMedia.value) {
+    if (ordered.length > 0 && preloadAllowed.value) {
       const direction = scrollDirection.value
       const startIndex = direction === 'down'
         ? (visibleIndexes.length ? Math.max(...visibleIndexes) + 1 : ordered.findIndex(entry => entry.top > 0))
