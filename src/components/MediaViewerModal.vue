@@ -59,11 +59,9 @@ onMounted(() => {
     return;
   }
   
-  isVisible.value = true;
   document.body.style.overflow = 'hidden';
   document.addEventListener('keydown', handleKeydown);
 });
-const isVisible = ref(false);
 const containerRef = ref<HTMLElement>();
 const startX = ref(0);
 const startY = ref(0);
@@ -71,7 +69,6 @@ const currentX = ref(0);
 const currentY = ref(0);
 const isDragging = ref(false);
 const dragThreshold = 50; // Minimum distance to trigger swipe
-const isClosing = ref(false);
 
 // Get media list from props or session storage
 const mediaList = computed(() => props.mediaList || mediaViewerData.value?.mediaList || []);
@@ -121,12 +118,10 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 function closeModal() {
-  isClosing.value = true;
-  // Clean up session storage
+  // Clean up session storage and return to the feed immediately — no fade-out
+  // delay, so closing is as instant as exiting a native (video) fullscreen.
   sessionStorage.removeItem('mediaViewerData');
-  setTimeout(() => {
-    router.back();
-  }, 200);
+  router.back();
 }
 
 function nextMedia() {
@@ -220,9 +215,8 @@ function goToMedia(index: number) {
 </script>
 
 <template>
-  <div 
+  <div
     class="media-viewer-modal"
-    :class="{ 'closing': isClosing }"
     @click="closeModal"
     @touchstart="handleTouchStart"
     @touchmove="handleTouchMove"
@@ -330,12 +324,6 @@ function goToMedia(index: number) {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 1;
-  transition: opacity 0.2s ease;
-}
-
-.media-viewer-modal.closing {
-  opacity: 0;
 }
 
 .media-viewer-content {
