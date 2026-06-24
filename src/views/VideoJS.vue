@@ -326,7 +326,9 @@ function handleMuteOverlayClick(event: Event) {
 function handleFullscreenOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
-  requestFullscreen();
+  // Open the same fullscreen media viewer that images use (route overlay),
+  // instead of native element fullscreen, so video and image behave the same.
+  openMediaViewer();
 }
 
 // Hardware acceleration detection – cached once per page load.
@@ -1791,7 +1793,9 @@ function handleVideoTap(event: Event) {
   if (isMobileBrowser()) {
     event.preventDefault();
     event.stopPropagation();
-    requestFullscreen();
+    // Open the in-app media viewer (same as images) rather than native
+    // fullscreen, so feed and detail behave identically.
+    openMediaViewer();
     return;
   }
   
@@ -1856,11 +1860,11 @@ function handleVideoTap(event: Event) {
         }
         return;
       } else {
-        // Other contexts: request fullscreen
-        console.log('VideoJS: Tapping on video area, requesting fullscreen');
+        // Feed context: open the in-app media viewer (like images), not native
+        // fullscreen.
         event.preventDefault();
         event.stopPropagation();
-        requestFullscreen();
+        openMediaViewer();
         return;
       }
     }

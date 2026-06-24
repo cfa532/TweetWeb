@@ -118,8 +118,10 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 function closeModal() {
-  // Clean up session storage and return to the feed immediately — no fade-out
-  // delay, so closing is as instant as exiting a native (video) fullscreen.
+  // Stop any playing video so its audio doesn't bleed, then return to the
+  // previous route. (The viewer is its own route, so the feed/detail view is
+  // restored by the navigation — no overlay to fade.)
+  try { containerRef.value?.querySelector('video')?.pause(); } catch {}
   sessionStorage.removeItem('mediaViewerData');
   router.back();
 }

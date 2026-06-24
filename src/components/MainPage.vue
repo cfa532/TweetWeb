@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, onActivated, ref, onUnmounted, watch, nextTick } from 'vue';
+import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, computed } from 'vue';
 defineOptions({ name: 'MainPage' })
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -208,7 +208,17 @@ async function loadTweetsWithMinimum() {
 }
 
 const displayedTweets = ref<Tweet[]>([]);
-const pendingCount = ref(0);
+// Number of store tweets not yet shown. A computed (not a ref bumped in a
+// watcher) so it can't go stale when a pagination appendNewToDisplayed() pulls
+// those same tweets into the feed before the user taps — which previously left
+// the banner visible with nothing new to show.
+const pendingCount = computed(() => {
+    if (initialLoad.value) return 0;
+    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    return tweetStore.tweets.filter(e =>
+        !existingIds.has(e.mid) && !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null)
+    ).length;
+});
 
 function appendNewToDisplayed() {
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
@@ -233,25 +243,16 @@ function appendNewToDisplayed() {
 
 function showPendingTweets() {
     appendNewToDisplayed();
-    pendingCount.value = 0;
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// Pick up tweets added/removed in the background (e.g. updateFollowingTweets, deleteTweet)
+// Remove deleted tweets from the feed immediately. (Additions are reflected by
+// the pendingCount computed, so they don't need handling here.)
 watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
-    // Handle deletions — remove from displayed immediately
     if (newLen < oldLen) {
         const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
         displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
-        return;
     }
-    // Handle additions — only count as pending, don't auto-insert
-    if (initialLoad.value || isLoading.value) return;
-    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
-    const count = tweetStore.tweets.filter(e =>
-        !existingIds.has(e.mid) && !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null)
-    ).length;
-    pendingCount.value = count;
 });
 
 watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: 'post' });

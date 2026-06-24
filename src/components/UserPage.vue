@@ -403,6 +403,10 @@ onActivated(async () => {
 
 const displayedTweets = ref<Tweet[]>([]);
 const pendingCount = ref(0);
+// The authorId this profile has already loaded. Survives the route hop through
+// /media-viewer (where authorId becomes undefined), unlike the watch's
+// oldValue — so returning to the same user doesn't re-fetch the whole profile.
+const loadedForUser = ref<string | null>(null);
 
 // Active view tab from AppHeader: undefined / 'tweets' = user's own tweets,
 // 'bookmarks' / 'favorites' fetch via get_user_meta and replace the body.
@@ -511,8 +515,7 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
 
 // Single entry point for loading profile tweets — covers initial mount, route
 // changes, and switching back from bookmark/favorite views.
-watch(() => [authorId.value, userView.value] as const, async ([nv, view], oldValue) => {
-    const [ov, previousView] = oldValue ?? [undefined, undefined];
+watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
     if (!nv) return;
 
     if (view !== 'tweets') {
@@ -525,7 +528,8 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view], oldVal
         return;
     }
 
-    if (nv === ov && previousView === 'tweets') return;
+    if (nv === loadedForUser.value && view === 'tweets') return;
+    loadedForUser.value = nv;
 
     console.log('UserPage loading authorId:', nv);
     pageNumber.value = 0;
