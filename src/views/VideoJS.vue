@@ -165,6 +165,7 @@ const isSoleMediaInGrid = computed(() => {
 
 const showFeedTimeRemaining = computed(
   () =>
+    !isMobile &&
     isInTweetList.value &&
     !isFullscreenActive.value &&
     isSoleMediaInGrid.value &&
@@ -175,6 +176,7 @@ const showFeedTimeRemaining = computed(
 
 const showFeedMuteButton = computed(
   () =>
+    !isMobile &&
     isInTweetList.value &&
     !isFullscreenActive.value &&
     !isAudio &&
@@ -183,6 +185,7 @@ const showFeedMuteButton = computed(
 
 const showFeedFullscreenButton = computed(
   () =>
+    !isMobile &&
     showFeedMuteButton.value &&
     hasUserPausedInFeed.value &&
     !isPlaying.value,
@@ -326,9 +329,13 @@ function handleMuteOverlayClick(event: Event) {
 function handleFullscreenOverlayClick(event: Event) {
   event.stopPropagation();
   event.preventDefault();
-  // Open the same fullscreen media viewer that images use (route overlay),
-  // instead of native element fullscreen, so video and image behave the same.
-  openMediaViewer();
+  if (isHLS.value && !isHLSInitialized) {
+    pendingUserPlayRequest = true;
+    isBuffering.value = true;
+    showVideoError.value = false;
+    setupHLS();
+  }
+  requestFullscreen();
 }
 
 // Hardware acceleration detection – cached once per page load.
@@ -1788,14 +1795,30 @@ function handleVideoTap(event: Event) {
 
   // Mobile: any tap that reaches this handler means the user tapped the video
   // area (not an overlay control, which intercepts its own touches via DOM
-  // order). Always open fullscreen — showControls is always false on mobile so
-  // there are no native control rows to protect.
+  // order). Always open device fullscreen.
   if (isMobileBrowser()) {
     event.preventDefault();
     event.stopPropagation();
-    // Open the in-app media viewer (same as images) rather than native
-    // fullscreen, so feed and detail behave identically.
-    openMediaViewer();
+    // Ensure HLS is loading/playing before entering fullscreen.
+    if (isHLS.value && !isHLSInitialized) {
+      // Not yet loaded — init HLS; manifest parsed handler will play via pendingUserPlayRequest.
+      pendingUserPlayRequest = true;
+      isBuffering.value = true;
+      showVideoError.value = false;
+      setupHLS();
+    } else if (isRegularVideo.value && !regularVideoActive.value && isInTweetList.value) {
+      regularVideoActive.value = true;
+      pendingUserPlayRequest = true;
+      nextTick(() => { setupRegularVideo(); video.value?.load(); });
+    } else if (video.value?.paused) {
+      // Video already has data — play NOW while still inside the user gesture
+      // so iOS Safari grants the play permission before fullscreen steals context.
+      video.value.play().catch(() => {
+        video.value!.muted = true;
+        video.value!.play().catch(() => {});
+      });
+    }
+    requestFullscreen();
     return;
   }
   
@@ -2023,7 +2046,18 @@ function handleFullscreenChange() {
     applyCurrentFeedMutedState();
     isPlaying.value = false;
   } else if (fs && video.value) {
-    if (video.value.paused) {
+    // If the video source hasn't been loaded yet, start loading it now and
+    // let the manifest/canplay handler trigger play via pendingUserPlayRequest.
+    if (isHLS.value && !isHLSInitialized) {
+      pendingUserPlayRequest = true;
+      isBuffering.value = true;
+      showVideoError.value = false;
+      setupHLS();
+    } else if (isRegularVideo.value && !regularVideoActive.value && isInTweetList.value) {
+      regularVideoActive.value = true;
+      pendingUserPlayRequest = true;
+      nextTick(() => { setupRegularVideo(); video.value?.load(); });
+    } else if (video.value.paused) {
       video.value.play().catch(() => {
         video.value!.muted = true;
         video.value!.play().catch(() => {});
