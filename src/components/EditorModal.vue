@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
@@ -20,7 +20,7 @@ const tweetTitle = ref()
 const txtConent = ref()
 const divAttach = ref()
 const dropHere = ref()
-const textArea = ref<HTMLTextAreaElement>()
+
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
@@ -114,6 +114,11 @@ async function retryUpload<T>(
 
 onMounted(() => {
   tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
+  document.addEventListener('paste', onSelect as EventListener)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('paste', onSelect as EventListener)
 })
 
 // Upload files and store them as IPFS or Mimei type
@@ -402,16 +407,18 @@ async function onSelect(e: Event) {
     (e as HTMLInputEvent).target.files ||       // select input file
     (e as DragEvent).dataTransfer?.files        // drag and drop
 
-  // For clipboard paste, prefer clipboardData.files; fall back to items (covers OS-copied files)
+  // For clipboard paste, prefer items (supports multiple files) over files (often capped at one)
   if (!files?.length && e.type === 'paste') {
     const clipboard = (e as ClipboardEvent).clipboardData
-    if (clipboard?.files?.length) {
-      files = clipboard.files
-    } else if (clipboard?.items?.length) {
-      files = Array.from(clipboard.items)
+    if (clipboard?.items?.length) {
+      const itemFiles = Array.from(clipboard.items)
         .filter(item => item.kind === 'file')
         .map(item => item.getAsFile())
         .filter((f): f is File => f !== null)
+      if (itemFiles.length > 0) files = itemFiles
+    }
+    if (!files?.length && clipboard?.files?.length) {
+      files = clipboard.files
     }
   }
 
@@ -447,25 +454,20 @@ async function onSelect(e: Event) {
     }
 
     divAttach.value!.hidden = false;
-    textArea.value!.hidden = false;
     dropHere.value!.hidden = true;
   }
   // No files — let the default paste behaviour handle text insertion into the textarea
 }
 
 function dragOver() {
-  textArea!.value!.hidden = true
   dropHere!.value!.hidden = false
 }
 
 function dragLeave(e: DragEvent) {
-  // Only hide the drop zone if we're leaving the modal-content container entirely
-  // Check if the related target is still within the modal-content
   const modalContent = (e.currentTarget as HTMLElement)
   const relatedTarget = e.relatedTarget as HTMLElement
 
   if (!modalContent.contains(relatedTarget)) {
-    textArea!.value!.hidden = false
     dropHere!.value!.hidden = true
   }
 }
@@ -572,12 +574,12 @@ function handleDragEnd() {
           <font-awesome-icon icon="circle-xmark" />
         </button>
       </div>
-        <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect' @paste='onSelect'>
+        <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
           <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
-          <textarea ref='textArea' v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
+          <textarea v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
           <div ref='dropHere' hidden class='drop-here'>
             <p>{{ $t('editor.dropHere') }}</p>
           </div>
@@ -726,7 +728,7 @@ function handleDragEnd() {
 .input-container {
   flex: 1;
   margin-bottom: 10px;
-  display: inline;
+  position: relative;
 }
 
 .input-textarea {
@@ -739,11 +741,15 @@ function handleDragEnd() {
 }
 
 .drop-here {
-  border: 1px solid lightgrey;
-  width: 100%;
-  height: 400px;
-  margin: 0px;
-  text-align: center;
+  position: absolute;
+  inset: 0;
+  border: 2px dashed #888;
+  border-radius: 5px;
+  background: rgba(235, 240, 243, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
 }
 
 .preview-container {
