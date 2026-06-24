@@ -292,7 +292,7 @@ function showToast(message, type = "info") {
   toast.id = "qc-toast";
   const colors = { info: "#1d9bf0", success: "#00ba7c", error: "#f4212e" };
   toast.style.cssText = `
-    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    position: fixed; top: 28px; left: 50%; transform: translateX(-50%);
     z-index: 999999; padding: 12px 22px; border-radius: 9999px;
     background: ${colors[type] ?? colors.info}; color: #fff;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -307,7 +307,7 @@ function showToast(message, type = "info") {
   if (!document.getElementById("qc-styles")) {
     const style = document.createElement("style");
     style.id = "qc-styles";
-    style.textContent = `@keyframes qc-fadein { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }`;
+    style.textContent = `@keyframes qc-fadein { from { opacity:0; transform:translateX(-50%) translateY(-8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }`;
     document.head.appendChild(style);
   }
 

@@ -633,11 +633,20 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 
 <style scoped>
 .new-tweets-banner {
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top));
+    left: 50%;
+    z-index: 2147482999;
+    width: min(520px, calc(100vw - 24px));
+    transform: translateX(-50%);
     text-align: center;
     padding: 10px;
     color: #1da1f2;
     cursor: pointer;
-    border-bottom: 1px solid #e6ecf0;
+    border: 1px solid #e6ecf0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
     font-size: 14px;
 }
 .new-tweets-banner:hover {

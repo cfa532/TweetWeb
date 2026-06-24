@@ -43,7 +43,7 @@ const iconByType: Record<ToastType, string> = {
 .toast-viewport {
     position: fixed;
     left: 50%;
-    bottom: calc(24px + env(safe-area-inset-bottom));
+    top: calc(24px + env(safe-area-inset-top));
     z-index: 2147483000;
     display: flex;
     width: min(520px, calc(100vw - 24px));
@@ -128,7 +128,7 @@ const iconByType: Record<ToastType, string> = {
 .toast-stack-enter-from,
 .toast-stack-leave-to {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(-18px);
 }
 
 .toast-stack-move {
