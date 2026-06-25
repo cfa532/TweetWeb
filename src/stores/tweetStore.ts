@@ -381,6 +381,11 @@ export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],      // tweets
         tweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
+        // Mids that belong to the main following feed (loaded by getTweetFeed /
+        // updateFollowingTweets). `tweets` is a shared cache that profile and pinned
+        // loaders also push into, so the feed banner must count only these — otherwise
+        // tweets seen on a profile leak into the main-feed "new tweets" count.
+        feedTweetIds: new Set<string>(),
         originalTweets: [] as Tweet[],
         originalTweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         users: new Map<MimeiId, User>(),
@@ -524,13 +529,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
          */
-        async addTweetToStore(tweet: Tweet) {
+        async addTweetToStore(tweet: Tweet, isFeedTweet: boolean = false) {
             try {
                 if (this._deletedTweetIds.has(tweet.mid)) return
                 const existing = this.tweetIndex.get(tweet.mid)
                 if (existing) {
                     // Tweet already cached — refresh mutable fields from fresh data.
                     this.refreshCachedTweet(existing, tweet)
+                    if (isFeedTweet) this.feedTweetIds.add(tweet.mid)
                     return
                 }
 
@@ -637,6 +643,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 
                 this.tweets.push(tweet);
                 this.tweetIndex.set(tweet.mid, tweet);
+                if (isFeedTweet) this.feedTweetIds.add(tweet.mid);
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -1235,7 +1242,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (cachedTweet) {
                                     this.refreshCachedTweet(cachedTweet, tweet)
                                 } else {
-                                    await this.addTweetToStore(tweet)
+                                    await this.addTweetToStore(tweet, true)
                                 }
                             } catch (error) {
                                 console.error("Error processing tweet in feed:", error)
@@ -1337,7 +1344,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (cachedTweet) {
                                     this.refreshCachedTweet(cachedTweet, tweet)
                                 } else {
-                                    await this.addTweetToStore(tweet)
+                                    await this.addTweetToStore(tweet, true)
                                 }
                             } catch (error) {
                                 console.error("Error processing tweet in updateFollowingTweets:", error)
@@ -2815,6 +2822,7 @@ export const useTweetStore = defineStore('tweetStore', {
             this._followings = []
             this.tweets = []
             this.tweetIndex.clear()
+            this.feedTweetIds.clear()
             this._deletedTweetIds.clear()
             this.originalTweets = []
             this.originalTweetIndex.clear()
@@ -2933,6 +2941,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 this._deletedTweetIds.add(tweetId)
                 this.tweets.splice(tweetIndex, 1)
                 this.tweetIndex.delete(tweetId)
+                this.feedTweetIds.delete(tweetId)
             }
 
             const author = await this.getUser(authorId)

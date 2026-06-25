@@ -9,10 +9,13 @@ import { AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { useScrollRestore } from '@/composables/useScrollRestore';
+import { useFeedPendingCount } from '@/composables/useFeedPendingCount';
+import { startFeedPolling } from '@/composables/useFeedPolling';
 
 const { t } = useI18n();
 
 const tweetStore = useTweetStore();
+const { feedPendingCount } = useFeedPendingCount();
 const isLoading = ref(false);
 const retryMessage = ref('');
 const pageNumber = ref(0);
@@ -129,6 +132,7 @@ async function maybeScrollToDeepLinkedTweet() {
 
 onMounted(() => {
     nextTick(() => setupLoadMoreObserver());
+    startFeedPolling();
 });
 
 onUnmounted(() => {
@@ -402,7 +406,19 @@ onActivated(async () => {
 });
 
 const displayedTweets = ref<Tweet[]>([]);
-const pendingCount = ref(0);
+const pendingCount = computed(() => {
+    if (initialLoad.value) return 0;
+    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
+    return tweetStore.tweets.filter(e => {
+        if (existingIds.has(e.mid)) return false;
+        if (pinnedIds.has(e.mid)) return false;
+        const isAuthorMatch = e.isPrivate
+            ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
+            : e.authorId === authorId.value;
+        return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
+    }).length;
+});
 // The authorId this profile has already loaded. Survives the route hop through
 // /media-viewer (where authorId becomes undefined), unlike the watch's
 // oldValue — so returning to the same user doesn't re-fetch the whole profile.
@@ -486,31 +502,16 @@ function appendNewToDisplayed() {
 
 function showPendingTweets() {
     appendNewToDisplayed();
-    pendingCount.value = 0;
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// Pick up any tweets added/removed in the store (e.g. background updates, deleteTweet)
+// Remove deleted tweets from the feed immediately. (Additions are reflected by
+// the pendingCount computed, so they don't need handling here.)
 watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
-    // Handle deletions — remove from displayed immediately
     if (newLen < oldLen) {
         const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
         displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
-        return;
     }
-    // Handle additions — only count as pending, don't auto-insert
-    if (initialLoad.value || isLoading.value) return;
-    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
-    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
-    const count = tweetStore.tweets.filter(e => {
-        if (existingIds.has(e.mid)) return false;
-        if (pinnedIds.has(e.mid)) return false;
-        const isAuthorMatch = e.isPrivate
-            ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
-            : e.authorId === authorId.value;
-        return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
-    }).length;
-    pendingCount.value = count;
 });
 
 // Single entry point for loading profile tweets — covers initial mount, route
@@ -602,8 +603,8 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <TweetList :tweets="pinnedTweets" />
             <hr v-if='pinnedTweets?.length!>0' />
             <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
-            <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
-                {{ $t('tweet.showNewTweets', pendingCount) }}
+            <div v-if="feedPendingCount > 0 && tweetStore.loginUser" class="new-tweets-banner" @click="router.push({ path: '/', query: { showNew: '1' } })">
+                {{ $t('tweet.showNewTweets', feedPendingCount) }}
             </div>
             <div :class="{ 'feed-restoring': isRestoringFeed }">
                 <TweetList :tweets="displayedTweets" />

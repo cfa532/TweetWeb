@@ -1,19 +1,23 @@
 <script setup lang='ts'>
 import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, computed } from 'vue';
 defineOptions({ name: 'MainPage' })
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { isWeChatBrowser } from '@/lib';
 import { useScrollRestore } from '@/composables/useScrollRestore';
+import { useFeedPendingCount } from '@/composables/useFeedPendingCount';
+import { startFeedPolling } from '@/composables/useFeedPolling';
 
 
 const { t } = useI18n();
 
 const tweetStore = useTweetStore();
 const router = useRouter();
+const route = useRoute();
+const { syncFeedDisplayed } = useFeedPendingCount();
 const isLoading = ref(false);
 const showLoadMoreSpinner = ref(false);
 const retryMessage = ref('');
@@ -167,6 +171,10 @@ onMounted(async () => {
     }
     await restoreAfterLoad();
     nextTick(() => setupLoadMoreObserver());
+
+    // App-wide poll for new following tweets (3 min). Singleton — also started by
+    // UserPage, so the banner stays current on either the main feed or a profile.
+    startFeedPolling();
 });
 
 // Kept alive across navigation, so onMounted won't re-run on return. Guard the
@@ -183,6 +191,12 @@ onActivated(() => {
         displayedTweets.value = [];
         initialLoad.value = true;
         loadTweetsWithMinimum();
+        return;
+    }
+    // Navigated back from another page with the "show new" intent (e.g. UserPage banner tap).
+    if (route.query.showNew) {
+        router.replace({ path: '/' });
+        showPendingTweets();
     }
 });
 
@@ -208,6 +222,17 @@ async function loadTweetsWithMinimum() {
 }
 
 const displayedTweets = ref<Tweet[]>([]);
+
+// Keep the shared composable in sync so other pages (e.g. UserPage) can read
+// the live feed pending count without duplicating the logic.
+// Track array length so the watcher fires on push/unshift (array mutations don't
+// change the ref's identity, so deep:false would miss them).
+watch(
+    [() => displayedTweets.value.length, () => initialLoad.value] as const,
+    () => syncFeedDisplayed(displayedTweets.value, !initialLoad.value),
+    { immediate: true },
+);
+
 // Number of store tweets not yet shown. A computed (not a ref bumped in a
 // watcher) so it can't go stale when a pagination appendNewToDisplayed() pulls
 // those same tweets into the feed before the user taps — which previously left
@@ -215,11 +240,20 @@ const displayedTweets = ref<Tweet[]>([]);
 const pendingCount = computed(() => {
     if (initialLoad.value) return 0;
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    // Only count main-feed tweets (loaded by getTweetFeed/updateFollowingTweets).
+    // `tweetStore.tweets` is a shared cache that profile/pinned loaders also populate,
+    // so without this guard tweets viewed on a profile would inflate the banner count.
     return tweetStore.tweets.filter(e =>
+        tweetStore.feedTweetIds.has(e.mid) &&
         !existingIds.has(e.mid) && !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null)
     ).length;
 });
 
+// Prepend newer tweets (and append older ones) from the store into the displayed list.
+// `unshift` is safe here without scroll compensation: every caller either runs at
+// scrollTop == 0 (cold mount / onActivated) or calls window.scrollTo({ top: 0 })
+// immediately after (showPendingTweets). There is no mid-session direct-prepend path,
+// so the viewport is never left pointing at shifted content.
 function appendNewToDisplayed() {
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
     const topTimestamp = displayedTweets.value.length > 0
@@ -229,6 +263,7 @@ function appendNewToDisplayed() {
     const newTweets = tweetStore.tweets
         .filter(e => {
             if (existingIds.has(e.mid)) return false;
+            if (!tweetStore.feedTweetIds.has(e.mid)) return false;
             return !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null);
         })
         .sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
@@ -241,8 +276,16 @@ function appendNewToDisplayed() {
     if (older.length > 0) displayedTweets.value.push(...older);
 }
 
-function showPendingTweets() {
+async function showPendingTweets() {
+    const before = displayedTweets.value.length;
     appendNewToDisplayed();
+    if (displayedTweets.value.length === before) {
+        // Nothing was added from the store — the new tweet didn't fully load in
+        // the background poll. Force a fresh page-0 fetch to pick it up.
+        pageNumber.value = 0;
+        hasMoreTweets.value = true;
+        await loadMoreTweets();
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
