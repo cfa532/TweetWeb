@@ -8,9 +8,7 @@ export function startFeedPolling(intervalMs = 180_000) {
     timer = setInterval(() => {
         const user = tweetStore.loginUser
         if (user) {
-            // Poll via get_tweet_feed (page 0) so we pick up tweets the server
-            // already has in the feed — update_following_tweets returns 0 because
-            // the server-side sync already ran during initial load.
+            console.log(`[feedPolling] ${new Date().toLocaleTimeString()} — polling for new tweets`)
             tweetStore.getTweetFeed(user, 0, 10).catch(() => {})
         }
     }, intervalMs)

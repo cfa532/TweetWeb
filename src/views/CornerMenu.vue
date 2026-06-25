@@ -198,7 +198,6 @@ async function deleteItem() {
         didDelete = true
       }
     }
-    if (didDelete) alertStore.success(t(props.isComment ? 'tweet.commentDeleted' : 'tweet.deleteSuccess'))
   } catch (error: any) {
     alertStore.error(error, { fallbackMessage: t('tweet.failedDeleteTweet') })
   }
