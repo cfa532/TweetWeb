@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, computed } from 'vue';
+import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, computed, type Ref } from 'vue';
 defineOptions({ name: 'MainPage' })
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -29,6 +29,18 @@ const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
 let loadMoreSpinnerTimer: ReturnType<typeof setTimeout> | null = null;
+const bannerVisible = ref(false);
+let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showBanner() {
+    bannerVisible.value = true;
+    if (bannerHideTimer) clearTimeout(bannerHideTimer);
+    bannerHideTimer = setTimeout(() => { bannerVisible.value = false; }, 60000);
+}
+function hideBanner() {
+    bannerVisible.value = false;
+    if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
+}
 
 function startLoadMoreSpinnerDelay() {
     clearLoadMoreSpinnerDelay();
@@ -203,6 +215,7 @@ onActivated(() => {
 onUnmounted(() => {
     loadMoreObserver?.disconnect();
     clearLoadMoreSpinnerDelay();
+    hideBanner();
 });
 
 async function loadTweetsWithMinimum() {
@@ -240,13 +253,42 @@ watch(
 const pendingCount = computed(() => {
     if (initialLoad.value) return 0;
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
-    // Only count main-feed tweets (loaded by getTweetFeed/updateFollowingTweets).
-    // `tweetStore.tweets` is a shared cache that profile/pinned loaders also populate,
-    // so without this guard tweets viewed on a profile would inflate the banner count.
+    const topTimestamp = displayedTweets.value.length > 0
+        ? (displayedTweets.value[0].timestamp as number)
+        : 0;
     return tweetStore.tweets.filter(e =>
         tweetStore.feedTweetIds.has(e.mid) &&
-        !existingIds.has(e.mid) && !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null)
+        !existingIds.has(e.mid) &&
+        !e.isPrivate &&
+        (!e.originalTweetId || e.originalTweet !== null) &&
+        (e.timestamp as number) > topTimestamp
     ).length;
+});
+
+watch(pendingCount, (count, prev) => {
+    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
+    else if (count === 0) hideBanner();
+});
+
+const pendingAuthors = computed(() => {
+    if (!pendingCount.value) return [];
+    const existingIds = new Set(displayedTweets.value.map((t: any) => t.mid));
+    const topTimestamp = displayedTweets.value.length > 0
+        ? (displayedTweets.value[0].timestamp as number)
+        : 0;
+    const seen = new Set<string>();
+    const authors: any[] = [];
+    for (const t of tweetStore.tweets as any[]) {
+        if (!tweetStore.feedTweetIds.has(t.mid)) continue;
+        if (existingIds.has(t.mid) || t.isPrivate || (t.originalTweetId && !t.originalTweet)) continue;
+        if ((t.timestamp as number) <= topTimestamp) continue;
+        if (t.author && !seen.has(t.author.mid)) {
+            seen.add(t.author.mid);
+            authors.push(t.author);
+            if (authors.length >= 3) break;
+        }
+    }
+    return authors;
 });
 
 // Prepend newer tweets (and append older ones) from the store into the displayed list.
@@ -277,11 +319,10 @@ function appendNewToDisplayed() {
 }
 
 async function showPendingTweets() {
+    hideBanner();
     const before = displayedTweets.value.length;
     appendNewToDisplayed();
     if (displayedTweets.value.length === before) {
-        // Nothing was added from the store — the new tweet didn't fully load in
-        // the background poll. Force a fresh page-0 fetch to pick it up.
         pageNumber.value = 0;
         hasMoreTweets.value = true;
         await loadMoreTweets();
@@ -307,9 +348,20 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
         <div v-if="isRestoringFeed" class="feed-restoring-overlay" aria-live="polite">
             <LoadingSpinner />
         </div>
-        <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
-            {{ $t('tweet.showNewTweets', pendingCount) }}
-        </div>
+        <Transition name="tweet-banner">
+            <div v-if="pendingCount > 0 && bannerVisible" class="new-tweets-banner" @click="showPendingTweets">
+                <svg class="banner-arrow" viewBox="0 0 12 14" width="11" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M6 13V1M6 1L1 6M6 1L11 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div v-if="pendingAuthors.length > 0" class="banner-avatars">
+                    <img v-for="(author, i) in pendingAuthors" :key="author.mid"
+                         :src="author.avatar"
+                         class="banner-avatar"
+                         :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
+                </div>
+                <span class="banner-text">{{ $t('tweet.showNewTweets', pendingCount) }}</span>
+            </div>
+        </Transition>
         <div :class="{ 'feed-restoring': isRestoringFeed }">
             <TweetList :tweets="displayedTweets" />
         </div>
@@ -341,20 +393,59 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
     top: calc(12px + env(safe-area-inset-top));
     left: 50%;
     z-index: 2147482999;
-    width: min(520px, calc(100vw - 24px));
     transform: translateX(-50%);
-    text-align: center;
-    padding: 10px;
-    color: #1da1f2;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 14px 0 12px;
+    background: rgba(29, 155, 240, 0.86);
+    border-radius: 19px;
+    border: none;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
     cursor: pointer;
-    border: 1px solid #e6ecf0;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-    font-size: 14px;
+    white-space: nowrap;
+    max-width: calc(100vw - 40px);
+    user-select: none;
 }
-.new-tweets-banner:hover {
-    background-color: #f5f8fa;
+.new-tweets-banner:active {
+    background: rgba(29, 155, 240, 0.96);
+}
+.banner-arrow {
+    flex-shrink: 0;
+}
+.banner-avatars {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.banner-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.5);
+    object-fit: cover;
+    position: relative;
+}
+.banner-text {
+    color: white;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1;
+}
+.tweet-banner-enter-active {
+    transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+.tweet-banner-leave-active {
+    transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.tweet-banner-enter-from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+}
+.tweet-banner-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
 }
 
 .load-more-sentinel {

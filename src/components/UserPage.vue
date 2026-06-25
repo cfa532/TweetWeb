@@ -15,7 +15,22 @@ import { startFeedPolling } from '@/composables/useFeedPolling';
 const { t } = useI18n();
 
 const tweetStore = useTweetStore();
-const { feedPendingCount } = useFeedPendingCount();
+const { feedPendingCount, pendingFeedAuthors } = useFeedPendingCount();
+const bannerVisible = ref(false);
+let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
+function showBanner() {
+    bannerVisible.value = true;
+    if (bannerHideTimer) clearTimeout(bannerHideTimer);
+    bannerHideTimer = setTimeout(() => { bannerVisible.value = false; }, 60000);
+}
+function hideBanner() {
+    bannerVisible.value = false;
+    if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
+}
+watch(feedPendingCount, (count, prev) => {
+    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
+    else if (count === 0) hideBanner();
+});
 const isLoading = ref(false);
 const retryMessage = ref('');
 const pageNumber = ref(0);
@@ -137,6 +152,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     loadMoreObserver?.disconnect();
+    hideBanner();
 });
 
 async function initialLoadTweets(authorId: MimeiId) {
@@ -603,9 +619,21 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <TweetList :tweets="pinnedTweets" />
             <hr v-if='pinnedTweets?.length!>0' />
             <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
-            <div v-if="feedPendingCount > 0 && tweetStore.loginUser" class="new-tweets-banner" @click="router.push({ path: '/', query: { showNew: '1' } })">
-                {{ $t('tweet.showNewTweets', feedPendingCount) }}
-            </div>
+            <Transition name="tweet-banner">
+                <div v-if="feedPendingCount > 0 && bannerVisible && tweetStore.loginUser" class="new-tweets-banner"
+                     @click="hideBanner(); router.push({ path: '/', query: { showNew: '1' } })">
+                    <svg class="banner-arrow" viewBox="0 0 12 14" width="11" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6 13V1M6 1L1 6M6 1L11 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <div v-if="pendingFeedAuthors.length > 0" class="banner-avatars">
+                        <img v-for="(author, i) in pendingFeedAuthors" :key="author.mid"
+                             :src="author.avatar"
+                             class="banner-avatar"
+                             :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
+                    </div>
+                    <span class="banner-text">{{ $t('tweet.showNewTweets', feedPendingCount) }}</span>
+                </div>
+            </Transition>
             <div :class="{ 'feed-restoring': isRestoringFeed }">
                 <TweetList :tweets="displayedTweets" />
             </div>
@@ -638,20 +666,59 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
     top: calc(12px + env(safe-area-inset-top));
     left: 50%;
     z-index: 2147482999;
-    width: min(520px, calc(100vw - 24px));
     transform: translateX(-50%);
-    text-align: center;
-    padding: 10px;
-    color: #1da1f2;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 14px 0 12px;
+    background: rgba(29, 155, 240, 0.86);
+    border-radius: 19px;
+    border: none;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
     cursor: pointer;
-    border: 1px solid #e6ecf0;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-    font-size: 14px;
+    white-space: nowrap;
+    max-width: calc(100vw - 40px);
+    user-select: none;
 }
-.new-tweets-banner:hover {
-    background-color: #f5f8fa;
+.new-tweets-banner:active {
+    background: rgba(29, 155, 240, 0.96);
+}
+.banner-arrow {
+    flex-shrink: 0;
+}
+.banner-avatars {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.banner-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.5);
+    object-fit: cover;
+    position: relative;
+}
+.banner-text {
+    color: white;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1;
+}
+.tweet-banner-enter-active {
+    transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+.tweet-banner-leave-active {
+    transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.tweet-banner-enter-from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+}
+.tweet-banner-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
 }
 
 .load-more-sentinel {
