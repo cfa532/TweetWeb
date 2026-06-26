@@ -32,6 +32,10 @@ const props = defineProps({
 const userId = computed(() => props.userId)
 const avatarUrl = ref(import.meta.env.VITE_APP_LOGO)
 const user = ref<User>()
+const isAccountAvatarBroken = ref(false)
+const accountAvatarSrc = computed(() =>
+    isLoggedIn.value && !isAccountAvatarBroken.value ? tweetStore.loginUser?.avatar : undefined
+)
 
 /** Bold name in profile header — use username when display name is missing (same as ItemHeader). */
 const profileHeaderDisplayName = computed(() => {
@@ -388,6 +392,16 @@ function onAvatarError(event: Event) {
     img.dataset.refreshed = '1'
     tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
 }
+
+watch(() => tweetStore.loginUser?.avatar, () => {
+    isAccountAvatarBroken.value = false
+})
+
+function onAccountAvatarError() {
+    isAccountAvatarBroken.value = true
+    const id = tweetStore.loginUser?.mid
+    if (id) tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
+}
 </script>
 
 <template>
@@ -432,9 +446,9 @@ function onAvatarError(event: Event) {
                     :aria-expanded="isAccountMenuOpen"
                     aria-haspopup="true"
                 >
-                    <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
+                    <img v-if="accountAvatarSrc" :src="accountAvatarSrc"
                         class="account-avatar rounded-circle"
-                        @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
+                        @error="onAccountAvatarError" />
                     <svg v-else xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="account-icon-fallback">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
