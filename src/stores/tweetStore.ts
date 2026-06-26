@@ -1250,7 +1250,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * This function can only be called after user has logged in.
          * Processes tweets exactly like getTweetFeed() and updates state.tweets directly.
          */
-        async updateFollowingTweets(options: { candidateIds?: Set<string>; showLoginError?: boolean } = {}): Promise<string[]> {
+        async updateFollowingTweets(options: { candidateIds?: Set<string>; showLoginError?: boolean; pageNumber?: number; pageSize?: number } = {}): Promise<string[]> {
             // Check if user is logged in
             if (!this.loginUser) {
                 console.error("updateFollowingTweets: User must be logged in to call this function")
@@ -1264,6 +1264,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 const params = {
                     aid: this.appId,
                     ver: "last",
+                    pn: options.pageNumber ?? 0,
+                    ps: options.pageSize ?? TWEET_COUNT,
                     appuserid: this.loginUser.mid,
                     hostid: this.loginUser.hostIds?.[0]
                 }
@@ -1348,19 +1350,33 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.clearFeedPendingCandidates()
                 return
             }
+            const userId = user.mid
 
             const candidateIds = new Set<string>()
             await this.getTweetFeed(user, 0, pageSize, {
                 updateFollowing: false,
                 candidateIds
             })
+            if (this.loginUser?.mid !== userId) {
+                return
+            }
             const feedCandidateCount = candidateIds.size
             const followingCandidateIds = await this.updateFollowingTweets({
                 candidateIds,
-                showLoginError: false
+                showLoginError: false,
+                pageNumber: 0,
+                pageSize
             })
+            if (this.loginUser?.mid !== userId) {
+                return
+            }
+            const latestCandidateIds = this.tweets
+                .filter(tweet => candidateIds.has(tweet.mid))
+                .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+                .map(tweet => tweet.mid)
+
             this.feedPendingCandidateIds.clear()
-            candidateIds.forEach(id => this.feedPendingCandidateIds.add(id))
+            latestCandidateIds.forEach(id => this.feedPendingCandidateIds.add(id))
             console.log(`[feedPending] Banner check candidates: get_tweet_feed=${feedCandidateCount}, update_following_tweets=${followingCandidateIds.length}`)
         },
 

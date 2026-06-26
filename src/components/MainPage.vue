@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, type Ref } from 'vue';
+import { computed, onMounted, onActivated, ref, onUnmounted, watch, nextTick, type Ref } from 'vue';
 defineOptions({ name: 'MainPage' })
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -22,6 +22,11 @@ const {
     pendingFeedAuthors: pendingAuthors,
     syncFeedDisplayed,
 } = useFeedPendingCount();
+const pendingCountLabel = computed(() => pendingCount.value > 9 ? '9+' : String(pendingCount.value));
+const pendingBannerText = computed(() => t(
+    pendingCount.value === 1 ? 'tweet.showNewTweetCapped' : 'tweet.showNewTweetsCapped',
+    { count: pendingCountLabel.value },
+));
 const isLoading = ref(false);
 const showLoadMoreSpinner = ref(false);
 const retryMessage = ref('');
@@ -214,7 +219,7 @@ onActivated(() => {
     // Navigated back from another page with the "show new" intent (e.g. UserPage banner tap).
     if (route.query.showNew) {
         router.replace({ path: '/' });
-        showPendingTweets();
+        showPendingTweets(false);
     }
 });
 
@@ -262,7 +267,7 @@ watch(pendingCount, (count, prev) => {
 // scrollTop == 0 (cold mount / onActivated) or calls window.scrollTo({ top: 0 })
 // immediately after (showPendingTweets). There is no mid-session direct-prepend path,
 // so the viewport is never left pointing at shifted content.
-function appendNewToDisplayed() {
+function appendNewToDisplayed(candidateIds?: Set<string>) {
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
     const topTimestamp = displayedTweets.value.length > 0
         ? (displayedTweets.value[0].timestamp as number)
@@ -271,7 +276,11 @@ function appendNewToDisplayed() {
     const newTweets = tweetStore.tweets
         .filter(e => {
             if (existingIds.has(e.mid)) return false;
-            if (!tweetStore.feedTweetIds.has(e.mid)) return false;
+            if (candidateIds) {
+                if (!candidateIds.has(e.mid)) return false;
+            } else if (!tweetStore.feedTweetIds.has(e.mid)) {
+                return false;
+            }
             return !e.isPrivate && (!e.originalTweetId || e.originalTweet !== null);
         })
         .sort((a, b) => (b.timestamp as number) - (a.timestamp as number));
@@ -284,11 +293,13 @@ function appendNewToDisplayed() {
     if (older.length > 0) displayedTweets.value.push(...older);
 }
 
-async function showPendingTweets() {
+async function showPendingTweets(loadIfEmpty = true) {
     hideBanner();
+    const candidateIds = new Set(tweetStore.feedPendingCandidateIds);
     const before = displayedTweets.value.length;
-    appendNewToDisplayed();
-    if (displayedTweets.value.length === before) {
+    appendNewToDisplayed(candidateIds);
+    tweetStore.clearFeedPendingCandidates();
+    if (loadIfEmpty && displayedTweets.value.length === before) {
         pageNumber.value = 0;
         hasMoreTweets.value = true;
         await loadMoreTweets();
@@ -315,7 +326,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <LoadingSpinner />
         </div>
         <Transition name="tweet-banner">
-            <div v-if="pendingCount > 0 && bannerVisible" class="new-tweets-banner" @click="showPendingTweets">
+            <div v-if="pendingCount > 0 && bannerVisible" class="new-tweets-banner" @click="showPendingTweets(false)">
                 <svg class="banner-arrow" viewBox="0 0 12 14" width="11" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M6 13V1M6 1L1 6M6 1L11 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -325,7 +336,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
                          class="banner-avatar"
                          :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
                 </div>
-                <span class="banner-text">{{ $t('tweet.showNewTweets', pendingCount) }}</span>
+                <span class="banner-text">{{ pendingBannerText }}</span>
             </div>
         </Transition>
         <div :class="{ 'feed-restoring': isRestoringFeed }">

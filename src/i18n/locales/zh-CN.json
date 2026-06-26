@@ -91,6 +91,8 @@
     "noMorePosts": "没有更多帖子了",
     "noMoreComments": "没有更多评论了",
     "showNewTweets": "{count} 条新推文",
+    "showNewTweetCapped": "{count} 条新推文",
+    "showNewTweetsCapped": "{count} 条新推文",
     "forwardedBy": "由 {'@'}{name} 转发",
     "forwardedByYou": "由你转发",
     "loadingAuthor": "加载中...",

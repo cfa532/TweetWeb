@@ -91,6 +91,8 @@
     "noMorePosts": "これ以上の投稿はありません",
     "noMoreComments": "これ以上のコメントはありません",
     "showNewTweets": "{count}件の新しいツイート",
+    "showNewTweetCapped": "{count}件の新しいツイート",
+    "showNewTweetsCapped": "{count}件の新しいツイート",
     "forwardedBy": "{'@'}{name}がリツイート",
     "forwardedByYou": "あなたがリツイート",
     "loadingAuthor": "読み込み中...",

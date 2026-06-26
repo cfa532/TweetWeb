@@ -91,6 +91,8 @@
     "noMorePosts": "No more posts",
     "noMoreComments": "No more comments",
     "showNewTweets": "{count} new tweet | {count} new tweets",
+    "showNewTweetCapped": "{count} new tweet",
+    "showNewTweetsCapped": "{count} new tweets",
     "forwardedBy": "Forwarded by {'@'}{name}",
     "forwardedByYou": "Forwarded by you",
     "loadingAuthor": "Loading...",

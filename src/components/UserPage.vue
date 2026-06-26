@@ -16,6 +16,11 @@ const { t } = useI18n();
 
 const tweetStore = useTweetStore();
 const { feedPendingCount, pendingFeedAuthors } = useFeedPendingCount();
+const feedPendingCountLabel = computed(() => feedPendingCount.value > 9 ? '9+' : String(feedPendingCount.value));
+const feedPendingBannerText = computed(() => t(
+    feedPendingCount.value === 1 ? 'tweet.showNewTweetCapped' : 'tweet.showNewTweetsCapped',
+    { count: feedPendingCountLabel.value },
+));
 const bannerVisible = ref(false);
 let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
 function showBanner() {
@@ -631,7 +636,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
                              class="banner-avatar"
                              :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
                     </div>
-                    <span class="banner-text">{{ $t('tweet.showNewTweets', feedPendingCount) }}</span>
+                    <span class="banner-text">{{ feedPendingBannerText }}</span>
                 </div>
             </Transition>
             <div :class="{ 'feed-restoring': isRestoringFeed }">
