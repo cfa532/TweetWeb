@@ -1838,6 +1838,20 @@ export const useTweetStore = defineStore('tweetStore', {
             if (user.writableHostIp === undefined) {
                 user.writableHostIp = null
             }
+            if (this._user?.mid === userId) {
+                const previousWritableHostIp = this._user.writableHostIp
+                const previousClient = this._user.client
+                Object.assign(this._user as any, user as any)
+                if (previousWritableHostIp) {
+                    this._user.writableHostIp = previousWritableHostIp
+                    if (previousClient) this._user.client = previousClient
+                }
+                this.users.set(userId, this._user)
+                setStoredUser(userId, this._user)
+                setStoredLoginUser(this._user)
+                this._rewriteUserMediaHosts(userId, providerIp)
+                return this._user
+            }
             const existingUser = this.users.get(userId)
             if (existingUser) {
                 // Preserve object identity so existing tweet/header refs receive refreshed fields.
@@ -2915,20 +2929,14 @@ export const useTweetStore = defineStore('tweetStore', {
 
             const targetUser = this.users.get(followingId)
 
-            if (isFollowing && !wasFollowing) {
-                if (this.loginUser) {
-                    this.loginUser.followingCount = (this.loginUser.followingCount ?? 0) + 1
-                }
-                if (targetUser) {
-                    targetUser.followersCount = (targetUser.followersCount ?? 0) + 1
-                }
-            } else if (!isFollowing && wasFollowing) {
-                if (this.loginUser) {
-                    this.loginUser.followingCount = Math.max(0, (this.loginUser.followingCount ?? 0) - 1)
-                }
-                if (targetUser) {
-                    targetUser.followersCount = Math.max(0, (targetUser.followersCount ?? 0) - 1)
-                }
+            const followDelta = isFollowing ? 1 : -1
+            if (this.loginUser) {
+                this.loginUser.followingCount = Math.max(0, (this.loginUser.followingCount ?? 0) + followDelta)
+                this.users.set(this.loginUser.mid, this.loginUser)
+            }
+            if (targetUser) {
+                targetUser.followersCount = Math.max(0, (targetUser.followersCount ?? 0) + followDelta)
+                setStoredUser(followingId, targetUser)
             }
 
             setStoredLoginUser(this.loginUser)
@@ -2953,23 +2961,35 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.feedTweetIds.delete(tweetId)
             }
 
-            const author = await this.getUser(authorId)
-            if (!author?.client) {
-                throw new Error('Tweet author provider is unavailable')
+            if (!this.loginUser.client) {
+                throw new Error('Tweet delete provider is unavailable')
             }
 
             const payload: Record<string, any> = {
                 aid: this.appId,
                 ver: "last",
-                appuserid: this.loginUser.mid, // caller identity (admin or owner)
+                version: "v3",
+                userid: this.loginUser.mid, // caller identity (admin or owner)
                 tweetid: tweetId,
-                userid: authorId, // tweet owner
-            }
-            if (author.hostIds?.[0]) {
-                payload.hostid = author.hostIds[0]
+                authorid: authorId, // tweet owner
             }
 
-            await author.client.RunMApp("delete_tweet", payload)
+            let response: any = await this.loginUser.client.RunMApp("delete_tweet", payload)
+            for (let depth = 0; depth < 3 && response && typeof response === "object"; depth++) {
+                if (response.success === false) {
+                    throw new Error(typeof response.message === "string" ? response.message : "Delete tweet failed")
+                }
+                if (response.success === true && "data" in response && response.data !== undefined) {
+                    response = response.data
+                    continue
+                }
+                break
+            }
+            const deletedTweetId = response?.tweetid
+            if (typeof deletedTweetId !== "string" || !deletedTweetId) {
+                throw new Error("Delete tweet failed: server returned success but no tweetid")
+            }
+            return deletedTweetId
         },
 
         /**
@@ -3126,6 +3146,12 @@ export const useTweetStore = defineStore('tweetStore', {
             if (ret === null || ret === undefined || !ret.success) {
                 const errorMessage = ret?.message || 'Unknown error occurred during tweet upload'
                 throw new Error(errorMessage);
+            }
+            if (!tweetId && this.loginUser) {
+                this.loginUser.tweetCount = (this.loginUser.tweetCount ?? 0) + 1
+                this.users.set(this.loginUser.mid, this.loginUser)
+                setStoredUser(this.loginUser.mid, this.loginUser)
+                setStoredLoginUser(this.loginUser)
             }
             return ret.mid
         },

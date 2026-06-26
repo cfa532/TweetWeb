@@ -330,8 +330,8 @@ watch(
         }
         const requestedId = nv
         const syncPeek =
-            tweetStore.users.get(requestedId) ??
-            (tweetStore.loginUser?.mid === requestedId ? tweetStore.loginUser : undefined)
+            (tweetStore.loginUser?.mid === requestedId ? tweetStore.loginUser : undefined) ??
+            tweetStore.users.get(requestedId)
         if (syncPeek) {
             user.value = syncPeek
         } else if (user.value?.mid !== requestedId) {
