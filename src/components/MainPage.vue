@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, computed, type Ref } from 'vue';
+import { onMounted, onActivated, ref, onUnmounted, watch, nextTick, type Ref } from 'vue';
 defineOptions({ name: 'MainPage' })
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -17,7 +17,11 @@ const { t } = useI18n();
 const tweetStore = useTweetStore();
 const router = useRouter();
 const route = useRoute();
-const { syncFeedDisplayed } = useFeedPendingCount();
+const {
+    feedPendingCount: pendingCount,
+    pendingFeedAuthors: pendingAuthors,
+    syncFeedDisplayed,
+} = useFeedPendingCount();
 const isLoading = ref(false);
 const showLoadMoreSpinner = ref(false);
 const retryMessage = ref('');
@@ -153,6 +157,7 @@ onMounted(async () => {
         router.replace(`/author/${tweetStore.followings[0]}`);
         return;
     }
+    tweetStore.clearFeedPendingCandidates();
     loadedForUser.value = tweetStore.loginUser.mid
 
     // Only load tweets if we don't have any yet or if this is a fresh session
@@ -200,6 +205,7 @@ onActivated(() => {
     }
     if (loadedForUser.value !== tweetStore.loginUser.mid) {
         loadedForUser.value = tweetStore.loginUser.mid;
+        tweetStore.clearFeedPendingCandidates();
         displayedTweets.value = [];
         initialLoad.value = true;
         loadTweetsWithMinimum();
@@ -246,49 +252,9 @@ watch(
     { immediate: true },
 );
 
-// Number of store tweets not yet shown. A computed (not a ref bumped in a
-// watcher) so it can't go stale when a pagination appendNewToDisplayed() pulls
-// those same tweets into the feed before the user taps — which previously left
-// the banner visible with nothing new to show.
-const pendingCount = computed(() => {
-    if (initialLoad.value) return 0;
-    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
-    const topTimestamp = displayedTweets.value.length > 0
-        ? (displayedTweets.value[0].timestamp as number)
-        : 0;
-    return tweetStore.tweets.filter(e =>
-        tweetStore.feedTweetIds.has(e.mid) &&
-        !existingIds.has(e.mid) &&
-        !e.isPrivate &&
-        (!e.originalTweetId || e.originalTweet !== null) &&
-        (e.timestamp as number) > topTimestamp
-    ).length;
-});
-
 watch(pendingCount, (count, prev) => {
     if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
     else if (count === 0) hideBanner();
-});
-
-const pendingAuthors = computed(() => {
-    if (!pendingCount.value) return [];
-    const existingIds = new Set(displayedTweets.value.map((t: any) => t.mid));
-    const topTimestamp = displayedTweets.value.length > 0
-        ? (displayedTweets.value[0].timestamp as number)
-        : 0;
-    const seen = new Set<string>();
-    const authors: any[] = [];
-    for (const t of tweetStore.tweets as any[]) {
-        if (!tweetStore.feedTweetIds.has(t.mid)) continue;
-        if (existingIds.has(t.mid) || t.isPrivate || (t.originalTweetId && !t.originalTweet)) continue;
-        if ((t.timestamp as number) <= topTimestamp) continue;
-        if (t.author && !seen.has(t.author.mid)) {
-            seen.add(t.author.mid);
-            authors.push(t.author);
-            if (authors.length >= 3) break;
-        }
-    }
-    return authors;
 });
 
 // Prepend newer tweets (and append older ones) from the store into the displayed list.
@@ -344,7 +310,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 
 <template>
     <PageLayout>
-        <AppHeader />
+        <AppHeader @refresh="showPendingTweets" />
         <div v-if="isRestoringFeed" class="feed-restoring-overlay" aria-live="polite">
             <LoadingSpinner />
         </div>

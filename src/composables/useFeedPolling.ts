@@ -9,7 +9,7 @@ export function startFeedPolling(intervalMs = 180_000) {
         const user = tweetStore.loginUser
         if (user) {
             console.log(`[feedPolling] ${new Date().toLocaleTimeString()} — polling for new tweets`)
-            tweetStore.getTweetFeed(user, 0, 10).catch(() => {})
+            tweetStore.refreshFeedPendingCandidates(10).catch(() => {})
         }
     }, intervalMs)
 }

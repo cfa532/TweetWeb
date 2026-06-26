@@ -386,6 +386,9 @@ export const useTweetStore = defineStore('tweetStore', {
         // loaders also push into, so the feed banner must count only these — otherwise
         // tweets seen on a profile leak into the main-feed "new tweets" count.
         feedTweetIds: new Set<string>(),
+        // Latest page-0 banner-check candidates. The visible banner count is derived
+        // from this set, not every cached feed tweet, to match the mobile algorithm.
+        feedPendingCandidateIds: new Set<string>(),
         originalTweets: [] as Tweet[],
         originalTweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         users: new Map<MimeiId, User>(),
@@ -1153,7 +1156,8 @@ export const useTweetStore = defineStore('tweetStore', {
         async getTweetFeed(
             user: User,
             pageNumber: number,
-            pageSize: number
+            pageSize: number,
+            options: { updateFollowing?: boolean; candidateIds?: Set<string> } = {}
         ): Promise<number | null> {
             let lastError: unknown = null
             for (let attempt = 1; attempt <= 2; attempt++) {
@@ -1214,46 +1218,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     await this.updateOriginalTweets(feedNestedOrig)
                 }
 
-                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
-                if (tweetsData) {
-                    const uniqueAuthorIds = [...new Set(
-                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                    )] as string[]
-                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
-                }
-
-                // Process main tweets (authors are now in-memory cache)
-                if (tweetsData) {
-                    for (const tweetJson of tweetsData) {
-                        if (tweetJson != null) {
-                            try {
-                                const tweet = tweetJson as Tweet
-                                const author = await this.getUser(tweet.authorId)
-                                if (!author) {
-                                    continue
-                                }
-                                tweet.author = author
-
-                                // Skip private tweets in feed
-                                if (tweet.isPrivate) {
-                                    continue
-                                }
-                                const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                if (cachedTweet) {
-                                    this.refreshCachedTweet(cachedTweet, tweet)
-                                } else {
-                                    await this.addTweetToStore(tweet, true)
-                                }
-                            } catch (error) {
-                                console.error("Error processing tweet in feed:", error)
-                                continue
-                            }
-                        }
-                    }
+                const candidateIds = await this.processFeedTweetRows(tweetsData, "getTweetFeed")
+                if (options.candidateIds) {
+                    candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
 
                 // If this is the first page (pageNumber === 0), also update following tweets in background
-                if (pageNumber === 0) {
+                if (pageNumber === 0 && options.updateFollowing !== false) {
                     // Call updateFollowingTweets in background without blocking the main flow
                     this.updateFollowingTweets().catch(error => {
                         console.error("Background updateFollowingTweets failed:", error)
@@ -1279,12 +1250,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * This function can only be called after user has logged in.
          * Processes tweets exactly like getTweetFeed() and updates state.tweets directly.
          */
-        async updateFollowingTweets(): Promise<void> {
+        async updateFollowingTweets(options: { candidateIds?: Set<string>; showLoginError?: boolean } = {}): Promise<string[]> {
             // Check if user is logged in
             if (!this.loginUser) {
                 console.error("updateFollowingTweets: User must be logged in to call this function")
-                useAlertStore().error("You must be logged in to update following tweets")
-                return
+                if (options.showLoginError !== false) {
+                    useAlertStore().error("You must be logged in to update following tweets")
+                }
+                return []
             }
 
             try {
@@ -1305,7 +1278,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     const errorMessage = response?.message || "Unknown error occurred"
                     console.error("Update following tweets failed:", errorMessage)
                     console.error("Response:", response)
-                    return
+                    return []
                 }
 
                 // Cache original tweets first (same as getTweetFeed)
@@ -1316,48 +1289,83 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Extract tweets from the response format (same as getTweetFeed)
                 const tweetsData = response.tweets
 
-                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
-                if (tweetsData) {
-                    const uniqueAuthorIds = [...new Set(
-                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                    )] as string[]
-                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
-                }
-
-                // Process main tweets (authors are now in-memory cache)
-                if (tweetsData) {
-                    for (const tweetJson of tweetsData) {
-                        if (tweetJson != null) {
-                            try {
-                                const tweet = tweetJson as Tweet
-                                const author = await this.getUser(tweet.authorId)
-                                if (!author) {
-                                    continue
-                                }
-                                tweet.author = author
-
-                                // Skip private tweets in feed (same as getTweetFeed)
-                                if (tweet.isPrivate) {
-                                    continue
-                                }
-                                const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                if (cachedTweet) {
-                                    this.refreshCachedTweet(cachedTweet, tweet)
-                                } else {
-                                    await this.addTweetToStore(tweet, true)
-                                }
-                            } catch (error) {
-                                console.error("Error processing tweet in updateFollowingTweets:", error)
-                                continue
-                            }
-                        }
-                    }
+                const candidateIds = await this.processFeedTweetRows(tweetsData, "updateFollowingTweets")
+                if (options.candidateIds) {
+                    candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
 
                 console.log(`Successfully updated following tweets: ${tweetsData?.length || 0} tweets processed`)
+                return candidateIds
             } catch (e) {
                 console.error("Error calling update_following_tweets:", e)
+                return []
             }
+        },
+
+        async processFeedTweetRows(tweetsData: any[] | undefined, context: string): Promise<string[]> {
+            const candidateIds: string[] = []
+            if (!tweetsData) return candidateIds
+
+            const uniqueAuthorIds = [...new Set(
+                tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+            )] as string[]
+            await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+
+            for (const tweetJson of tweetsData) {
+                if (tweetJson == null) continue
+                try {
+                    const tweet = tweetJson as Tweet
+                    const author = await this.getUser(tweet.authorId)
+                    if (!author) continue
+                    tweet.author = author
+
+                    if (tweet.isPrivate) continue
+
+                    const cachedTweet = this.tweetIndex.get(tweet.mid)
+                    if (cachedTweet) {
+                        this.refreshCachedTweet(cachedTweet, tweet)
+                        this.feedTweetIds.add(tweet.mid)
+                    } else {
+                        await this.addTweetToStore(tweet, true)
+                    }
+
+                    const storedTweet = this.tweetIndex.get(tweet.mid)
+                    if (storedTweet && (!storedTweet.originalTweetId || storedTweet.originalTweet)) {
+                        candidateIds.push(storedTweet.mid)
+                    }
+                } catch (error) {
+                    console.error(`Error processing tweet in ${context}:`, error)
+                    continue
+                }
+            }
+
+            return candidateIds
+        },
+
+        async refreshFeedPendingCandidates(pageSize: number = 10): Promise<void> {
+            const user = this.loginUser
+            if (!user) {
+                this.clearFeedPendingCandidates()
+                return
+            }
+
+            const candidateIds = new Set<string>()
+            await this.getTweetFeed(user, 0, pageSize, {
+                updateFollowing: false,
+                candidateIds
+            })
+            const feedCandidateCount = candidateIds.size
+            const followingCandidateIds = await this.updateFollowingTweets({
+                candidateIds,
+                showLoginError: false
+            })
+            this.feedPendingCandidateIds.clear()
+            candidateIds.forEach(id => this.feedPendingCandidateIds.add(id))
+            console.log(`[feedPending] Banner check candidates: get_tweet_feed=${feedCandidateCount}, update_following_tweets=${followingCandidateIds.length}`)
+        },
+
+        clearFeedPendingCandidates() {
+            this.feedPendingCandidateIds.clear()
         },
 
         /**
@@ -2823,6 +2831,7 @@ export const useTweetStore = defineStore('tweetStore', {
             this.tweets = []
             this.tweetIndex.clear()
             this.feedTweetIds.clear()
+            this.feedPendingCandidateIds.clear()
             this._deletedTweetIds.clear()
             this.originalTweets = []
             this.originalTweetIndex.clear()

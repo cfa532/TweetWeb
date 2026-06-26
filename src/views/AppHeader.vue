@@ -14,18 +14,15 @@ const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
 
-/** Logo: on home feed → my profile when logged in; anywhere else AppHeader appears → home. */
+const emit = defineEmits<{ (e: 'refresh'): void }>()
+
+/** Logo: on home feed → emit refresh; anywhere else → navigate home. */
 function onAppAvatarClick() {
     if (route.name !== 'main') {
         router.push({ name: 'main' })
         return
     }
-    const mid = tweetStore.loginUser?.mid
-    if (mid) {
-        router.push(`/author/${mid}`)
-    } else {
-        router.push({ name: 'main' })
-    }
+    emit('refresh')
 }
 const isAccountMenuOpen = ref(false)
 let accountMenuCloseTimer: ReturnType<typeof setTimeout> | null = null
