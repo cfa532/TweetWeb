@@ -15,6 +15,7 @@ const router = useRouter();
 // Get data from session storage if not provided as props
 const mediaViewerData = ref<any>(null);
 const currentIndex = ref(0);
+const currentImageSettled = ref(false);
 
 onMounted(() => {
   // Try to get data from session storage
@@ -90,6 +91,10 @@ const isVideo = computed(() => {
 });
 
 const currentMediaIndex = computed(() => currentIndex.value);
+
+watch(() => currentMedia.value?.mid, () => {
+  currentImageSettled.value = false;
+});
 
 
 onUnmounted(() => {
@@ -214,6 +219,20 @@ function goToMedia(index: number) {
     currentIndex.value = index;
   }
 }
+
+function handleFullscreenImageSettled(media: MimeiFileType) {
+  if (media.mid === currentMedia.value?.mid) {
+    currentImageSettled.value = true;
+  }
+}
+
+function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
+  if (!media.type?.toLowerCase().includes('image')) return undefined;
+  if (index === currentMediaIndex.value || currentImageSettled.value) {
+    return media.mid;
+  }
+  return undefined;
+}
 </script>
 
 <template>
@@ -267,6 +286,7 @@ function goToMedia(index: number) {
             :media="currentMedia" 
             :tweet="tweet"
             class="fullscreen-image"
+            @settled="handleFullscreenImageSettled"
           />
         </div>
         <div v-else-if="currentMedia && isVideo" class="video-container">
@@ -297,7 +317,8 @@ function goToMedia(index: number) {
         >
           <img
             v-if="media.type?.toLowerCase().includes('image')"
-            :src="media.mid"
+            :src="thumbnailSrc(media, Number(index))"
+            loading="lazy"
             :alt="`Thumbnail ${Number(index) + 1}`"
           />
           <div 

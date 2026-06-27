@@ -820,18 +820,13 @@ export const useTweetStore = defineStore('tweetStore', {
                         await this.updateOriginalTweets(nestedOrig)
                     }
 
-                    // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
-                    if (tweetsData) {
-                        const uniqueAuthorIds = [...new Set(
-                            tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                        )] as string[]
-                        await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
-                    }
-
                     if (tweetsData) {
                         for (const tweetJson of tweetsData) {
                             if (tweetJson == null) continue
                             const tweet = tweetJson as Tweet
+                            if (tweet.authorId === user.mid) {
+                                tweet.author = user
+                            }
                             const cachedTweet = this.tweetIndex.get(tweet.mid)
                             if (cachedTweet) {
                                 this.refreshCachedTweet(cachedTweet, tweet)

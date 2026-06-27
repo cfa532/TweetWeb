@@ -13,6 +13,9 @@ const props = defineProps({
     index: {type: Number, required: false},
     mediaLoadState: {type: String as PropType<MediaLoadState>, required: false, default: 'visible'},
 })
+const emit = defineEmits<{
+    settled: [media: MimeiFileType]
+}>()
 
 const isLoaded = ref(false);
 const imageElement = ref<HTMLImageElement | null>(null);
@@ -46,6 +49,7 @@ function handleImageSettled(event?: Event) {
     if (img.getAttribute('src') !== imageSrc.value) return;
     isLoaded.value = true;
     renderedImageUrls.add(props.media.mid);
+    emit('settled', props.media);
 }
 
 function cancelImageLoad() {
@@ -121,6 +125,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener(TWEET_MEDIA_PRELOAD_STALE_EVENT, cancelStalePreload);
+    cancelImageLoad();
 });
 </script>
 

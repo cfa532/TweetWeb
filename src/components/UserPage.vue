@@ -568,9 +568,9 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }
 
-    // Force-refresh user data from its host (keeps cache for instant display
-    // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
-    tweetStore.getUserFromRootHost(nv, true).then(u => {
+    // Keep cached profile/avatar data on the fast path. The tweet load below
+    // refreshes stale routes on retry, and avatar errors still force a repair.
+    tweetStore.getUserFromRootHost(nv, false).then(u => {
         console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
     });
     // A scrollTweet deep link owns the scroll target. Otherwise only hide the feed
