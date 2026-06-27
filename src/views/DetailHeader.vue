@@ -271,7 +271,7 @@ watch(
   margin-left: -8px;
   margin-right: -8px;
   margin-bottom: -8px;
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
   overflow: hidden;
   perspective: 720px;
   transform-style: preserve-3d;
