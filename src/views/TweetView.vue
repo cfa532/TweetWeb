@@ -31,6 +31,13 @@ const MAX_CHARS_CHINESE = 300;
 /** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
 const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
 
+function tweetHasOwnBody(tweet: Tweet | null | undefined): boolean {
+  if (!tweet) return false;
+  if (typeof tweet.title === 'string' && tweet.title.trim()) return true;
+  if (typeof tweet.content === 'string' && tweet.content.trim()) return true;
+  return Array.isArray(tweet.attachments) && tweet.attachments.length > 0;
+}
+
 onMounted(async () => {
   if (currentTweet.value.originalTweetId) {
     // Use already-loaded originalTweet (e.g. from pinned tweet cache) if available,
@@ -42,7 +49,7 @@ onMounted(async () => {
       );
 
     if (originalTweet.value) {
-      if (!currentTweet.value.content && !currentTweet.value.attachments) {
+      if (!tweetHasOwnBody(currentTweet.value)) {
         // A retweet.
         retweetedBy.value = currentTweet.value.author.username;
         isRetweet.value = true;

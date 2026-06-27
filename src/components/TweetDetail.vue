@@ -29,6 +29,13 @@ const loadError = ref(false)
 const tweetNotFound = ref(false)
 const hasLoadAttempted = ref(false)
 
+function tweetHasOwnBody(tweetValue: Tweet | null | undefined): boolean {
+    if (!tweetValue) return false
+    if (typeof tweetValue.title === 'string' && tweetValue.title.trim()) return true
+    if (typeof tweetValue.content === 'string' && tweetValue.content.trim()) return true
+    return Array.isArray(tweetValue.attachments) && tweetValue.attachments.length > 0
+}
+
 // Download prompt variables
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
@@ -185,7 +192,7 @@ async function showTweet(timeoutId?: number) {
                     // its originalTweet; reuse it instead of refetching.
                     originTweet.value = tweet.value.originalTweet
                         ?? await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
-                    if (!tweet.value.content && !tweet.value.attachments) {
+                    if (!tweetHasOwnBody(tweet.value) && originTweet.value) {
                         // Pure retweet (no added content): show the original's comments.
                         isRetweet.value = true
                         const failed = await tweetStore.loadComments(originTweet.value)
@@ -253,11 +260,11 @@ const formattedTitle = computed(() => {
     if (!tweetStore.isEmptyString(tweet.value.content)) {
         title = tweet.value.content!.substring(0, MAX_TITLE_LENGTH)
     } else {
-        if (tweet.value.originalTweetId) {
+        if (tweet.value.originalTweetId && tweet.value.originalTweet) {
             if (!tweetStore.isEmptyString(tweet.value.originalTweet.content)) {
-                title = tweet.value.originalTweet!.content!.substring(0, MAX_TITLE_LENGTH)
+                title = tweet.value.originalTweet.content!.substring(0, MAX_TITLE_LENGTH)
             } else {
-                tweet.value.originalTweet!.attachments?.forEach((element: any) => {
+                tweet.value.originalTweet.attachments?.forEach((element: any) => {
                     title += '[' + element.type + ']'
                 });
             }
@@ -924,8 +931,8 @@ function retryLoad() {
             </div>
 
             <!-- quoted tweet -->
-            <blockquote v-if="!isRetweet" class="quoted-tweet">
-                <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
+            <blockquote v-if="!isRetweet && originTweet" class="quoted-tweet">
+                <TweetView :tweet="originTweet" :is-quoted=true></TweetView>
             </blockquote>
 
             <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />

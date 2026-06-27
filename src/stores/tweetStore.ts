@@ -62,6 +62,13 @@ function collectNestedOriginalTweetsFromRows(tweetsData: any[] | undefined): any
     return out
 }
 
+function tweetHasOwnBody(tweet: Pick<Tweet, 'title' | 'content' | 'attachments'> | undefined | null): boolean {
+    if (!tweet) return false
+    if (typeof tweet.title === 'string' && tweet.title.trim()) return true
+    if (typeof tweet.content === 'string' && tweet.content.trim()) return true
+    return Array.isArray(tweet.attachments) && tweet.attachments.length > 0
+}
+
 /**
  * v2 toggle_followed payload: unwrap nested { success, data } (delegation used to double-wrap).
  * @throws on { success: false } or non-boolean isFollowing
@@ -446,6 +453,41 @@ export const useTweetStore = defineStore('tweetStore', {
             const userToPersist = user ?? this._user
             if (userToPersist) setStoredLoginUser(userToPersist)
         },
+        _mergeUserIntoCachedRefs(userId: MimeiId, updates: Partial<User>) {
+            const visitedTweets = new WeakSet<Tweet>()
+            const mergeUser = (target: User | null | undefined) => {
+                if (target?.mid === userId) Object.assign(target, updates)
+            }
+            const mergeTweetAuthor = (tweet: Tweet | null | undefined) => {
+                if (!tweet) return
+                if (visitedTweets.has(tweet)) return
+                visitedTweets.add(tweet)
+                if (tweet.authorId === userId || tweet.author?.mid === userId) {
+                    mergeUser(tweet.author)
+                }
+                for (const comment of tweet.comments ?? []) {
+                    mergeTweetAuthor(comment)
+                }
+                mergeTweetAuthor(tweet.originalTweet)
+            }
+
+            mergeUser(this._user)
+            const cachedUser = this.users.get(userId)
+            if (cachedUser) {
+                mergeUser(cachedUser)
+            } else if (this._user?.mid === userId) {
+                this.users.set(userId, this._user)
+            }
+
+            for (const tweet of this.tweets) mergeTweetAuthor(tweet)
+            for (const tweet of this.originalTweetIndex.values()) mergeTweetAuthor(tweet)
+
+            const userToStore = this._user?.mid === userId ? this._user : this.users.get(userId)
+            if (userToStore) {
+                setStoredUser(userId, userToStore)
+                if (this._user?.mid === userId) setStoredLoginUser(this._user)
+            }
+        },
         /**
          * Add a user ID to the following list if not already present
          * @param uid The user ID to add to followings
@@ -620,20 +662,35 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
                         
-                        // If originalTweetId exists but originalTweet is null, skip this tweet
+                        // Pure retweets cannot render without their original, but quote
+                        // tweets still have their own content/media and should remain visible.
                         if (!tweet.originalTweet) {
-                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
+                            if (tweetHasOwnBody(tweet)) {
+                                tweet.originalTweet = undefined
+                                console.warn(`[addTweetToStore] Original quote target unavailable; rendering quote wrapper only:
+  Quote Tweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}`)
+                            } else {
+                                console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
   Retweet ID: ${tweet.mid}
   Original Tweet ID: ${tweet.originalTweetId}`)
-                            return
+                                return
+                            }
                         }
                     } catch (error) {
                         console.error(`[addTweetToStore] ❌ ERROR fetching original tweet:
   Retweet ID: ${tweet.mid}
   Original Tweet ID: ${tweet.originalTweetId}
   Error:`, error)
-                        console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
-                        return
+                        if (tweetHasOwnBody(tweet)) {
+                            tweet.originalTweet = undefined
+                            console.warn(`[addTweetToStore] Original quote target errored; rendering quote wrapper only:
+  Quote Tweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}`)
+                        } else {
+                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
+                            return
+                        }
                     }
                 }
                 
@@ -2969,15 +3026,29 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error('Not authorized to delete this tweet')
             }
 
+            console.log('[deleteTweet] Starting delete', {
+                tweetId,
+                authorId,
+                callerId: this.loginUser.mid,
+            })
+
             const tweetIndex = this.tweets.findIndex(e => e.mid === tweetId)
             if (tweetIndex >= 0) {
                 this._deletedTweetIds.add(tweetId)
                 this.tweets.splice(tweetIndex, 1)
                 this.tweetIndex.delete(tweetId)
                 this.feedTweetIds.delete(tweetId)
+                console.log('[deleteTweet] Removed tweet from local cache', {
+                    tweetId,
+                    tweetIndex,
+                    cachedTweets: this.tweets.length,
+                })
+            } else {
+                console.log('[deleteTweet] Tweet was not in local cache before server delete', { tweetId })
             }
 
             if (!this.loginUser.client) {
+                console.error('[deleteTweet] Provider unavailable', { tweetId, authorId })
                 throw new Error('Tweet delete provider is unavailable')
             }
 
@@ -2990,22 +3061,30 @@ export const useTweetStore = defineStore('tweetStore', {
                 authorid: authorId, // tweet owner
             }
 
-            let response: any = await this.loginUser.client.RunMApp("delete_tweet", payload)
-            for (let depth = 0; depth < 3 && response && typeof response === "object"; depth++) {
-                if (response.success === false) {
-                    throw new Error(typeof response.message === "string" ? response.message : "Delete tweet failed")
+            console.log('[deleteTweet] Calling delete_tweet', payload)
+            try {
+                let response: any = await this.loginUser.client.RunMApp("delete_tweet", payload)
+                console.log('[deleteTweet] delete_tweet response', { tweetId, response })
+                for (let depth = 0; depth < 3 && response && typeof response === "object"; depth++) {
+                    if (response.success === false) {
+                        throw new Error(typeof response.message === "string" ? response.message : "Delete tweet failed")
+                    }
+                    if (response.success === true && "data" in response && response.data !== undefined) {
+                        response = response.data
+                        continue
+                    }
+                    break
                 }
-                if (response.success === true && "data" in response && response.data !== undefined) {
-                    response = response.data
-                    continue
+                const deletedTweetId = response?.tweetid
+                if (typeof deletedTweetId !== "string" || !deletedTweetId) {
+                    throw new Error("Delete tweet failed: server returned success but no tweetid")
                 }
-                break
+                console.log('[deleteTweet] Delete completed', { tweetId, deletedTweetId })
+                return deletedTweetId
+            } catch (error) {
+                console.error('[deleteTweet] Delete failed', { tweetId, authorId, error })
+                throw error
             }
-            const deletedTweetId = response?.tweetid
-            if (typeof deletedTweetId !== "string" || !deletedTweetId) {
-                throw new Error("Delete tweet failed: server returned success but no tweetid")
-            }
-            return deletedTweetId
         },
 
         /**
@@ -3213,9 +3292,21 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             try {
                 const targetAuthorId = authorId ?? this.loginUser.mid
+                console.log('[updateTweet] Starting update', {
+                    tweetId,
+                    targetAuthorId,
+                    callerId: this.loginUser.mid,
+                    contentLength: content.length,
+                })
                 let targetAuthor: User | undefined
                 if (targetAuthorId !== this.loginUser.mid) {
                     targetAuthor = await this.getUser(targetAuthorId)
+                    console.log('[updateTweet] Resolved target author', {
+                        tweetId,
+                        targetAuthorId,
+                        hasAuthor: !!targetAuthor,
+                        providerIp: targetAuthor?.providerIp,
+                    })
                 }
 
                 // update_tweet enforces author identity in appuserid, so for admin edits
@@ -3236,6 +3327,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         hostid: targetAuthor?.hostIds?.[0],
                         tweetid: tweetId,
                         content: content})
+                console.log('[updateTweet] update_tweet response', { tweetId, ret })
                 if (!ret || !ret.success) {
                     throw new Error(ret?.message || 'Failed to update tweet')
                 }
@@ -3243,10 +3335,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 const idx = this.tweets.findIndex(t => t.mid === tweetId)
                 if (idx !== -1) {
                     this.tweets[idx].content = content
+                    console.log('[updateTweet] Updated local tweet cache', { tweetId, tweetIndex: idx })
+                } else {
+                    console.log('[updateTweet] Tweet was not in local cache after server update', { tweetId })
                 }
+                console.log('[updateTweet] Update completed', { tweetId, returnedMid: ret.mid })
                 return ret.mid
             } catch (error) {
-                console.error('[TWEET-STORE] Update tweet failed:', error)
+                console.error('[updateTweet] Update failed', { tweetId, authorId, error })
                 throw error
             }
         },
@@ -3948,7 +4044,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 user.hostIds = [updates.hostId.trim()]
             }
             this._user = user
-            setStoredLoginUser(user)
+            this._mergeUserIntoCachedRefs(user.mid, user)
 
             return true
         },
@@ -4046,9 +4142,8 @@ export const useTweetStore = defineStore('tweetStore', {
 
             // Avatar display uses user.providerIp (read host), not the writable host.
             const displayIp = user.providerIp || user.writableHostIp
-            const updatedUser = { ...user, avatar: this.getMediaUrl(confirmedAvatar, `http://${displayIp}`) }
-            this._user = updatedUser
-            setStoredLoginUser(updatedUser)
+            const avatar = this.getMediaUrl(confirmedAvatar, `http://${displayIp}`)
+            this._mergeUserIntoCachedRefs(user.mid, { avatar })
 
             return confirmedAvatar
         },
