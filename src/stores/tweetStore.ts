@@ -2247,7 +2247,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     return [];
                 }
 
-                const candidates = ipAddresses.slice(0, 4);
+                const candidates = ipAddresses.slice(0, 2);
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
@@ -2346,9 +2346,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     return [];
                 }
 
-                // Race all candidate IPs in parallel; return the first one that passes
+                // Race the first pair of candidate IPs in parallel; return the first one that passes
                 // a health check. Remaining checks are abandoned once a winner is found.
-                const candidates = ipAddresses.slice(0, 4);
+                const candidates = ipAddresses.slice(0, 2);
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
@@ -2362,14 +2362,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    console.warn(`[getProviderIps] All health checks failed for ${mid}, falling back to first candidate:`, candidates[0]);
-                    return [candidates[0]];
+                    throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
                 }
 
                 console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner);
                 return [winner];
 
             } catch (error) {
+                if (error instanceof Error && error.message.startsWith('[getProviderIps] All provider health checks failed')) {
+                    throw error;
+                }
                 console.error("[getProviderIps] Error getting provider IPs for", mid, error);
                 return [];
             }
@@ -2958,15 +2960,9 @@ export const useTweetStore = defineStore('tweetStore', {
             // handler runs. The cross-node delegation path in toggle_following.js
             // drops the response payload (Java-Map-backed bridge object whose
             // keys are not JS-enumerable), turning a clearly successful op into
-            // a client-side failure. Falls back to loginUser.client if the
-            // writable host can't be resolved.
-            let homeClient = loginUser.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(loginUser)
-                homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[toggleFollowing] Could not resolve home host, using current client:', e)
-            }
+            // a client-side failure.
+            const writableIp = await this.resolveWritableHostIp(loginUser)
+            const homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
 
             // Follow can RPC to home node and sync many tweets; default pooled timeout (15s) is often too short.
             const originalTimeout = homeClient.timeout
@@ -3180,19 +3176,9 @@ export const useTweetStore = defineStore('tweetStore', {
             // Point the main client at the writable host (hostIds[0]) for writes.
             // Matches iOS appUser.resolveWritableUrl; runs once per session then
             // caches via user.writableHostIp.
-            if (!this.loginUser.writableHostIp && this.loginUser.hostIds?.[0]) {
-                try {
-                    const writableIp = await Promise.race([
-                        this.resolveWritableHostIp(this.loginUser),
-                        new Promise<string>((_, reject) =>
-                            setTimeout(() => reject(new Error('writable host discovery timeout')), 5000))
-                    ])
-                    this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
-                    setStoredLoginUser(this.loginUser)
-                } catch (error) {
-                    console.warn('[TWEET-STORE] Writable host unavailable, using current client:', error)
-                }
-            }
+            const writableIp = await this.resolveWritableHostIp(this.loginUser)
+            this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
+            setStoredLoginUser(this.loginUser)
 
             // Leither may be busy after video processing; allow 5 minutes per write.
             const effectiveTimeout = 5 * 60 * 1000
@@ -3311,15 +3297,10 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 // update_tweet enforces author identity in appuserid, so for admin edits
                 // we must act on the tweet owner's node and pass owner id as appuserid.
-                let client = targetAuthor?.client ?? this.loginUser.client
-                if (!targetAuthor && this.loginUser) {
-                    try {
-                        const writableIp = await this.resolveWritableHostIp(this.loginUser)
-                        client = createPooledClient(writableIp, this.lapi.connectionPool)
-                    } catch (e) {
-                        console.warn('[updateTweet] Could not resolve writable host, using current client:', e)
-                    }
-                }
+                const writeUser = targetAuthor ?? this.loginUser
+                if (!writeUser) throw new Error('Not logged in')
+                const writableIp = await this.resolveWritableHostIp(writeUser)
+                const client = createPooledClient(writableIp, this.lapi.connectionPool)
                 const ret = await client.RunMApp("update_tweet",
                     {aid: this.appId, ver: "last",
                         appuserid: targetAuthorId,
@@ -4010,13 +3991,8 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Mutation: route through user's writable host (hostIds[0]).
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[updateProfile] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
             writeClient.timeout = 15000
             let ret
@@ -4069,13 +4045,8 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Mutation: route through user's writable host (hostIds[0]).
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[updateAgentPublicKey] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
             writeClient.timeout = 15000
             let ret
@@ -4119,13 +4090,8 @@ export const useTweetStore = defineStore('tweetStore', {
             // Mutation: route through user's writable host (hostIds[0]) so the
             // change lands on the writable node directly instead of relying on
             // server-side replication from a read-only host.
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[setUserAvatar] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
             writeClient.timeout = 15000
             let confirmedAvatar: string = cid
@@ -4186,13 +4152,8 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!user) throw new Error("Not logged in")
 
             // Mutation: route through user's writable host (hostIds[0]).
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[deleteAccount] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
             writeClient.timeout = 15000
             let ret
