@@ -35,7 +35,7 @@ const handleClick = () => {
     color: #ffffff;
     padding: 0 15px 0 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    margin-top: 10px;
+    margin-top: 0px;
     cursor: pointer;
     transition: transform 0.2s ease;
     animation: rotateToVertical 0.6s ease-out;

@@ -52,7 +52,7 @@ function tweetRefFor(tweet: Tweet) {
 
 <style scoped>
 .feed-container {
-    padding: 4px 0px 0px 0px;
+    padding: 0px 0px 0px 0px;
 }
 
 .tweet-list-row {

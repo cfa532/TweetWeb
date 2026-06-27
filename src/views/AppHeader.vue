@@ -424,7 +424,7 @@ function onAccountAvatarError() {
                         </span>
                     </div>
 
-                    <div class="mt-1">
+                    <div class="profile-bio">
                         <span class="alias text-muted">{{ user.profile }}</span>
                     </div>
                 </div>
@@ -524,18 +524,20 @@ function onAccountAvatarError() {
 
 .header-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     flex-wrap: nowrap;
-    min-height: 56px;
-    margin: 2px 0;
+    min-height: 68px;
+    margin: 0;
+    padding: 10px 10px 4px 0;
 }
 
 .header-left {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     flex: 1;
     min-width: 0;
+    padding-right: 0px;
 }
 
 .avatar img {
@@ -552,20 +554,37 @@ function onAccountAvatarError() {
 .user-info {
     flex-grow: 1;
     /* Allows the user info to take up remaining space */
-    margin-left: 10px;
+    margin-left: 4px;
     /* Adds some space between avatar and user info */
     flex-wrap: wrap;
     /* Allows text to wrap on smaller screens */
+    min-width: 0;
+    padding-top: 2px;
 }
 
 .username-alias-time {
     display: flex;
     align-items: center;
-    gap: 1px;
+    gap: 4px;
     flex-wrap: wrap;
     /* Allows text to wrap on smaller screens */
     font-size: 0.95rem;
     color: #ccd0d4;
+    margin-bottom: 6px;
+    line-height: 1.25;
+}
+
+.profile-bio {
+    line-height: 1.35;
+    padding-right: 6px;
+}
+
+.profile-bio .alias {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
 .text-muted {
@@ -579,6 +598,8 @@ function onAccountAvatarError() {
     align-items: center;
     gap: 8px;
     width: 100%;
+    padding-top: 8px;
+    padding-bottom: 1px;
 }
 
 .links {
@@ -655,7 +676,7 @@ function onAccountAvatarError() {
     .user-info {
         line-height: 1.2;
         flex-grow: 1;
-        margin-left: 1px;
+        margin-left: 4px;
         /* Adjusts margin for smaller screens */
     }
 
@@ -670,13 +691,19 @@ function onAccountAvatarError() {
     }
 
     .header-row {
-        min-height: 56px;
+        min-height: 68px;
+        padding-top: 10px;
+    }
+
+    .account-menu-wrapper {
+        margin-left: 10px;
+        margin-right: 8px;
     }
 }
 
 @media (min-width: 1200px) {
     .user-info {
-        margin-left: 1px;
+        margin-left: 6px;
         /* Increases margin for larger screens */
     }
 }
@@ -808,7 +835,7 @@ function onAccountAvatarError() {
     box-sizing: border-box;
     min-width: 24px;
     min-height: 24px;
-    padding: 0 8px 0 0;
+    padding: 0;
     text-decoration: none;
     flex-shrink: 0;
     display: inline-flex;
@@ -841,6 +868,9 @@ function onAccountAvatarError() {
     flex-shrink: 0;
     padding-bottom: 2px;
     margin-bottom: -2px;
+    margin-left: 12px;
+    margin-top: 8px;
+    margin-right: 10px;
 }
 
 .account-dropdown {
