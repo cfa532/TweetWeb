@@ -51,6 +51,18 @@ function hideBanner() {
     if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
 }
 
+function numericTimestamp(value: string | number | undefined): number | null {
+    const timestamp = Number(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+async function consumeShowNewQuery() {
+    if (!route.query.showNew) return false;
+    await router.replace({ path: '/' });
+    await showPendingTweets(false);
+    return true;
+}
+
 function startLoadMoreSpinnerDelay() {
     clearLoadMoreSpinnerDelay();
     // Only show spinner if loading takes longer than 1s.
@@ -162,7 +174,10 @@ onMounted(async () => {
         router.replace(`/author/${tweetStore.followings[0]}`);
         return;
     }
-    tweetStore.clearFeedPendingCandidates();
+    const hasShowNewIntent = route.query.showNew != null;
+    if (!hasShowNewIntent) {
+        tweetStore.clearFeedPendingCandidates();
+    }
     loadedForUser.value = tweetStore.loginUser.mid
 
     // Only load tweets if we don't have any yet or if this is a fresh session
@@ -192,6 +207,7 @@ onMounted(async () => {
         }
     }
     await restoreAfterLoad();
+    await consumeShowNewQuery();
     nextTick(() => setupLoadMoreObserver());
 
     // App-wide poll for new following tweets (3 min). Singleton — also started by
@@ -217,10 +233,7 @@ onActivated(() => {
         return;
     }
     // Navigated back from another page with the "show new" intent (e.g. UserPage banner tap).
-    if (route.query.showNew) {
-        router.replace({ path: '/' });
-        showPendingTweets(false);
-    }
+    void consumeShowNewQuery();
 });
 
 onUnmounted(() => {
@@ -278,6 +291,8 @@ function appendNewToDisplayed(candidateIds?: Set<string>) {
             if (existingIds.has(e.mid)) return false;
             if (candidateIds) {
                 if (!candidateIds.has(e.mid)) return false;
+                const timestamp = numericTimestamp(e.timestamp);
+                if (topTimestamp !== Infinity && (timestamp === null || timestamp <= topTimestamp)) return false;
             } else if (!tweetStore.feedTweetIds.has(e.mid)) {
                 return false;
             }
