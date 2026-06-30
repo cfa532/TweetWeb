@@ -12,6 +12,8 @@ const GUEST_ID = "000000000000000000000000000"
 const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
 const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
+const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
+const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
 
 type ExpiringLocalCache<T> = {
@@ -408,6 +410,7 @@ export const useTweetStore = defineStore('tweetStore', {
         healthCheckInProgress: new Map<string, Promise<boolean>>(),
         _writableHostCache: new Map<string, {ip: string, expiresAt: number}>(), // keyed by hostId
         _pendingUserFetches: new Map<string, Promise<User | undefined>>(), // Deduplicate concurrent getUser calls
+        _resourceFetchFailures: new Map<string, { count: number, cooldownUntil: number }>(), // Per-resource (user/node/media) fetch failure cooldown
         _deletedTweetIds: new Set<string>() // Prevent re-insertion after optimistic delete
     }),
     getters: {
@@ -1909,6 +1912,14 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {
+            if (!forceRefresh) {
+                if (this._isFetchCoolingDown(userId)) {
+                    const f = this._resourceFetchFailures.get(userId)!
+                    console.warn(`[_fetchUser] ${userId} in cooldown (${Math.ceil((f.cooldownUntil - Date.now()) / 1000)}s left, ${f.count} failures), skipping`)
+                    return undefined
+                }
+            }
+
             // Try the persistent user cache for faster initial display. Route state
             // is restored from NodePool, whose map is session-scoped like iOS.
             if (!forceRefresh) {
@@ -1939,9 +1950,17 @@ export const useTweetStore = defineStore('tweetStore', {
             // Resolve all provider IPs (up to 2) and race them in parallel.
             // Whichever node responds first with valid user data wins; dead nodes
             // simply lose the race instead of blocking sequentially on a 15s timeout.
-            const providerIps = await this.getProviderIps(userId, v4Only, forceRefresh)
+            let providerIps: string[]
+            try {
+                providerIps = await this.getProviderIps(userId, v4Only, forceRefresh)
+            } catch (e) {
+                console.warn(`[_fetchUser] getProviderIps threw for ${userId}:`, e)
+                this._recordFetchFailure(userId, `user:${userId}`)
+                return undefined
+            }
             if (providerIps.length === 0) {
                 console.warn(`[_fetchUser] No provider IPs for user ${userId}`)
+                this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
 
@@ -1964,6 +1983,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!raceResult) {
                 console.error(`[_fetchUser] All provider IPs failed for user ${userId}`)
                 this._nullifyCachedIp(userId)
+                this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
 
@@ -1973,6 +1993,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
                 console.error(`[_fetchUser] Invalid user object for ${userId}:`, user)
                 this._nullifyCachedIp(userId)
+                this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
 
@@ -1987,6 +2008,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
             user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
             setStoredUser(userId, user)
+            this._clearFetchFailure(userId)
             user.client = createPooledClient(providerIp, this.lapi.connectionPool)
             user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
             delete user.baseUrl
@@ -2223,6 +2245,27 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
 
+        _isFetchCoolingDown(resourceId: string): boolean {
+            const failure = this._resourceFetchFailures.get(resourceId)
+            return !!failure && Date.now() < failure.cooldownUntil
+        },
+
+        _recordFetchFailure(resourceId: string, label: string = resourceId) {
+            const prev = this._resourceFetchFailures.get(resourceId)
+            const count = (prev?.count ?? 0) + 1
+            if (count >= 2) {
+                const backoff = Math.min(USER_FETCH_COOLDOWN_BASE_MS * Math.pow(2, count - 2), USER_FETCH_COOLDOWN_MAX_MS)
+                this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: Date.now() + backoff })
+                console.warn(`[fetchFailure] ${label} failed ${count}x; cooling down for ${backoff / 1000}s`)
+            } else {
+                this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: 0 })
+            }
+        },
+
+        _clearFetchFailure(resourceId: string) {
+            this._resourceFetchFailures.delete(resourceId)
+        },
+
         /**
          * Get the first pair of provider IPs for a given mid without testing them
          * @param mid The mid to get provider IPs for
@@ -2269,6 +2312,11 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async getNodeIpByHostId(hostId: string, refresh: boolean = false): Promise<string | null> {
+            if (!refresh && this._isFetchCoolingDown(hostId)) {
+                const f = this._resourceFetchFailures.get(hostId)!
+                console.warn(`[getNodeIp] ${hostId} in cooldown (${Math.ceil((f.cooldownUntil - Date.now()) / 1000)}s left), skipping`)
+                return null
+            }
             if (!refresh) {
                 const pooledIp = nodePool.getIPForNode(hostId)
                 if (pooledIp) {
@@ -2291,7 +2339,12 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             const ips = await nodePool.resolveIPs(hostId, () => this._resolveNodeIps(hostId), true)
-            return ips.length > 0 ? ips[0] : null
+            if (ips.length > 0) {
+                this._clearFetchFailure(hostId)
+                return ips[0]
+            }
+            this._recordFetchFailure(hostId, `node:${hostId}`)
+            return null
         },
 
         async _resolveNodeIps(hostId: string): Promise<string[]> {
