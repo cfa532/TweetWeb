@@ -40,6 +40,7 @@ let lastErrorTime = 0;
 let loadMoreSpinnerTimer: ReturnType<typeof setTimeout> | null = null;
 const bannerVisible = ref(false);
 let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
+let stopFeedPolling: (() => void) | undefined;
 
 function showBanner() {
     bannerVisible.value = true;
@@ -49,6 +50,17 @@ function showBanner() {
 function hideBanner() {
     bannerVisible.value = false;
     if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
+}
+
+function handleFeedPollingResult(result: { feedCandidateIds: string[]; followingCandidateIds: string[] }) {
+    if (route.name !== 'main') return false;
+    if (isAtTop()) {
+        appendNewToDisplayed(new Set(result.feedCandidateIds), true);
+    } else {
+        tweetStore.addFeedPendingCandidates(result.feedCandidateIds);
+    }
+    tweetStore.addFeedPendingCandidates(result.followingCandidateIds);
+    return true;
 }
 
 function numericTimestamp(value: string | number | undefined): number | null {
@@ -85,6 +97,10 @@ function isNearBottom(threshold = scrollThreshold) {
     const scrollBottom = window.innerHeight + window.scrollY;
     const docHeight = document.documentElement.scrollHeight;
     return docHeight - scrollBottom <= threshold;
+}
+
+function isAtTop(threshold = 8) {
+    return window.scrollY <= threshold;
 }
 
 /** After a page loads, the scroll position does not change — no scroll event fires. Chain loads while the user is still near the bottom. */
@@ -129,9 +145,19 @@ async function loadMoreTweets() {
         startLoadMoreSpinnerDelay();
     }
     loadError.value = '';
+    const loadedPageNumber = pageNumber.value;
+    const feedCandidateIds = new Set<string>();
+    const routePageZeroToBanner = loadedPageNumber === 0 && !isAtTop();
 
     try {
-        const tweetsLoaded = await tweetStore.loadTweets(undefined, pageNumber.value, pageSize);
+        const user = tweetStore.loginUser;
+        if (!user) {
+            router.replace(`/author/${tweetStore.followings[0]}`);
+            return;
+        }
+        const tweetsLoaded = await tweetStore.getTweetFeed(user, loadedPageNumber, pageSize, {
+            candidateIds: feedCandidateIds,
+        });
 
         if (tweetsLoaded && tweetsLoaded > 0) {
             if (tweetsLoaded < pageSize) {
@@ -150,7 +176,11 @@ async function loadMoreTweets() {
         lastErrorTime = Date.now();
     } finally {
         clearLoadMoreSpinnerDelay();
-        appendNewToDisplayed();
+        if (routePageZeroToBanner) {
+            tweetStore.addFeedPendingCandidates(feedCandidateIds);
+        } else {
+            appendNewToDisplayed(feedCandidateIds);
+        }
         isLoading.value = false;
         scheduleLoadMoreIfStillNearBottom();
     }
@@ -179,6 +209,13 @@ onMounted(async () => {
         tweetStore.clearFeedPendingCandidates();
     }
     loadedForUser.value = tweetStore.loginUser.mid
+
+    if (displayedTweets.value.length === 0 && tweetStore.tweets.length === 0) {
+        const cachedFeedTweets = tweetStore.getCachedFeedTweets(tweetStore.loginUser.mid);
+        if (cachedFeedTweets.length > 0) {
+            displayedTweets.value = cachedFeedTweets;
+        }
+    }
 
     // Only load tweets if we don't have any yet or if this is a fresh session
     const shouldLoad = tweetStore.tweets.length === 0 || initialLoad.value;
@@ -212,7 +249,7 @@ onMounted(async () => {
 
     // App-wide poll for new following tweets (3 min). Singleton — also started by
     // UserPage, so the banner stays current on either the main feed or a profile.
-    startFeedPolling();
+    stopFeedPolling = startFeedPolling(180_000, handleFeedPollingResult);
 });
 
 // Kept alive across navigation, so onMounted won't re-run on return. Guard the
@@ -240,6 +277,7 @@ onUnmounted(() => {
     loadMoreObserver?.disconnect();
     clearLoadMoreSpinnerDelay();
     hideBanner();
+    stopFeedPolling?.();
 });
 
 async function loadTweetsWithMinimum() {
@@ -276,11 +314,9 @@ watch(pendingCount, (count, prev) => {
 });
 
 // Prepend newer tweets (and append older ones) from the store into the displayed list.
-// `unshift` is safe here without scroll compensation: every caller either runs at
-// scrollTop == 0 (cold mount / onActivated) or calls window.scrollTo({ top: 0 })
-// immediately after (showPendingTweets). There is no mid-session direct-prepend path,
-// so the viewport is never left pointing at shifted content.
-function appendNewToDisplayed(candidateIds?: Set<string>) {
+// Direct prepends only happen while the feed is already at the top; otherwise page-0
+// refreshes are routed through the banner so the viewport is not shifted.
+function appendNewToDisplayed(candidateIds?: Set<string>, newerOnly = false) {
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
     const topTimestamp = displayedTweets.value.length > 0
         ? (displayedTweets.value[0].timestamp as number)
@@ -292,7 +328,7 @@ function appendNewToDisplayed(candidateIds?: Set<string>) {
             if (candidateIds) {
                 if (!candidateIds.has(e.mid)) return false;
                 const timestamp = numericTimestamp(e.timestamp);
-                if (topTimestamp !== Infinity && (timestamp === null || timestamp <= topTimestamp)) return false;
+                if (newerOnly && topTimestamp !== Infinity && (timestamp === null || timestamp <= topTimestamp)) return false;
             } else if (!tweetStore.feedTweetIds.has(e.mid)) {
                 return false;
             }
@@ -312,7 +348,7 @@ async function showPendingTweets(loadIfEmpty = true) {
     hideBanner();
     const candidateIds = new Set(tweetStore.feedPendingCandidateIds);
     const before = displayedTweets.value.length;
-    appendNewToDisplayed(candidateIds);
+    appendNewToDisplayed(candidateIds, true);
     tweetStore.clearFeedPendingCandidates();
     if (loadIfEmpty && displayedTweets.value.length === before) {
         pageNumber.value = 0;

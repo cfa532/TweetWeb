@@ -9,18 +9,11 @@ import { AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { useScrollRestore } from '@/composables/useScrollRestore';
-import { useFeedPendingCount } from '@/composables/useFeedPendingCount';
 import { startFeedPolling } from '@/composables/useFeedPolling';
 
 const { t } = useI18n();
 
 const tweetStore = useTweetStore();
-const { feedPendingCount, pendingFeedAuthors } = useFeedPendingCount();
-const feedPendingCountLabel = computed(() => feedPendingCount.value > 9 ? '9+' : String(feedPendingCount.value));
-const feedPendingBannerText = computed(() => t(
-    feedPendingCount.value === 1 ? 'tweet.showNewTweetCapped' : 'tweet.showNewTweetsCapped',
-    { count: feedPendingCountLabel.value },
-));
 const bannerVisible = ref(false);
 let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
 function showBanner() {
@@ -32,10 +25,6 @@ function hideBanner() {
     bannerVisible.value = false;
     if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
 }
-watch(feedPendingCount, (count, prev) => {
-    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
-    else if (count === 0) hideBanner();
-});
 const isLoading = ref(false);
 const retryMessage = ref('');
 const pageNumber = ref(0);
@@ -54,6 +43,10 @@ function isNearBottom(threshold = scrollThreshold) {
     const scrollBottom = window.innerHeight + window.scrollY;
     const docHeight = document.documentElement.scrollHeight;
     return docHeight - scrollBottom <= threshold;
+}
+
+function isAtTop(threshold = 8) {
+    return window.scrollY <= threshold;
 }
 
 /** After a page loads, scroll position is unchanged — no scroll event. Chain loads while still near the bottom. */
@@ -258,6 +251,9 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 
     let currentTimeoutId: number | null = null;
     let loadSucceeded = false;
+    const firstPageNumber = pageNumber.value;
+    const startedAtTop = isAtTop();
+    const loadedCandidateIds = new Set<string>();
 
     // Start loading pinned tweets in parallel with regular tweets so the pinned
     // video (shown first on the page) gets priority bandwidth.
@@ -275,7 +271,11 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
             const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
 
             let hasTimedOut = false;
-            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize).then(result => {
+            const pageCandidateIds = new Set<string>();
+            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize, {
+                candidateIds: pageCandidateIds,
+            }).then(result => {
+                pageCandidateIds.forEach(id => loadedCandidateIds.add(id));
                 // Clear timeout immediately when load succeeds
                 if (currentTimeoutId && !hasTimedOut) {
                     clearTimeout(currentTimeoutId);
@@ -362,7 +362,9 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
                 displayedTweets.value = filtered;
             }
         }
-        appendNewToDisplayed();
+        if (firstPageNumber !== 0 || startedAtTop) {
+            appendNewToDisplayed(loadedCandidateIds);
+        }
         isLoading.value = false;
         initialLoad.value = false;
         scheduleLoadMoreIfStillNearBottom();
@@ -375,9 +377,14 @@ async function loadMoreTweets() {
 
     isLoading.value = true;
     loadError.value = '';
+    const loadedPageNumber = pageNumber.value;
+    const pageCandidateIds = new Set<string>();
+    const routePageZeroToBanner = loadedPageNumber === 0 && !isAtTop();
 
     try {
-        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
+        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, loadedPageNumber, pageSize, {
+            candidateIds: pageCandidateIds,
+        });
 
         if (tweetsLoaded && tweetsLoaded > 0) {
             // A full page means there may be another page; only a short page is the end.
@@ -394,7 +401,9 @@ async function loadMoreTweets() {
         loadError.value = t('tweet.loadMoreError');
         lastErrorTime = Date.now();
     } finally {
-        appendNewToDisplayed();
+        if (!routePageZeroToBanner) {
+            appendNewToDisplayed(pageCandidateIds);
+        }
         isLoading.value = false;
         scheduleLoadMoreIfStillNearBottom();
     }
@@ -440,6 +449,18 @@ const pendingCount = computed(() => {
         return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
     }).length;
 });
+const profilePendingCountLabel = computed(() => pendingCount.value > 9 ? '9+' : String(pendingCount.value));
+const profilePendingBannerText = computed(() => t(
+    pendingCount.value === 1 ? 'tweet.showNewTweetCapped' : 'tweet.showNewTweetsCapped',
+    { count: profilePendingCountLabel.value },
+));
+function handlePendingBannerClick() {
+    showPendingTweets();
+}
+watch(pendingCount, (count, prev) => {
+    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
+    else if (count === 0) hideBanner();
+});
 // The authorId this profile has already loaded. Survives the route hop through
 // /media-viewer (where authorId becomes undefined), unlike the watch's
 // oldValue — so returning to the same user doesn't re-fetch the whole profile.
@@ -476,7 +497,7 @@ watch(
     { immediate: true }
 );
 
-function appendNewToDisplayed() {
+function appendNewToDisplayed(candidateIds?: Set<string>) {
     const displayedMap = new Map(displayedTweets.value.map(t => [t.mid, t]));
 
     // Update only scalar fields that may change (e.g. likeCount, content)
@@ -506,6 +527,7 @@ function appendNewToDisplayed() {
         .filter(e => {
             if (existingIds.has(e.mid)) return false;
             if (pinnedIds.has(e.mid)) return false;
+            if (candidateIds && !candidateIds.has(e.mid)) return false;
             const isAuthorMatch = e.isPrivate
                 ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
                 : e.authorId === authorId.value;
@@ -522,6 +544,7 @@ function appendNewToDisplayed() {
 }
 
 function showPendingTweets() {
+    hideBanner();
     appendNewToDisplayed();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -625,18 +648,12 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <hr v-if='pinnedTweets?.length!>0' />
             <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
             <Transition name="tweet-banner">
-                <div v-if="feedPendingCount > 0 && bannerVisible && tweetStore.loginUser" class="new-tweets-banner"
-                     @click="hideBanner(); router.push({ path: '/', query: { showNew: '1' } })">
+                <div v-if="pendingCount > 0 && bannerVisible && tweetStore.loginUser" class="new-tweets-banner"
+                     @click="handlePendingBannerClick">
                     <svg class="banner-arrow" viewBox="0 0 12 14" width="11" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M6 13V1M6 1L1 6M6 1L11 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
-                    <div v-if="pendingFeedAuthors.length > 0" class="banner-avatars">
-                        <img v-for="(author, i) in pendingFeedAuthors" :key="author.mid"
-                             :src="author.avatar"
-                             class="banner-avatar"
-                             :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
-                    </div>
-                    <span class="banner-text">{{ feedPendingBannerText }}</span>
+                    <span class="banner-text">{{ profilePendingBannerText }}</span>
                 </div>
             </Transition>
             <div :class="{ 'feed-restoring': isRestoringFeed }">

@@ -741,7 +741,8 @@ export const useTweetStore = defineStore('tweetStore', {
         async loadTweetsByUser(
             userId: string,
             pageNumber: number = 0,
-            pageSize: number = 10
+            pageSize: number = 10,
+            options: { candidateIds?: Set<string> } = {}
         ): Promise<number | null> {
             const params = {
                 aid: this.appId,
@@ -837,6 +838,10 @@ export const useTweetStore = defineStore('tweetStore', {
                                     console.error("Error processing tweet:", tweet.mid, error)
                                 }
                             }
+                            const storedTweet = this.tweetIndex.get(tweet.mid)
+                            if (storedTweet && (!storedTweet.originalTweetId || storedTweet.originalTweet)) {
+                                options.candidateIds?.add(storedTweet.mid)
+                            }
                         }
                     }
 
@@ -876,6 +881,65 @@ export const useTweetStore = defineStore('tweetStore', {
                 setLocalCache(`tweets_${userId}`, userTweets)
             } catch (e) {
                 console.warn("Failed to cache user tweets to localStorage:", e)
+            }
+        },
+
+        cacheFeedTweets(userId?: string) {
+            const cacheUserId = userId ?? this.loginUser?.mid
+            if (!cacheUserId) return
+            try {
+                const feedTweets = this.tweets
+                    .filter(t => this.feedTweetIds.has(t.mid))
+                    .map(t => tweetForSessionStorage(t))
+                    .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+                setLocalCache(`feed_tweets_${cacheUserId}`, feedTweets)
+            } catch (e) {
+                console.warn("Failed to cache feed tweets to localStorage:", e)
+            }
+        },
+
+        getCachedFeedTweets(userId: string): Tweet[] {
+            try {
+                const tweets = getLocalCache<Tweet[]>(`feed_tweets_${userId}`)
+                if (!tweets) return []
+                const result: Tweet[] = []
+                for (const t of tweets) {
+                    if (this._deletedTweetIds.has(t.mid)) continue
+                    if (t.author) {
+                        delete (t.author as any).providerIp
+                        if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
+                            t.provider = t.author.providerIp
+                        }
+                        const mapRef = this.users.get(t.authorId)
+                        if (mapRef) {
+                            t.author = mapRef
+                        } else {
+                            this.users.set(t.authorId, t.author)
+                        }
+                    }
+                    if (t.originalTweet?.author) {
+                        delete (t.originalTweet.author as any).providerIp
+                        if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
+                            t.originalTweet.provider = t.originalTweet.author.providerIp
+                        }
+                    }
+                    t.comments = []
+
+                    const existing = this.tweetIndex.get(t.mid)
+                    if (existing) {
+                        this.feedTweetIds.add(existing.mid)
+                        result.push(existing)
+                    } else {
+                        this.tweets.push(t)
+                        this.tweetIndex.set(t.mid, t)
+                        this.feedTweetIds.add(t.mid)
+                        result.push(t)
+                    }
+                }
+                return result
+            } catch (e) {
+                console.warn("Failed to load cached feed tweets:", e)
+                return []
             }
         },
 
@@ -1274,13 +1338,17 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (options.candidateIds) {
                     candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
+                this.cacheFeedTweets(user.mid)
 
-                // If this is the first page (pageNumber === 0), also update following tweets in background
-                if (pageNumber === 0 && options.updateFollowing !== false) {
-                    // Call updateFollowingTweets in background without blocking the main flow
-                    this.updateFollowingTweets().catch(error => {
+                if (options.updateFollowing !== false) {
+                    this.updateFollowingTweets({
+                        showLoginError: false,
+                        pageNumber,
+                        pageSize
+                    }).then(candidateIds => {
+                        this.addFeedPendingCandidates(candidateIds)
+                    }).catch(error => {
                         console.error("Background updateFollowingTweets failed:", error)
-                        // Don't throw the error as this is a background operation
                     })
                 }
 
@@ -1347,6 +1415,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (options.candidateIds) {
                     candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
+                this.cacheFeedTweets(this.loginUser.mid)
 
                 console.log(`Successfully updated following tweets: ${tweetsData?.length || 0} tweets processed`)
                 return candidateIds
@@ -1396,11 +1465,11 @@ export const useTweetStore = defineStore('tweetStore', {
             return candidateIds
         },
 
-        async refreshFeedPendingCandidates(pageSize: number = 10): Promise<void> {
+        async refreshFeedCandidates(pageSize: number = 10): Promise<{ feedCandidateIds: string[]; followingCandidateIds: string[] }> {
             const user = this.loginUser
             if (!user) {
                 this.clearFeedPendingCandidates()
-                return
+                return { feedCandidateIds: [], followingCandidateIds: [] }
             }
             const userId = user.mid
 
@@ -1410,26 +1479,46 @@ export const useTweetStore = defineStore('tweetStore', {
                 candidateIds
             })
             if (this.loginUser?.mid !== userId) {
-                return
+                return { feedCandidateIds: [], followingCandidateIds: [] }
             }
             const feedCandidateCount = candidateIds.size
             const followingCandidateIds = await this.updateFollowingTweets({
-                candidateIds,
                 showLoginError: false,
                 pageNumber: 0,
                 pageSize
             })
             if (this.loginUser?.mid !== userId) {
-                return
+                return { feedCandidateIds: [], followingCandidateIds: [] }
             }
-            const latestCandidateIds = this.tweets
-                .filter(tweet => candidateIds.has(tweet.mid))
+
+            const sortCandidateIds = (ids: Set<string>) => this.tweets
+                .filter(tweet => ids.has(tweet.mid))
                 .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
                 .map(tweet => tweet.mid)
 
-            this.feedPendingCandidateIds.clear()
-            latestCandidateIds.forEach(id => this.feedPendingCandidateIds.add(id))
+            const sortedFeedCandidateIds = sortCandidateIds(candidateIds)
+            const sortedFollowingCandidateIds = sortCandidateIds(new Set(followingCandidateIds))
             console.log(`[feedPending] Banner check candidates: get_tweet_feed=${feedCandidateCount}, update_following_tweets=${followingCandidateIds.length}`)
+            return {
+                feedCandidateIds: sortedFeedCandidateIds,
+                followingCandidateIds: sortedFollowingCandidateIds
+            }
+        },
+
+        async refreshFeedPendingCandidates(pageSize: number = 10): Promise<void> {
+            const { feedCandidateIds, followingCandidateIds } = await this.refreshFeedCandidates(pageSize)
+            this.replaceFeedPendingCandidates([...feedCandidateIds, ...followingCandidateIds])
+        },
+
+        addFeedPendingCandidates(candidateIds: Iterable<string>) {
+            for (const id of candidateIds) {
+                this.feedPendingCandidateIds.add(id)
+            }
+        },
+
+        replaceFeedPendingCandidates(candidateIds: Iterable<string>) {
+            this.feedPendingCandidateIds.clear()
+            this.addFeedPendingCandidates(candidateIds)
         },
 
         clearFeedPendingCandidates() {
