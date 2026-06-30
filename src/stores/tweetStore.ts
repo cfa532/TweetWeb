@@ -4131,7 +4131,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const writableIp = await this.resolveWritableHostIp(user)
             const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("set_author_core_data", {
@@ -4185,7 +4185,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const writableIp = await this.resolveWritableHostIp(user)
             const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("set_author_core_data", {
@@ -4230,7 +4230,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const writableIp = await this.resolveWritableHostIp(user)
             const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let confirmedAvatar: string = cid
             try {
                 const ret = await writeClient.RunMApp("set_user_avatar", {
@@ -4292,7 +4292,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const writableIp = await this.resolveWritableHostIp(user)
             const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("delete_account", {
