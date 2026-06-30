@@ -48,6 +48,7 @@
     "loginSuccessful": "ログインに成功しました！",
     "registrationSuccessful": "登録が完了しました。ログインまで数分お待ちください。",
     "profileUpdated": "プロフィールが更新されました。",
+    "hostIdUpdated": "ホストIDが変更されました。再度ログインしてください。",
     "accountDeleted": "アカウントが削除されました。",
     "usernamePasswordRequired": "ユーザー名とパスワードが必要です。",
     "loginFailed": "ログインに失敗しました。認証情報を確認してください。",

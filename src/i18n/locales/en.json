@@ -48,6 +48,7 @@
     "loginSuccessful": "Login successful!",
     "registrationSuccessful": "Registration successful. Please wait a few minutes before logging in.",
     "profileUpdated": "Profile updated successfully.",
+    "hostIdUpdated": "Host ID changed. Please log in again.",
     "accountDeleted": "Account deleted.",
     "usernamePasswordRequired": "Username and password are required.",
     "loginFailed": "Login failed. Please check your credentials.",

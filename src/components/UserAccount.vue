@@ -197,20 +197,33 @@ async function handleUpdateProfile() {
         }
     }
 
+    const originalHostId = user.value?.hostIds?.[0] || '';
+    const newHostId = editHostId.value.trim();
+    const hostIdChanged = newHostId.length === MIMEI_ID_LENGTH && newHostId !== originalHostId;
+
     isLoading.value = true;
     try {
         await tweetStore.updateProfile({
             name: editName.value.trim(),
             profile: editProfile.value.trim(),
             password: editPassword.value || undefined,
-            hostId: editHostId.value.trim() || undefined,
+            hostId: newHostId || undefined,
             cloudDrivePort: port ? parseInt(port, 10) : undefined,
             domainToShare: editDomainToShare.value.trim() || undefined,
         });
-        alertStore.success(t('auth.profileUpdated'));
-        editPassword.value = '';
-        editConfirmPassword.value = '';
-        activeView.value = 'profile';
+        if (hostIdChanged) {
+            alertStore.success(t('auth.hostIdUpdated'));
+            tweetStore.logout();
+            activeView.value = 'login';
+            loginUsername.value = '';
+            loginPassword.value = '';
+            router.push('/');
+        } else {
+            alertStore.success(t('auth.profileUpdated'));
+            editPassword.value = '';
+            editConfirmPassword.value = '';
+            activeView.value = 'profile';
+        }
     } catch (err: any) {
         errorMessage.value = err?.message || t('auth.updateFailed');
     } finally {
