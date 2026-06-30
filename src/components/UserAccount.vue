@@ -225,7 +225,18 @@ async function handleUpdateProfile() {
             activeView.value = 'profile';
         }
     } catch (err: any) {
-        errorMessage.value = err?.message || t('auth.updateFailed');
+        // When changing hostId the server migrates to the new host after saving, which
+        // can cause a timeout even though the write succeeded. Treat that as success.
+        if (hostIdChanged && err?.message?.includes('timed out')) {
+            alertStore.success(t('auth.hostIdUpdated'));
+            tweetStore.logout();
+            activeView.value = 'login';
+            loginUsername.value = '';
+            loginPassword.value = '';
+            router.push('/');
+        } else {
+            errorMessage.value = err?.message || t('auth.updateFailed');
+        }
     } finally {
         isLoading.value = false;
     }
