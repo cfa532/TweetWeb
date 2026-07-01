@@ -4253,9 +4253,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 writeClient.timeout = originalTimeout
             }
 
-            // Avatar display uses user.providerIp (read host), not the writable host.
-            const displayIp = user.providerIp || user.writableHostIp
-            const avatar = this.getMediaUrl(confirmedAvatar, `http://${displayIp}`)
+            // Use writableIp for display: the CID was just uploaded there and is
+            // guaranteed to exist. providerIp (read host) may not have replicated it yet,
+            // which would cause a 404 and permanently break the avatar in AppHeader.
+            const avatar = this.getMediaUrl(confirmedAvatar, `http://${writableIp}`)
             this._mergeUserIntoCachedRefs(user.mid, { avatar })
 
             return confirmedAvatar
