@@ -393,14 +393,21 @@ function onAvatarError(event: Event) {
     tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
 }
 
+let avatarErrorRetries = 0
 watch(() => tweetStore.loginUser?.avatar, () => {
     isAccountAvatarBroken.value = false
+    avatarErrorRetries = 0
 })
 
-function onAccountAvatarError() {
+async function onAccountAvatarError() {
     isAccountAvatarBroken.value = true
     const id = tweetStore.loginUser?.mid
-    if (id) tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
+    if (!id || avatarErrorRetries >= 1) return
+    avatarErrorRetries++
+    await tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
+    // Force a reload attempt even when the URL hasn't changed (e.g. the writable
+    // host background resolution in login() may now have fixed it).
+    isAccountAvatarBroken.value = false
 }
 </script>
 

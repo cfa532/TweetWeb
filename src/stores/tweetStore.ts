@@ -3010,6 +3010,20 @@ export const useTweetStore = defineStore('tweetStore', {
                         user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
                         this._user = user
                         this.addFollowing(userId)
+
+                        // Resolve the writable host in the background and fix the avatar URL.
+                        // The avatar CID was uploaded to the writable host; the providerIp used
+                        // during _fetchUser may be a different replica that hasn't replicated it.
+                        // When this resolves, _mergeUserIntoCachedRefs triggers the AppHeader
+                        // watcher which resets isAccountAvatarBroken and retries the image load.
+                        this.resolveWritableHostIp(user).then(writableIp => {
+                            if (!writableIp || this._user?.mid !== user.mid) return
+                            const current = this._user?.avatar
+                            if (!current) return
+                            const fixed = this.normalizeAvatarUrl(current, `http://${writableIp}`)
+                            if (fixed !== current) this._mergeUserIntoCachedRefs(user.mid, { avatar: fixed })
+                        }).catch(() => {})
+
                         console.log(`[login] Login flow completed successfully for ${username}`);
                         useAlertStore().success(i18n.global.t("auth.loginSuccessful"))
                         return user
