@@ -21,6 +21,7 @@ const isLoading = ref(false);
 const errorMessage = ref<string | null>(null);
 const showDeleteConfirm = ref(false);
 const showLogoutConfirm = ref(false);
+const showHostIdChangeConfirm = ref(false);
 const showAvatarCropper = ref(false);
 const isUploadingAvatar = ref(false);
 const isGeneratingAgentToken = ref(false);
@@ -177,7 +178,7 @@ async function handleRegister() {
 }
 
 // ==================== UPDATE PROFILE ====================
-async function handleUpdateProfile() {
+function handleUpdateProfile() {
     clearError();
 
     if (editPassword.value && editPassword.value !== editConfirmPassword.value) {
@@ -200,6 +201,19 @@ async function handleUpdateProfile() {
     const originalHostId = user.value?.hostIds?.[0] || '';
     const newHostId = editHostId.value.trim();
     const hostIdChanged = newHostId.length === MIMEI_ID_LENGTH && newHostId !== originalHostId;
+
+    if (hostIdChanged) {
+        showHostIdChangeConfirm.value = true;
+        return;
+    }
+
+    doUpdateProfile(false);
+}
+
+async function doUpdateProfile(hostIdChanged: boolean) {
+    showHostIdChangeConfirm.value = false;
+    const newHostId = editHostId.value.trim();
+    const port = editCloudDrivePort.value.trim();
 
     isLoading.value = true;
     try {
@@ -631,6 +645,21 @@ function goBack() {
                     <button class="btn btn-danger flex-fill" @click="handleDeleteAccount" :disabled="isLoading">
                         <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
                         {{ $t('common.delete') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Host ID Change Confirmation -->
+        <div v-if="showHostIdChangeConfirm" class="confirm-overlay" @click.self="showHostIdChangeConfirm = false">
+            <div class="confirm-dialog">
+                <h6 class="text-warning mb-2">{{ $t('auth.hostId') }}</h6>
+                <p class="mb-3">{{ $t('auth.hostIdChangeConfirm') }}</p>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-secondary flex-fill" @click="showHostIdChangeConfirm = false">{{ $t('common.cancel') }}</button>
+                    <button class="btn btn-warning flex-fill" @click="doUpdateProfile(true)" :disabled="isLoading">
+                        <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
+                        {{ $t('common.ok') }}
                     </button>
                 </div>
             </div>

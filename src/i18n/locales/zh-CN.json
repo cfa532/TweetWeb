@@ -49,6 +49,7 @@
     "registrationSuccessful": "注册成功。请等待几分钟后再登录。",
     "profileUpdated": "个人资料更新成功。",
     "hostIdUpdated": "主机 ID 已更改，请重新登录。",
+    "hostIdChangeConfirm": "更改主机 ID 将保存您的资料并自动退出登录，是否继续？",
     "accountDeleted": "账户已删除。",
     "usernamePasswordRequired": "用户名和密码是必需的。",
     "loginFailed": "登录失败。请检查您的凭据。",

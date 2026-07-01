@@ -49,6 +49,7 @@
     "registrationSuccessful": "登録が完了しました。ログインまで数分お待ちください。",
     "profileUpdated": "プロフィールが更新されました。",
     "hostIdUpdated": "ホストIDが変更されました。再度ログインしてください。",
+    "hostIdChangeConfirm": "ホストIDを変更するとプロフィールが保存され、自動的にサインアウトされます。続行しますか？",
     "accountDeleted": "アカウントが削除されました。",
     "usernamePasswordRequired": "ユーザー名とパスワードが必要です。",
     "loginFailed": "ログインに失敗しました。認証情報を確認してください。",
