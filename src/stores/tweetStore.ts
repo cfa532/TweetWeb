@@ -4111,6 +4111,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 profile: updates.profile ?? user.profile ?? "",
                 timestamp: typeof user.timestamp === 'number' ? user.timestamp : Date.now(),
                 cloudDrivePort: updates.cloudDrivePort ?? user.cloudDrivePort ?? 0,
+                // Include cached stats/avatar so the server doesn't need a get_user_core_data
+                // round-trip to merge them (avoids a redundant second set_author_core_data call).
+                avatar: user.avatar ?? "",
+                followingCount: user.followingCount ?? 0,
+                followersCount: user.followersCount ?? 0,
+                tweetCount: user.tweetCount ?? 0,
+                bookmarksCount: user.bookmarksCount ?? 0,
+                favoritesCount: user.favoritesCount ?? 0,
+                commentsCount: user.commentsCount ?? 0,
+                lastLogin: user.lastLogin ?? 0,
             }
             if (updates.password) {
                 userObj.password = updates.password
