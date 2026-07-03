@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { useAlertStore } from '@/stores/alert.store';
 import { DownloadPrompt, DownloadModal } from '@/components';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 
 const { t } = useI18n()
 const router = useRouter()
@@ -34,7 +34,7 @@ const avatarUrl = ref(import.meta.env.VITE_APP_LOGO)
 const user = ref<User>()
 const isAccountAvatarBroken = ref(false)
 const accountAvatarSrc = computed(() =>
-    isLoggedIn.value && !isAccountAvatarBroken.value ? tweetStore.loginUser?.avatar : undefined
+    isLoggedIn.value && !isAccountAvatarBroken.value ? avatarSrc(tweetStore.loginUser?.avatar) : undefined
 )
 
 /** Bold name in profile header — use username when display name is missing (same as ItemHeader). */
@@ -416,7 +416,7 @@ async function onAccountAvatarError() {
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img :src="user ? user.avatar : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
+                    <img :src="user ? avatarSrc(user.avatar) : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
                         class="rounded-circle"
                         :title="user ? `ID: ${user.mid}\nBase URL: ${user.providerIp ?? 'N/A'}\nHost ID: ${user.hostIds?.[0] ?? 'N/A'}` : undefined" />
                 </div>

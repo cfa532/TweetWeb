@@ -2,7 +2,7 @@
 import { onMounted, ref, watch, computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
 import { useI18n } from 'vue-i18n';
@@ -127,7 +127,7 @@ async function onToggleFollow(event: Event) {
   <div v-else-if="user" class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="user.avatar" :title="avatarTooltip" alt="User Avatar" class="rounded-circle">
+      <img :src="avatarSrc(user.avatar)" :title="avatarTooltip" alt="User Avatar" class="rounded-circle">
     </div>
 
     <!-- User Info -->

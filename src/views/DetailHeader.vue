@@ -2,7 +2,7 @@
 import type { PropType } from 'vue';
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 import { useTweetStore } from '@/stores';
 
 const props = defineProps({
@@ -199,7 +199,7 @@ watch(
     <div class='d-flex justify-content-between align-items-center' style='width: 100%'>
       <div class='d-flex align-items-center'>
         <div class='avatar me-2'>
-          <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
+          <img :src='avatarSrc(author.avatar)' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
         </div>
         <div class='user-info flex-grow-1'>
           <div v-if='isRetweet' class='label text-muted small'>

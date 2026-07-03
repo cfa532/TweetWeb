@@ -329,6 +329,17 @@ async function copyAgentToken() {
 // Local blob URL for immediate avatar display after crop
 const localAvatarUrl = ref<string | null>(null);
 
+/** Falls back to the default logo on load failure. Guarded so a default logo
+ *  that itself fails to load (dead network, blocked host) doesn't re-trigger
+ *  @error in an infinite reload loop (setting img.src to its current value
+ *  still makes the browser re-fetch it). */
+function onProfileAvatarError(event: Event) {
+    const img = event.target as HTMLImageElement | null;
+    if (!img || img.dataset.fallback === '1') return;
+    img.dataset.fallback = '1';
+    img.src = defaultAvatar;
+}
+
 async function handleAvatarCrop(blob: Blob) {
     showAvatarCropper.value = false;
     isUploadingAvatar.value = true;
@@ -445,7 +456,7 @@ function goBack() {
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
                     <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                        alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
+                        alt="Avatar" @error="onProfileAvatarError" />
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
                     <span class="text-muted">@{{ user?.username }}</span>
                 </div>
@@ -519,7 +530,7 @@ function goBack() {
                 <div class="text-center mb-3">
                     <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
                         <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                            alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
+                            alt="Avatar" @error="onProfileAvatarError" />
                         <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
                             <span class="spinner-border spinner-border-sm text-white"></span>
                         </div>

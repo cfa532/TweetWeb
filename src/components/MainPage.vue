@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { AppHeader } from '@/views';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
-import { isWeChatBrowser } from '@/lib';
+import { isWeChatBrowser, avatarSrc } from '@/lib';
 import { useScrollRestore } from '@/composables/useScrollRestore';
 import { useFeedPendingCount } from '@/composables/useFeedPendingCount';
 import { startFeedPolling } from '@/composables/useFeedPolling';
@@ -383,7 +383,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
                 </svg>
                 <div v-if="pendingAuthors.length > 0" class="banner-avatars">
                     <img v-for="(author, i) in pendingAuthors" :key="author.mid"
-                         :src="author.avatar"
+                         :src="avatarSrc(author.avatar)"
                          class="banner-avatar"
                          :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
                 </div>

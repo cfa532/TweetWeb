@@ -25,6 +25,14 @@ export function normalizeMediaType(type: string | undefined): string {
 }
 
 /**
+ * Resolves a user's avatar to a displayable URL, falling back to the
+ * app's default logo when the avatar is missing/blank.
+ */
+export function avatarSrc(avatar: string | undefined | null): string {
+    return avatar && avatar.trim() !== '' ? avatar : import.meta.env.VITE_APP_LOGO;
+}
+
+/**
  * Checks if a media type is a video (includes both regular and HLS video)
  * @param type The media type to check
  * @returns True if the type is any kind of video
