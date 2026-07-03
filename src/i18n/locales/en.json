@@ -49,6 +49,8 @@
     "registrationSuccessful": "Registration successful. Please wait a few minutes before logging in.",
     "profileUpdated": "Profile updated successfully.",
     "hostIdUpdated": "Host ID changed. Please log in again.",
+    "hostIdUpdatedLoginNewHost": "Host ID updated. Please log in on the new host.",
+    "hostIdUpdateTimedOutVerify": "Host ID update timed out. Log in again to verify the result.",
     "hostIdChangeConfirm": "Changing the Host ID will save your profile and sign you out automatically. Continue?",
     "accountDeleted": "Account deleted.",
     "usernamePasswordRequired": "Username and password are required.",

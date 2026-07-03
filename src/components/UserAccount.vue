@@ -210,6 +210,24 @@ function handleUpdateProfile() {
     doUpdateProfile(false);
 }
 
+function isTimeoutError(err: any): boolean {
+    const message = String(err?.message ?? err ?? '').toLowerCase();
+    return message.includes('timed out') || message.includes('timeout');
+}
+
+function finishHostIdChange(message: string, type: 'success' | 'warning') {
+    if (type === 'warning') {
+        alertStore.warning(message);
+    } else {
+        alertStore.success(message);
+    }
+    tweetStore.logout();
+    activeView.value = 'login';
+    loginUsername.value = '';
+    loginPassword.value = '';
+    router.push('/');
+}
+
 async function doUpdateProfile(hostIdChanged: boolean) {
     showHostIdChangeConfirm.value = false;
     const newHostId = editHostId.value.trim();
@@ -226,12 +244,7 @@ async function doUpdateProfile(hostIdChanged: boolean) {
             domainToShare: editDomainToShare.value.trim() || undefined,
         });
         if (hostIdChanged) {
-            alertStore.success(t('auth.hostIdUpdated'));
-            tweetStore.logout();
-            activeView.value = 'login';
-            loginUsername.value = '';
-            loginPassword.value = '';
-            router.push('/');
+            finishHostIdChange(t('auth.hostIdUpdatedLoginNewHost'), 'success');
         } else {
             alertStore.success(t('auth.profileUpdated'));
             editPassword.value = '';
@@ -239,15 +252,8 @@ async function doUpdateProfile(hostIdChanged: boolean) {
             activeView.value = 'profile';
         }
     } catch (err: any) {
-        // When changing hostId the server migrates to the new host after saving, which
-        // can cause a timeout even though the write succeeded. Treat that as success.
-        if (hostIdChanged && err?.message?.includes('timed out')) {
-            alertStore.success(t('auth.hostIdUpdated'));
-            tweetStore.logout();
-            activeView.value = 'login';
-            loginUsername.value = '';
-            loginPassword.value = '';
-            router.push('/');
+        if (hostIdChanged && isTimeoutError(err)) {
+            finishHostIdChange(t('auth.hostIdUpdateTimedOutVerify'), 'warning');
         } else {
             errorMessage.value = err?.message || t('auth.updateFailed');
         }

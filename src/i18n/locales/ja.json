@@ -49,6 +49,8 @@
     "registrationSuccessful": "登録が完了しました。ログインまで数分お待ちください。",
     "profileUpdated": "プロフィールが更新されました。",
     "hostIdUpdated": "ホストIDが変更されました。再度ログインしてください。",
+    "hostIdUpdatedLoginNewHost": "ホストIDが更新されました。新しいホストにログインしてください。",
+    "hostIdUpdateTimedOutVerify": "ホストIDの更新がタイムアウトしました。再度ログインして結果を確認してください。",
     "hostIdChangeConfirm": "ホストIDを変更するとプロフィールが保存され、自動的にサインアウトされます。続行しますか？",
     "accountDeleted": "アカウントが削除されました。",
     "usernamePasswordRequired": "ユーザー名とパスワードが必要です。",
