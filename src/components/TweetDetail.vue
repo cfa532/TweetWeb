@@ -116,9 +116,12 @@ onMounted(async () => {
         loadDetail()
     }
 
-    // Show download button after 2 seconds
+    // Show download button after 2 seconds, hide it again 30 seconds later
     setTimeout(() => {
         showDownloadPrompt.value = true
+        setTimeout(() => {
+            showDownloadPrompt.value = false
+        }, 30000)
     }, 2000)
 });
 async function loadDetail() {
