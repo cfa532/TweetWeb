@@ -21,7 +21,6 @@ const netdisk = require('./netdisk');
 const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
 const agentRouter = require('./agentRoutes');
-const commentRouter = require('./commentRoutes');
 const createShareRoutes = require('./shareRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
@@ -64,6 +63,8 @@ const execAsync = promisify(exec);
 
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
+const hostname = os.hostname().split('.')[0].toLowerCase();
+const commentRoutesEnabled = hostname === 'minipc'; // ksbox SSH alias
 
 // Leither connection management
 let leitherConnections = new Map();
@@ -447,8 +448,9 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
 
-  // Skip authorization for the comment endpoint (uses server-side X cookies)
-  if (req.path === '/comment') {
+  // Only ksbox runs the comment endpoint because it depends on local X cookies
+  // and Playwright browser state.
+  if (commentRoutesEnabled && req.path === '/comment') {
     return next();
   }
   
@@ -651,7 +653,13 @@ app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
 app.use('/', zipRouter);         // ZIP processing routes
 app.use('/api/agent', agentRouter()); // Agent proxy routes
-app.use('/', commentRouter);    // X (Twitter) comment proxy
+
+if (commentRoutesEnabled) {
+  const commentRouter = require('./commentRoutes');
+  app.use('/', commentRouter);    // X (Twitter) comment proxy
+} else {
+  console.log(`[COMMENT] Disabled on host ${hostname}; only ksbox/minipc loads commentRoutes`);
+}
 
 // Health check endpoint (no authorization required)
 app.get('/health', (req, res) => {
