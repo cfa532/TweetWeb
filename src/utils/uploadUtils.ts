@@ -3,7 +3,14 @@ import { useAlertStore } from '@/stores/alert.store';
 export interface VideoUploadResponse {
   success: boolean;
   cid: string;
+  mediaType?: 'video' | 'hls_video';
+  size?: number;
+  aspectRatio?: number;
   message?: string;
+}
+
+function formatFileSizeMB(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
 }
 
 /**
@@ -84,7 +91,7 @@ export async function normalizeVideo(
   const normalizeVideoUrl = `http://${url.hostname}:${cloudDrivePort}/normalize-video`;
   const statusUrl = `http://${url.hostname}:${cloudDrivePort}/normalize-video/status`;
   
-  console.log('Normalizing video:', normalizeVideoUrl, 'File size:', file.size);
+  console.log(`[CLIENT-NORMALIZE] route=/normalize-video file="${file.name}" size=${formatFileSizeMB(file.size)} type="${file.type || 'unknown'}" baseUrl=${baseUrl} endpoint=${normalizeVideoUrl} statusEndpoint=${statusUrl}`);
   
   // Create multipart form data (same as uploadVideo)
   const formData = new FormData();
@@ -99,7 +106,7 @@ export async function normalizeVideo(
   
   try {
     // Step 1: Start the upload and get job ID with progress tracking
-    console.log(`[NORMALIZE] Sending upload request...`);
+    console.log(`[CLIENT-NORMALIZE] Sending upload request at ${new Date().toISOString()}`);
     
     // Use XMLHttpRequest for upload progress tracking (same as uploadVideo)
     const uploadResult = await new Promise<any>((resolve, reject) => {
@@ -109,11 +116,13 @@ export async function normalizeVideo(
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && onProgress) {
           const uploadProgress = Math.max(5, Math.round(5 + ((event.loaded / event.total) * 35))); // 5-40% for upload
+          console.log(`[CLIENT-NORMALIZE] uploadProgress=${uploadProgress}% loaded=${formatFileSizeMB(event.loaded)} total=${formatFileSizeMB(event.total)}`);
           onProgress(uploadProgress);
         }
       });
       
       xhr.addEventListener('load', () => {
+        console.log(`[CLIENT-NORMALIZE] uploadResponse status=${xhr.status} ${xhr.statusText} body="${xhr.responseText.slice(0, 500)}"`);
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const result = JSON.parse(xhr.responseText);
@@ -127,10 +136,12 @@ export async function normalizeVideo(
       });
       
       xhr.addEventListener('error', () => {
+        console.error(`[CLIENT-NORMALIZE] upload network error for endpoint=${normalizeVideoUrl}`);
         reject(new Error('Network error during upload'));
       });
       
       xhr.addEventListener('timeout', () => {
+        console.error(`[CLIENT-NORMALIZE] upload timeout after ${xhr.timeout}ms for endpoint=${normalizeVideoUrl}`);
         reject(new Error('Upload timeout'));
       });
       
@@ -145,7 +156,7 @@ export async function normalizeVideo(
       throw new Error('No jobId returned from server');
     }
     
-    console.log(`[NORMALIZE] Upload completed, job ID: ${jobId}`);
+    console.log(`[CLIENT-NORMALIZE] Upload accepted jobId=${jobId} statusUrl=${statusUrl}/${jobId}`);
     
     // Show upload completion progress (40% of total progress bar)
     if (onProgress) {
@@ -154,15 +165,17 @@ export async function normalizeVideo(
     
     // Step 2: Poll for completion
     return new Promise<string>((resolve, reject) => {
+      let pollCount = 0;
       const pollInterval = setInterval(async () => {
         try {
+          pollCount += 1;
           const statusResponse = await fetch(`${statusUrl}/${jobId}`);
           if (!statusResponse.ok) {
             throw new Error(`Status check failed: ${statusResponse.status}`);
           }
           
           const statusResult = await statusResponse.json();
-          console.log('[NORMALIZE] Job status:', statusResult.status, 'Progress:', statusResult.progress + '%', 'Message:', statusResult.message);
+          console.log(`[CLIENT-NORMALIZE] poll=${pollCount} jobId=${jobId} status=${statusResult.status} progress=${statusResult.progress}% message="${statusResult.message || ''}" mediaType=${statusResult.mediaType || 'unknown'} size=${statusResult.size || 'unknown'}`);
           
           // Update progress if callback provided (map job progress to 40-95% range)
           if (onProgress && statusResult.progress) {
@@ -181,14 +194,16 @@ export async function normalizeVideo(
               return;
             }
             
-            console.log('Video normalization completed, CID:', statusResult.cid);
+            console.log(`[CLIENT-NORMALIZE] completed jobId=${jobId} cid=${statusResult.cid}`);
             resolve(statusResult.cid);
           } else if (statusResult.status === 'failed') {
             clearInterval(pollInterval);
+            console.error(`[CLIENT-NORMALIZE] failed jobId=${jobId} message="${statusResult.message || 'Video normalization failed'}"`);
             reject(new Error(statusResult.message || 'Video normalization failed'));
           }
         } catch (error) {
           clearInterval(pollInterval);
+          console.error(`[CLIENT-NORMALIZE] polling error jobId=${jobId}:`, error);
           reject(error);
         }
       }, 2000); // Poll every 2 seconds
@@ -196,12 +211,13 @@ export async function normalizeVideo(
       // Set a maximum timeout of 10 minutes
       setTimeout(() => {
         clearInterval(pollInterval);
+        console.error(`[CLIENT-NORMALIZE] timeout jobId=${jobId} after 10 minutes`);
         reject(new Error('Video normalization timeout after 10 minutes'));
       }, 10 * 60 * 1000);
     });
     
   } catch (error: any) {
-    console.error('Video normalization error:', error);
+    console.error('[CLIENT-NORMALIZE] Video normalization error:', error);
     throw error;
   }
 }
@@ -222,7 +238,7 @@ export async function uploadVideo(
   onProgress?: (progress: number) => void,
   noResample: boolean = false,
   retryCount: number = 0
-): Promise<string> {
+): Promise<VideoUploadResponse> {
   // Validate file size (4GB limit to match backend)
   const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
   if (file.size > maxFileSize) {
@@ -245,7 +261,7 @@ export async function uploadVideo(
   const videoUploadUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video`;
   const statusUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video/status`;
   
-  console.log('Uploading video to:', videoUploadUrl, 'File size:', file.size, 'noResample:', noResample, 'retry:', retryCount);
+  console.log(`[CLIENT-VIDEO-UPLOAD] route=/convert-video file="${file.name}" size=${formatFileSizeMB(file.size)} type="${file.type || 'unknown'}" noResample=${noResample} retry=${retryCount} baseUrl=${baseUrl} endpoint=${videoUploadUrl} statusEndpoint=${statusUrl}`);
   
   // Create multipart form data
   const formData = new FormData();
@@ -261,6 +277,7 @@ export async function uploadVideo(
   // Step 1: Start the upload and get job ID with progress tracking
   try {
     console.log(`[CLIENT-UPLOAD-TIMING] Sending upload request with progress tracking...`);
+    console.log(`[CLIENT-VIDEO-UPLOAD] Sending upload request at ${new Date().toISOString()}`);
     
     // Use XMLHttpRequest for upload progress tracking
     const uploadResult = await new Promise<any>((resolve, reject) => {
@@ -277,6 +294,7 @@ export async function uploadVideo(
       });
       
       xhr.addEventListener('load', () => {
+        console.log(`[CLIENT-VIDEO-UPLOAD] uploadResponse status=${xhr.status} ${xhr.statusText} body="${xhr.responseText.slice(0, 500)}"`);
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const result = JSON.parse(xhr.responseText);
@@ -290,10 +308,12 @@ export async function uploadVideo(
       });
       
       xhr.addEventListener('error', () => {
+        console.error(`[CLIENT-VIDEO-UPLOAD] upload network error for endpoint=${videoUploadUrl}`);
         reject(new Error('Network error during upload'));
       });
       
       xhr.addEventListener('timeout', () => {
+        console.error(`[CLIENT-VIDEO-UPLOAD] upload timeout after ${xhr.timeout}ms for endpoint=${videoUploadUrl}`);
         reject(new Error('Upload timeout'));
       });
       
@@ -314,7 +334,7 @@ export async function uploadVideo(
     }
     
     const jobId = uploadResult.jobId;
-    console.log('Video upload started, job ID:', jobId);
+    console.log(`[CLIENT-VIDEO-UPLOAD] Upload accepted jobId=${jobId} statusUrl=${statusUrl}/${jobId}`);
     
     // Show upload completion progress (40% of total progress bar)
     if (onProgress) {
@@ -322,16 +342,18 @@ export async function uploadVideo(
     }
     
     // Step 2: Poll for completion
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<VideoUploadResponse>((resolve, reject) => {
+      let pollCount = 0;
       const pollInterval = setInterval(async () => {
         try {
+          pollCount += 1;
           const statusResponse = await fetch(`${statusUrl}/${jobId}`);
           if (!statusResponse.ok) {
             throw new Error(`Status check failed: ${statusResponse.status}`);
           }
           
           const statusResult = await statusResponse.json();
-          console.log('Job status:', statusResult.status, 'Progress:', statusResult.progress + '%', 'Message:', statusResult.message);
+          console.log(`[CLIENT-VIDEO-UPLOAD] poll=${pollCount} jobId=${jobId} status=${statusResult.status} progress=${statusResult.progress}% message="${statusResult.message || ''}" mediaType=${statusResult.mediaType || 'unknown'} size=${statusResult.size || 'unknown'} aspectRatio=${statusResult.aspectRatio || 'unknown'}`);
           
           // Map server progress 0-50% → 40-70% (video processing)
           // and 50-100% → 70-100% (server-side storage step).
@@ -356,14 +378,23 @@ export async function uploadVideo(
               return;
             }
             
-            console.log('Video processing completed, CID:', statusResult.cid);
-            resolve(statusResult.cid);
+            console.log(`[CLIENT-VIDEO-UPLOAD] completed jobId=${jobId} cid=${statusResult.cid} mediaType=${statusResult.mediaType || 'video'} size=${statusResult.size || 'unknown'} aspectRatio=${statusResult.aspectRatio || 'unknown'}`);
+            resolve({
+              success: true,
+              cid: statusResult.cid,
+              mediaType: statusResult.mediaType || 'video',
+              size: typeof statusResult.size === 'number' ? statusResult.size : undefined,
+              aspectRatio: typeof statusResult.aspectRatio === 'number' ? statusResult.aspectRatio : undefined,
+              message: statusResult.message
+            });
           } else if (statusResult.status === 'failed') {
             clearInterval(pollInterval);
+            console.error(`[CLIENT-VIDEO-UPLOAD] failed jobId=${jobId} message="${statusResult.message || 'Video processing failed'}"`);
             reject(new Error(statusResult.message || 'Video processing failed'));
           }
         } catch (error) {
           clearInterval(pollInterval);
+          console.error(`[CLIENT-VIDEO-UPLOAD] polling error jobId=${jobId}:`, error);
           reject(error);
         }
       }, 5000); // Poll every 5 seconds for better responsiveness
@@ -371,14 +402,16 @@ export async function uploadVideo(
       // Set a maximum timeout of 4 hours for large files
       setTimeout(() => {
         clearInterval(pollInterval);
+        console.error(`[CLIENT-VIDEO-UPLOAD] timeout jobId=${jobId} after 4 hours`);
         reject(new Error('Video processing timeout after 4 hours'));
       }, 4 * 60 * 60 * 1000);
     });
   } catch (error: any) {
     // Log connection errors for debugging
     if (error.name === 'AbortError' || error.message.includes('ERR_CONNECTION_RESET') || error.message.includes('Failed to fetch')) {
-      console.error('Network error during upload:', error.message);
+      console.error('[CLIENT-VIDEO-UPLOAD] Network error during upload:', error.message);
     }
+    console.error('[CLIENT-VIDEO-UPLOAD] Video upload error:', error);
     throw error;
   }
 }

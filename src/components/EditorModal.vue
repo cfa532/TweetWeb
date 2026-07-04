@@ -5,7 +5,7 @@ import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import { CidModal } from '@/views'
-import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 import { MEDIA_TYPES, isVideoType, isImageType, avatarSrc } from '@/lib'
 
 interface HTMLInputEvent extends Event {
@@ -40,8 +40,6 @@ const mmFiles = ref<MimeiFileType[]>([]);
 const showCidModal = ref(false);
 
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
-const SMALL_VIDEO_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50MB
-
 const avatarRetry = ref(0)
 async function onAvatarError() {
   if (avatarRetry.value >= 3) return
@@ -139,74 +137,57 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
 
       } else if (isVideoType(fileType)) {
-        // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
-        
-        let useIPFSFallback = false;
-        let fallbackReason: string | null = null;
-        let shouldWarnFallback = false;
-        let isHLSConverted = false; // Track if video was converted to HLS
-        
-        if (file.size <= SMALL_VIDEO_THRESHOLD_BYTES) {
-          // Small videos go direct-to-IPFS (progressive MP4) — the intended route,
-          // no fallback warning.
-          useIPFSFallback = true;
-        } else if (!author.cloudDrivePort) {
-          // null/undefined/0: no backend HLS service configured.
-          useIPFSFallback = true;
-          fallbackReason = 'cloudDrivePort not configured';
-          shouldWarnFallback = true;
+        let backendVideoType: string = MEDIA_TYPES.VIDEO;
+        let backendVideoSize: number | undefined;
+        let backendVideoAspectRatio: number | undefined;
+
+        if (!author.cloudDrivePort) {
+          // No backend HLS service configured: upload as a regular IPFS file
+          // regardless of size.
+          cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
         } else {
           const cloudDrivePort = String(author.cloudDrivePort);
-          let ipAddress: string | null = null;
-          if (author.writableHostIp) {
-            const raw = author.writableHostIp;
-            ipAddress = raw.includes(':') ? raw.split(':')[0] : raw;
-          } else {
-            useIPFSFallback = true;
-            fallbackReason = 'Writable host not resolved';
-            shouldWarnFallback = true;
+          const rawWritableHost = author.writableHostIp || await tweetStore.resolveWritableHostIp(author);
+          const ipAddress = rawWritableHost.includes(':') ? rawWritableHost.split(':')[0] : rawWritableHost;
+          const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
+
+          console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value}`);
+
+          const serviceAvailable = await checkServiceAvailability(baseUrl);
+          if (!serviceAvailable) {
+            throw new Error(`Backend service at ${baseUrl} is not available (health check failed)`);
           }
 
-          const baseUrl = ipAddress ? `http://${ipAddress}:${cloudDrivePort}` : '';
-          const serviceAvailable = ipAddress ? await checkServiceAvailability(baseUrl) : false;
+          console.log(`[CLIENT-VIDEO-UPLOAD] backend service available at ${baseUrl}; starting /convert-video upload`);
 
-          if (!useIPFSFallback && !serviceAvailable) {
-            useIPFSFallback = true;
-            fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
-            shouldWarnFallback = true;
-          } else if (!useIPFSFallback) {
-            cid = await retryUpload(
-              () => uploadVideo(
-                file,
-                baseUrl,
-                cloudDrivePort,
-                (progress) => { uploadProgress[i] = progress; },
-                noResample.value
-              ),
-              file.name
-            );
+          const videoResult = await retryUpload(
+            () => uploadVideo(
+              file,
+              baseUrl,
+              cloudDrivePort,
+              (progress) => { uploadProgress[i] = progress; },
+              noResample.value
+            ),
+            file.name
+          );
 
-            if (!cid || cid.trim() === '') {
-              throw new Error('Video upload failed: No CID returned from server');
-            }
+          cid = videoResult.cid;
+          backendVideoType = videoResult.mediaType || MEDIA_TYPES.VIDEO;
+          backendVideoSize = videoResult.size;
+          backendVideoAspectRatio = videoResult.aspectRatio;
 
-            isHLSConverted = true;
-            uploadProgress[i] = 100;
+          if (!cid || cid.trim() === '') {
+            throw new Error('Video upload failed: No CID returned from server');
           }
-        }
 
-        // Fallback path: small videos, missing/unreachable cloudDrivePort, or
-        // resolution failure — all land here and upload progressive MP4 via upload_ipfs.
-        if (useIPFSFallback) {
-          if (shouldWarnFallback && fallbackReason) {
-            useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
-          }
-          cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
+          uploadProgress[i] = 100;
         }
         
-        // Store HLS conversion status for later use
-        (file as any).__isHLSConverted = isHLSConverted;
+        // Store backend-selected metadata for the attachment object.
+        (file as any).__backendVideoType = backendVideoType;
+        (file as any).__backendVideoSize = backendVideoSize;
+        (file as any).__backendVideoAspectRatio = backendVideoAspectRatio;
         
       } else {
         // Handle other file types with new upload_ipfs API (matches iOS)
@@ -216,13 +197,13 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         );
       }
 
-      const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) :
+      const aspectRatio = isVideoType(fileType) ? ((file as any).__backendVideoAspectRatio ?? await getVideoAspectRatio(file)) :
                          isImageType(fileType) ? await getImageAspectRatio(file) : null;
 
       const fi = {
         mid: cid,
-        type: isVideoType(fileType) ? ((file as any).__isHLSConverted ? MEDIA_TYPES.HLS_VIDEO : MEDIA_TYPES.VIDEO) : fileType,
-        size: processedFile.size,
+        type: isVideoType(fileType) ? ((file as any).__backendVideoType || MEDIA_TYPES.VIDEO) : fileType,
+        size: isVideoType(fileType) ? ((file as any).__backendVideoSize ?? processedFile.size) : processedFile.size,
         fileName: file.name,
         timestamp: file.lastModified,
         aspectRatio: aspectRatio
@@ -268,7 +249,7 @@ async function onSubmit() {
       try {
         await tweetStore.resolveWritableHostIp(author)
       } catch (e) {
-        console.warn('[EDITOR] Writable host resolution failed, uploads may fall back to IPFS:', e)
+        console.warn('[EDITOR] Writable host resolution failed, configured video backend uploads may fail:', e)
       }
     }
 

@@ -205,9 +205,10 @@ if [ "$NO_RESAMPLE" = true ]; then
     PLAYLIST_PATH=$(escape_shell_arg "$TEMP_DIR/playlist.m3u8")
     SEGMENT_PATH=$(escape_shell_arg "$TEMP_DIR/segment%03d.ts")
     
-    ffmpeg -i "$INPUT_FILE" -c:v copy -c:a copy -f hls -hls_time 6 -hls_list_size 0 \
+    ffmpeg -i "$INPUT_FILE" -c:v copy -c:a aac -b:a 128k \
+        -f hls -hls_time 10 -hls_list_size 0 -hls_playlist_type vod -start_number 0 \
         -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
-    "$TEMP_DIR/playlist.m3u8" -y
+        "$TEMP_DIR/playlist.m3u8" -y
     
     echo -e "${GREEN}[SUCCESS] HLS conversion completed${NC}"
     echo "$TEMP_DIR"
@@ -292,13 +293,16 @@ ESCAPED_INPUT=$(escape_shell_arg "$INPUT_FILE")
 
 # Determine target resolution and bitrate based on original resolution
 # Preserve-quality bitrate policy shared with videoRoutes.js
-REFERENCE_1080P_RESOLUTION=1080
-REFERENCE_1080P_BITRATE=4000
+REFERENCE_720P_BITRATE=2500
+REFERENCE_720P_PIXELS=921600
 MIN_BITRATE=600
+HLS_SEGMENT_DURATION=10
 
 calculate_video_bitrate() {
     local reference_resolution=$1
-    local calculated=$(awk "BEGIN {printf \"%.0f\", ($reference_resolution / $REFERENCE_1080P_RESOLUTION) * $REFERENCE_1080P_BITRATE}")
+    local reference_width=$(awk "BEGIN {printf \"%.0f\", ($reference_resolution * 16) / 9}")
+    local pixel_count=$((reference_width * reference_resolution))
+    local calculated=$(awk "BEGIN {printf \"%.0f\", ($pixel_count / $REFERENCE_720P_PIXELS) * $REFERENCE_720P_BITRATE}")
     if [ $calculated -lt $MIN_BITRATE ]; then
         calculated=$MIN_BITRATE
     fi
@@ -336,10 +340,9 @@ else
     CALCULATED_BITRATE=$(calculate_video_bitrate $REFERENCE_DIM)
 fi
 
-# Determine final target bitrate:
-# If source bitrate is lower than calculated target but higher than minimum, keep source bitrate
-if [ -n "$SOURCE_BITRATE_K" ] && [ $SOURCE_BITRATE_K -lt $CALCULATED_BITRATE ] && [ $SOURCE_BITRATE_K -ge $MIN_BITRATE ]; then
-    echo -e "${GREEN}[BITRATE] Using source bitrate ${SOURCE_BITRATE_K}k (between min ${MIN_BITRATE}k and target ${CALCULATED_BITRATE}k)${NC}"
+# Determine final target bitrate: never raise bitrate above a readable source bitrate.
+if [ -n "$SOURCE_BITRATE_K" ] && [ "$SOURCE_BITRATE_K" -gt 0 ] && [ "$SOURCE_BITRATE_K" -lt "$CALCULATED_BITRATE" ]; then
+    echo -e "${GREEN}[BITRATE] Keeping lower source bitrate ${SOURCE_BITRATE_K}k instead of calculated target ${CALCULATED_BITRATE}k${NC}"
     TARGET_BITRATE=$SOURCE_BITRATE_K
 else
     TARGET_BITRATE=$CALCULATED_BITRATE
@@ -350,9 +353,13 @@ DIMS=$(calculate_dimensions $TARGET_DIM $DISPLAY_WIDTH $DISPLAY_HEIGHT)
 TARGET_WIDTH=$(echo $DIMS | cut -d' ' -f1)
 TARGET_HEIGHT=$(echo $DIMS | cut -d' ' -f2)
 
-# Calculate segment duration
+# Match iOS HLS output cadence.
 TARGET_RESOLUTION=$((TARGET_WIDTH * TARGET_HEIGHT))
-SEGMENT_DURATION=$(calculate_segment_duration $TARGET_RESOLUTION $TARGET_BITRATE)
+SEGMENT_DURATION=$HLS_SEGMENT_DURATION
+BUFFER_SIZE=$(awk "BEGIN {printf \"%d\", ($TARGET_BITRATE / 2)}")
+if [ "$BUFFER_SIZE" -lt 1 ]; then
+    BUFFER_SIZE=1
+fi
 
 echo -e "${GREEN}[INFO] Original: ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT} (${ORIG_RESOLUTION} pixels)${NC}"
 echo -e "${GREEN}[INFO] Target: ${TARGET_WIDTH}x${TARGET_HEIGHT}, Bitrate: ${TARGET_BITRATE}k, Segment: ${SEGMENT_DURATION}s${NC}"
@@ -362,10 +369,11 @@ SEGMENT_PATH=$(escape_shell_arg "$TEMP_DIR/segment%03d.ts")
 
 # Dual-variant HLS conversion (but script only does single for simplicity)
 ffmpeg -i "$INPUT_FILE" -c:v libx264 -c:a aac \
-    -vf "scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-    -b:v ${TARGET_BITRATE}k -b:a 128k -preset fast -tune zerolatency -threads 2 \
-    -fflags +genpts+igndts -bsf:v h264_mp4toannexb -avoid_negative_ts make_zero \
-    -f hls -hls_time ${SEGMENT_DURATION} -hls_list_size 0 \
+    -profile:v main -level 4.0 -pix_fmt yuv420p \
+    -vf "scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:force_divisible_by=2" \
+    -g 48 -b:v ${TARGET_BITRATE}k -maxrate ${TARGET_BITRATE}k -bufsize ${BUFFER_SIZE}k \
+    -b:a 128k -preset fast -threads 2 \
+    -f hls -hls_time ${SEGMENT_DURATION} -hls_list_size 0 -hls_playlist_type vod -start_number 0 \
     -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
     "$TEMP_DIR/playlist.m3u8" -y
 
@@ -396,4 +404,3 @@ if [ "$SKIP_IPFS" = false ] && [ -n "$LEITHER_BIN" ]; then
     echo -e "${BLUE}========================================${NC}"
     echo ""
 fi
-

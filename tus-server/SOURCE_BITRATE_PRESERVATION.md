@@ -19,7 +19,7 @@ Previously, server-side video normalization always used the calculated target bi
 Modified both `videoRoutes.js` and `convert-to-hls.sh` to check the source video bitrate first:
 1. Extract source bitrate from the input video using ffprobe
 2. Calculate target bitrate based on resolution (as before)
-3. **NEW**: If source bitrate is lower than target but higher than minimum, keep the source bitrate
+3. **NEW**: If source bitrate is a readable positive value lower than target, keep the source bitrate
 4. Otherwise, use the calculated target bitrate
 
 ## Changes Made
@@ -37,10 +37,10 @@ const MIN_BITRATE = 300; // Minimum bitrate in kbps (reduced from 500k to avoid 
 
 **After:**
 ```javascript
-const MIN_BITRATE = 500; // Minimum bitrate in kbps for quality (matches Android implementation)
+const MIN_BITRATE = 600; // Minimum bitrate in kbps for quality (matches iOS implementation)
 ```
 
-✅ **Changed from 300k → 500k** to match Android client and ensure quality
+✅ **Changed from 300k → 600k** to match iOS/Android client behavior
 
 ### 2. Added Source Bitrate Checking Logic in videoRoutes.js
 
@@ -69,12 +69,12 @@ if (videoResolution > 720) {
 }
 
 // Determine final target bitrate:
-// If source bitrate is lower than calculated target but higher than minimum, keep source bitrate
+// If source bitrate is a readable positive value lower than calculated target, keep source bitrate
 let bitrate;
 if (sourceBitrateK !== null && 
-    sourceBitrateK < calculatedBitrateK && 
-    sourceBitrateK >= MIN_BITRATE) {
-  console.log(`[${requestId}] [BITRATE] Using source bitrate ${sourceBitrateK}k (between min ${MIN_BITRATE}k and target ${calculatedBitrateK}k)`);
+    sourceBitrateK > 0 &&
+    sourceBitrateK < calculatedBitrateK) {
+  console.log(`[${requestId}] [BITRATE] Keeping lower source bitrate ${sourceBitrateK}k instead of calculated target ${calculatedBitrateK}k`);
   bitrate = sourceBitrateK;
 } else {
   bitrate = calculatedBitrateK;
@@ -111,9 +111,9 @@ else
 fi
 
 # Determine final target bitrate:
-# If source bitrate is lower than calculated target but higher than minimum, keep source bitrate
-if [ -n "$SOURCE_BITRATE_K" ] && [ $SOURCE_BITRATE_K -lt $CALCULATED_BITRATE ] && [ $SOURCE_BITRATE_K -ge $MIN_BITRATE ]; then
-    echo -e "${GREEN}[BITRATE] Using source bitrate ${SOURCE_BITRATE_K}k (between min ${MIN_BITRATE}k and target ${CALCULATED_BITRATE}k)${NC}"
+# If source bitrate is a readable positive value lower than calculated target, keep source bitrate
+if [ -n "$SOURCE_BITRATE_K" ] && [ "$SOURCE_BITRATE_K" -gt 0 ] && [ "$SOURCE_BITRATE_K" -lt "$CALCULATED_BITRATE" ]; then
+    echo -e "${GREEN}[BITRATE] Keeping lower source bitrate ${SOURCE_BITRATE_K}k instead of calculated target ${CALCULATED_BITRATE}k${NC}"
     TARGET_BITRATE=$SOURCE_BITRATE_K
 else
     TARGET_BITRATE=$CALCULATED_BITRATE
@@ -130,8 +130,8 @@ The new logic follows this decision tree (same as Android):
 3. Determine final bitrate:
    
    IF sourceBitrateK is available AND
-      sourceBitrateK < calculatedBitrateK AND
-      sourceBitrateK >= MIN_BITRATE (500k)
+      sourceBitrateK > 0 AND
+      sourceBitrateK < calculatedBitrateK
    THEN
       Use sourceBitrateK (preserve original)
    ELSE
@@ -141,47 +141,42 @@ The new logic follows this decision tree (same as Android):
 ## Examples
 
 ### Example 1: Source bitrate preserved
-- **Source:** 480p video @ 700k bitrate
-- **Calculated target:** 500k (proportional for 480p, enforced minimum)
-- **Final:** Use **700k** source bitrate (between 500k min and calculated target)
+- **Source:** 480p video @ 300k bitrate
+- **Calculated target:** 1111k (proportional for 480p on the iOS 720p/2500k pixel curve)
+- **Final:** Use **300k** source bitrate (readable positive value below target)
 
-### Example 2: Source bitrate too low - use minimum
-- **Source:** 360p video @ 300k bitrate
-- **Calculated target:** 500k (minimum enforced)
-- **Final:** Use **500k** (source below minimum)
+### Example 2: Source bitrate higher than target - use target
+- **Source:** 720p video @ 3000k bitrate
+- **Calculated target:** 2500k
+- **Final:** Use **2500k** target (source above target, compress to save space)
 
-### Example 3: Source bitrate higher than target - use target
-- **Source:** 720p video @ 2000k bitrate
-- **Calculated target:** 1000k
-- **Final:** Use **1000k** target (source above target, compress to save space)
-
-### Example 4: Source bitrate unavailable - use calculated
+### Example 3: Source bitrate unavailable - use calculated
 - **Source:** Unknown bitrate (metadata extraction failed)
-- **Calculated target:** 1000k
-- **Final:** Use **1000k** target (fallback to calculated)
+- **Calculated target:** 2500k
+- **Final:** Use **2500k** target (fallback to calculated)
 
 ## Benefits
 
-1. **Preserves original quality**: If source is already good quality (500k-1000k), don't degrade it
+1. **Preserves original quality**: If source bitrate is already below the calculated target, don't inflate it
 2. **Avoids unnecessary upscaling**: Don't increase bitrate if source is already reasonable
 3. **Reduces processing time**: Better bitrate selection means more efficient encoding
-4. **Maintains minimum quality**: Still enforces 500k minimum for very low bitrate sources
+4. **Keeps calculated quality floor**: Still uses the minimum when source bitrate is unavailable or above target
 5. **Smart compression**: Only compress when source bitrate is significantly higher than needed
 6. **Consistency**: Server behavior now matches Android client implementation
 
 ## System Minimum Bitrate
 
-**Answer:** The system minimum bitrate is **500 kbps** (updated from 300 kbps)
+**Answer:** The calculated bitrate floor is **600 kbps** (updated from 300 kbps)
 
 This is now consistent across:
-- **Android VideoNormalizer.kt**: 500k ✅
-- **Android LocalHLSConverter.kt**: 500k ✅
-- **Android LocalVideoProcessingService.kt**: 500k ✅
-- **Server videoRoutes.js**: 500k ✅ (updated)
-- **Server convert-to-hls.sh**: 500k ✅ (updated)
+- **Android VideoNormalizer.kt**: 600k ✅
+- **Android LocalHLSConverter.kt**: 600k ✅
+- **Android LocalVideoProcessingService.kt**: 600k ✅
+- **Server videoRoutes.js**: 600k ✅ (updated)
+- **Server convert-to-hls.sh**: 600k ✅ (updated)
 
 **Rationale:**
-- Below 500k, video quality becomes noticeably poor
+- The 600k floor matches the iOS compatibility target when source bitrate is unavailable or not lower
 - Modern codecs (H.264) require minimum bitrate for acceptable quality
 - Matches industry standards for mobile video
 - Consistent with iOS implementation
@@ -199,8 +194,8 @@ Test server-side conversion with various source videos:
    - Verify: No quality loss, file size similar to source
 
 3. **Low bitrate source (300k) @ 360p**
-   - Expected: Increase to 500k minimum
-   - Verify: Quality improved, file size increased slightly
+   - Expected: Preserve 300k source bitrate
+   - Verify: No bitrate inflation, file size similar to source
 
 4. **Variable bitrate sources**
    - Test with different resolutions and bitrates
@@ -211,10 +206,10 @@ Test server-side conversion with various source videos:
 The enhanced logging will show:
 ```
 [REQUEST-ID] [INFO] Video resolution: 480p
-[REQUEST-ID] [INFO] Original video bitrate: 700k
+[REQUEST-ID] [INFO] Original video bitrate: 300k
 [REQUEST-ID] [NORMALIZE] Video resolution (480p) < 720p, keeping resolution with proportional bitrate
-[REQUEST-ID] [BITRATE] Using source bitrate 700k (between min 500k and target 500k)
-[REQUEST-ID] [INFO] Normalization target: 854x480, source bitrate: 700k, calculated target: 500k, final bitrate: 700k
+[REQUEST-ID] [BITRATE] Keeping lower source bitrate 300k instead of calculated target 1111k
+[REQUEST-ID] [INFO] Normalization target: 854x480, source bitrate: 300k, calculated target: 1111k, final bitrate: 300k
 ```
 
 ## Files Modified
@@ -241,7 +236,7 @@ The enhanced logging will show:
 ## Related Documentation
 
 - Android: `docs/SOURCE_BITRATE_PRESERVATION.md` - Android client implementation
-- Android: `docs/MIN_BITRATE_500K_ENFORCEMENT.md` - 500k minimum enforcement
+- Android video normalization code - 600k calculated bitrate floor
 - Server: `README.md` - Server setup and configuration
 - Server: `ZIP_ENDPOINT_README.md` - Video processing endpoints
 
