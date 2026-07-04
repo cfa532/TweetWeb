@@ -373,6 +373,11 @@ let hlsPlaylistProbeAbortController: AbortController | null = null;
 // advancing) from playback progress, so the buffering spinner isn't hidden the
 // instant a freeze starts.
 let lastProgressTime = -1;
+// Consecutive advancing timeupdate ticks since the last 'waiting'. hls.js nudges
+// currentTime forward by itself to jump small buffer holes while still stalled,
+// which fires a single advancing timeupdate that isn't real resumed playback —
+// requiring two in a row filters that one-off jump out.
+let consecutiveAdvanceTicks = 0;
 
 function shouldLoadFeedMedia(): boolean {
   if (!isInTweetList.value) return true;
@@ -624,16 +629,23 @@ onMounted(() => {
           // buffer's edge — clearing on the isPlaying flag alone hid the spinner
           // the instant the freeze started. (Still unsticks isBuffering when
           // hls.js resumes without re-firing 'playing', since time then advances.)
+          // Require two consecutive advancing ticks: hls.js's gap-nudge jumps
+          // currentTime once by itself while still stalled to hop a buffer hole,
+          // which looks like "advanced" for a single tick even though playback
+          // hasn't actually resumed — clearing on that alone flashed the spinner
+          // off immediately, right as the freeze continued.
           const t = video.value?.currentTime ?? 0;
           const advanced = t > lastProgressTime + 1e-3;
           lastProgressTime = t;
-          if (isBuffering.value && advanced) {
+          consecutiveAdvanceTicks = advanced ? consecutiveAdvanceTicks + 1 : 0;
+          if (isBuffering.value && consecutiveAdvanceTicks >= 2) {
             isBuffering.value = false;
           }
         });
         video.value.addEventListener('volumechange', syncMutedState);
         video.value.addEventListener('waiting', () => {
           isBuffering.value = true; // Video is buffering
+          consecutiveAdvanceTicks = 0;
         });
         video.value.addEventListener('canplay', () => {
           syncVideoReadyState();
