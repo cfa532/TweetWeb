@@ -1855,7 +1855,7 @@ playlist.m3u8`;
     }
     
     console.log(`[${requestId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
-    console.log(`[${requestId}] [INFO] HLS files preserved in: ${tempDir}`);
+    console.log(`[${requestId}] [INFO] Conversion temp directory preserved in: ${tempDir}`);
     console.log(`[${new Date().toISOString()}] [${requestId}] --- /convert-video route processing finished ---\n`);
   }
 }
@@ -2779,7 +2779,7 @@ playlist.m3u8`;
     }
     
     console.log(`[${jobId}] [INFO] Total route processing time: ${Date.now() - routeStartTime}ms`);
-    console.log(`[${jobId}] [INFO] HLS files preserved in: ${tempDir}`);
+    console.log(`[${jobId}] [INFO] Conversion temp directory preserved in: ${tempDir}`);
     console.log(`[${new Date().toISOString()}] [${jobId}] --- /convert-video route processing finished ---\n`);
   }
 }
