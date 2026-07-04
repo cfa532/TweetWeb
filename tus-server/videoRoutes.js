@@ -2171,23 +2171,25 @@ async function processVideoUploadInternal(req, jobId) {
       console.log(`[${jobId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${rotation}°)`);
     }
 
-    // For clearly-large HLS outputs, try writing HLS directly from the upload.
-    // Borderline cases stay on the proven normalize path so the cutoff behavior
-    // for progressive MP4 output remains intact.
+    // Normalize-first remains the default because normalized.mp4 is the exact
+    // cutoff source of truth and can often be segmented to HLS with video copy.
+    // Direct HLS is kept behind an explicit opt-in for controlled experiments.
     const normalizedIsPortrait = targetHeight > targetWidth;
     const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
     const isDirectSingleVariant = noResample || normalizedReferenceDim <= 480;
     const estimatedNormalizedSizeMB = estimateOutputSizeMB(videoInfo, bitrate, videoInfo && videoInfo.hasAudio);
     const uploadedFileSizeMB = uploadedFile.size / (1024 * 1024);
     const directHlsEstimatedCutoffMB = HLS_CONVERSION_CUTOFF_MB * 1.1;
+    const directHlsEnabled = process.env.HLS_DIRECT_TO_HLS === 'true';
     const shouldAttemptDirectHLS =
+      directHlsEnabled &&
       finalEncoder !== 'copy' &&
       uploadedFileSizeMB > HLS_CONVERSION_CUTOFF_MB &&
       estimatedNormalizedSizeMB !== null &&
       estimatedNormalizedSizeMB > directHlsEstimatedCutoffMB;
 
     console.log(
-      `[${jobId}] [DIRECT-HLS] Eligibility: attempt=${shouldAttemptDirectHLS}, uploaded=${uploadedFileSizeMB.toFixed(2)}MB, estimatedNormalized=${estimatedNormalizedSizeMB !== null ? estimatedNormalizedSizeMB.toFixed(2) + 'MB' : 'unknown'}, cutoff=${HLS_CONVERSION_CUTOFF_MB}MB, safetyCutoff=${directHlsEstimatedCutoffMB.toFixed(2)}MB, normalizeEncoder=${finalEncoder}, variantMode=${isDirectSingleVariant ? 'single' : 'dual'}`
+      `[${jobId}] [DIRECT-HLS] Eligibility: enabled=${directHlsEnabled}, attempt=${shouldAttemptDirectHLS}, uploaded=${uploadedFileSizeMB.toFixed(2)}MB, estimatedNormalized=${estimatedNormalizedSizeMB !== null ? estimatedNormalizedSizeMB.toFixed(2) + 'MB' : 'unknown'}, cutoff=${HLS_CONVERSION_CUTOFF_MB}MB, safetyCutoff=${directHlsEstimatedCutoffMB.toFixed(2)}MB, normalizeEncoder=${finalEncoder}, variantMode=${isDirectSingleVariant ? 'single' : 'dual'}`
     );
 
     if (shouldAttemptDirectHLS) {
