@@ -513,6 +513,30 @@ function getPathSizeSync(filePath) {
   }, 0);
 }
 
+function estimateOutputSizeMB(videoInfo, videoBitrateK, hasAudio) {
+  const duration = Number(videoInfo && videoInfo.duration);
+  const bitrate = Number(videoBitrateK);
+
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(bitrate) || bitrate <= 0) {
+    return null;
+  }
+
+  const audioBitrateK = hasAudio ? HLS_AUDIO_BITRATE : 0;
+  const estimatedBytes = (duration * (bitrate + audioBitrateK) * 1000) / 8;
+  return estimatedBytes / (1024 * 1024);
+}
+
+function calculateAverageBitrateKFromFileSize(fileSizeBytes, durationSec) {
+  const size = Number(fileSizeBytes);
+  const duration = Number(durationSec);
+
+  if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(duration) || duration <= 0) {
+    return null;
+  }
+
+  return Math.floor((size * 8) / duration / 1000);
+}
+
 // Helper function to get video resolution (p value)
 function getVideoResolution(displayWidth, displayHeight) {
   // For landscape videos (width ≥ height): resolution = HEIGHT (e.g., 1280×720 = 720p)
@@ -1014,6 +1038,63 @@ function createSinglePassDualHLSCommand({
     `-hls_segment_filename ${escapeShellArg(path.join(tempDir, '%v/segment%03d.ts'))}`,
     `-var_stream_map ${escapeShellArg(streamMap)}`,
     escapeShellArg(path.join(tempDir, '%v/playlist.m3u8'))
+  ].filter(Boolean).join(' ');
+}
+
+function createSinglePassSingleHLSCommand({
+  inputPath,
+  tempDir,
+  videoInfo,
+  outputWidth,
+  outputHeight,
+  outputBitrate,
+  segmentDuration,
+  frameRate,
+  hasAudio
+}) {
+  const rotationFilter = getRotationFilter(videoInfo.rotation || 0);
+  const filterSteps = [];
+  if (rotationFilter) {
+    filterSteps.push(rotationFilter);
+  }
+  filterSteps.push(`scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2`);
+  filterSteps.push('setsar=1');
+
+  const gopSize = Math.max(30, Math.min(600, Math.round(segmentDuration * frameRate)));
+  const audioMap = hasAudio ? `-map ${escapeShellArg('0:a:0?')}` : '';
+  const audioEncoding = hasAudio ? ` -c:a aac -b:a ${HLS_AUDIO_BITRATE}k` : '';
+
+  return [
+    'ffmpeg',
+    '-y',
+    '-fflags +genpts+igndts',
+    `-i ${escapeShellArg(inputPath)}`,
+    `-vf ${escapeShellArg(filterSteps.join(','))}`,
+    '-map 0:v:0',
+    audioMap,
+    '-c:v libx264',
+    '-profile:v main',
+    '-level 4.1',
+    '-pix_fmt yuv420p',
+    '-preset fast',
+    '-tune zerolatency',
+    '-threads 2',
+    `-b:v ${outputBitrate}k`,
+    `-g ${gopSize}`,
+    `-keyint_min ${gopSize}`,
+    '-sc_threshold 0',
+    `-force_key_frames ${escapeShellArg(`expr:gte(t,n_forced*${segmentDuration})`)}`,
+    audioEncoding,
+    '-avoid_negative_ts make_zero',
+    '-max_muxing_queue_size 1024',
+    '-f hls',
+    `-hls_time ${segmentDuration}`,
+    '-hls_list_size 0',
+    '-hls_playlist_type vod',
+    '-hls_segment_type mpegts',
+    '-start_number 0',
+    `-hls_segment_filename ${escapeShellArg(path.join(tempDir, 'segment%03d.ts'))}`,
+    escapeShellArg(path.join(tempDir, 'playlist.m3u8'))
   ].filter(Boolean).join(' ');
 }
 
@@ -1956,6 +2037,7 @@ async function processVideoUploadInternal(req, jobId) {
 
     videoInfo = await getVideoInfoInternal();
     console.log(`[${jobId}] [INFO] Video dimensions: ${videoInfo.width}x${videoInfo.height}, duration: ${videoInfo.duration}s`);
+    console.log(`[${jobId}] [SOURCE] codec=${videoInfo.codec || 'unknown'}, profile=${videoInfo.profile || 'unknown'}, pix_fmt=${videoInfo.pixelFormat || 'unknown'}, bitrate=${videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) + 'k' : 'unknown'}, audio=${videoInfo.hasAudio ? 'yes' : 'no'}`);
 
     displayWidth = videoInfo.displayWidth || videoInfo.width;
     displayHeight = videoInfo.displayHeight || videoInfo.height;
@@ -1978,8 +2060,16 @@ async function processVideoUploadInternal(req, jobId) {
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
     console.log(`[${jobId}] [INFO] Video resolution: ${videoResolution}p`);
     
-    // Get source video bitrate (in bps, convert to kbps)
-    const sourceBitrateKInternal = videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : null;
+    // Get source bitrate conservatively. Some uploads report inflated metadata
+    // bitrates, so cap with the real average bitrate implied by file size.
+    const metadataSourceBitrateK = videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : null;
+    const fileAverageBitrateK = calculateAverageBitrateKFromFileSize(uploadedFile.size, videoInfo && videoInfo.duration);
+    const sourceBitrateCandidates = [metadataSourceBitrateK, fileAverageBitrateK]
+      .filter(value => Number.isFinite(value) && value > 0);
+    const sourceBitrateKInternal = sourceBitrateCandidates.length > 0
+      ? Math.min(...sourceBitrateCandidates)
+      : null;
+    console.log(`[${jobId}] [BITRATE] Source bitrate candidates: metadata=${metadataSourceBitrateK || 'unknown'}k, fileAverage=${fileAverageBitrateK || 'unknown'}k, selected=${sourceBitrateKInternal || 'unknown'}k`);
 
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, bitrate;
@@ -2081,19 +2171,30 @@ async function processVideoUploadInternal(req, jobId) {
       console.log(`[${jobId}] [NORMALIZE] Applying rotation correction: ${transposeFilter} (source rotation=${rotation}°)`);
     }
 
-    // Keep the proven normalize-then-HLS pipeline as the default. The single-pass
-    // filter graph is available as an experimental opt-in path.
-    const singlePassHlsEnabled = process.env.HLS_SINGLE_PASS_FILTER_COMPLEX === 'true';
+    // For clearly-large HLS outputs, try writing HLS directly from the upload.
+    // Borderline cases stay on the proven normalize path so the cutoff behavior
+    // for progressive MP4 output remains intact.
     const normalizedIsPortrait = targetHeight > targetWidth;
     const normalizedReferenceDim = normalizedIsPortrait ? targetWidth : targetHeight;
-    const shouldCreateDualVariantHLS = !noResample && normalizedReferenceDim > 480;
+    const isDirectSingleVariant = noResample || normalizedReferenceDim <= 480;
+    const estimatedNormalizedSizeMB = estimateOutputSizeMB(videoInfo, bitrate, videoInfo && videoInfo.hasAudio);
+    const uploadedFileSizeMB = uploadedFile.size / (1024 * 1024);
+    const directHlsEstimatedCutoffMB = HLS_CONVERSION_CUTOFF_MB * 1.1;
+    const shouldAttemptDirectHLS =
+      finalEncoder !== 'copy' &&
+      uploadedFileSizeMB > HLS_CONVERSION_CUTOFF_MB &&
+      estimatedNormalizedSizeMB !== null &&
+      estimatedNormalizedSizeMB > directHlsEstimatedCutoffMB;
 
-    if (singlePassHlsEnabled && shouldCreateDualVariantHLS) {
-      console.log(`[${jobId}] [HLS-SINGLE-PASS] Trying direct filter_complex dual-variant HLS from original upload`);
+    console.log(
+      `[${jobId}] [DIRECT-HLS] Eligibility: attempt=${shouldAttemptDirectHLS}, uploaded=${uploadedFileSizeMB.toFixed(2)}MB, estimatedNormalized=${estimatedNormalizedSizeMB !== null ? estimatedNormalizedSizeMB.toFixed(2) + 'MB' : 'unknown'}, cutoff=${HLS_CONVERSION_CUTOFF_MB}MB, safetyCutoff=${directHlsEstimatedCutoffMB.toFixed(2)}MB, normalizeEncoder=${finalEncoder}, variantMode=${isDirectSingleVariant ? 'single' : 'dual'}`
+    );
+
+    if (shouldAttemptDirectHLS) {
+      console.log(`[${jobId}] [ROUTE] Direct HLS path selected; skipping normalized.mp4 unless fallback is needed`);
+      let directHlsConverted = false;
       try {
-        const highQualityWidth = targetWidth;
-        const highQualityHeight = targetHeight;
-        const highQualityBitrate = calculateVideoBitrateK(normalizedReferenceDim);
+        const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
         const target480Dim = Math.min(normalizedReferenceDim, 480);
         let variant480Width, variant480Height;
 
@@ -2108,61 +2209,127 @@ async function processVideoUploadInternal(req, jobId) {
         const variant480EvenDims = ensureEvenDimensions(variant480Width, variant480Height);
         variant480Width = variant480EvenDims.width;
         variant480Height = variant480EvenDims.height;
-        const variant480Bitrate = calculateVideoBitrateK(target480Dim);
+        let directHlsCommand;
+        let expectedHlsFiles;
+        let directVariantDescription;
 
-        const segmentDurationHigh = calculateOptimalSegmentDuration({
-          displayWidth: highQualityWidth,
-          displayHeight: highQualityHeight,
-          duration: videoInfo ? videoInfo.duration : null
-        }, highQualityBitrate);
-        const segmentDuration480 = calculateOptimalSegmentDuration({
-          displayWidth: variant480Width,
-          displayHeight: variant480Height,
-          duration: videoInfo ? videoInfo.duration : null
-        }, variant480Bitrate);
-        // Keep both variants on the same segment cadence for smoother HLS level switches.
-        const segmentDuration = Math.max(segmentDurationHigh, segmentDuration480);
-        const frameRate = videoInfo && videoInfo.frameRate ? videoInfo.frameRate : 30;
+        if (isDirectSingleVariant) {
+          const singleVariantWidth = noResample ? targetWidth : variant480Width;
+          const singleVariantHeight = noResample ? targetHeight : variant480Height;
+          const singleVariantBitrate = noResample
+            ? bitrate
+            : capBitrateToSourceK(calculateVideoBitrateK(target480Dim), bitrate, `[${jobId}] [DIRECT-HLS]`);
+          const segmentDurationSingle = calculateOptimalSegmentDuration({
+            displayWidth: singleVariantWidth,
+            displayHeight: singleVariantHeight,
+            duration: videoInfo ? videoInfo.duration : null
+          }, singleVariantBitrate);
 
-        console.log(`[${jobId}] [HLS-SINGLE-PASS] 720p variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
-        console.log(`[${jobId}] [HLS-SINGLE-PASS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k`);
-        console.log(`[${jobId}] [HLS-SINGLE-PASS] Segment duration: ${segmentDuration}s, audio: ${videoInfo.hasAudio ? 'yes' : 'no'}`);
+          directHlsCommand = createSinglePassSingleHLSCommand({
+            inputPath: uploadedFile.tempFilePath,
+            tempDir,
+            videoInfo,
+            outputWidth: singleVariantWidth,
+            outputHeight: singleVariantHeight,
+            outputBitrate: singleVariantBitrate,
+            segmentDuration: segmentDurationSingle,
+            frameRate,
+            hasAudio: videoInfo.hasAudio
+          });
+          const masterPlaylist = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-STREAM-INF:BANDWIDTH=${singleVariantBitrate * 1000 + HLS_AUDIO_BITRATE_BPS},RESOLUTION=${singleVariantWidth}x${singleVariantHeight}
+playlist.m3u8`;
 
-        const directHlsCommand = createSinglePassDualHLSCommand({
-          inputPath: uploadedFile.tempFilePath,
-          tempDir,
-          videoInfo,
-          highQualityWidth,
-          highQualityHeight,
-          highQualityBitrate,
-          variant480Width,
-          variant480Height,
-          variant480Bitrate,
-          segmentDuration,
-          frameRate,
-          hasAudio: videoInfo.hasAudio
-        });
+          directVariantDescription = `single ${normalizedReferenceDim}p`;
+          expectedHlsFiles = [
+            path.join(tempDir, 'playlist.m3u8')
+          ];
+          console.log(`[${jobId}] [DIRECT-HLS] Single variant: ${singleVariantWidth}x${singleVariantHeight} @ ${singleVariantBitrate}k, segment=${segmentDurationSingle}s`);
+          console.log(`[${jobId}] [FFMPEG] Direct HLS command (${directVariantDescription}): ${directHlsCommand}`);
 
-        updateProgressSafe(jobId, 40, 'Converting directly to HLS...');
-        await executeWithProgress(
-          directHlsCommand,
-          jobId,
-          40,
-          80,
-          'Converting directly to dual-variant HLS...',
-          uploadedFile.size,
-          videoInfo && videoInfo.duration ? videoInfo.duration : 0
-        );
+          updateProgressSafe(jobId, 40, 'Converting directly to HLS...');
+          await executeWithProgress(
+            directHlsCommand,
+            jobId,
+            40,
+            80,
+            'Converting directly to single-variant HLS...',
+            uploadedFile.size,
+            videoInfo && videoInfo.duration ? videoInfo.duration : 0
+          );
 
-        const expectedHlsFiles = [
-          path.join(tempDir, 'master.m3u8'),
-          path.join(tempDir, '720p/playlist.m3u8'),
-          path.join(tempDir, '480p/playlist.m3u8')
-        ];
+          fs.writeFileSync(path.join(tempDir, 'master.m3u8'), masterPlaylist);
+          expectedHlsFiles.push(path.join(tempDir, 'master.m3u8'));
+        } else {
+          const highQualityWidth = targetWidth;
+          const highQualityHeight = targetHeight;
+          const highQualityBitrate = capBitrateToSourceK(
+            calculateVideoBitrateK(normalizedReferenceDim),
+            bitrate,
+            `[${jobId}] [DIRECT-HLS]`
+          );
+          const variant480Bitrate = capBitrateToSourceK(
+            calculateVideoBitrateK(target480Dim),
+            bitrate,
+            `[${jobId}] [DIRECT-HLS]`
+          );
+
+          const segmentDurationHigh = calculateOptimalSegmentDuration({
+            displayWidth: highQualityWidth,
+            displayHeight: highQualityHeight,
+            duration: videoInfo ? videoInfo.duration : null
+          }, highQualityBitrate);
+          const segmentDuration480 = calculateOptimalSegmentDuration({
+            displayWidth: variant480Width,
+            displayHeight: variant480Height,
+            duration: videoInfo ? videoInfo.duration : null
+          }, variant480Bitrate);
+          const segmentDuration = Math.max(segmentDurationHigh, segmentDuration480);
+
+          directHlsCommand = createSinglePassDualHLSCommand({
+            inputPath: uploadedFile.tempFilePath,
+            tempDir,
+            videoInfo,
+            highQualityWidth,
+            highQualityHeight,
+            highQualityBitrate,
+            variant480Width,
+            variant480Height,
+            variant480Bitrate,
+            segmentDuration,
+            frameRate,
+            hasAudio: videoInfo.hasAudio
+          });
+          directVariantDescription = 'dual 720p+480p';
+          expectedHlsFiles = [
+            path.join(tempDir, 'master.m3u8'),
+            path.join(tempDir, '720p/playlist.m3u8'),
+            path.join(tempDir, '480p/playlist.m3u8')
+          ];
+
+          console.log(`[${jobId}] [DIRECT-HLS] 720p variant: ${highQualityWidth}x${highQualityHeight} @ ${highQualityBitrate}k`);
+          console.log(`[${jobId}] [DIRECT-HLS] 480p variant: ${variant480Width}x${variant480Height} @ ${variant480Bitrate}k`);
+          console.log(`[${jobId}] [DIRECT-HLS] Segment duration: ${segmentDuration}s, audio: ${videoInfo.hasAudio ? 'yes' : 'no'}`);
+          console.log(`[${jobId}] [FFMPEG] Direct HLS command (${directVariantDescription}): ${directHlsCommand}`);
+
+          updateProgressSafe(jobId, 40, 'Converting directly to HLS...');
+          await executeWithProgress(
+            directHlsCommand,
+            jobId,
+            40,
+            80,
+            'Converting directly to dual-variant HLS...',
+            uploadedFile.size,
+            videoInfo && videoInfo.duration ? videoInfo.duration : 0
+          );
+        }
+
         const missingHlsFile = expectedHlsFiles.find(filePath => !fs.existsSync(filePath));
         if (missingHlsFile) {
-          throw new Error(`Single-pass HLS output missing expected file: ${missingHlsFile}`);
+          throw new Error(`Direct HLS output missing expected file: ${missingHlsFile}`);
         }
+        directHlsConverted = true;
 
         updateProgressSafe(jobId, 80, 'Storing HLS stream...');
         const cidOutput = await executeLeitherOperationWithProgress(
@@ -2175,10 +2342,12 @@ async function processVideoUploadInternal(req, jobId) {
         );
         const cid = extractCidFromLeitherOutput(cidOutput);
         if (!cid) {
-          throw new Error('Failed to extract CID from IPFS add output for single-pass HLS content');
+          throw new Error('Failed to extract CID from IPFS add output for direct HLS content');
         }
 
-        console.log(`[${jobId}] [SUCCESS] Single-pass dual-variant HLS uploaded to IPFS, CID: ${cid}`);
+        console.log(`[${jobId}] [ROUTE] Direct HLS output uploaded, CID: ${cid}`);
+        console.log(`[${jobId}] [SUCCESS] Direct ${directVariantDescription} HLS conversion completed`);
+        console.timeEnd(`[${jobId}] video-normalization`);
         return {
           cid,
           tempDir,
@@ -2186,13 +2355,14 @@ async function processVideoUploadInternal(req, jobId) {
           size: getPathSizeSync(tempDir),
           aspectRatio: targetWidth / targetHeight
         };
-      } catch (singlePassError) {
-        console.warn(`[${jobId}] [HLS-SINGLE-PASS] Direct filter_complex HLS failed, falling back to normalized pipeline: ${singlePassError.message}`);
+      } catch (directHlsError) {
+        if (directHlsConverted) {
+          throw directHlsError;
+        }
+        console.warn(`[${jobId}] [DIRECT-HLS] Direct HLS conversion failed, falling back to normalize-then-HLS path: ${directHlsError.message}`);
         cleanupPartialHLSOutput(tempDir);
-        updateProgressSafe(jobId, 40, 'Single-pass HLS failed, falling back to normalized pipeline...');
+        updateProgressSafe(jobId, 40, 'Direct HLS failed, falling back to normalized pipeline...');
       }
-    } else if (!singlePassHlsEnabled) {
-      console.log(`[${jobId}] [HLS-SINGLE-PASS] Disabled; set HLS_SINGLE_PASS_FILTER_COMPLEX=true to enable`);
     }
 
     // Normalize to MP4
