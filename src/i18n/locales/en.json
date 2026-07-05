@@ -99,6 +99,7 @@
     "showNewTweetsCapped": "{count} new tweets",
     "forwardedBy": "Forwarded by {'@'}{name}",
     "forwardedByYou": "Forwarded by you",
+    "loadingQuotedTweet": "Loading quoted tweet...",
     "loadingAuthor": "Loading...",
     "loadingUsername": "loading",
     "editTweet": "Edit Tweet",

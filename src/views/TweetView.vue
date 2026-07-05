@@ -614,8 +614,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         </div>
       </div>
       <!-- Embedded original tweet for quote tweets -->
-      <blockquote v-if="!isRetweet && !isQuoted && originalTweet" class="quoted-tweet">
-        <TweetView :tweet="originalTweet" :is-quoted="true" />
+      <blockquote v-if="!isRetweet && !isQuoted && currentTweet.originalTweetId" class="quoted-tweet">
+        <TweetView v-if="originalTweet" :tweet="originalTweet" :is-quoted="true" />
+        <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
       </blockquote>
     </div>
     <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="(t) => currentTweet = t" />
@@ -639,6 +640,14 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   border-radius: 8px;
   overflow: hidden;
   background-color: #f0f2f5;
+}
+.quoted-tweet-placeholder {
+  margin: 0;
+  padding: 12px;
+  color: #657786;
+  font-size: 14px;
+  /* Match the background the embedded tweet itself uses (.tweet-container.is-quoted) */
+  background-color: #d0d8e4;
 }
 
 /* Remove card styling on mobile for flush layout */

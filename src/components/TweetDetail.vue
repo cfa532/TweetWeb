@@ -934,8 +934,9 @@ function retryLoad() {
             </div>
 
             <!-- quoted tweet -->
-            <blockquote v-if="!isRetweet && originTweet" class="quoted-tweet">
-                <TweetView :tweet="originTweet" :is-quoted=true></TweetView>
+            <blockquote v-if="!isRetweet && tweet.originalTweetId" class="quoted-tweet">
+                <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
+                <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
             </blockquote>
 
             <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
@@ -1009,6 +1010,12 @@ function retryLoad() {
 }
 .quoted-tweet :deep(.tweet-container) {
     background-color: #d0d8e4;
+}
+.quoted-tweet-placeholder {
+    margin: 0;
+    padding: 12px;
+    color: #657786;
+    font-size: 14px;
 }
 
 .comment-list {
