@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+defineOptions({ name: 'Followers' })
 import { useI18n } from 'vue-i18n'
 import { useTweetStore } from '@/stores'
 import { useRoute } from 'vue-router';
 import { AppHeader, UserRow } from "@/views";
 import { LoadingSpinner, PageLayout } from "@/components";
+import { useScrollRestore } from '@/composables/useScrollRestore';
 
 const { t } = useI18n();
 const route = useRoute();
-const userId = route.params.userId as MimeiId
+// Reactive so the AppHeader updates when navigating followers/A → followers/B
+// within this same keep-alive instance. loadedUserId tracks what's currently
+// rendered so the watcher can detect an actual change.
+const userId = computed(() => route.params.userId as MimeiId)
+const loadedUserId = ref<MimeiId | undefined>(userId.value)
 const tweetStore = useTweetStore()
 const followerIds = ref([] as MimeiId[])
 const loginFollowingIds = ref([] as MimeiId[])
@@ -19,7 +25,6 @@ const batchSize = 8 // Number of users to load at once
                     // (kept small so the connection pool isn't saturated by
                     //  dozens of parallel getUser calls; subsequent batches
                     //  auto-load as soon as the current one resolves)
-const containerRef = ref<HTMLElement>()
 
 // Computed property for currently visible user IDs
 const visibleUserIds = computed(() => {
@@ -45,7 +50,8 @@ const isLoggedIn = computed(() => !!tweetStore.loginUser)
 // The await on Promise.allSettled gates the next batch so we don't
 // pile on the connection pool. After the batch settles, recurse to
 // load the next one — keeps loading continuously until every follower
-// is mounted.
+// is mounted. Paused while scroll is being restored so useScrollRestore
+// can page content in deterministically.
 const loadNextBatch = async () => {
     if (isLoadingMore.value || !hasMoreUsers.value) return
 
@@ -66,26 +72,31 @@ const loadNextBatch = async () => {
 
     isLoadingMore.value = false
 
-    if (hasMoreUsers.value) {
+    if (hasMoreUsers.value && !isRestoringFeed.value) {
         // Auto-continue without waiting for scroll.
         loadNextBatch()
     }
 }
 
-// Handle scroll to load more users
+// Infinite scroll on the window (same model as MainPage/UserPage).
 const handleScroll = () => {
-    if (!containerRef.value) return
-    
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.value
-    const scrollPercentage = (scrollTop + clientHeight) / scrollHeight
-    
-    // Load more when user scrolls to 80% of the content
-    if (scrollPercentage > 0.8 && hasMoreUsers.value && !isLoadingMore.value) {
+    if (isRestoringFeed.value || isLoadingMore.value || !hasMoreUsers.value) return
+    const scrollBottom = window.innerHeight + window.scrollY
+    const docHeight = document.documentElement.scrollHeight
+    if (docHeight - scrollBottom <= 200) {
         loadNextBatch()
     }
 }
 
-onMounted(async () => {
+// Persist & restore this list's scroll position, keyed per-user so one user's
+// spot never bleeds onto another's. Back-nav restores synchronously (keep-alive
+// DOM); reload pages content in then jumps. See composables/useScrollRestore.
+const { restoring: isRestoringFeed, restoreAfterLoad } = useScrollRestore(
+    () => `followers:${route.params.userId}`,
+    { hasMore: () => hasMoreUsers.value, loadMore: loadNextBatch },
+)
+
+async function loadFollowers(targetUserId: MimeiId) {
     isLoading.value = true
 
     try {
@@ -99,7 +110,7 @@ onMounted(async () => {
         // instead of reloading the page — the reload was disruptive (could fire even
         // after the user navigated away) and didn't actually solve anything.
         let timeoutId: number | null = null;
-        const loadPromise = tweetStore.getFollowers(userId)
+        const loadPromise = tweetStore.getFollowers(targetUserId)
         const timeoutPromise = new Promise<MimeiId[]>((resolve) =>
             timeoutId = window.setTimeout(() => {
                 console.warn('[Followers] load timeout; showing empty state')
@@ -116,68 +127,30 @@ onMounted(async () => {
         if (followerIds.value.length > 0) {
             await loadNextBatch()
         }
-
-        // Add scroll listener
-        if (containerRef.value) {
-            containerRef.value.addEventListener('scroll', handleScroll)
-        }
     } catch (error) {
-        // Timeout already handled the refresh
         console.error('Unexpected error loading followers:', error)
-    }
-})
-
-// Cleanup scroll listener
-const cleanup = () => {
-    if (containerRef.value) {
-        containerRef.value.removeEventListener('scroll', handleScroll)
     }
 }
 
-// Watch for route changes to reset state
+onMounted(async () => {
+    await loadFollowers(userId.value)
+    await restoreAfterLoad()
+    // Resume auto-loading any remaining batches now that scroll position is set.
+    if (hasMoreUsers.value) loadNextBatch()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+})
+
+// Reload when the :userId param changes (same keep-alive instance).
 watch(() => route.params.userId, async (newUserId) => {
-    if (newUserId !== userId) {
-        cleanup()
-        followerIds.value = []
-        currentIndex.value = 0
-        isLoading.value = true
-
-        try {
-            if (tweetStore.loginUser) {
-                loginFollowingIds.value = await tweetStore.getFollowings(tweetStore.loginUser.mid)
-            } else {
-                loginFollowingIds.value = []
-            }
-
-            // Load followers with 15-second timeout; on timeout show empty list
-            // rather than reloading.
-            let timeoutId: number | null = null;
-            const loadPromise = tweetStore.getFollowers(newUserId as MimeiId)
-            const timeoutPromise = new Promise<MimeiId[]>((resolve) =>
-                timeoutId = window.setTimeout(() => {
-                    console.warn('[Followers] load timeout (route change); showing empty state')
-                    resolve([])
-                }, 15000)
-            )
-
-            const newIds = await Promise.race([loadPromise, timeoutPromise])
-            // Success - clear the timeout
-            if (timeoutId) clearTimeout(timeoutId)
-            followerIds.value = newIds
-            isLoading.value = false
-
-            if (newIds.length > 0) {
-                await loadNextBatch()
-            }
-
-            if (containerRef.value) {
-                containerRef.value.addEventListener('scroll', handleScroll)
-            }
-        } catch (error) {
-            // Timeout already handled the refresh
-            console.error('Unexpected error loading followers on route change:', error)
-        }
-    }
+    if (!newUserId || newUserId === loadedUserId.value) return
+    cleanup()
+    followerIds.value = []
+    currentIndex.value = 0
+    await loadFollowers(newUserId as MimeiId)
+    loadedUserId.value = newUserId as MimeiId
+    await restoreAfterLoad()
+    if (hasMoreUsers.value) loadNextBatch()
+    window.addEventListener('scroll', handleScroll, { passive: true })
 })
 
 function handleFollowToggled(payload: { userId: MimeiId; isFollowing: boolean }) {
@@ -193,8 +166,10 @@ function handleResolveFailed(userId: MimeiId) {
     followerIds.value = followerIds.value.filter(id => id !== userId)
 }
 
-// Cleanup on component unmount
-import { onUnmounted } from 'vue'
+// Cleanup scroll listener
+function cleanup() {
+    window.removeEventListener('scroll', handleScroll)
+}
 onUnmounted(() => {
     cleanup()
 })
@@ -204,58 +179,80 @@ onUnmounted(() => {
     <PageLayout>
         <AppHeader :userId="userId"/>
 
-        <div ref="containerRef" class="users-container">
-        <UserRow 
-            v-for="userId in visibleUserIds" 
-            :userId="userId" 
-            :isFollowing="loginFollowingIds.includes(userId)"
-            :showFollowButton="isLoggedIn"
-            :key="userId" 
-            @follow-toggled="handleFollowToggled"
-            @resolve-failed="handleResolveFailed"
-            class="user-row" 
-        />
-        
-        <!-- Loading spinner for initial load -->
-        <div v-if="isLoading" class="d-flex justify-content-center my-3">
-            <LoadingSpinner />
+        <!-- The list is part of the normal window scroll, so the header scrolls
+             with it — same as every other screen. -->
+        <div class="users-list" :class="{ 'list-restoring': isRestoringFeed }">
+            <UserRow
+                v-for="userId in visibleUserIds"
+                :userId="userId"
+                :isFollowing="loginFollowingIds.includes(userId)"
+                :showFollowButton="isLoggedIn"
+                :key="userId"
+                @follow-toggled="handleFollowToggled"
+                @resolve-failed="handleResolveFailed"
+                class="user-row"
+            />
+
+            <!-- Loading spinner for initial load -->
+            <div v-if="isLoading" class="d-flex justify-content-center my-3">
+                <LoadingSpinner />
+            </div>
+
+            <!-- Loading spinner for more users -->
+            <div v-if="isLoadingMore && !isLoading" class="d-flex justify-content-center my-3">
+                <LoadingSpinner size="sm" />
+            </div>
+
+            <!-- End of list indicator -->
+            <div v-if="!hasMoreUsers && visibleUserIds.length > 0" class="text-center text-muted my-3">
+                <small>{{ $t('tweet.noMoreUsers') }}</small>
+            </div>
+
+            <!-- Empty state -->
+            <div v-if="!isLoading && followerIds.length === 0" class="text-center text-muted my-3">
+                <small>{{ $t('tweet.noUsersFound') }}</small>
+            </div>
         </div>
 
-        <!-- Loading spinner for more users -->
-        <div v-if="isLoadingMore && !isLoading" class="d-flex justify-content-center my-3">
-            <LoadingSpinner size="sm" />
+        <div v-if="isRestoringFeed" class="list-restoring-overlay" aria-live="polite">
+            <LoadingSpinner />
         </div>
-        
-        <!-- End of list indicator -->
-        <div v-if="!hasMoreUsers && visibleUserIds.length > 0" class="text-center text-muted my-3">
-            <small>{{ $t('tweet.noMoreUsers') }}</small>
-        </div>
-        
-        <!-- Empty state -->
-        <div v-if="!isLoading && followerIds.length === 0" class="text-center text-muted my-3">
-            <small>{{ $t('tweet.noUsersFound') }}</small>
-        </div>
-    </div>
     </PageLayout>
 </template>
 
 <style scoped>
-.users-container {
-    max-height: calc(100vh - 100px);
-    overflow-y: auto;
-    padding: 10px;
+/* Inset the row boxes from the screen edges (both sides) and add a little gap
+   below the header. */
+.users-list {
+    padding: 8px 6px 0px;
 }
 
 .user-row {
     border: 1px solid #ccc;
     border-radius: 5px;
-    margin: 5px 0;
-    padding: 10px;
+    margin: 5px 0px;
+    padding: 10px 6px;
     background-color: #f9f9f9;
     transition: background-color 0.3s ease;
 }
 
 .user-row:hover {
     background-color: #e9e9e9;
+}
+
+/* While paging in content to reach a saved scroll offset (deep reload), keep the
+   list's layout for measurement but hide it so the top never flashes. */
+.list-restoring {
+    visibility: hidden;
+}
+
+.list-restoring-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1030;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.8);
 }
 </style>

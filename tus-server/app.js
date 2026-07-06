@@ -21,7 +21,7 @@ const netdisk = require('./netdisk');
 const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
 const agentRouter = require('./agentRoutes');
-const commentRouter = require('./commentRoutes');
+const createShareRoutes = require('./shareRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
 
@@ -46,7 +46,13 @@ app.use((req, res, next) => {
     'Accept',
     'Cache-Control',
     'Connection',
-    'Keep-Alive'
+    'Keep-Alive',
+    'X-Share-Password',
+    'x-share-password',
+    'X-Download-Token',
+    'x-download-token',
+    'Range',
+    'If-Range'
   ].join(', '));
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -57,6 +63,8 @@ const execAsync = promisify(exec);
 
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
+const hostname = os.hostname().split('.')[0].toLowerCase();
+const commentRoutesEnabled = hostname === 'minipc'; // ksbox SSH alias
 
 // Leither connection management
 let leitherConnections = new Map();
@@ -408,6 +416,17 @@ function checkAuthorizedUser(req, res, next) {
   if (req.path === '/health') {
     return next();
   }
+
+  // Public share downloads are gated by shareRoutes itself.
+  if (req.path === '/download') {
+    return next();
+  }
+
+  // Public share metadata is needed so clients can decide whether to prompt
+  // for a password before redirecting to IPFS.
+  if (req.method === 'GET' && req.path.startsWith('/shares/')) {
+    return next();
+  }
   
   // Skip authorization for the register endpoint
   if (req.path === '/files/register') {
@@ -429,8 +448,9 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
 
-  // Skip authorization for the comment endpoint (uses server-side X cookies)
-  if (req.path === '/comment') {
+  // Only ksbox runs the comment endpoint because it depends on local X cookies
+  // and Playwright browser state.
+  if (commentRoutesEnabled && req.path === '/comment') {
     return next();
   }
   
@@ -541,6 +561,12 @@ app.use((req, res, next) => {
 
 // Configure file upload middleware with different limits for different routes
 app.use((req, res, next) => {
+  // /process-zip streams multipart data directly in zipRoutes.js so the
+  // server can accept chunked Android uploads without buffering in memory.
+  if (req.path === '/process-zip') {
+    return next();
+  }
+
   // Use 1GB limit for video conversion, 500MB for zip processing, 50MB for other routes
   let fileSizeLimit = 50 * 1024 * 1024; // Default 50MB
   if (req.path === '/convert-video') {
@@ -592,7 +618,13 @@ app.use(cors({
     'Accept',
     'Cache-Control',
     'Connection',
-    'Keep-Alive'
+    'Keep-Alive',
+    'X-Share-Password',
+    'x-share-password',
+    'X-Download-Token',
+    'x-download-token',
+    'Range',
+    'If-Range'
   ],
   exposedHeaders: [
     'Location',
@@ -600,7 +632,11 @@ app.use(cors({
     'Upload-Offset',
     'Upload-Length',
     'x-username',
-    'X-Username'
+    'X-Username',
+    'Accept-Ranges',
+    'Content-Range',
+    'Content-Length',
+    'X-Download-Token'
   ],
   credentials: true,
   maxAge: 86400 // 24 hours
@@ -611,12 +647,19 @@ app.use(checkAuthorizedUser);
 
 // Mount the routers
 app.use('/', uploadRouter);     // TUS upload handling
+app.use('/', createShareRoutes(uploadRouter.registries)); // File sharing and gated downloads
 app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
 app.use('/', zipRouter);         // ZIP processing routes
 app.use('/api/agent', agentRouter()); // Agent proxy routes
-app.use('/', commentRouter);    // X (Twitter) comment proxy
+
+if (commentRoutesEnabled) {
+  const commentRouter = require('./commentRoutes');
+  app.use('/', commentRouter);    // X (Twitter) comment proxy
+} else {
+  console.log(`[COMMENT] Disabled on host ${hostname}; only ksbox/minipc loads commentRoutes`);
+}
 
 // Health check endpoint (no authorization required)
 app.get('/health', (req, res) => {
@@ -652,5 +695,6 @@ app.listen(port, '::', async () => {
   
   // Initialize services on startup
   await initializeLeither();
+  uploadRouter.resumePendingIpfsConversions();
   await initializeHardwareEncoders();
 });

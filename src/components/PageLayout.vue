@@ -9,7 +9,7 @@
   width: 100%;
   margin: 0;
   background-color: #1a1a2e;
-  overflow-x: hidden; /* Prevent horizontal overflow */
+  overflow-x: clip; /* clip (not hidden) avoids creating a scroll container that clips absolutely-positioned dropdowns on short pages */
   box-sizing: border-box;
 }
 
@@ -22,5 +22,14 @@
 .page-layout img {
   max-width: 100%;
   height: auto;
+}
+
+.tweet-list-row .card-header {
+  padding: 0 !important;
+}
+
+.tweet-list-row .tweet-content-wrapper {
+  padding-left: 4px !important;
+  padding-right: 4px !important;
 }
 </style>

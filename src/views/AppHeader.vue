@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { useAlertStore } from '@/stores/alert.store';
 import { DownloadPrompt, DownloadModal } from '@/components';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 
 const { t } = useI18n()
 const router = useRouter()
@@ -14,18 +14,15 @@ const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
 const isLoggedIn = computed(() => !!tweetStore.loginUser)
 
-/** Logo: on home feed → my profile when logged in; anywhere else AppHeader appears → home. */
+const emit = defineEmits<{ (e: 'refresh'): void }>()
+
+/** Logo: on home feed → emit refresh; anywhere else → navigate home. */
 function onAppAvatarClick() {
     if (route.name !== 'main') {
         router.push({ name: 'main' })
         return
     }
-    const mid = tweetStore.loginUser?.mid
-    if (mid) {
-        router.push(`/author/${mid}`)
-    } else {
-        router.push({ name: 'main' })
-    }
+    emit('refresh')
 }
 const isAccountMenuOpen = ref(false)
 let accountMenuCloseTimer: ReturnType<typeof setTimeout> | null = null
@@ -35,6 +32,10 @@ const props = defineProps({
 const userId = computed(() => props.userId)
 const avatarUrl = ref(import.meta.env.VITE_APP_LOGO)
 const user = ref<User>()
+const isAccountAvatarBroken = ref(false)
+const accountAvatarSrc = computed(() =>
+    isLoggedIn.value && !isAccountAvatarBroken.value ? avatarSrc(tweetStore.loginUser?.avatar) : undefined
+)
 
 /** Bold name in profile header — use username when display name is missing (same as ItemHeader). */
 const profileHeaderDisplayName = computed(() => {
@@ -116,7 +117,7 @@ async function onProfileToggleFollow(event: Event) {
         }
     } catch (error) {
         localIsFollowing.value = previous
-        console.error('Failed to toggle following:', error)
+        console.error('Failed to toggle following:', error, { mid: user.value?.mid, username: user.value?.username })
         alertStore.error(t('profile.followActionFailed'))
     } finally {
         isTogglingProfileFollow.value = false
@@ -128,6 +129,7 @@ async function onProfileToggleFollow(event: Event) {
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
+const appVersion = ref<number | null>(null)
 
 const openDownloadModal = () => {
     showDownloadModal.value = true
@@ -202,8 +204,8 @@ async function countOriginalTweetsByUser(userId: string): Promise<number> {
     const user = tweetStore.loginUser
     if (!user?.client) return 0
 
-    const pageSize = 50
-    const maxPages = 20
+    const pageSize = 5
+    const maxPages = 4
     let originalTweetCount = 0
 
     for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
@@ -266,7 +268,7 @@ const uploadTweet = async () => {
                 return
             }
         } catch (error) {
-            console.error('[publish pre-check] Failed to validate original tweet threshold:', error)
+            console.error('[publish pre-check] Failed to validate original tweet threshold for user:', loginUser.mid, error)
         }
     }
 
@@ -296,8 +298,7 @@ const startDirectDownload = async () => {
     }
 }
 
-onMounted(() => {
-    // Show download prompt after 2 seconds
+onMounted(async () => {
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
@@ -305,6 +306,24 @@ onMounted(() => {
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
+
+    const cached = sessionStorage.getItem('appVersion')
+    if (cached) appVersion.value = Number(cached)
+
+    try {
+        const res = await tweetStore.lapi.client.RunMApp("check_upgrade", {
+            aid: tweetStore.appId,
+            ver: "last",
+            version: "v2",
+        })
+        const data = res?.success ? res.data : res
+        if (data?.version != null) {
+            appVersion.value = data.version
+            sessionStorage.setItem('appVersion', String(data.version))
+        }
+    } catch (e) {
+        console.warn('[AppHeader] check_upgrade failed', e)
+    }
 })
 watch(
     userId,
@@ -315,8 +334,8 @@ watch(
         }
         const requestedId = nv
         const syncPeek =
-            tweetStore.users.get(requestedId) ??
-            (tweetStore.loginUser?.mid === requestedId ? tweetStore.loginUser : undefined)
+            (tweetStore.loginUser?.mid === requestedId ? tweetStore.loginUser : undefined) ??
+            tweetStore.users.get(requestedId)
         if (syncPeek) {
             user.value = syncPeek
         } else if (user.value?.mid !== requestedId) {
@@ -326,7 +345,7 @@ watch(
             // Use cache when available — racing provider IPs on every profile
             // visit was wasteful. If the cached IP is dead, the avatar's
             // @error handler force-refreshes to recover (see onAvatarError).
-            const u = await tweetStore.getUser(requestedId)
+            const u = await tweetStore.getUserFromRootHost(requestedId)
             if (userId.value !== requestedId) return
             user.value = u ?? syncPeek
         } catch (e) {
@@ -338,10 +357,12 @@ watch(
     { immediate: true },
 )
 
-/** Active profile view tab — driven by the `view` query param so it's
- *  deep-linkable and the browser back button works as expected.
- *  Default (no query) maps to 'tweets'. */
-const activeView = computed<'tweets' | 'bookmarks' | 'favorites'>(() => {
+/** Active profile view tab — covers all five stat tabs.
+ *  Fans/followings are separate routes; tweets/bookmarks/favorites are
+ *  ?view= variants of UserPage. */
+const activeView = computed<'fans' | 'followings' | 'tweets' | 'bookmarks' | 'favorites'>(() => {
+    if (route.name === 'followers') return 'fans'
+    if (route.name === 'followings') return 'followings'
     const v = route.query.view
     return v === 'bookmarks' || v === 'favorites' ? v : 'tweets'
 })
@@ -369,7 +390,24 @@ function onAvatarError(event: Event) {
     const id = userId.value
     if (!id) return
     img.dataset.refreshed = '1'
-    tweetStore.getUser(id, true).catch(() => undefined)
+    tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
+}
+
+let avatarErrorRetries = 0
+watch(() => tweetStore.loginUser?.avatar, () => {
+    isAccountAvatarBroken.value = false
+    avatarErrorRetries = 0
+})
+
+async function onAccountAvatarError() {
+    isAccountAvatarBroken.value = true
+    const id = tweetStore.loginUser?.mid
+    if (!id || avatarErrorRetries >= 1) return
+    avatarErrorRetries++
+    await tweetStore.getUserFromRootHost(id, true).catch(() => undefined)
+    // Force a reload attempt even when the URL hasn't changed (e.g. the writable
+    // host background resolution in login() may now have fixed it).
+    isAccountAvatarBroken.value = false
 }
 </script>
 
@@ -378,7 +416,7 @@ function onAvatarError(event: Event) {
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img :src="user ? user.avatar : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
+                    <img :src="user ? avatarSrc(user.avatar) : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
                         class="rounded-circle"
                         :title="user ? `ID: ${user.mid}\nBase URL: ${user.providerIp ?? 'N/A'}\nHost ID: ${user.hostIds?.[0] ?? 'N/A'}` : undefined" />
                 </div>
@@ -393,7 +431,7 @@ function onAvatarError(event: Event) {
                         </span>
                     </div>
 
-                    <div class="mt-1">
+                    <div class="profile-bio">
                         <span class="alias text-muted">{{ user.profile }}</span>
                     </div>
                 </div>
@@ -415,9 +453,9 @@ function onAvatarError(event: Event) {
                     :aria-expanded="isAccountMenuOpen"
                     aria-haspopup="true"
                 >
-                    <img v-if="isLoggedIn && tweetStore.loginUser?.avatar" :src="tweetStore.loginUser.avatar"
+                    <img v-if="accountAvatarSrc" :src="accountAvatarSrc"
                         class="account-avatar rounded-circle"
-                        @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
+                        @error="onAccountAvatarError" />
                     <svg v-else xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="account-icon-fallback">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
@@ -436,22 +474,21 @@ function onAvatarError(event: Event) {
                         <a href="#" class="account-dropdown-item" @click.prevent="goToAccount">{{ $t('auth.account') }}</a>
                         <a href="#" class="account-dropdown-item" @click.prevent="logout">{{ $t('auth.logout') }}</a>
                     </template>
+                    <div v-if="appVersion !== null" class="account-dropdown-version">v{{ appVersion }}</div>
                 </div>
             </div>
         </div>
         <!-- Followers and Friends Links -->
         <div v-if="user" class="user-actions">
             <div v-if="user" class="links">
-                <a href="#" @click.prevent="router.push(`/followers/${user.mid}`)" class="text-muted">{{
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'fans' }"
+                    @click.prevent="router.push(`/followers/${user.mid}`)">{{
                     user.followersCount }} {{ $t('profile.fans') }}</a>
-                <a href="#" @click.prevent="router.push(`/followings/${user.mid}`)" class="text-muted">{{
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'followings' }"
+                    @click.prevent="router.push(`/followings/${user.mid}`)">{{
                     user.followingCount }} {{ $t('profile.following') }}</a>
-                <!-- Tweets count: plain text for other users, an active-able
-                     tab when viewing the appUser's own profile so the user
-                     can switch back from the Bookmarks/Favorites views. -->
-                <a v-if="isViewingSelf" href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
+                <a href="#" class="text-muted view-tab" :class="{ active: activeView === 'tweets' }"
                     @click.prevent="setView(undefined)">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
-                <a v-else href="#" class="text-muted">{{ user.tweetCount }} {{ $t('profile.tweet') }}</a>
 
                 <!-- Bookmarks / Favorites are personal: appUser only. -->
                 <template v-if="isViewingSelf">
@@ -494,18 +531,20 @@ function onAvatarError(event: Event) {
 
 .header-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     flex-wrap: nowrap;
-    min-height: 56px;
-    margin: 2px 0;
+    min-height: 68px;
+    margin: 0;
+    padding: 10px 10px 4px 0;
 }
 
 .header-left {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     flex: 1;
     min-width: 0;
+    padding-right: 0px;
 }
 
 .avatar img {
@@ -522,20 +561,37 @@ function onAvatarError(event: Event) {
 .user-info {
     flex-grow: 1;
     /* Allows the user info to take up remaining space */
-    margin-left: 10px;
+    margin-left: 4px;
     /* Adds some space between avatar and user info */
     flex-wrap: wrap;
     /* Allows text to wrap on smaller screens */
+    min-width: 0;
+    padding-top: 2px;
 }
 
 .username-alias-time {
     display: flex;
     align-items: center;
-    gap: 1px;
+    gap: 4px;
     flex-wrap: wrap;
     /* Allows text to wrap on smaller screens */
     font-size: 0.95rem;
     color: #ccd0d4;
+    margin-bottom: 6px;
+    line-height: 1.25;
+}
+
+.profile-bio {
+    line-height: 1.35;
+    padding-right: 6px;
+}
+
+.profile-bio .alias {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
 .text-muted {
@@ -549,6 +605,8 @@ function onAvatarError(event: Event) {
     align-items: center;
     gap: 8px;
     width: 100%;
+    padding-top: 8px;
+    padding-bottom: 1px;
 }
 
 .links {
@@ -625,7 +683,7 @@ function onAvatarError(event: Event) {
     .user-info {
         line-height: 1.2;
         flex-grow: 1;
-        margin-left: 1px;
+        margin-left: 4px;
         /* Adjusts margin for smaller screens */
     }
 
@@ -640,13 +698,19 @@ function onAvatarError(event: Event) {
     }
 
     .header-row {
-        min-height: 56px;
+        min-height: 68px;
+        padding-top: 10px;
+    }
+
+    .account-menu-wrapper {
+        margin-left: 10px;
+        margin-right: 8px;
     }
 }
 
 @media (min-width: 1200px) {
     .user-info {
-        margin-left: 1px;
+        margin-left: 6px;
         /* Increases margin for larger screens */
     }
 }
@@ -778,7 +842,7 @@ function onAvatarError(event: Event) {
     box-sizing: border-box;
     min-width: 24px;
     min-height: 24px;
-    padding: 0 8px 0 0;
+    padding: 0;
     text-decoration: none;
     flex-shrink: 0;
     display: inline-flex;
@@ -811,6 +875,9 @@ function onAvatarError(event: Event) {
     flex-shrink: 0;
     padding-bottom: 2px;
     margin-bottom: -2px;
+    margin-left: 12px;
+    margin-top: 8px;
+    margin-right: 10px;
 }
 
 .account-dropdown {
@@ -836,6 +903,14 @@ function onAvatarError(event: Event) {
 
 .account-dropdown-item:hover {
     background: #ecf3f8;
+}
+
+.account-dropdown-version {
+    padding: 6px 12px;
+    color: #aaa;
+    font-size: 0.78rem;
+    text-align: right;
+    border-top: 1px solid #e6ecf0;
 }
 
 @keyframes slideDown {

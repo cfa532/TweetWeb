@@ -21,6 +21,7 @@ const isLoading = ref(false);
 const errorMessage = ref<string | null>(null);
 const showDeleteConfirm = ref(false);
 const showLogoutConfirm = ref(false);
+const showHostIdChangeConfirm = ref(false);
 const showAvatarCropper = ref(false);
 const isUploadingAvatar = ref(false);
 const isGeneratingAgentToken = ref(false);
@@ -177,7 +178,7 @@ async function handleRegister() {
 }
 
 // ==================== UPDATE PROFILE ====================
-async function handleUpdateProfile() {
+function handleUpdateProfile() {
     clearError();
 
     if (editPassword.value && editPassword.value !== editConfirmPassword.value) {
@@ -197,22 +198,65 @@ async function handleUpdateProfile() {
         }
     }
 
+    const originalHostId = user.value?.hostIds?.[0] || '';
+    const newHostId = editHostId.value.trim();
+    const hostIdChanged = newHostId.length === MIMEI_ID_LENGTH && newHostId !== originalHostId;
+
+    if (hostIdChanged) {
+        showHostIdChangeConfirm.value = true;
+        return;
+    }
+
+    doUpdateProfile(false);
+}
+
+function isTimeoutError(err: any): boolean {
+    const message = String(err?.message ?? err ?? '').toLowerCase();
+    return message.includes('timed out') || message.includes('timeout');
+}
+
+function finishHostIdChange(message: string, type: 'success' | 'warning') {
+    if (type === 'warning') {
+        alertStore.warning(message);
+    } else {
+        alertStore.success(message);
+    }
+    tweetStore.logout();
+    activeView.value = 'login';
+    loginUsername.value = '';
+    loginPassword.value = '';
+    router.push('/');
+}
+
+async function doUpdateProfile(hostIdChanged: boolean) {
+    showHostIdChangeConfirm.value = false;
+    const newHostId = editHostId.value.trim();
+    const port = editCloudDrivePort.value.trim();
+
     isLoading.value = true;
     try {
         await tweetStore.updateProfile({
             name: editName.value.trim(),
             profile: editProfile.value.trim(),
             password: editPassword.value || undefined,
-            hostId: editHostId.value.trim() || undefined,
+            hostId: newHostId || undefined,
             cloudDrivePort: port ? parseInt(port, 10) : undefined,
             domainToShare: editDomainToShare.value.trim() || undefined,
         });
-        alertStore.success(t('auth.profileUpdated'));
-        editPassword.value = '';
-        editConfirmPassword.value = '';
-        activeView.value = 'profile';
+        if (hostIdChanged) {
+            finishHostIdChange(t('auth.hostIdUpdatedLoginNewHost'), 'success');
+        } else {
+            alertStore.success(t('auth.profileUpdated'));
+            editPassword.value = '';
+            editConfirmPassword.value = '';
+            activeView.value = 'profile';
+        }
     } catch (err: any) {
-        errorMessage.value = err?.message || t('auth.updateFailed');
+        if (hostIdChanged && isTimeoutError(err)) {
+            finishHostIdChange(t('auth.hostIdUpdateTimedOutVerify'), 'warning');
+        } else {
+            errorMessage.value = err?.message || t('auth.updateFailed');
+        }
     } finally {
         isLoading.value = false;
     }
@@ -284,6 +328,17 @@ async function copyAgentToken() {
 
 // Local blob URL for immediate avatar display after crop
 const localAvatarUrl = ref<string | null>(null);
+
+/** Falls back to the default logo on load failure. Guarded so a default logo
+ *  that itself fails to load (dead network, blocked host) doesn't re-trigger
+ *  @error in an infinite reload loop (setting img.src to its current value
+ *  still makes the browser re-fetch it). */
+function onProfileAvatarError(event: Event) {
+    const img = event.target as HTMLImageElement | null;
+    if (!img || img.dataset.fallback === '1') return;
+    img.dataset.fallback = '1';
+    img.src = defaultAvatar;
+}
 
 async function handleAvatarCrop(blob: Blob) {
     showAvatarCropper.value = false;
@@ -401,7 +456,7 @@ function goBack() {
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
                     <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                        alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
+                        alt="Avatar" @error="onProfileAvatarError" />
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
                     <span class="text-muted">@{{ user?.username }}</span>
                 </div>
@@ -436,6 +491,10 @@ function goBack() {
 
                 <!-- Info rows -->
                 <div class="info-section mb-3">
+                    <div v-if="user?.mid" class="info-row">
+                        <span class="info-label">{{ $t('auth.userId') }}</span>
+                        <span class="info-value text-muted">{{ user.mid }}</span>
+                    </div>
                     <div v-if="user?.hostIds?.[0]" class="info-row">
                         <span class="info-label">{{ $t('auth.hostId') }}</span>
                         <span class="info-value text-muted">{{ user.hostIds[0] }}</span>
@@ -471,7 +530,7 @@ function goBack() {
                 <div class="text-center mb-3">
                     <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
                         <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                            alt="Avatar" @error="(e: Event) => (e.target as HTMLImageElement).src = defaultAvatar" />
+                            alt="Avatar" @error="onProfileAvatarError" />
                         <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
                             <span class="spinner-border spinner-border-sm text-white"></span>
                         </div>
@@ -603,6 +662,21 @@ function goBack() {
                     <button class="btn btn-danger flex-fill" @click="handleDeleteAccount" :disabled="isLoading">
                         <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
                         {{ $t('common.delete') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Host ID Change Confirmation -->
+        <div v-if="showHostIdChangeConfirm" class="confirm-overlay" @click.self="showHostIdChangeConfirm = false">
+            <div class="confirm-dialog">
+                <h6 class="text-warning mb-2">{{ $t('auth.hostId') }}</h6>
+                <p class="mb-3">{{ $t('auth.hostIdChangeConfirm') }}</p>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-secondary flex-fill" @click="showHostIdChangeConfirm = false">{{ $t('common.cancel') }}</button>
+                    <button class="btn btn-warning flex-fill" @click="doUpdateProfile(true)" :disabled="isLoading">
+                        <span v-if="isLoading" class="spinner-border spinner-border-sm me-1"></span>
+                        {{ $t('common.ok') }}
                     </button>
                 </div>
             </div>

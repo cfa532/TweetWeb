@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 import { useTweetStore } from '@/stores';
 import { useI18n } from 'vue-i18n';
 import { CornerMenu } from '@/views';
@@ -23,18 +23,26 @@ const router = useRouter()
 const route = useRoute()
 const tweetStore = useTweetStore()
 
+const headerAuthor = computed<User | null>(() => {
+  if (props.author) return props.author
+  if (props.tweet?.author) return props.tweet.author
+  const authorId = props.tweet?.authorId
+  return authorId ? tweetStore.users.get(authorId) ?? null : null
+})
+
 /** Bold line in tweet header: use username when display name is missing (same idea as UserAccount profile). */
 const authorDisplayName = computed(() => {
-  if (!props.author) return t('tweet.loadingAuthor')
-  const name = props.author.name
+  const author = headerAuthor.value
+  if (!author) return t('tweet.loadingAuthor')
+  const name = author.name
   if (name != null && String(name).trim() !== '') return name
-  const u = props.author.username
+  const u = author.username
   if (u != null && String(u).trim() !== '') return u
   return t('tweet.loadingAuthor')
 })
 
 function openUserPage(userId: string) {
-  if (props.author) {
+  if (headerAuthor.value) {
     tweetStore.addFollowing(userId)
     router.push(`/author/${userId}`)
   }
@@ -52,7 +60,7 @@ function openUserPage(userId: string) {
 function handleAvatarError(event: Event) {
   const img = event.target as HTMLImageElement | null
   if (!img || img.dataset.refreshed === '1') return
-  const authorId = props.author?.mid
+  const authorId = headerAuthor.value?.mid ?? props.tweet?.authorId
   if (!authorId) return
   img.dataset.refreshed = '1'
   tweetStore.getUser(authorId, true).catch(() => undefined)
@@ -110,7 +118,7 @@ function openDetailView() {
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
     <div :class="['avatar', 'me-2', 'author-avatar', { 'comment-avatar': isComment }]">
-      <img v-if='props.author' :src='props.author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(props.author.mid)' @error='handleAvatarError'>
+      <img v-if='headerAuthor' :src='avatarSrc(headerAuthor.avatar)' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(headerAuthor.mid)' @error='handleAvatarError'>
       <div v-else class='rounded-circle loading-avatar'></div>
     </div>
     <!-- User Info -->
@@ -121,11 +129,11 @@ function openDetailView() {
       </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>
-        <span class='username fw-bold' :class='{ "loading-text": !props.author }'>{{ authorDisplayName }}</span>
+        <span class='username fw-bold' :class='{ "loading-text": !headerAuthor }'>{{ authorDisplayName }}</span>
       </div>
       <!-- Followers and Friends Links -->
       <div class='mt-1'>
-        <span class='alias text-muted' :class='{ "loading-text": !props.author }'>@{{ props.author?.username || $t('tweet.loadingUsername') }}</span>
+        <span class='alias text-muted' :class='{ "loading-text": !headerAuthor }'>@{{ headerAuthor?.username || $t('tweet.loadingUsername') }}</span>
         <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
           }}</span>
       </div>
@@ -182,6 +190,10 @@ function openDetailView() {
 .avatar {
   display: flex;
   align-items: center;
+}
+
+.author-avatar {
+  padding-left: 4px;
 }
 
 .loading-avatar, .author-avatar .loading-avatar {

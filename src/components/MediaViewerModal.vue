@@ -15,6 +15,7 @@ const router = useRouter();
 // Get data from session storage if not provided as props
 const mediaViewerData = ref<any>(null);
 const currentIndex = ref(0);
+const currentImageSettled = ref(false);
 
 onMounted(() => {
   // Try to get data from session storage
@@ -59,11 +60,9 @@ onMounted(() => {
     return;
   }
   
-  isVisible.value = true;
   document.body.style.overflow = 'hidden';
   document.addEventListener('keydown', handleKeydown);
 });
-const isVisible = ref(false);
 const containerRef = ref<HTMLElement>();
 const startX = ref(0);
 const startY = ref(0);
@@ -71,7 +70,6 @@ const currentX = ref(0);
 const currentY = ref(0);
 const isDragging = ref(false);
 const dragThreshold = 50; // Minimum distance to trigger swipe
-const isClosing = ref(false);
 
 // Get media list from props or session storage
 const mediaList = computed(() => props.mediaList || mediaViewerData.value?.mediaList || []);
@@ -93,6 +91,10 @@ const isVideo = computed(() => {
 });
 
 const currentMediaIndex = computed(() => currentIndex.value);
+
+watch(() => currentMedia.value?.mid, () => {
+  currentImageSettled.value = false;
+});
 
 
 onUnmounted(() => {
@@ -121,12 +123,12 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 function closeModal() {
-  isClosing.value = true;
-  // Clean up session storage
+  // Stop any playing video so its audio doesn't bleed, then return to the
+  // previous route. (The viewer is its own route, so the feed/detail view is
+  // restored by the navigation — no overlay to fade.)
+  try { containerRef.value?.querySelector('video')?.pause(); } catch {}
   sessionStorage.removeItem('mediaViewerData');
-  setTimeout(() => {
-    router.back();
-  }, 200);
+  router.back();
 }
 
 function nextMedia() {
@@ -217,12 +219,25 @@ function goToMedia(index: number) {
     currentIndex.value = index;
   }
 }
+
+function handleFullscreenImageSettled(media: MimeiFileType) {
+  if (media.mid === currentMedia.value?.mid) {
+    currentImageSettled.value = true;
+  }
+}
+
+function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
+  if (!media.type?.toLowerCase().includes('image')) return undefined;
+  if (index === currentMediaIndex.value || currentImageSettled.value) {
+    return media.mid;
+  }
+  return undefined;
+}
 </script>
 
 <template>
-  <div 
+  <div
     class="media-viewer-modal"
-    :class="{ 'closing': isClosing }"
     @click="closeModal"
     @touchstart="handleTouchStart"
     @touchmove="handleTouchMove"
@@ -271,6 +286,7 @@ function goToMedia(index: number) {
             :media="currentMedia" 
             :tweet="tweet"
             class="fullscreen-image"
+            @settled="handleFullscreenImageSettled"
           />
         </div>
         <div v-else-if="currentMedia && isVideo" class="video-container">
@@ -297,12 +313,13 @@ function goToMedia(index: number) {
           :key="media.mid"
           class="thumbnail"
           :class="{ 'active': index === currentMediaIndex }"
-          @click="goToMedia(index)"
+          @click="goToMedia(Number(index))"
         >
-          <img 
+          <img
             v-if="media.type?.toLowerCase().includes('image')"
-            :src="media.mid" 
-            :alt="`Thumbnail ${index + 1}`"
+            :src="thumbnailSrc(media, Number(index))"
+            loading="lazy"
+            :alt="`Thumbnail ${Number(index) + 1}`"
           />
           <div 
             v-else
@@ -330,12 +347,6 @@ function goToMedia(index: number) {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 1;
-  transition: opacity 0.2s ease;
-}
-
-.media-viewer-modal.closing {
-  opacity: 0;
 }
 
 .media-viewer-content {
@@ -415,7 +426,17 @@ function goToMedia(index: number) {
   margin: 0;
 }
 
-.image-container,
+.image-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .video-container {
   width: 100%;
   height: 100%;
@@ -430,27 +451,25 @@ function goToMedia(index: number) {
   width: auto !important;
   height: auto !important;
   max-width: 100vw !important;
-  max-height: 100vh !important;
-  object-fit: contain;
-  object-position: center;
+  max-height: none !important;
+  object-fit: unset !important;
   display: block;
 }
 
 .image-container :deep(.img-wrapper) {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: auto;
+  max-width: 100vw;
+  height: auto;
+  display: block;
 }
 
 .image-container :deep(.img-wrapper img) {
   width: auto !important;
   height: auto !important;
   max-width: 100vw !important;
-  max-height: 100vh !important;
-  object-fit: contain !important;
-  object-position: center !important;
+  max-height: none !important;
+  object-fit: unset !important;
+  display: block;
 }
 
 .video-container :deep(.video-container) {

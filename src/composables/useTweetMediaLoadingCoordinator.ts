@@ -1,7 +1,11 @@
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type InjectionKey, type Ref } from 'vue'
 import { isImageType, isVideoType, normalizeMediaType } from '@/lib'
+import { hasPrimaryVideo, primaryVideoHealthy } from './useVideoPlaybackCoordinator'
 
 export type MediaLoadState = 'idle' | 'preload' | 'visible'
+export const TWEET_MEDIA_PRELOAD_STALE_EVENT = 'tweet-media-preload-stale'
+export type TweetMediaElementRegistrar = (tweetId: string, media: MimeiFileType, element: Element | null) => void
+export const TWEET_MEDIA_ELEMENT_REGISTRY_KEY: InjectionKey<TweetMediaElementRegistrar> = Symbol('tweet-media-element-registry')
 
 interface TweetEntry {
   tweet: Tweet
@@ -10,10 +14,21 @@ interface TweetEntry {
   top: number
 }
 
-const VISIBLE_THRESHOLD = 0.01
+interface MediaEntry {
+  tweetId: string
+  media: MimeiFileType
+  element: HTMLElement
+  ratio: number
+  top: number
+  visible: boolean
+}
+
+const TWEET_VISIBLE_THRESHOLD = 0.01
 const DIRECTIONAL_IMAGE_TWEETS = 2
-const DIRECTIONAL_VIDEOS = 2
+const DIRECTIONAL_VIDEOS = 1
 const REVERSE_TWEETS = 1
+const SCROLL_SETTLE_PRELOAD_DELAY_MS = 180
+const SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
 
 function isImageMedia(media: MimeiFileType): boolean {
   const type = normalizeMediaType(media.type)
@@ -33,14 +48,26 @@ function hasImage(tweet: Tweet): boolean {
   return mediaItems(tweet).some(isImageMedia)
 }
 
-function visibleRatioForElement(element: HTMLElement): { ratio: number; top: number } {
-  if (typeof window === 'undefined') return { ratio: 0, top: 0 }
+function visibilityForElement(element: HTMLElement): { ratio: number; top: number; visible: boolean } {
+  if (typeof window === 'undefined') return { ratio: 0, top: 0, visible: false }
   const rect = element.getBoundingClientRect()
-  if (rect.height <= 0) return { ratio: 0, top: rect.top }
+  if (rect.width <= 0 || rect.height <= 0) return { ratio: 0, top: rect.top, visible: false }
+  const visibleLeft = Math.max(rect.left, 0)
+  const visibleRight = Math.min(rect.right, window.innerWidth)
   const visibleTop = Math.max(rect.top, 0)
   const visibleBottom = Math.min(rect.bottom, window.innerHeight)
+  const visibleWidth = Math.max(0, visibleRight - visibleLeft)
   const visibleHeight = Math.max(0, visibleBottom - visibleTop)
-  return { ratio: visibleHeight / rect.height, top: rect.top }
+  const visibleArea = visibleWidth * visibleHeight
+  return {
+    ratio: visibleArea / (rect.width * rect.height),
+    top: rect.top,
+    visible: visibleArea > 0,
+  }
+}
+
+function mediaKey(tweetId: string, media: MimeiFileType): string {
+  return `${tweetId}\n${media.mid}`
 }
 
 function debugMediaPlan(message: string, payload: Record<string, unknown>) {
@@ -50,11 +77,14 @@ function debugMediaPlan(message: string, payload: Record<string, unknown>) {
 
 export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
   const entries = new Map<string, TweetEntry>()
+  const mediaEntries = new Map<string, MediaEntry>()
   const version = ref(0)
   const scrollDirection = ref<'down' | 'up'>('down')
+  const canPreloadIdleMedia = ref(true)
   let observer: IntersectionObserver | null = null
   let lastScrollY = typeof window !== 'undefined' ? window.scrollY : 0
   let scrollFrame: number | null = null
+  let scrollSettleTimer: number | null = null
   let lastPlanKey = ''
 
   function bump() {
@@ -76,23 +106,42 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     return entries.length - 1
   }
 
+  function visibleMediaKeys(): Set<string> {
+    version.value
+    const keys = new Set<string>()
+    for (const [key, entry] of mediaEntries) {
+      if (entry.visible) keys.add(key)
+    }
+    return keys
+  }
+
+  // Offscreen preloads (video or image) only run once scroll has settled AND
+  // the primary video is buffered enough to play without stalling. When there
+  // is no primary video there is nothing to prioritize, so preloads proceed —
+  // this also covers image-only stretches and comment threads (which don't
+  // register a playback-coordinator primary).
+  const preloadAllowed = computed(() =>
+    canPreloadIdleMedia.value && (!hasPrimaryVideo.value || primaryVideoHealthy.value)
+  )
+
   const loadingPlan = computed(() => {
     const ordered = sortedEntries()
+    const visibleMediaIds = visibleMediaKeys()
     const visibleTweetIds = new Set<string>()
     const preloadTweetIds = new Set<string>()
     const preloadVideoIds = new Set<string>()
 
     for (const entry of ordered) {
-      if (entry.ratio >= VISIBLE_THRESHOLD) {
+      if (entry.ratio >= TWEET_VISIBLE_THRESHOLD) {
         visibleTweetIds.add(entry.tweet.mid)
       }
     }
 
     const visibleIndexes = ordered
-      .map((entry, index) => entry.ratio >= VISIBLE_THRESHOLD ? index : -1)
+      .map((entry, index) => entry.ratio >= TWEET_VISIBLE_THRESHOLD ? index : -1)
       .filter(index => index >= 0)
 
-    if (ordered.length > 0) {
+    if (ordered.length > 0 && preloadAllowed.value) {
       const direction = scrollDirection.value
       const startIndex = direction === 'down'
         ? (visibleIndexes.length ? Math.max(...visibleIndexes) + 1 : ordered.findIndex(entry => entry.top > 0))
@@ -156,15 +205,18 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
       }
     }
 
-    return { visibleTweetIds, preloadTweetIds, preloadVideoIds }
+    return { visibleMediaIds, visibleTweetIds, preloadTweetIds, preloadVideoIds }
   })
 
   watch(loadingPlan, (plan) => {
+    const visibleMedia = [...plan.visibleMediaIds]
     const visible = [...plan.visibleTweetIds]
     const preloadTweets = [...plan.preloadTweetIds]
     const preloadVideos = [...plan.preloadVideoIds]
     const key = [
       scrollDirection.value,
+      canPreloadIdleMedia.value ? 'settled' : 'scrolling',
+      visibleMedia.join(','),
       visible.join(','),
       preloadTweets.join(','),
       preloadVideos.join(','),
@@ -173,6 +225,8 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     lastPlanKey = key
     debugMediaPlan('plan', {
       direction: scrollDirection.value,
+      preloadEnabled: canPreloadIdleMedia.value,
+      visibleMedia,
       visibleTweets: visible,
       preloadImageTweets: preloadTweets,
       preloadVideos,
@@ -181,7 +235,7 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
 
   function getMediaLoadState(tweetId: string, media: MimeiFileType): MediaLoadState {
     const plan = loadingPlan.value
-    if (plan.visibleTweetIds.has(tweetId)) return 'visible'
+    if (plan.visibleMediaIds.has(mediaKey(tweetId, media))) return 'visible'
     if (isImageMedia(media) && plan.preloadTweetIds.has(tweetId)) return 'preload'
     if (isVideoMedia(media) && plan.preloadVideoIds.has(media.mid)) return 'preload'
     return 'idle'
@@ -200,7 +254,7 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     }
 
     if (element instanceof HTMLElement) {
-      const initialVisibility = visibleRatioForElement(element)
+      const initialVisibility = visibilityForElement(element)
       entries.set(tweet.mid, {
         tweet,
         element,
@@ -212,7 +266,35 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     bump()
   }
 
-  function handleScroll() {
+  function setMediaElement(tweetId: string, media: MimeiFileType, element: Element | null) {
+    const key = mediaKey(tweetId, media)
+    const existing = mediaEntries.get(key)
+    if (existing && existing.element === element) {
+      existing.media = media
+      return
+    }
+
+    if (existing && existing.element !== element) {
+      observer?.unobserve(existing.element)
+      mediaEntries.delete(key)
+    }
+
+    if (element instanceof HTMLElement) {
+      const visibility = visibilityForElement(element)
+      mediaEntries.set(key, {
+        tweetId,
+        media,
+        element,
+        ratio: visibility.ratio,
+        top: visibility.top,
+        visible: visibility.visible,
+      })
+      observer?.observe(element)
+    }
+    bump()
+  }
+
+  function updateViewportState() {
     if (scrollFrame != null) return
     scrollFrame = window.requestAnimationFrame(() => {
       scrollFrame = null
@@ -222,21 +304,64 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
         lastScrollY = y
       }
       for (const entry of entries.values()) {
-        const visibility = visibleRatioForElement(entry.element)
+        const visibility = visibilityForElement(entry.element)
         entry.ratio = visibility.ratio
         entry.top = visibility.top
+      }
+      for (const entry of mediaEntries.values()) {
+        const visibility = visibilityForElement(entry.element)
+        entry.ratio = visibility.ratio
+        entry.top = visibility.top
+        entry.visible = visibility.visible
       }
       bump()
     })
   }
 
+  function markScrollActive() {
+    if (canPreloadIdleMedia.value) {
+      canPreloadIdleMedia.value = false
+      window.dispatchEvent(new CustomEvent(TWEET_MEDIA_PRELOAD_STALE_EVENT))
+    }
+    if (scrollSettleTimer != null) {
+      window.clearTimeout(scrollSettleTimer)
+    }
+    scrollSettleTimer = window.setTimeout(() => {
+      scrollSettleTimer = null
+      canPreloadIdleMedia.value = true
+      updateViewportState()
+    }, SCROLL_SETTLE_PRELOAD_DELAY_MS)
+  }
+
+  function handleScrollIntent(event?: Event) {
+    if (event instanceof KeyboardEvent && !SCROLL_KEYS.has(event.key)) return
+    markScrollActive()
+    updateViewportState()
+  }
+
+  function handleScroll() {
+    markScrollActive()
+    updateViewportState()
+  }
+
   onMounted(() => {
     observer = new IntersectionObserver((observedEntries) => {
       for (const observed of observedEntries) {
+        let matched = false
         for (const entry of entries.values()) {
           if (entry.element !== observed.target) continue
           entry.ratio = observed.intersectionRatio
           entry.top = observed.boundingClientRect.top
+          matched = true
+          break
+        }
+        if (matched) continue
+        for (const entry of mediaEntries.values()) {
+          if (entry.element !== observed.target) continue
+          const visibility = visibilityForElement(entry.element)
+          entry.ratio = visibility.ratio
+          entry.top = visibility.top
+          entry.visible = visibility.visible
           break
         }
       }
@@ -246,10 +371,16 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     for (const entry of entries.values()) {
       observer.observe(entry.element)
     }
+    for (const entry of mediaEntries.values()) {
+      observer.observe(entry.element)
+    }
 
     window.addEventListener('scroll', handleScroll, { passive: true })
     window.addEventListener('resize', handleScroll, { passive: true })
-    handleScroll()
+    window.addEventListener('wheel', handleScrollIntent, { passive: true, capture: true })
+    window.addEventListener('touchmove', handleScrollIntent, { passive: true, capture: true })
+    window.addEventListener('keydown', handleScrollIntent, { capture: true })
+    updateViewportState()
   })
 
   onBeforeUnmount(() => {
@@ -257,15 +388,24 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
       window.cancelAnimationFrame(scrollFrame)
       scrollFrame = null
     }
+    if (scrollSettleTimer != null) {
+      window.clearTimeout(scrollSettleTimer)
+      scrollSettleTimer = null
+    }
     window.removeEventListener('scroll', handleScroll)
     window.removeEventListener('resize', handleScroll)
+    window.removeEventListener('wheel', handleScrollIntent, { capture: true })
+    window.removeEventListener('touchmove', handleScrollIntent, { capture: true })
+    window.removeEventListener('keydown', handleScrollIntent, { capture: true })
     observer?.disconnect()
     observer = null
     entries.clear()
+    mediaEntries.clear()
   })
 
   return {
     setTweetElement,
+    setMediaElement,
     getMediaLoadState,
   }
 }

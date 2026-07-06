@@ -1,17 +1,30 @@
 <script setup lang='ts'>
-import { onMounted, ref, onUnmounted, watch, computed, nextTick } from 'vue';
+import { onMounted, onActivated, ref, onUnmounted, watch, computed, nextTick } from 'vue';
+defineOptions({ name: 'UserPage' })
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
-import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
+import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router';
 import { LOAD_TIMEOUT_MS } from '@/constants';
-import { USER_PAGE_SCROLL_PREFIX } from '@/constants/scrollRestore';
 import { AppHeader } from '@/views';
 import { isWeChatBrowser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
+import { useScrollRestore } from '@/composables/useScrollRestore';
+import { startFeedPolling } from '@/composables/useFeedPolling';
 
 const { t } = useI18n();
 
 const tweetStore = useTweetStore();
+const bannerVisible = ref(false);
+let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
+function showBanner() {
+    bannerVisible.value = true;
+    if (bannerHideTimer) clearTimeout(bannerHideTimer);
+    bannerHideTimer = setTimeout(() => { bannerVisible.value = false; }, 60000);
+}
+function hideBanner() {
+    bannerVisible.value = false;
+    if (bannerHideTimer) { clearTimeout(bannerHideTimer); bannerHideTimer = null; }
+}
 const isLoading = ref(false);
 const retryMessage = ref('');
 const pageNumber = ref(0);
@@ -25,7 +38,6 @@ const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
 const loadError = ref(''); // Error message to display when loading fails
 let lastErrorTime = 0;
-const resyncedUsersThisSession = new Set<string>();
 
 function isNearBottom(threshold = scrollThreshold) {
     const scrollBottom = window.innerHeight + window.scrollY;
@@ -33,8 +45,14 @@ function isNearBottom(threshold = scrollThreshold) {
     return docHeight - scrollBottom <= threshold;
 }
 
+function isAtTop(threshold = 8) {
+    return window.scrollY <= threshold;
+}
+
 /** After a page loads, scroll position is unchanged — no scroll event. Chain loads while still near the bottom. */
 function scheduleLoadMoreIfStillNearBottom() {
+    if (userView.value !== 'tweets') return;
+    if (isRestoringFeed.value) return;
     void (async () => {
         await nextTick();
         await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -56,46 +74,15 @@ function setupLoadMoreObserver() {
     loadMoreObserver = new IntersectionObserver(
         (entries) => {
             if (!entries[0]?.isIntersecting) return;
+            if (userView.value !== 'tweets') return;
             if (isLoading.value || !hasMoreTweets.value) return;
             if (lastErrorTime && Date.now() - lastErrorTime < 2000) return;
+            if (isRestoringFeed.value) return;
             void loadMoreTweets();
         },
         { root: null, rootMargin: '0px 0px 320px 0px', threshold: 0 },
     );
     loadMoreObserver.observe(el);
-}
-
-function restoreUserPageScroll(authorId: MimeiId) {
-    const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + authorId)
-    if (raw === null) {
-        window.scrollTo(0, 0)
-        return
-    }
-    const y = parseInt(raw, 10)
-    if (Number.isNaN(y)) {
-        window.scrollTo(0, 0)
-        return
-    }
-    const apply = () => {
-        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
-        window.scrollTo(0, Math.min(Math.max(0, y), maxScroll))
-    }
-    // Layout grows after tweets/images paint — retry so we don't clamp to 0.
-    nextTick(() => {
-        requestAnimationFrame(() => {
-            apply()
-            requestAnimationFrame(apply)
-        })
-        setTimeout(apply, 50)
-        setTimeout(apply, 200)
-    })
-}
-
-function saveUserPageScrollPosition() {
-    const id = authorId.value
-    if (id) {
-        sessionStorage.setItem(USER_PAGE_SCROLL_PREFIX + id, String(window.scrollY))
-    }
 }
 
 const SCROLL_TWEET_MAX_PAGES = 40
@@ -145,32 +132,25 @@ async function tryScrollToTweet(tweetId: MimeiId) {
     await clearScrollTweetQuery()
 }
 
-async function maybeScrollOrRestoreProfile(nv: MimeiId, ov: MimeiId | undefined) {
+// Deep link to a specific tweet on the profile (scrollTweet query). Normal scroll
+// position on back-navigation is preserved by <keep-alive> + the router's saved
+// scroll position, so no manual restore is needed here.
+async function maybeScrollToDeepLinkedTweet() {
     const raw = route.query.scrollTweet
     const tid = raw === undefined || raw === null ? undefined : Array.isArray(raw) ? raw[0] : raw
     if (tid) {
         await tryScrollToTweet(tid as MimeiId)
-        return
-    }
-    if (ov !== undefined && nv !== ov) {
-        window.scrollTo(0, 0)
-    } else {
-        restoreUserPageScroll(nv)
     }
 }
 
-// Save while still on this route — onUnmounted runs after the next view mounts,
-// so window.scrollY is often already 0 (detail page scrolled to top).
-onBeforeRouteLeave(() => {
-    saveUserPageScrollPosition()
-})
-
 onMounted(() => {
     nextTick(() => setupLoadMoreObserver());
+    startFeedPolling();
 });
 
 onUnmounted(() => {
     loadMoreObserver?.disconnect();
+    hideBanner();
 });
 
 async function initialLoadTweets(authorId: MimeiId) {
@@ -271,22 +251,31 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 
     let currentTimeoutId: number | null = null;
     let loadSucceeded = false;
+    const firstPageNumber = pageNumber.value;
+    const startedAtTop = isAtTop();
+    const loadedCandidateIds = new Set<string>();
 
     // Start loading pinned tweets in parallel with regular tweets so the pinned
     // video (shown first on the page) gets priority bandwidth.
     const pinnedPromiseOuter = loadPinnedTweetsForUser(authorId);
 
     try {
-        // Keep loading more pages until we have at least 6 tweets or no more tweets
+        // Keep loading a couple of pages for first paint, but do not let initial
+        // profile render chain many retry windows when nodes are slow.
         const minTweets = 6;
+        const maxInitialRounds = 3;
         let tweetsLoaded = 0;
         let round = 0;
-        while (isLoading.value && round < 10) {
+        while (isLoading.value && round < maxInitialRounds) {
             // Add timeout to each page load - timeout, refresh immediately on timeout (max attempts)
             const refreshCount = parseInt(sessionStorage.getItem('userPageRefreshCount') || '0');
 
             let hasTimedOut = false;
-            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize).then(result => {
+            const pageCandidateIds = new Set<string>();
+            const loadPromise = tweetStore.loadTweetsByUser(authorId, pageNumber.value, pageSize, {
+                candidateIds: pageCandidateIds,
+            }).then(result => {
+                pageCandidateIds.forEach(id => loadedCandidateIds.add(id));
                 // Clear timeout immediately when load succeeds
                 if (currentTimeoutId && !hasTimedOut) {
                     clearTimeout(currentTimeoutId);
@@ -373,7 +362,9 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
                 displayedTweets.value = filtered;
             }
         }
-        appendNewToDisplayed();
+        if (firstPageNumber !== 0 || startedAtTop) {
+            appendNewToDisplayed(loadedCandidateIds);
+        }
         isLoading.value = false;
         initialLoad.value = false;
         scheduleLoadMoreIfStillNearBottom();
@@ -381,13 +372,19 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
 }
 
 async function loadMoreTweets() {
+    if (userView.value !== 'tweets') return;
     if (isLoading.value || !hasMoreTweets.value) return;
 
     isLoading.value = true;
     loadError.value = '';
+    const loadedPageNumber = pageNumber.value;
+    const pageCandidateIds = new Set<string>();
+    const routePageZeroToBanner = loadedPageNumber === 0 && !isAtTop();
 
     try {
-        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, pageNumber.value, pageSize);
+        const tweetsLoaded = await tweetStore.loadTweetsByUser(authorId.value, loadedPageNumber, pageSize, {
+            candidateIds: pageCandidateIds,
+        });
 
         if (tweetsLoaded && tweetsLoaded > 0) {
             // A full page means there may be another page; only a short page is the end.
@@ -404,14 +401,70 @@ async function loadMoreTweets() {
         loadError.value = t('tweet.loadMoreError');
         lastErrorTime = Date.now();
     } finally {
-        appendNewToDisplayed();
+        if (!routePageZeroToBanner) {
+            appendNewToDisplayed(pageCandidateIds);
+        }
         isLoading.value = false;
         scheduleLoadMoreIfStillNearBottom();
     }
 }
 
+// Persist & restore this profile's scroll position, keyed per-author so one
+// user's spot never bleeds onto another's. Back-nav restores synchronously
+// (keep-alive DOM); reload pages content in then jumps. See useScrollRestore.
+const { restoring: isRestoringFeed, restoreAfterLoad, hasDeepSavedScroll } = useScrollRestore(
+    () => `userPage:${authorId.value}`,
+    {
+        hasMore: () => hasMoreTweets.value,
+        loadMore: loadMoreTweets,
+        skipRestore: () => route.query.scrollTweet != null,
+    },
+);
+
+// UserPage is keep-alive. Returning from TweetDetail with ?scrollTweet= only
+// changes the query — authorId does not change, so the authorId watch does not
+// re-run. Handle that activation here (onBeforeRouteUpdate does not fire when
+// the component was deactivated for TweetDetail).
+onActivated(async () => {
+    const raw = route.query.scrollTweet
+    const tid = raw === undefined || raw === null ? undefined : Array.isArray(raw) ? raw[0] : raw
+    if (!tid) return
+    while (isLoading.value) {
+        await new Promise((r) => setTimeout(r, 40))
+    }
+    await tryScrollToTweet(tid as MimeiId)
+});
+
 const displayedTweets = ref<Tweet[]>([]);
-const pendingCount = ref(0);
+const pendingCount = computed(() => {
+    if (initialLoad.value) return 0;
+    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
+    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
+    return tweetStore.tweets.filter(e => {
+        if (existingIds.has(e.mid)) return false;
+        if (pinnedIds.has(e.mid)) return false;
+        const isAuthorMatch = e.isPrivate
+            ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
+            : e.authorId === authorId.value;
+        return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
+    }).length;
+});
+const profilePendingCountLabel = computed(() => pendingCount.value > 9 ? '9+' : String(pendingCount.value));
+const profilePendingBannerText = computed(() => t(
+    pendingCount.value === 1 ? 'tweet.showNewTweetCapped' : 'tweet.showNewTweetsCapped',
+    { count: profilePendingCountLabel.value },
+));
+function handlePendingBannerClick() {
+    showPendingTweets();
+}
+watch(pendingCount, (count, prev) => {
+    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
+    else if (count === 0) hideBanner();
+});
+// The authorId this profile has already loaded. Survives the route hop through
+// /media-viewer (where authorId becomes undefined), unlike the watch's
+// oldValue — so returning to the same user doesn't re-fetch the whole profile.
+const loadedForUser = ref<string | null>(null);
 
 // Active view tab from AppHeader: undefined / 'tweets' = user's own tweets,
 // 'bookmarks' / 'favorites' fetch via get_user_meta and replace the body.
@@ -444,7 +497,7 @@ watch(
     { immediate: true }
 );
 
-function appendNewToDisplayed() {
+function appendNewToDisplayed(candidateIds?: Set<string>) {
     const displayedMap = new Map(displayedTweets.value.map(t => [t.mid, t]));
 
     // Update only scalar fields that may change (e.g. likeCount, content)
@@ -474,6 +527,7 @@ function appendNewToDisplayed() {
         .filter(e => {
             if (existingIds.has(e.mid)) return false;
             if (pinnedIds.has(e.mid)) return false;
+            if (candidateIds && !candidateIds.has(e.mid)) return false;
             const isAuthorMatch = e.isPrivate
                 ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
                 : e.authorId === authorId.value;
@@ -490,37 +544,37 @@ function appendNewToDisplayed() {
 }
 
 function showPendingTweets() {
+    hideBanner();
     appendNewToDisplayed();
-    pendingCount.value = 0;
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// Pick up any tweets added/removed in the store (e.g. background updates, deleteTweet)
+// Remove deleted tweets from the feed immediately. (Additions are reflected by
+// the pendingCount computed, so they don't need handling here.)
 watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
-    // Handle deletions — remove from displayed immediately
     if (newLen < oldLen) {
         const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
         displayedTweets.value = displayedTweets.value.filter(t => storeIds.has(t.mid));
-        return;
     }
-    // Handle additions — only count as pending, don't auto-insert
-    if (initialLoad.value || isLoading.value) return;
-    const existingIds = new Set(displayedTweets.value.map(t => t.mid));
-    const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
-    const count = tweetStore.tweets.filter(e => {
-        if (existingIds.has(e.mid)) return false;
-        if (pinnedIds.has(e.mid)) return false;
-        const isAuthorMatch = e.isPrivate
-            ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
-            : e.authorId === authorId.value;
-        return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
-    }).length;
-    pendingCount.value = count;
 });
 
-// Single entry point for loading tweets — covers both initial mount and route changes
-watch(authorId, async (nv, ov) => {
-    if (!nv || nv === ov) return;
+// Single entry point for loading profile tweets — covers initial mount, route
+// changes, and switching back from bookmark/favorite views.
+watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
+    if (!nv) return;
+
+    if (view !== 'tweets') {
+        loadError.value = '';
+        retryMessage.value = '';
+        hasMoreTweets.value = false;
+        initialLoad.value = false;
+        isLoading.value = false;
+        isRestoringFeed.value = false;
+        return;
+    }
+
+    if (nv === loadedForUser.value && view === 'tweets') return;
+    loadedForUser.value = nv;
 
     console.log('UserPage loading authorId:', nv);
     pageNumber.value = 0;
@@ -537,26 +591,19 @@ watch(authorId, async (nv, ov) => {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }
 
-    // Force-refresh user data from its host (keeps cache for instant display
-    // while fetching fresh data; avoids extra get_provider_ips RPC that removeUser causes)
-    // Then run one background resync using the same resolved user to avoid duplicate
-    // provider-IP resolution/health-check bursts.
-    void (async () => {
-        const freshUser = await tweetStore.getUser(nv, true)
-        console.log(`[UserPage] providerIp for ${nv}:`, freshUser?.providerIp ?? 'not resolved')
-        if (!resyncedUsersThisSession.has(nv)) {
-            resyncedUsersThisSession.add(nv)
-            try {
-                await tweetStore.resyncUser(nv, freshUser)
-                console.log(`[UserPage] Background resync completed for ${nv}`)
-            } catch (error) {
-                console.warn(`[UserPage] Background resync failed for ${nv}:`, error)
-            }
-        }
-    })()
+    // Keep cached profile/avatar data on the fast path. The tweet load below
+    // refreshes stale routes on retry, and avatar errors still force a repair.
+    tweetStore.getUserFromRootHost(nv, false).then(u => {
+        console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
+    });
+    // A scrollTweet deep link owns the scroll target. Otherwise only hide the feed
+    // while paging back to a previously saved deep scroll position; a fresh load
+    // with no saved spot (e.g. tapping the Tweets tab) loads normally — no veil.
+    const hasScrollTweet = route.query.scrollTweet != null;
+    isRestoringFeed.value = !hasScrollTweet && hasDeepSavedScroll();
     await initialLoadTweets(nv);
-    // Deep link to a tweet, or restore list position / scroll top on author switch
-    await maybeScrollOrRestoreProfile(nv, ov)
+    await maybeScrollToDeepLinkedTweet();
+    if (!hasScrollTweet) await restoreAfterLoad();
 }, { immediate: true });
 
 onBeforeRouteUpdate(async (to, from) => {
@@ -577,6 +624,9 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 <template>
     <PageLayout>
         <AppHeader :userId='authorId' />
+        <div v-if="isRestoringFeed" class="feed-restoring-overlay" aria-live="polite">
+            <LoadingSpinner />
+        </div>
 
         <!-- Bookmarks / Favorites view: replaces pinned + own-tweets list. -->
         <template v-if="userView !== 'tweets'">
@@ -597,10 +647,18 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <TweetList :tweets="pinnedTweets" />
             <hr v-if='pinnedTweets?.length!>0' />
             <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
-            <div v-if="pendingCount > 0" class="new-tweets-banner" @click="showPendingTweets">
-                {{ $t('tweet.showNewTweets', pendingCount) }}
+            <Transition name="tweet-banner">
+                <div v-if="pendingCount > 0 && bannerVisible && tweetStore.loginUser" class="new-tweets-banner"
+                     @click="handlePendingBannerClick">
+                    <svg class="banner-arrow" viewBox="0 0 12 14" width="11" height="13" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6 13V1M6 1L1 6M6 1L11 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="banner-text">{{ profilePendingBannerText }}</span>
+                </div>
+            </Transition>
+            <div :class="{ 'feed-restoring': isRestoringFeed }">
+                <TweetList :tweets="displayedTweets" />
             </div>
-            <TweetList :tweets="displayedTweets" />
             <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
             <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
                 <LoadingSpinner size="sm" />
@@ -626,21 +684,86 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 
 <style scoped>
 .new-tweets-banner {
-    text-align: center;
-    padding: 10px;
-    color: #1da1f2;
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top));
+    left: 50%;
+    z-index: 2147482999;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 14px 0 12px;
+    background: rgba(29, 155, 240, 0.86);
+    border-radius: 19px;
+    border: none;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
     cursor: pointer;
-    border-bottom: 1px solid #e6ecf0;
-    font-size: 14px;
+    white-space: nowrap;
+    max-width: calc(100vw - 40px);
+    user-select: none;
 }
-.new-tweets-banner:hover {
-    background-color: #f5f8fa;
+.new-tweets-banner:active {
+    background: rgba(29, 155, 240, 0.96);
+}
+.banner-arrow {
+    flex-shrink: 0;
+}
+.banner-avatars {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.banner-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.5);
+    object-fit: cover;
+    position: relative;
+}
+.banner-text {
+    color: white;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1;
+}
+.tweet-banner-enter-active {
+    transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+.tweet-banner-leave-active {
+    transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.tweet-banner-enter-from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+}
+.tweet-banner-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
 }
 
 .load-more-sentinel {
     width: 100%;
     height: 1px;
     pointer-events: none;
+}
+
+/* While paging in content to reach a saved scroll offset (deep reload / author
+   switch), keep the feed's layout for measurement but hide it so the top of the
+   list never flashes before content catches up. */
+.feed-restoring {
+    visibility: hidden;
+}
+
+.feed-restoring-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1030;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.8);
 }
 
 .tweet-feed-loading-fixed {

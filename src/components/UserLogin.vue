@@ -82,7 +82,7 @@ async function onSubmit(values: any) {
                         class="form-control" 
                         :class="{ 'is-invalid': errors.username }"
                         :disabled="isLoading || isSubmitting"
-                        @input="(e) => username = (e.target as HTMLInputElement).value"
+                        @input="(e: Event) => username = (e.target as HTMLInputElement).value"
                     />
                     <div class="invalid-feedback">{{ errors.username }}</div>
                 </div>
@@ -94,7 +94,7 @@ async function onSubmit(values: any) {
                         class="form-control" 
                         :class="{ 'is-invalid': errors.password }"
                         :disabled="isLoading || isSubmitting"
-                        @input="(e) => password = (e.target as HTMLInputElement).value"
+                        @input="(e: Event) => password = (e.target as HTMLInputElement).value"
                     />
                     <div class="invalid-feedback">{{ errors.password }}</div>
                 </div>

@@ -5,41 +5,29 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
   MediaViewerModal, UserAccount, LeitherSetupNotice
 } from "@/components"
 import { useAlertStore } from '@/stores';
-import { USER_PAGE_SCROLL_PREFIX, MAIN_FEED_SCROLL_KEY } from '@/constants/scrollRestore';
+
+function getStoredLoginUser() {
+  return sessionStorage.getItem("user")
+}
 
 function scrollBehavior(
   to: RouteLocationNormalized,
   from: RouteLocationNormalized,
   savedPosition: { left: number; top: number } | null
 ) {
-  // Stripping scrollTweet after scrollIntoView must not jump back to top (default behavior).
-  if (to.name === 'UserPage' && from.name === 'UserPage') {
-    const had = from.query.scrollTweet
-    const has = to.query.scrollTweet
-    const sameAuthor = to.params.authorId === from.params.authorId
-    if (sameAuthor && had && !has) {
-      return false
-    }
-  }
-  if (from.name === 'TweetDetail' && to.name === 'UserPage') {
-    // Deep link from detail carousel: scroll position is resolved in UserPage via #id / scrollIntoView
-    if (to.query.scrollTweet) return { left: 0, top: 0 }
-    const id = to.params.authorId as string | undefined
-    if (id) {
-      const raw = sessionStorage.getItem(USER_PAGE_SCROLL_PREFIX + id)
-      if (raw != null) {
-        const top = parseInt(raw, 10)
-        if (!Number.isNaN(top)) return { left: 0, top }
-      }
-    }
-  }
-  if (from.name === 'TweetDetail' && to.name === 'main') {
-    const raw = sessionStorage.getItem(MAIN_FEED_SCROLL_KEY)
-    if (raw != null) {
-      const top = parseInt(raw, 10)
-      if (!Number.isNaN(top)) return { left: 0, top }
-    }
-  }
+  // Deep link to a specific tweet on a profile: start at top, UserPage scrolls
+  // it into view itself.
+  if (to.query.scrollTweet) return { left: 0, top: 0 }
+  // The keep-alive list pages (main feed, user profile, followers/followings)
+  // restore their own scroll synchronously in onActivated (see
+  // composables/useScrollRestore). Returning false keeps vue-router from applying
+  // a delayed scroll — that delay was the cause of the top-then-position flash on
+  // back-navigation and reload. It also supersedes the old scrollTweet-stripping
+  // special case (no scroll = no jump).
+  if (to.name === 'main' || to.name === 'UserPage' || to.name === 'followers' || to.name === 'followings') return false
+  // Back/forward navigation: restore the previous scroll. The list pages are
+  // kept alive (<keep-alive>), so their DOM is intact at full height and this
+  // restores instantly without any flash.
   if (savedPosition) return savedPosition
   if (to.hash) return { el: to.hash, behavior: 'smooth' as const }
   return { left: 0, top: 0 }
@@ -79,7 +67,7 @@ export const router = createRouter({
     {
       path: '/post/:tweetId?', name: "post", component: AddPost,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user) {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else
@@ -98,7 +86,7 @@ export const router = createRouter({
       name: 'netdisk',
       component: CloudFileList,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user) {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else
@@ -111,7 +99,7 @@ export const router = createRouter({
       name: "uploadFile",
       component: UploadFile,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user) {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else {
@@ -125,7 +113,7 @@ export const router = createRouter({
       name: "uploadApk",
       component: UploadPackage,
       beforeEnter: (to, from, next) => {
-        let user = sessionStorage.getItem("user")
+        let user = getStoredLoginUser()
         if (!user || JSON.parse(user)["username"]!="admin") {
           next({ name: 'login', query: { redirect: to.fullPath } })
         } else

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import type { PropType } from 'vue'
+import { computed, inject, onBeforeUnmount } from "vue";
+import type { ComponentPublicInstance, PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { Image, PDFView, VideoJS, BlobData, AudioPlayer } from './index'
 import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
-import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
+import {
+    TWEET_MEDIA_ELEMENT_REGISTRY_KEY,
+    type MediaLoadState,
+} from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -18,6 +21,7 @@ const props = defineProps({
 });
 
 const router = useRouter();
+const setFeedMediaElement = inject(TWEET_MEDIA_ELEMENT_REGISTRY_KEY, null);
 
 const mediaMid = computed(() => {
     return props.media.mid.substring(props.media.mid.lastIndexOf("/")+1)
@@ -77,6 +81,16 @@ const resolvedAutoplay = computed(() => {
     return videoItems.length === 1 && videoItems[0].mid === props.media.mid;
 });
 
+function setMediaRootElement(refValue: Element | ComponentPublicInstance | null) {
+    if (!props.tweet?.mid) return;
+    const element = refValue instanceof Element ? refValue : null;
+    setFeedMediaElement?.(props.tweet.mid, props.media, element);
+}
+
+onBeforeUnmount(() => {
+    setMediaRootElement(null);
+});
+
 function handleMediaClick(event: MouseEvent) {
     const mediaType = normalizeMediaType(props.media.type);
     
@@ -111,6 +125,7 @@ function handleMediaClick(event: MouseEvent) {
     <div 
         class="container" 
         :id="mediaMid"
+        :ref="setMediaRootElement"
         :class="{ 'clickable-media': isMediaViewable }"
         @click="handleMediaClick"
     >

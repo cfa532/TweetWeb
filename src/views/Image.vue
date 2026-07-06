@@ -1,7 +1,11 @@
+<script lang="ts">
+const renderedImageUrls = new Set<string>();
+</script>
+
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { PropType } from 'vue'
-import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
+import { TWEET_MEDIA_PRELOAD_STALE_EVENT, type MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({
     media: {type: Object as PropType<MimeiFileType>, required: true },
@@ -9,9 +13,17 @@ const props = defineProps({
     index: {type: Number, required: false},
     mediaLoadState: {type: String as PropType<MediaLoadState>, required: false, default: 'visible'},
 })
+const emit = defineEmits<{
+    settled: [media: MimeiFileType]
+}>()
 
 const isLoaded = ref(false);
+const imageElement = ref<HTMLImageElement | null>(null);
+const imageSrc = ref('');
+const resolvedMediaMid = ref('');
 const shouldLoad = computed(() => props.mediaLoadState !== 'idle');
+let imageLoadEpoch = 0;
+let lastStalePreloadCancelEpoch = -1;
 
 function debugImageLoad(message: string) {
     if (!import.meta.env.DEV) return;
@@ -22,18 +34,99 @@ function debugImageLoad(message: string) {
     });
 }
 
-watch(() => props.media.mid, () => {
-    isLoaded.value = false;
-});
+function markLoadedIfImageSettled() {
+    const img = imageElement.value;
+    if (!img) return;
+    if (img.complete) {
+        isLoaded.value = true;
+        renderedImageUrls.add(props.media.mid);
+    }
+}
 
-watch(shouldLoad, (load, wasLoading) => {
-    if (!load) {
-        if (wasLoading) debugImageLoad('cancel');
-        isLoaded.value = false;
+function handleImageSettled(event?: Event) {
+    const img = event?.target instanceof HTMLImageElement ? event.target : imageElement.value;
+    if (!img || img !== imageElement.value) return;
+    if (img.getAttribute('src') !== imageSrc.value) return;
+    isLoaded.value = true;
+    renderedImageUrls.add(props.media.mid);
+    emit('settled', props.media);
+}
+
+function cancelImageLoad() {
+    imageLoadEpoch += 1;
+    const img = imageElement.value;
+    if (renderedImageUrls.has(props.media.mid) || img?.complete) {
+        isLoaded.value = true;
         return;
     }
-    debugImageLoad(props.mediaLoadState === 'visible' ? 'load visible' : 'preload');
+
+    if (img) {
+        img.removeAttribute('src');
+    }
+    imageSrc.value = '';
+    resolvedMediaMid.value = '';
+    isLoaded.value = false;
+}
+
+function cancelStalePreload() {
+    if (props.mediaLoadState !== 'preload') return;
+    if (lastStalePreloadCancelEpoch === imageLoadEpoch) return;
+    debugImageLoad('cancel stale preload');
+    cancelImageLoad();
+    lastStalePreloadCancelEpoch = imageLoadEpoch;
+}
+
+async function resolveImageSource() {
+    if (!shouldLoad.value) {
+        return;
+    }
+    const loadEpoch = ++imageLoadEpoch;
+
+    if (imageSrc.value && resolvedMediaMid.value === props.media.mid) {
+        await nextTick();
+        if (loadEpoch !== imageLoadEpoch || !shouldLoad.value) return;
+        markLoadedIfImageSettled();
+        return;
+    }
+
+    isLoaded.value = renderedImageUrls.has(props.media.mid);
+    imageSrc.value = props.media.mid;
+    resolvedMediaMid.value = props.media.mid;
+
+    await nextTick();
+    if (loadEpoch !== imageLoadEpoch || !shouldLoad.value) return;
+    markLoadedIfImageSettled();
+}
+
+watch(() => props.media.mid, async () => {
+    if (imageElement.value && !imageElement.value.complete) {
+        imageElement.value.removeAttribute('src');
+    }
+    imageSrc.value = '';
+    resolvedMediaMid.value = '';
+    isLoaded.value = renderedImageUrls.has(props.media.mid);
+    await resolveImageSource();
+});
+
+watch(() => props.mediaLoadState, async (state, previousState) => {
+    if (state === 'idle') {
+        if (previousState !== 'idle') debugImageLoad('cancel');
+        cancelImageLoad();
+        return;
+    }
+    debugImageLoad(state === 'visible' ? 'load visible' : 'preload');
+    await resolveImageSource();
 }, { immediate: true });
+
+onMounted(() => {
+    markLoadedIfImageSettled();
+    window.addEventListener(TWEET_MEDIA_PRELOAD_STALE_EVENT, cancelStalePreload);
+});
+
+onUnmounted(() => {
+    window.removeEventListener(TWEET_MEDIA_PRELOAD_STALE_EVENT, cancelStalePreload);
+    cancelImageLoad();
+});
 </script>
 
 <template>
@@ -42,12 +135,13 @@ watch(shouldLoad, (load, wasLoading) => {
             <div class="img-spinner"></div>
         </div>
         <img
-            v-if="shouldLoad"
-            :src="props.media.mid"
+            v-if="imageSrc"
+            ref="imageElement"
+            :src="imageSrc"
             :loading="props.mediaLoadState === 'visible' ? 'eager' : 'lazy'"
             decoding="async"
-            @load="isLoaded = true"
-            @error="isLoaded = true"
+            @load="handleImageSettled"
+            @error="handleImageSettled"
         />
     </div>
 </template>
@@ -68,6 +162,11 @@ watch(shouldLoad, (load, wasLoading) => {
     justify-content: center;
     z-index: 1;
     pointer-events: none;
+}
+
+.img-wrapper > img {
+    position: relative;
+    z-index: 2;
 }
 
 .img-spinner {
@@ -150,11 +249,11 @@ div.media-attachments div.grid-item div.container img {
 
 /* Full-screen image styles */
 .fullscreen-image {
-    width: 100vw !important;
+    width: auto !important;
     height: auto !important;
-    max-height: 100vh;
-    object-fit: contain;
-    object-position: center;
+    max-width: 100vw !important;
+    max-height: none !important;
+    object-fit: unset !important;
     display: block;
 }
 </style>

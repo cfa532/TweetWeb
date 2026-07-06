@@ -132,9 +132,9 @@ ffmpeg -i input.mp4 -b:v 400k test_400k.mp4   # Above 300k
 ```
 
 **Expected behavior:**
-- 100k video → normalized to 300k (minimum enforced)
-- 250k video → normalized to 300k (minimum enforced)
-- 400k video → keeps 400k (above minimum)
+- 100k video → keeps 100k when the readable source bitrate is below target
+- 250k video → keeps 250k when the readable source bitrate is below target
+- 400k video → keeps 400k when the readable source bitrate is below target
 
 ### 2. Verify COPY Codec Usage
 
@@ -209,4 +209,3 @@ All platforms now use:
 
 - Android changes: `/Users/cfa532/Documents/GitHub/Tweet/docs/MEMORY_OPTIMIZATION_GUIDE.md`
 - Video normalization algorithm: `/Users/cfa532/Documents/GitHub/Tweet/docs/VIDEO_NORMALIZATION_HLS_UPDATE.md`
-

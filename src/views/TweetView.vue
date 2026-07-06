@@ -31,6 +31,13 @@ const MAX_CHARS_CHINESE = 300;
 /** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
 const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
 
+function tweetHasOwnBody(tweet: Tweet | null | undefined): boolean {
+  if (!tweet) return false;
+  if (typeof tweet.title === 'string' && tweet.title.trim()) return true;
+  if (typeof tweet.content === 'string' && tweet.content.trim()) return true;
+  return Array.isArray(tweet.attachments) && tweet.attachments.length > 0;
+}
+
 onMounted(async () => {
   if (currentTweet.value.originalTweetId) {
     // Use already-loaded originalTweet (e.g. from pinned tweet cache) if available,
@@ -42,7 +49,7 @@ onMounted(async () => {
       );
 
     if (originalTweet.value) {
-      if (!currentTweet.value.content && !currentTweet.value.attachments) {
+      if (!tweetHasOwnBody(currentTweet.value)) {
         // A retweet.
         retweetedBy.value = currentTweet.value.author.username;
         isRetweet.value = true;
@@ -379,7 +386,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div :class="['tweet-container', isQuoted ? '' : 'card']" :data-tweet-mid='props.tweet.mid'>
+  <div :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']" :data-tweet-mid='props.tweet.mid'>
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -607,8 +614,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         </div>
       </div>
       <!-- Embedded original tweet for quote tweets -->
-      <blockquote v-if="!isRetweet && !isQuoted && originalTweet" class="quoted-tweet">
-        <TweetView :tweet="originalTweet" :is-quoted="true" />
+      <blockquote v-if="!isRetweet && !isQuoted && currentTweet.originalTweetId" class="quoted-tweet">
+        <TweetView v-if="originalTweet" :tweet="originalTweet" :is-quoted="true" />
+        <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
       </blockquote>
     </div>
     <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="(t) => currentTweet = t" />
@@ -622,12 +630,24 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   /* Profile deep links: scrollIntoView clears fixed AppHeader overlap */
   scroll-margin-top: 52px;
 }
+.tweet-container.is-quoted {
+  background-color: #d0d8e4;
+}
 .quoted-tweet {
-  margin: 8px 0 8px 32px;
+  margin: 8px 0 8px 48px;
   padding: 0;
   border: 1px solid #e6ecf0;
   border-radius: 8px;
   overflow: hidden;
+  background-color: #f0f2f5;
+}
+.quoted-tweet-placeholder {
+  margin: 0;
+  padding: 12px;
+  color: #657786;
+  font-size: 14px;
+  /* Match the background the embedded tweet itself uses (.tweet-container.is-quoted) */
+  background-color: #d0d8e4;
 }
 
 /* Remove card styling on mobile for flush layout */
@@ -643,8 +663,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   }
 
   .tweet-container .card-header {
-    padding: 0;
-    padding-left: 8px; /* Add left padding for item header breathing room */
+    padding: 0 4px;
   }
 }
 
@@ -664,7 +683,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   position: relative;
   border-radius: 8px;
   overflow: hidden;
-  background-color: #000;
+  box-sizing: border-box;
+  border: 1px solid gray;
+  background-color: gray;
 }
 
 /* iOS MediaGrid Algorithm Styles */
@@ -1007,7 +1028,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 }
 .card-header {
   margin: 0;
-  padding: 0 8px;
+  padding: 0;
   cursor: pointer;
   background-color: solid #888;
 }
@@ -1019,7 +1040,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .tweet-content-wrapper {
   text-align: left;
   font-size: medium;
-  padding: 4px 12px 0 8px;
+  padding: 4px 4px 0 4px;
   cursor: pointer;
 }
 

@@ -58,6 +58,13 @@
   font-weight: normal;
 }
 
+/* Always reserve space for the vertical scrollbar so the centered layout
+   (#app / .container-fluid use margin: 0 auto) doesn't shift horizontally
+   between pages that have a scrollbar (long lists) and those that don't. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   min-height: 100vh;
   color: var(--color-text);

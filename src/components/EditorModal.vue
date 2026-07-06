@@ -1,13 +1,12 @@
 <script setup lang='ts'>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
-import IconLink from '@/components/icons/IconLink.vue'
 import { CidModal } from '@/views'
-import { compressImage, uploadVideo, normalizeVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
-import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
+import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { MEDIA_TYPES, isVideoType, isImageType, avatarSrc } from '@/lib'
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
@@ -21,7 +20,7 @@ const tweetTitle = ref()
 const txtConent = ref()
 const divAttach = ref()
 const dropHere = ref()
-const textArea = ref<HTMLTextAreaElement>()
+
 const filesUpload = ref<File[]>([])
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
@@ -33,6 +32,7 @@ const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
 const isQuoting = ref(false)    // whether to also post as a quote tweet (comment mode only)
+const showEditorOptions = ref(false)
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
@@ -40,7 +40,12 @@ const mmFiles = ref<MimeiFileType[]>([]);
 const showCidModal = ref(false);
 
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
-const SMALL_VIDEO_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50MB
+const avatarRetry = ref(0)
+async function onAvatarError() {
+  if (avatarRetry.value >= 3) return
+  await tweetStore.getUser(author.mid)
+  avatarRetry.value++  // key change remounts the img, forcing browser to re-request the (possibly updated) URL
+}
 
 // Retry configuration for uploads
 const UPLOAD_RETRY_CONFIG = {
@@ -107,6 +112,11 @@ async function retryUpload<T>(
 
 onMounted(() => {
   tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
+  document.addEventListener('paste', onSelect as EventListener)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('paste', onSelect as EventListener)
 })
 
 // Upload files and store them as IPFS or Mimei type
@@ -127,74 +137,57 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
 
       } else if (isVideoType(fileType)) {
-        // Upload video through new endpoint or fallback to IPFS
         uploadProgress[i] = 5; // Show initial progress
-        
-        let useIPFSFallback = false;
-        let fallbackReason: string | null = null;
-        let shouldWarnFallback = false;
-        let isHLSConverted = false; // Track if video was converted to HLS
-        
-        if (file.size <= SMALL_VIDEO_THRESHOLD_BYTES) {
-          // Small videos go direct-to-IPFS (progressive MP4) — the intended route,
-          // no fallback warning.
-          useIPFSFallback = true;
-        } else if (!author.cloudDrivePort) {
-          // null/undefined/0: no backend HLS service configured.
-          useIPFSFallback = true;
-          fallbackReason = 'cloudDrivePort not configured';
-          shouldWarnFallback = true;
+        let backendVideoType: string = MEDIA_TYPES.VIDEO;
+        let backendVideoSize: number | undefined;
+        let backendVideoAspectRatio: number | undefined;
+
+        if (!author.cloudDrivePort) {
+          // No backend HLS service configured: upload as a regular IPFS file
+          // regardless of size.
+          cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
         } else {
           const cloudDrivePort = String(author.cloudDrivePort);
-          let ipAddress: string | null = null;
-          if (author.writableHostIp) {
-            const raw = author.writableHostIp;
-            ipAddress = raw.includes(':') ? raw.split(':')[0] : raw;
-          } else {
-            useIPFSFallback = true;
-            fallbackReason = 'Writable host not resolved';
-            shouldWarnFallback = true;
+          const rawWritableHost = author.writableHostIp || await tweetStore.resolveWritableHostIp(author);
+          const ipAddress = rawWritableHost.includes(':') ? rawWritableHost.split(':')[0] : rawWritableHost;
+          const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
+
+          console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value}`);
+
+          const serviceAvailable = await checkServiceAvailability(baseUrl);
+          if (!serviceAvailable) {
+            throw new Error(`Backend service at ${baseUrl} is not available (health check failed)`);
           }
 
-          const baseUrl = ipAddress ? `http://${ipAddress}:${cloudDrivePort}` : '';
-          const serviceAvailable = ipAddress ? await checkServiceAvailability(baseUrl) : false;
+          console.log(`[CLIENT-VIDEO-UPLOAD] backend service available at ${baseUrl}; starting /convert-video upload`);
 
-          if (!useIPFSFallback && !serviceAvailable) {
-            useIPFSFallback = true;
-            fallbackReason = `Backend service at ${baseUrl} is not available (health check failed)`;
-            shouldWarnFallback = true;
-          } else if (!useIPFSFallback) {
-            cid = await retryUpload(
-              () => uploadVideo(
-                file,
-                baseUrl,
-                cloudDrivePort,
-                (progress) => { uploadProgress[i] = progress; },
-                noResample.value
-              ),
-              file.name
-            );
+          const videoResult = await retryUpload(
+            () => uploadVideo(
+              file,
+              baseUrl,
+              cloudDrivePort,
+              (progress) => { uploadProgress[i] = progress; },
+              noResample.value
+            ),
+            file.name
+          );
 
-            if (!cid || cid.trim() === '') {
-              throw new Error('Video upload failed: No CID returned from server');
-            }
+          cid = videoResult.cid;
+          backendVideoType = videoResult.mediaType || MEDIA_TYPES.VIDEO;
+          backendVideoSize = videoResult.size;
+          backendVideoAspectRatio = videoResult.aspectRatio;
 
-            isHLSConverted = true;
-            uploadProgress[i] = 100;
+          if (!cid || cid.trim() === '') {
+            throw new Error('Video upload failed: No CID returned from server');
           }
-        }
 
-        // Fallback path: small videos, missing/unreachable cloudDrivePort, or
-        // resolution failure — all land here and upload progressive MP4 via upload_ipfs.
-        if (useIPFSFallback) {
-          if (shouldWarnFallback && fallbackReason) {
-            useAlertStore().warning(`Video upload using IPFS fallback: ${fallbackReason}`);
-          }
-          cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
+          uploadProgress[i] = 100;
         }
         
-        // Store HLS conversion status for later use
-        (file as any).__isHLSConverted = isHLSConverted;
+        // Store backend-selected metadata for the attachment object.
+        (file as any).__backendVideoType = backendVideoType;
+        (file as any).__backendVideoSize = backendVideoSize;
+        (file as any).__backendVideoAspectRatio = backendVideoAspectRatio;
         
       } else {
         // Handle other file types with new upload_ipfs API (matches iOS)
@@ -204,13 +197,13 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         );
       }
 
-      const aspectRatio = isVideoType(fileType) ? await getVideoAspectRatio(file) :
+      const aspectRatio = isVideoType(fileType) ? ((file as any).__backendVideoAspectRatio ?? await getVideoAspectRatio(file)) :
                          isImageType(fileType) ? await getImageAspectRatio(file) : null;
 
       const fi = {
         mid: cid,
-        type: isVideoType(fileType) ? ((file as any).__isHLSConverted ? MEDIA_TYPES.HLS_VIDEO : MEDIA_TYPES.VIDEO) : fileType,
-        size: processedFile.size,
+        type: isVideoType(fileType) ? ((file as any).__backendVideoType || MEDIA_TYPES.VIDEO) : fileType,
+        size: isVideoType(fileType) ? ((file as any).__backendVideoSize ?? processedFile.size) : processedFile.size,
         fileName: file.name,
         timestamp: file.lastModified,
         aspectRatio: aspectRatio
@@ -256,7 +249,7 @@ async function onSubmit() {
       try {
         await tweetStore.resolveWritableHostIp(author)
       } catch (e) {
-        console.warn('[EDITOR] Writable host resolution failed, uploads may fall back to IPFS:', e)
+        console.warn('[EDITOR] Writable host resolution failed, configured video backend uploads may fail:', e)
       }
     }
 
@@ -293,7 +286,6 @@ async function onSubmit() {
     tweetTitle.value = null
     filesUpload.value = []
     mmFiles.value = []
-    noResample.value = false
 
     // Fetch parent tweet once — used for both quote tweet and navigation
     let parentTweet = null
@@ -333,18 +325,19 @@ async function onSubmit() {
     }
   } catch (err) {
     console.error('onSubmit err:', err)
+    if ((err as any)?.isTimeout) return
     useAlertStore().error(err instanceof Error ? err.message : String(err))
     submitFailed.value = true
 
     // Refresh loginUser: clear per-user cache and re-fetch, overwriting
-    // _user and sessionStorage['user'] in place (never null them first).
+    // _user and persisted login cache in place (never null them first).
     const mid = tweetStore.loginUser?.mid
     if (mid) {
       tweetStore.removeUser(mid)
       const freshUser = await tweetStore.getUser(mid, true)
       if (freshUser) {
         tweetStore._user = freshUser
-        sessionStorage.setItem('user', JSON.stringify(freshUser))
+        tweetStore.persistLoginUser(freshUser)
       }
     }
   } finally {
@@ -391,12 +384,29 @@ async function checkServiceAvailability(baseUrl: string): Promise<boolean> {
 }
 
 async function onSelect(e: Event) {
-  let files =
+  let files: FileList | File[] | null | undefined =
     (e as HTMLInputEvent).target.files ||       // select input file
-    (e as DragEvent).dataTransfer?.files ||     // drag and drop
-    (e as ClipboardEvent).clipboardData?.files  // copy and paste
+    (e as DragEvent).dataTransfer?.files        // drag and drop
+
+  // For clipboard paste, prefer items (supports multiple files) over files (often capped at one)
+  if (!files?.length && e.type === 'paste') {
+    const clipboard = (e as ClipboardEvent).clipboardData
+    if (clipboard?.items?.length) {
+      const itemFiles = Array.from(clipboard.items)
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter((f): f is File => f !== null)
+      if (itemFiles.length > 0) files = itemFiles
+    }
+    if (!files?.length && clipboard?.files?.length) {
+      files = clipboard.files
+    }
+  }
 
   if (files && files.length > 0) {
+    // Prevent the browser from pasting the file as text/path into the textarea
+    e.preventDefault()
+
     let totalSize = 0;
     filesUpload.value.forEach(f => totalSize += f.size);
 
@@ -425,30 +435,20 @@ async function onSelect(e: Event) {
     }
 
     divAttach.value!.hidden = false;
-    textArea.value!.hidden = false;
     dropHere.value!.hidden = true;
-  } else {
-    // Clipboard works only with HTTPS
-    if ((e.target as HTMLTextAreaElement) === textArea.value) {
-      // Paste into text area
-      document.execCommand('paste');
-    }
   }
+  // No files — let the default paste behaviour handle text insertion into the textarea
 }
 
 function dragOver() {
-  textArea!.value!.hidden = true
   dropHere!.value!.hidden = false
 }
 
 function dragLeave(e: DragEvent) {
-  // Only hide the drop zone if we're leaving the modal-content container entirely
-  // Check if the related target is still within the modal-content
   const modalContent = (e.currentTarget as HTMLElement)
   const relatedTarget = e.relatedTarget as HTMLElement
 
   if (!modalContent.contains(relatedTarget)) {
-    textArea!.value!.hidden = false
     dropHere!.value!.hidden = true
   }
 }
@@ -546,47 +546,80 @@ function handleDragEnd() {
 
   <div style='background-color:aliceblue;'>
       <div class='editor-header'>
-        <img :src='author.avatar' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer'>
+        <img :key='avatarRetry' :src='avatarSrc(author.avatar)' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer' @error='onAvatarError'>
         <div class='editor-author' @click='openUserPage' style='cursor:pointer'>
           <div class='fw-bold'>{{ author.name }}</div>
           <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>
         </div>
-        <div class='cancel-btn' @click='goBack'>
-          <font-awesome-icon icon="circle-xmark" size="xl" />
-        </div>
+        <button class='cancel-btn' type='button' @click='goBack' :aria-label="$t('common.cancel')">
+          <font-awesome-icon icon="circle-xmark" />
+        </button>
       </div>
-      <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
+        <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
           <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
-          <textarea ref='textArea' v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
+          <textarea v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
           <div ref='dropHere' hidden class='drop-here'>
             <p>{{ $t('editor.dropHere') }}</p>
           </div>
         </div>
-        <form @submit.prevent='onSubmit' enctype='multipart/form-data' @paste.prevent='onSelect' class='form-container'>
+        <form @submit.prevent='onSubmit' enctype='multipart/form-data' class='form-container'>
           <input ref='selectFiles' @change='onSelect' type='file' hidden multiple />
-          <div class='button-container'>
-            <span>
-              <button class='btn' @click.prevent='selectFiles.click()'>{{ $t('editor.files') }}</button>&nbsp;
-              <label class="bottom-btn" @click.prevent="openModal">
-                <IconLink />
+          <div class='editor-toolbar'>
+            <div class='toolbar-files'>
+              <button
+                class='toolbar-icon-button'
+                type='button'
+                @click.prevent='selectFiles.click()'
+                :title="$t('editor.files')"
+                :aria-label="$t('editor.files')"
+              >
+                <font-awesome-icon icon="paperclip" />
+              </button>
+              <button
+                class='toolbar-link-button'
+                type='button'
+                @click.prevent='openModal'
+                :title="$t('editor.link')"
+                :aria-label="$t('editor.link')"
+              >
+                <font-awesome-icon icon="link" />
+              </button>
+              <button
+                class='toolbar-icon-button toolbar-options-button'
+                :class="{ 'is-open': showEditorOptions }"
+                type='button'
+                @click.prevent='showEditorOptions = !showEditorOptions'
+                :title="$t('editor.options')"
+                :aria-label="$t('editor.options')"
+                :aria-expanded='showEditorOptions'
+              >
+                <font-awesome-icon icon="sliders" />
+              </button>
+            </div>
+            <div class='toolbar-actions'>
+              <button class='btn submit-button' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
+            </div>
+            <div v-if='showEditorOptions' class='toolbar-options-panel'>
+              <label class='toolbar-option' for='downloadable-checkbox'>
+                <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>
+                <span>{{ $t('editor.downloadable') }}</span>
               </label>
-            </span>
-            <span>
-              <input type='checkbox' v-model='downloadable' id='downloadable-checkbox'>&nbsp;
-              <label for='downloadable-checkbox'>{{ $t('editor.downloadable') }}</label>&nbsp;&nbsp;&nbsp;
-              <input type='checkbox' v-model='isPrivate' id='private-checkbox'>&nbsp;
-              <label for='private-checkbox'>{{ $t('editor.private') }}</label>&nbsp;&nbsp;&nbsp;
-              <input type='checkbox' v-model='noResample' id='noresample-checkbox'>&nbsp;
-              <label for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">{{ $t('editor.preserveQuality') }}</label>&nbsp;&nbsp;&nbsp;
-              <template v-if='tweetId'>
-                <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>&nbsp;
-                <label for='quoting-checkbox'>{{ $t('editor.quoteTweet') }}</label>&nbsp;&nbsp;&nbsp;
-              </template>
-              <button class='btn' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
-            </span>
+              <label class='toolbar-option' for='private-checkbox'>
+                <input type='checkbox' v-model='isPrivate' id='private-checkbox'>
+                <span>{{ $t('editor.private') }}</span>
+              </label>
+              <label class='toolbar-option' for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">
+                <input type='checkbox' v-model='noResample' id='noresample-checkbox'>
+                <span>{{ $t('editor.preserveQuality') }}</span>
+              </label>
+              <label v-if='tweetId' class='toolbar-option' for='quoting-checkbox'>
+                <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>
+                <span>{{ $t('editor.quoteTweet') }}</span>
+              </label>
+            </div>
           </div>
           <Loading :visible='loading' />
         </form>
@@ -622,7 +655,7 @@ function handleDragEnd() {
 .editor-header {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
+  padding: 8px 10px 4px;
 }
 
 .editor-avatar {
@@ -638,10 +671,26 @@ function handleDragEnd() {
 }
 
 .cancel-btn {
-  cursor: pointer;
-  color: #e0245e;
-  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: #495057;
+  background: transparent;
+  border: 1px solid #adb5bd;
+  border-radius: 6px;
+  padding: 0;
   margin-right: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.cancel-btn:hover,
+.cancel-btn:focus-visible {
+  color: #212529;
+  border-color: #6c757d;
+  background: #f8f9fa;
 }
 
 .editor-content {
@@ -652,7 +701,7 @@ function handleDragEnd() {
   border-radius: 10px;
   background-color: #ebf0f3;
   border: 1px solid #888;
-  margin: 10px 0 0 0;
+  margin: 4px 0 0 0;
   flex-direction: column;
   flex: 1;
 }
@@ -660,23 +709,28 @@ function handleDragEnd() {
 .input-container {
   flex: 1;
   margin-bottom: 10px;
-  display: inline;
+  position: relative;
 }
 
 .input-textarea {
-  margin: 5px;
+  margin: 2px;
   border: 1px solid lightgrey;
-  width: 99%;
+  width: calc(100% - 4px);
   height: 40vh;
   border-radius: 5px;
+  box-sizing: border-box;
 }
 
 .drop-here {
-  border: 1px solid lightgrey;
-  width: 100%;
-  height: 400px;
-  margin: 0px;
-  text-align: center;
+  position: absolute;
+  inset: 0;
+  border: 2px dashed #888;
+  border-radius: 5px;
+  background: rgba(235, 240, 243, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
 }
 
 .preview-container {
@@ -695,11 +749,64 @@ function handleDragEnd() {
   flex: 1;
 }
 
-.button-container {
-  height: auto;
+.editor-toolbar {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 104px;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 8px;
+  margin: 10px;
+}
+
+.toolbar-files {
   display: flex;
-  justify-content: space-between;
-  margin: 10px
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.toolbar-actions {
+  grid-column: 3;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.toolbar-options-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(104px, max-content));
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #c8d0d8;
+  border-radius: 6px;
+  background: #f8fbfd;
+}
+
+.toolbar-option {
+  display: inline-grid;
+  grid-template-columns: 16px minmax(0, max-content);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: #343a40;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.toolbar-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.toolbar-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .btn {
@@ -708,21 +815,87 @@ function handleDragEnd() {
   padding: 3px 10px;
 }
 
-.bottom-btn {
-  display: inline-flex;
-  align-items: center;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 16px;
-  fill: rgb(48, 46, 46);
-  transition: background-color 0.3s;
+.submit-button {
+  width: 104px;
+  min-height: 36px;
 }
 
-.bottom-btn svg {
-  padding-top: 6px;
-  margin-right: 10px;
-  width: 24px;
-  height: 24px;
+.toolbar-icon-button,
+.toolbar-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px solid #b8c2cc;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #fff;
+  color: #2f3a45;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.toolbar-icon-button {
+  width: 38px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.toolbar-link-button {
+  width: 38px;
+  padding: 0;
+  border-color: #9ec5fe;
+  background: #f0f7ff;
+  color: #0d6efd;
+}
+
+.toolbar-icon-button:hover,
+.toolbar-icon-button:focus-visible {
+  border-color: #6c757d;
+  background: #f8f9fa;
+}
+
+.toolbar-link-button:hover,
+.toolbar-link-button:focus-visible {
+  border-color: #0d6efd;
+  background: #e7f1ff;
+}
+
+.toolbar-options-button.is-open {
+  border-color: #198754;
+  background: #e9f7ef;
+  color: #146c43;
+}
+
+@media (max-width: 760px) {
+  .editor-toolbar {
+    grid-template-columns: 130px minmax(0, 1fr) 104px;
+    align-items: start;
+  }
+
+  .toolbar-options-panel {
+    grid-template-columns: repeat(2, minmax(104px, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .editor-toolbar {
+    grid-template-columns: minmax(0, 1fr) 104px;
+  }
+
+  .toolbar-files {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .toolbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .toolbar-options-panel {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

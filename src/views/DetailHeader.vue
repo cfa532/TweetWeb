@@ -2,7 +2,7 @@
 import type { PropType } from 'vue';
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 import { useTweetStore } from '@/stores';
 
 const props = defineProps({
@@ -47,10 +47,14 @@ function excerptFromTweet(t: Tweet): string | null {
 /** Excerpts paired with tweet ids for the rotating strip (tap opens profile at that tweet). */
 const carouselItems = ref<{ excerpt: string; tweetId: string }[]>([]);
 const currentIdx = ref(0);
-/** After mount / author change: strip appears only after this is true (3s delay on first paint). */
+/** After mount / author change: strip appears only after this is true (5s delay on first paint). */
 const stripReady = ref(false);
+const TWEET_DETAIL_MEDIA_READY_EVENT = 'tweet-detail-media-ready';
+const PEER_TWEETS_FALLBACK_DELAY_MS = 12000;
 let ticker: number | null = null;
 let revealTimer: number | null = null;
+let peerTweetsTimer: number | null = null;
+let removePeerTweetsReadyListener: (() => void) | null = null;
 
 function clearCarouselTicker() {
   if (ticker !== null) {
@@ -113,10 +117,39 @@ async function loadPeerTweets() {
   rebuildCarousel();
 }
 
+function clearPeerTweetsSchedule() {
+  if (peerTweetsTimer !== null) {
+    clearTimeout(peerTweetsTimer);
+    peerTweetsTimer = null;
+  }
+  if (removePeerTweetsReadyListener) {
+    removePeerTweetsReadyListener();
+    removePeerTweetsReadyListener = null;
+  }
+}
+
+function schedulePeerTweetsLoad() {
+  clearPeerTweetsSchedule();
+  const scheduledAuthorId = props.author.mid;
+  let started = false;
+  const start = () => {
+    if (started || props.author.mid !== scheduledAuthorId) return;
+    started = true;
+    clearPeerTweetsSchedule();
+    void loadPeerTweets();
+  };
+  const onMediaReady = () => start();
+  window.addEventListener(TWEET_DETAIL_MEDIA_READY_EVENT, onMediaReady, { once: true });
+  removePeerTweetsReadyListener = () => {
+    window.removeEventListener(TWEET_DETAIL_MEDIA_READY_EVENT, onMediaReady);
+  };
+  peerTweetsTimer = window.setTimeout(start, PEER_TWEETS_FALLBACK_DELAY_MS);
+}
+
 onMounted(() => {
   rebuildCarousel();
-  void loadPeerTweets();
-  scheduleStripReveal(3000);
+  schedulePeerTweetsLoad();
+  scheduleStripReveal(5000);
 });
 
 onUnmounted(() => {
@@ -124,6 +157,7 @@ onUnmounted(() => {
     clearTimeout(revealTimer);
     revealTimer = null;
   }
+  clearPeerTweetsSchedule();
   clearCarouselTicker();
 });
 
@@ -132,7 +166,7 @@ watch(
   () => {
     currentIdx.value = 0;
     rebuildCarousel();
-    void loadPeerTweets();
+    schedulePeerTweetsLoad();
     if (revealTimer !== null) {
       clearTimeout(revealTimer);
       revealTimer = null;
@@ -165,7 +199,7 @@ watch(
     <div class='d-flex justify-content-between align-items-center' style='width: 100%'>
       <div class='d-flex align-items-center'>
         <div class='avatar me-2'>
-          <img :src='author.avatar' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
+          <img :src='avatarSrc(author.avatar)' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)'>
         </div>
         <div class='user-info flex-grow-1'>
           <div v-if='isRetweet' class='label text-muted small'>
@@ -237,7 +271,7 @@ watch(
   margin-left: -8px;
   margin-right: -8px;
   margin-bottom: -8px;
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
   overflow: hidden;
   perspective: 720px;
   transform-style: preserve-3d;

@@ -30,6 +30,8 @@ interface User {
     tweetCount?: number;
     bookmarksCount?: number;
     favoritesCount?: number;
+    commentsCount?: number;
+    lastLogin?: number;
     cloudDrivePort?: number;  // Port for backend service (undefined/null/0 means no service)
     domainToShare?: string;
     hostUrl?: string;

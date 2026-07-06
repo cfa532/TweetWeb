@@ -9,6 +9,17 @@ import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 const GUEST_ID = "000000000000000000000000000"
+const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
+const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
+const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
+const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
+const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
+const LOGIN_USER_STORAGE_KEY = "user"
+
+type ExpiringLocalCache<T> = {
+    cachedAt: number
+    value: T
+}
 
 /**
  * Comma-separated ids from `VITE_DEFAULT_FOLLOWINGS`: same role as iOS `AppConfig.alphaId` /
@@ -51,6 +62,13 @@ function collectNestedOriginalTweetsFromRows(tweetsData: any[] | undefined): any
         }
     }
     return out
+}
+
+function tweetHasOwnBody(tweet: Pick<Tweet, 'title' | 'content' | 'attachments'> | undefined | null): boolean {
+    if (!tweet) return false
+    if (typeof tweet.title === 'string' && tweet.title.trim()) return true
+    if (typeof tweet.content === 'string' && tweet.content.trim()) return true
+    return Array.isArray(tweet.attachments) && tweet.attachments.length > 0
 }
 
 /**
@@ -242,12 +260,144 @@ function parseRegisterSuccessUser(ret: any): RegisterSuccessUser {
 function parseRegisteredUserMid(ret: any): string | undefined {
     return parseRegisterSuccessUser(ret).mid
 }
+
+function firstNodePoolIp(mid: unknown): string | undefined {
+    if (typeof mid !== 'string' || !mid) return undefined
+    return nodePool.getIPForNode(mid) ?? undefined
+}
+
+function firstUserRouteFromNodePool(user: any): string | undefined {
+    const accessNodeId = user?.hostIds?.[1] ?? user?.hostIds?.[0]
+    return firstNodePoolIp(accessNodeId)
+}
+
+function userForSessionStorage(user: any): any {
+    if (!user || typeof user !== 'object') return user
+    const cached = { ...user }
+    delete cached.client
+    delete cached.providerIp
+    delete cached.baseUrl
+    delete cached.writableUrl
+    delete cached.writableHostIp
+    return cached
+}
+
+function tweetForSessionStorage(tweet: any): any {
+    if (!tweet || typeof tweet !== 'object') return tweet
+    const cached = { ...tweet }
+    delete cached.provider
+    if (cached.author) {
+        cached.author = userForSessionStorage(cached.author)
+    }
+    if (cached.originalTweet && typeof cached.originalTweet === 'object') {
+        cached.originalTweet = { ...cached.originalTweet }
+        delete cached.originalTweet.provider
+        if (cached.originalTweet.author) {
+            cached.originalTweet.author = userForSessionStorage(cached.originalTweet.author)
+        }
+    }
+    return cached
+}
+
+function setLocalCache<T>(key: string, value: T) {
+    const payload: ExpiringLocalCache<T> = {
+        cachedAt: Date.now(),
+        value,
+    }
+    localStorage.setItem(key, JSON.stringify(payload))
+}
+
+function getLocalCache<T>(key: string, ttl: number = LOCAL_TWEET_CACHE_TTL): T | null {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+
+    try {
+        const parsed = JSON.parse(raw) as Partial<ExpiringLocalCache<T>>
+        if (
+            !parsed ||
+            typeof parsed !== 'object' ||
+            typeof parsed.cachedAt !== 'number' ||
+            !('value' in parsed)
+        ) {
+            localStorage.removeItem(key)
+            return null
+        }
+
+        if (Date.now() - parsed.cachedAt > ttl) {
+            localStorage.removeItem(key)
+            return null
+        }
+
+        return parsed.value as T
+    } catch {
+        localStorage.removeItem(key)
+        return null
+    }
+}
+
+function getStoredLoginUser(): any | null {
+    localStorage.removeItem(LOGIN_USER_STORAGE_KEY)
+    const raw = sessionStorage.getItem(LOGIN_USER_STORAGE_KEY)
+    if (!raw) return null
+
+    try {
+        const user = JSON.parse(raw)
+        if (user && typeof user === 'object') {
+            return user
+        }
+    } catch {
+        sessionStorage.removeItem(LOGIN_USER_STORAGE_KEY)
+    }
+    return null
+}
+
+function setStoredLoginUser(user: any) {
+    sessionStorage.setItem(LOGIN_USER_STORAGE_KEY, JSON.stringify(userForSessionStorage(user)))
+    localStorage.removeItem(LOGIN_USER_STORAGE_KEY)
+}
+
+function clearStoredLoginUser() {
+    sessionStorage.removeItem(LOGIN_USER_STORAGE_KEY)
+    localStorage.removeItem(LOGIN_USER_STORAGE_KEY)
+}
+
+function setStoredUser(userId: string, user: any) {
+    setLocalCache(userId, userForSessionStorage(user))
+}
+
+function getStoredUser(userId: string): any | null {
+    return getLocalCache<any>(userId, LOCAL_USER_CACHE_TTL)
+}
+
+function clearStoredUser(userId: string) {
+    localStorage.removeItem(userId)
+    sessionStorage.removeItem(userId)
+}
+
+function attachNodePoolRoute(user: any, connectionPool: any): boolean {
+    const providerIp = firstUserRouteFromNodePool(user)
+    if (!providerIp) return false
+    user.providerIp = providerIp
+    user.client = createPooledClient(providerIp, connectionPool)
+    if (user.writableHostIp === undefined) {
+        user.writableHostIp = null
+    }
+    return true
+}
 const TWEET_COUNT = 5
 
 export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],      // tweets
         tweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
+        // Mids that belong to the main following feed (loaded by getTweetFeed /
+        // updateFollowingTweets). `tweets` is a shared cache that profile and pinned
+        // loaders also push into, so the feed banner must count only these — otherwise
+        // tweets seen on a profile leak into the main-feed "new tweets" count.
+        feedTweetIds: new Set<string>(),
+        // Latest page-0 banner-check candidates. The visible banner count is derived
+        // from this set, not every cached feed tweet, to match the mobile algorithm.
+        feedPendingCandidateIds: new Set<string>(),
         originalTweets: [] as Tweet[],
         originalTweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         users: new Map<MimeiId, User>(),
@@ -260,6 +410,7 @@ export const useTweetStore = defineStore('tweetStore', {
         healthCheckInProgress: new Map<string, Promise<boolean>>(),
         _writableHostCache: new Map<string, {ip: string, expiresAt: number}>(), // keyed by hostId
         _pendingUserFetches: new Map<string, Promise<User | undefined>>(), // Deduplicate concurrent getUser calls
+        _resourceFetchFailures: new Map<string, { count: number, cooldownUntil: number }>(), // Per-resource (user/node/media) fetch failure cooldown
         _deletedTweetIds: new Set<string>() // Prevent re-insertion after optimistic delete
     }),
     getters: {
@@ -271,9 +422,10 @@ export const useTweetStore = defineStore('tweetStore', {
             if (state._user) {
                 return state._user
             }
-            if (sessionStorage.getItem("user")) {
-                let usr = JSON.parse(sessionStorage.getItem("user")!)
-                usr.client = createPooledClient(usr.providerIp, state.lapi.connectionPool)
+            const storedUser = getStoredLoginUser()
+            if (storedUser) {
+                let usr = storedUser
+                attachNodePoolRoute(usr, state.lapi.connectionPool)
                 // Don't trust persisted writableHostIp — re-resolve fresh each session.
                 // Matches iOS which explicitly does not encode writableUrl across sessions.
                 usr.writableHostIp = null
@@ -300,6 +452,45 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     },
     actions: {
+        persistLoginUser(user?: User | null) {
+            const userToPersist = user ?? this._user
+            if (userToPersist) setStoredLoginUser(userToPersist)
+        },
+        _mergeUserIntoCachedRefs(userId: MimeiId, updates: Partial<User>) {
+            const visitedTweets = new WeakSet<Tweet>()
+            const mergeUser = (target: User | null | undefined) => {
+                if (target?.mid === userId) Object.assign(target, updates)
+            }
+            const mergeTweetAuthor = (tweet: Tweet | null | undefined) => {
+                if (!tweet) return
+                if (visitedTweets.has(tweet)) return
+                visitedTweets.add(tweet)
+                if (tweet.authorId === userId || tweet.author?.mid === userId) {
+                    mergeUser(tweet.author)
+                }
+                for (const comment of tweet.comments ?? []) {
+                    mergeTweetAuthor(comment)
+                }
+                mergeTweetAuthor(tweet.originalTweet)
+            }
+
+            mergeUser(this._user)
+            const cachedUser = this.users.get(userId)
+            if (cachedUser) {
+                mergeUser(cachedUser)
+            } else if (this._user?.mid === userId) {
+                this.users.set(userId, this._user)
+            }
+
+            for (const tweet of this.tweets) mergeTweetAuthor(tweet)
+            for (const tweet of this.originalTweetIndex.values()) mergeTweetAuthor(tweet)
+
+            const userToStore = this._user?.mid === userId ? this._user : this.users.get(userId)
+            if (userToStore) {
+                setStoredUser(userId, userToStore)
+                if (this._user?.mid === userId) setStoredLoginUser(this._user)
+            }
+        },
         /**
          * Add a user ID to the following list if not already present
          * @param uid The user ID to add to followings
@@ -386,13 +577,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
          */
-        async addTweetToStore(tweet: Tweet) {
+        async addTweetToStore(tweet: Tweet, isFeedTweet: boolean = false) {
             try {
                 if (this._deletedTweetIds.has(tweet.mid)) return
                 const existing = this.tweetIndex.get(tweet.mid)
                 if (existing) {
                     // Tweet already cached — refresh mutable fields from fresh data.
                     this.refreshCachedTweet(existing, tweet)
+                    if (isFeedTweet) this.feedTweetIds.add(tweet.mid)
                     return
                 }
 
@@ -402,7 +594,19 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.warn("Author not found for tweet:", tweet.mid, "authorId:", tweet.authorId)
                     return
                 }
-                
+
+                // Always point tweet.author at the same object that lives in
+                // this.users so that Object.assign() in _fetchUser (triggered by
+                // handleAvatarError) propagates directly here without needing
+                // _rewriteUserMediaHosts to find the tweet by iteration.
+                const mapRef = this.users.get(tweet.authorId)
+                if (mapRef) {
+                    author = mapRef
+                } else {
+                    // Register so future getUser() calls share the same reference.
+                    this.users.set(tweet.authorId, author)
+                }
+
                 tweet.comments = []     // load comments only on detail page
                 tweet.author = author
                 tweet.provider = author.providerIp
@@ -461,25 +665,40 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
                         
-                        // If originalTweetId exists but originalTweet is null, skip this tweet
+                        // Pure retweets cannot render without their original, but quote
+                        // tweets still have their own content/media and should remain visible.
                         if (!tweet.originalTweet) {
-                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
+                            if (tweetHasOwnBody(tweet)) {
+                                tweet.originalTweet = undefined
+                                console.warn(`[addTweetToStore] Original quote target unavailable; rendering quote wrapper only:
+  Quote Tweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}`)
+                            } else {
+                                console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
   Retweet ID: ${tweet.mid}
   Original Tweet ID: ${tweet.originalTweetId}`)
-                            return
+                                return
+                            }
                         }
                     } catch (error) {
                         console.error(`[addTweetToStore] ❌ ERROR fetching original tweet:
   Retweet ID: ${tweet.mid}
   Original Tweet ID: ${tweet.originalTweetId}
   Error:`, error)
-                        console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
-                        return
+                        if (tweetHasOwnBody(tweet)) {
+                            tweet.originalTweet = undefined
+                            console.warn(`[addTweetToStore] Original quote target errored; rendering quote wrapper only:
+  Quote Tweet ID: ${tweet.mid}
+  Original Tweet ID: ${tweet.originalTweetId}`)
+                        } else {
+                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
+                            return
+                        }
                     }
                 }
                 
                 try {
-                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweet))
+                    sessionStorage.setItem(tweet.mid, JSON.stringify(tweetForSessionStorage(tweet)))
                 } catch (error) {
                     console.error("Error saving tweet to sessionStorage:", error)
                     // Continue even if sessionStorage fails
@@ -487,6 +706,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 
                 this.tweets.push(tweet);
                 this.tweetIndex.set(tweet.mid, tweet);
+                if (isFeedTweet) this.feedTweetIds.add(tweet.mid);
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -524,7 +744,8 @@ export const useTweetStore = defineStore('tweetStore', {
         async loadTweetsByUser(
             userId: string,
             pageNumber: number = 0,
-            pageSize: number = 10
+            pageSize: number = 10,
+            options: { candidateIds?: Set<string> } = {}
         ): Promise<number | null> {
             const params = {
                 aid: this.appId,
@@ -549,7 +770,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 params.userid = user.mid
 
                 try {
-                    const response = await user.client.RunMApp("get_tweets_by_user", params)
+                    if (attempt > 1) {
+                        const hostId = user.hostIds?.[0]
+                        if (hostId) this._writableHostCache.delete(hostId)
+                        user.writableHostIp = null
+                    }
+                    const writableIp = await this.resolveWritableHostIp(user)
+                    const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                    const response = await profileClient.RunMApp("get_tweets_by_user", params)
 
                     // Check success status first
                     const success = response?.success
@@ -596,18 +824,13 @@ export const useTweetStore = defineStore('tweetStore', {
                         await this.updateOriginalTweets(nestedOrig)
                     }
 
-                    // Pre-fetch all unique authors in parallel (addTweetToStore calls getUser internally)
-                    if (tweetsData) {
-                        const uniqueAuthorIds = [...new Set(
-                            tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                        )] as string[]
-                        await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
-                    }
-
                     if (tweetsData) {
                         for (const tweetJson of tweetsData) {
                             if (tweetJson == null) continue
                             const tweet = tweetJson as Tweet
+                            if (tweet.authorId === user.mid) {
+                                tweet.author = user
+                            }
                             const cachedTweet = this.tweetIndex.get(tweet.mid)
                             if (cachedTweet) {
                                 this.refreshCachedTweet(cachedTweet, tweet)
@@ -617,6 +840,10 @@ export const useTweetStore = defineStore('tweetStore', {
                                 } catch (error) {
                                     console.error("Error processing tweet:", tweet.mid, error)
                                 }
+                            }
+                            const storedTweet = this.tweetIndex.get(tweet.mid)
+                            if (storedTweet && (!storedTweet.originalTweetId || storedTweet.originalTweet)) {
+                                options.candidateIds?.add(storedTweet.mid)
                             }
                         }
                     }
@@ -652,28 +879,70 @@ export const useTweetStore = defineStore('tweetStore', {
             try {
                 const userTweets = this.tweets
                     .filter(t => t.authorId === userId)
-                    .map(t => {
-                        // Strip non-serializable fields (client, etc.)
-                        const { author, originalTweet, comments, ...rest } = t
-                        const cached: any = { ...rest }
-                        if (author) {
-                            const { client, ...authorRest } = author as any
-                            cached.author = authorRest
-                        }
-                        if (originalTweet) {
-                            const { author: origAuthor, comments: origComments, ...origRest } = originalTweet
-                            cached.originalTweet = { ...origRest }
-                            if (origAuthor) {
-                                const { client, ...origAuthorRest } = origAuthor as any
-                                cached.originalTweet.author = origAuthorRest
-                            }
-                        }
-                        return cached
-                    })
+                    .map(t => tweetForSessionStorage(t))
                     .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
-                localStorage.setItem(`tweets_${userId}`, JSON.stringify(userTweets))
+                setLocalCache(`tweets_${userId}`, userTweets)
             } catch (e) {
                 console.warn("Failed to cache user tweets to localStorage:", e)
+            }
+        },
+
+        cacheFeedTweets(userId?: string) {
+            const cacheUserId = userId ?? this.loginUser?.mid
+            if (!cacheUserId) return
+            try {
+                const feedTweets = this.tweets
+                    .filter(t => this.feedTweetIds.has(t.mid))
+                    .map(t => tweetForSessionStorage(t))
+                    .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+                setLocalCache(`feed_tweets_${cacheUserId}`, feedTweets)
+            } catch (e) {
+                console.warn("Failed to cache feed tweets to localStorage:", e)
+            }
+        },
+
+        getCachedFeedTweets(userId: string): Tweet[] {
+            try {
+                const tweets = getLocalCache<Tweet[]>(`feed_tweets_${userId}`)
+                if (!tweets) return []
+                const result: Tweet[] = []
+                for (const t of tweets) {
+                    if (this._deletedTweetIds.has(t.mid)) continue
+                    if (t.author) {
+                        delete (t.author as any).providerIp
+                        if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
+                            t.provider = t.author.providerIp
+                        }
+                        const mapRef = this.users.get(t.authorId)
+                        if (mapRef) {
+                            t.author = mapRef
+                        } else {
+                            this.users.set(t.authorId, t.author)
+                        }
+                    }
+                    if (t.originalTweet?.author) {
+                        delete (t.originalTweet.author as any).providerIp
+                        if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
+                            t.originalTweet.provider = t.originalTweet.author.providerIp
+                        }
+                    }
+                    t.comments = []
+
+                    const existing = this.tweetIndex.get(t.mid)
+                    if (existing) {
+                        this.feedTweetIds.add(existing.mid)
+                        result.push(existing)
+                    } else {
+                        this.tweets.push(t)
+                        this.tweetIndex.set(t.mid, t)
+                        this.feedTweetIds.add(t.mid)
+                        result.push(t)
+                    }
+                }
+                return result
+            } catch (e) {
+                console.warn("Failed to load cached feed tweets:", e)
+                return []
             }
         },
 
@@ -683,17 +952,34 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         getCachedUserTweets(userId: string): Tweet[] {
             try {
-                const cached = localStorage.getItem(`tweets_${userId}`)
-                if (!cached) return []
-                const tweets = JSON.parse(cached) as Tweet[]
+                const tweets = getLocalCache<Tweet[]>(`tweets_${userId}`)
+                if (!tweets) return []
                 for (const t of tweets) {
-                    if (t.author?.providerIp) {
-                        t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
+                    if (t.author) {
+                        delete (t.author as any).providerIp
+                        if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
+                            t.provider = t.author.providerIp
+                        }
                     }
-                    if (t.originalTweet?.author?.providerIp) {
-                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                    if (t.originalTweet?.author) {
+                        delete (t.originalTweet.author as any).providerIp
+                        if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
+                            t.originalTweet.provider = t.originalTweet.author.providerIp
+                        }
                     }
                     t.comments = []
+
+                    // Align cached tweet.author with the users-Map reference so that
+                    // Object.assign() in _fetchUser (triggered by getUserFromRootHost)
+                    // propagates the fresh avatar directly into displayedTweets items.
+                    if (t.author) {
+                        const mapRef = this.users.get(t.authorId)
+                        if (mapRef) {
+                            t.author = mapRef
+                        } else {
+                            this.users.set(t.authorId, t.author)
+                        }
+                    }
                 }
                 return tweets
             } catch (e) {
@@ -708,23 +994,12 @@ export const useTweetStore = defineStore('tweetStore', {
         cachePinnedTweets(userId: string, tweets: Tweet[]) {
             try {
                 const serializable = tweets.map(t => {
-                    const { author, originalTweet, comments, ...rest } = t
-                    const cached: any = { ...rest }
-                    if (author) {
-                        const { client, ...authorRest } = author as any
-                        cached.author = authorRest
-                    }
-                    if (originalTweet) {
-                        const { author: origAuthor, comments: origComments, ...origRest } = originalTweet
-                        cached.originalTweet = { ...origRest }
-                        if (origAuthor) {
-                            const { client, ...origAuthorRest } = origAuthor as any
-                            cached.originalTweet.author = origAuthorRest
-                        }
-                    }
+                    const cached: any = tweetForSessionStorage(t)
+                    cached.comments = []
+                    if (cached.originalTweet) cached.originalTweet.comments = []
                     return cached
                 })
-                localStorage.setItem(`pinned_${userId}`, JSON.stringify(serializable))
+                setLocalCache(`pinned_${userId}`, serializable)
             } catch (e) {
                 console.warn("Failed to cache pinned tweets:", e)
             }
@@ -735,17 +1010,31 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         getCachedPinnedTweets(userId: string): Tweet[] {
             try {
-                const cached = localStorage.getItem(`pinned_${userId}`)
-                if (!cached) return []
-                const tweets = JSON.parse(cached) as Tweet[]
+                const tweets = getLocalCache<Tweet[]>(`pinned_${userId}`)
+                if (!tweets) return []
                 for (const t of tweets) {
-                    if (t.author?.providerIp) {
-                        t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
+                    if (t.author) {
+                        delete (t.author as any).providerIp
+                        if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
+                            t.provider = t.author.providerIp
+                        }
                     }
-                    if (t.originalTweet?.author?.providerIp) {
-                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                    if (t.originalTweet?.author) {
+                        delete (t.originalTweet.author as any).providerIp
+                        if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
+                            t.originalTweet.provider = t.originalTweet.author.providerIp
+                        }
                     }
                     t.comments = []
+
+                    if (t.author) {
+                        const mapRef = this.users.get(t.authorId)
+                        if (mapRef) {
+                            t.author = mapRef
+                        } else {
+                            this.users.set(t.authorId, t.author)
+                        }
+                    }
                 }
                 return tweets
             } catch (e) {
@@ -782,7 +1071,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 this.originalTweets.push(originalTweet)
                                 this.originalTweetIndex.set(originalTweet.mid, originalTweet)
                                 try {
-                                    sessionStorage.setItem(originalTweet.mid, JSON.stringify(originalTweet))
+                                    sessionStorage.setItem(originalTweet.mid, JSON.stringify(tweetForSessionStorage(originalTweet)))
                                 } catch (e) {
                                     console.warn("Failed to cache original tweet to sessionStorage:", originalTweet.mid, e)
                                 }
@@ -824,7 +1113,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 try {
-                    const raw = await user.client.RunMApp("get_pinned_tweets", params)
+                    if (attempt > 1) {
+                        const hostId = user.hostIds?.[0]
+                        if (hostId) this._writableHostCache.delete(hostId)
+                        user.writableHostIp = null
+                    }
+                    const writableIp = await this.resolveWritableHostIp(user)
+                    const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                    const raw = await profileClient.RunMApp("get_pinned_tweets", params)
 
                     // v2 wraps payloads as { success, data, message }. Unwrap.
                     pinned = (raw && typeof raw === 'object' && 'success' in raw)
@@ -921,7 +1217,7 @@ export const useTweetStore = defineStore('tweetStore', {
             pageSize: number = 20
         ): Promise<Tweet[]> {
             const user = await this.getUser(userId)
-            if (!user || !user.client) return []
+            if (!user) return []
 
             const params = {
                 aid: this.appId,
@@ -936,7 +1232,9 @@ export const useTweetStore = defineStore('tweetStore', {
 
             let raw: any
             try {
-                raw = await user.client.RunMApp("get_user_meta", params)
+                const writableIp = await this.resolveWritableHostIp(user)
+                const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                raw = await profileClient.RunMApp("get_user_meta", params)
             } catch (e) {
                 console.warn(`[loadUserTweetsByType] ${type} RPC failed for ${userId}:`, e)
                 return []
@@ -977,9 +1275,19 @@ export const useTweetStore = defineStore('tweetStore', {
         async getTweetFeed(
             user: User,
             pageNumber: number,
-            pageSize: number
+            pageSize: number,
+            options: { updateFollowing?: boolean; candidateIds?: Set<string> } = {}
         ): Promise<number | null> {
-            try {
+            let lastError: unknown = null
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                if (attempt > 1) {
+                    const hostId = user.hostIds?.[0]
+                    if (hostId) this._writableHostCache.delete(hostId)
+                    user.writableHostIp = null
+                }
+                const writableIp = await this.resolveWritableHostIp(user)
+                const feedClient = createPooledClient(writableIp, this.lapi.connectionPool)
                 const params = {
                     aid: this.appId,
                     ver: "last",
@@ -988,7 +1296,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     userid: user.mid,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                 }
-                const response = await user.client.RunMApp("get_tweet_feed", params)
+                const response = await feedClient.RunMApp("get_tweet_feed", params)
 
                 // Check success status first
                 const success = response?.success
@@ -1029,58 +1337,35 @@ export const useTweetStore = defineStore('tweetStore', {
                     await this.updateOriginalTweets(feedNestedOrig)
                 }
 
-                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
-                if (tweetsData) {
-                    const uniqueAuthorIds = [...new Set(
-                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                    )] as string[]
-                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                const candidateIds = await this.processFeedTweetRows(tweetsData, "getTweetFeed")
+                if (options.candidateIds) {
+                    candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
+                this.cacheFeedTweets(user.mid)
 
-                // Process main tweets (authors are now in-memory cache)
-                if (tweetsData) {
-                    for (const tweetJson of tweetsData) {
-                        if (tweetJson != null) {
-                            try {
-                                const tweet = tweetJson as Tweet
-                                const author = await this.getUser(tweet.authorId)
-                                if (!author) {
-                                    continue
-                                }
-                                tweet.author = author
-
-                                // Skip private tweets in feed
-                                if (tweet.isPrivate) {
-                                    continue
-                                }
-                                const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                if (cachedTweet) {
-                                    this.refreshCachedTweet(cachedTweet, tweet)
-                                } else {
-                                    await this.addTweetToStore(tweet)
-                                }
-                            } catch (error) {
-                                console.error("Error processing tweet in feed:", error)
-                                continue
-                            }
-                        }
-                    }
-                }
-
-                // If this is the first page (pageNumber === 0), also update following tweets in background
-                if (pageNumber === 0) {
-                    // Call updateFollowingTweets in background without blocking the main flow
-                    this.updateFollowingTweets().catch(error => {
+                if (options.updateFollowing !== false) {
+                    this.updateFollowingTweets({
+                        showLoginError: false,
+                        pageNumber,
+                        pageSize
+                    }).then(candidateIds => {
+                        this.addFeedPendingCandidates(candidateIds)
+                    }).catch(error => {
                         console.error("Background updateFollowingTweets failed:", error)
-                        // Don't throw the error as this is a background operation
                     })
                 }
 
                 return tweetsData?.length || null
-            } catch (e) {
-                console.error("Error fetching tweet feed:", e)
-                return null
+                } catch (e) {
+                    lastError = e
+                    console.error(`Error fetching tweet feed (attempt ${attempt}/2):`, e)
+                    if (attempt === 1) continue
+                }
             }
+            if (lastError) {
+                console.error("Error fetching tweet feed:", lastError)
+            }
+            return null
         },
 
         /**
@@ -1088,23 +1373,29 @@ export const useTweetStore = defineStore('tweetStore', {
          * This function can only be called after user has logged in.
          * Processes tweets exactly like getTweetFeed() and updates state.tweets directly.
          */
-        async updateFollowingTweets(): Promise<void> {
+        async updateFollowingTweets(options: { candidateIds?: Set<string>; showLoginError?: boolean; pageNumber?: number; pageSize?: number } = {}): Promise<string[]> {
             // Check if user is logged in
             if (!this.loginUser) {
                 console.error("updateFollowingTweets: User must be logged in to call this function")
-                useAlertStore().error("You must be logged in to update following tweets")
-                return
+                if (options.showLoginError !== false) {
+                    useAlertStore().error("You must be logged in to update following tweets")
+                }
+                return []
             }
 
             try {
                 const params = {
                     aid: this.appId,
                     ver: "last",
+                    pn: options.pageNumber ?? 0,
+                    ps: options.pageSize ?? TWEET_COUNT,
                     appuserid: this.loginUser.mid,
                     hostid: this.loginUser.hostIds?.[0]
                 }
 
-                const response = await this.loginUser.client.RunMApp("update_following_tweets", params)
+                const writableIp = await this.resolveWritableHostIp(this.loginUser)
+                const updateClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                const response = await updateClient.RunMApp("update_following_tweets", params)
 
                 // Check success status first
                 const success = response?.success
@@ -1112,7 +1403,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     const errorMessage = response?.message || "Unknown error occurred"
                     console.error("Update following tweets failed:", errorMessage)
                     console.error("Response:", response)
-                    return
+                    return []
                 }
 
                 // Cache original tweets first (same as getTweetFeed)
@@ -1123,48 +1414,118 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Extract tweets from the response format (same as getTweetFeed)
                 const tweetsData = response.tweets
 
-                // Pre-fetch all unique authors in parallel to avoid sequential RPC calls
-                if (tweetsData) {
-                    const uniqueAuthorIds = [...new Set(
-                        tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
-                    )] as string[]
-                    await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+                const candidateIds = await this.processFeedTweetRows(tweetsData, "updateFollowingTweets")
+                if (options.candidateIds) {
+                    candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
-
-                // Process main tweets (authors are now in-memory cache)
-                if (tweetsData) {
-                    for (const tweetJson of tweetsData) {
-                        if (tweetJson != null) {
-                            try {
-                                const tweet = tweetJson as Tweet
-                                const author = await this.getUser(tweet.authorId)
-                                if (!author) {
-                                    continue
-                                }
-                                tweet.author = author
-
-                                // Skip private tweets in feed (same as getTweetFeed)
-                                if (tweet.isPrivate) {
-                                    continue
-                                }
-                                const cachedTweet = this.tweetIndex.get(tweet.mid)
-                                if (cachedTweet) {
-                                    this.refreshCachedTweet(cachedTweet, tweet)
-                                } else {
-                                    await this.addTweetToStore(tweet)
-                                }
-                            } catch (error) {
-                                console.error("Error processing tweet in updateFollowingTweets:", error)
-                                continue
-                            }
-                        }
-                    }
-                }
+                this.cacheFeedTweets(this.loginUser.mid)
 
                 console.log(`Successfully updated following tweets: ${tweetsData?.length || 0} tweets processed`)
+                return candidateIds
             } catch (e) {
                 console.error("Error calling update_following_tweets:", e)
+                return []
             }
+        },
+
+        async processFeedTweetRows(tweetsData: any[] | undefined, context: string): Promise<string[]> {
+            const candidateIds: string[] = []
+            if (!tweetsData) return candidateIds
+
+            const uniqueAuthorIds = [...new Set(
+                tweetsData.filter((t: any) => t != null).map((t: any) => t.authorId)
+            )] as string[]
+            await Promise.all(uniqueAuthorIds.map(id => this.getUser(id).catch(() => undefined)))
+
+            for (const tweetJson of tweetsData) {
+                if (tweetJson == null) continue
+                try {
+                    const tweet = tweetJson as Tweet
+                    const author = await this.getUser(tweet.authorId)
+                    if (!author) continue
+                    tweet.author = author
+
+                    if (tweet.isPrivate) continue
+
+                    const cachedTweet = this.tweetIndex.get(tweet.mid)
+                    if (cachedTweet) {
+                        this.refreshCachedTweet(cachedTweet, tweet)
+                        this.feedTweetIds.add(tweet.mid)
+                    } else {
+                        await this.addTweetToStore(tweet, true)
+                    }
+
+                    const storedTweet = this.tweetIndex.get(tweet.mid)
+                    if (storedTweet && (!storedTweet.originalTweetId || storedTweet.originalTweet)) {
+                        candidateIds.push(storedTweet.mid)
+                    }
+                } catch (error) {
+                    console.error(`Error processing tweet in ${context}:`, error)
+                    continue
+                }
+            }
+
+            return candidateIds
+        },
+
+        async refreshFeedCandidates(pageSize: number = 10): Promise<{ feedCandidateIds: string[]; followingCandidateIds: string[] }> {
+            const user = this.loginUser
+            if (!user) {
+                this.clearFeedPendingCandidates()
+                return { feedCandidateIds: [], followingCandidateIds: [] }
+            }
+            const userId = user.mid
+
+            const candidateIds = new Set<string>()
+            await this.getTweetFeed(user, 0, pageSize, {
+                updateFollowing: false,
+                candidateIds
+            })
+            if (this.loginUser?.mid !== userId) {
+                return { feedCandidateIds: [], followingCandidateIds: [] }
+            }
+            const feedCandidateCount = candidateIds.size
+            const followingCandidateIds = await this.updateFollowingTweets({
+                showLoginError: false,
+                pageNumber: 0,
+                pageSize
+            })
+            if (this.loginUser?.mid !== userId) {
+                return { feedCandidateIds: [], followingCandidateIds: [] }
+            }
+
+            const sortCandidateIds = (ids: Set<string>) => this.tweets
+                .filter(tweet => ids.has(tweet.mid))
+                .sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+                .map(tweet => tweet.mid)
+
+            const sortedFeedCandidateIds = sortCandidateIds(candidateIds)
+            const sortedFollowingCandidateIds = sortCandidateIds(new Set(followingCandidateIds))
+            console.log(`[feedPending] Banner check candidates: get_tweet_feed=${feedCandidateCount}, update_following_tweets=${followingCandidateIds.length}`)
+            return {
+                feedCandidateIds: sortedFeedCandidateIds,
+                followingCandidateIds: sortedFollowingCandidateIds
+            }
+        },
+
+        async refreshFeedPendingCandidates(pageSize: number = 10): Promise<void> {
+            const { feedCandidateIds, followingCandidateIds } = await this.refreshFeedCandidates(pageSize)
+            this.replaceFeedPendingCandidates([...feedCandidateIds, ...followingCandidateIds])
+        },
+
+        addFeedPendingCandidates(candidateIds: Iterable<string>) {
+            for (const id of candidateIds) {
+                this.feedPendingCandidateIds.add(id)
+            }
+        },
+
+        replaceFeedPendingCandidates(candidateIds: Iterable<string>) {
+            this.feedPendingCandidateIds.clear()
+            this.addFeedPendingCandidates(candidateIds)
+        },
+
+        clearFeedPendingCandidates() {
+            this.feedPendingCandidateIds.clear()
         },
 
         /**
@@ -1216,15 +1577,36 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!forceRefresh && sessionStorage.getItem(tweetId)) {
                 console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
-                if (t.author && t.author.providerIp) {
-                    // hprose clients aren't JSON-serializable; rebuild on restore.
-                    t.author.client = createPooledClient(t.author.providerIp, this.lapi.connectionPool)
-                    if (t.originalTweet?.author?.providerIp) {
-                        t.originalTweet.author.client = createPooledClient(t.originalTweet.author.providerIp, this.lapi.connectionPool)
+                const cachedAuthorId = t.author?.mid ?? t.authorId
+                if (t.author && cachedAuthorId) {
+                    const authorIp = await this.getProviderIp(cachedAuthorId, v4Only, false)
+                    if (!authorIp) {
+                        console.log(`[fetchTweet] Cached tweet ${tweetId} author route missing, fetching fresh data`)
+                        sessionStorage.removeItem(tweetId)
+                    } else {
+                        t.author.providerIp = authorIp
+                        t.provider = authorIp
+                        t.author.client = createPooledClient(authorIp, this.lapi.connectionPool)
+                        if (t.author.avatar) {
+                            t.author.avatar = this.normalizeAvatarUrl(t.author.avatar, `http://${authorIp}`)
+                        }
+
+                        const originalAuthorId = t.originalTweet?.author?.mid ?? t.originalTweet?.authorId
+                        if (t.originalTweet?.author && originalAuthorId) {
+                            const originalAuthorIp = await this.getProviderIp(originalAuthorId, v4Only, false)
+                            if (originalAuthorIp) {
+                                t.originalTweet.author.providerIp = originalAuthorIp
+                                t.originalTweet.provider = originalAuthorIp
+                                t.originalTweet.author.client = createPooledClient(originalAuthorIp, this.lapi.connectionPool)
+                                if (t.originalTweet.author.avatar) {
+                                    t.originalTweet.author.avatar = this.normalizeAvatarUrl(t.originalTweet.author.avatar, `http://${originalAuthorIp}`)
+                                }
+                            }
+                        }
+                        return t
                     }
-                    return t
                 } else {
-                    console.log(`[fetchTweet] Cached tweet ${tweetId} missing author/providerIp, fetching fresh data`)
+                    console.log(`[fetchTweet] Cached tweet ${tweetId} missing author, fetching fresh data`)
                     // Remove invalid cache
                     sessionStorage.removeItem(tweetId)
                 }
@@ -1270,7 +1652,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             tweetid: tweetId,
                             appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID
                         })
-                    })
+                    }, `tweet ${tweetId}`)
                     if (!raceResult) {
                         console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
                         return null
@@ -1443,46 +1825,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            sessionStorage.setItem(tweetData.mid, JSON.stringify(tweet))
+            sessionStorage.setItem(tweetData.mid, JSON.stringify(tweetForSessionStorage(tweet)))
             return tweet
-        },
-
-        /**
-         * Mirrors iOS ProfileView.refreshProfileData background resync:
-         * ask the read node to sync the target user's root object from hostIds[0],
-         * then force-refresh user data from the provider route.
-         */
-        async resyncUser(userId: MimeiId, seedUser?: User): Promise<User | undefined> {
-            const user = seedUser ?? this.users.get(userId) ?? await this.getUser(userId, true)
-            if (!user?.client) return undefined
-            try {
-                const ret = await user.client.RunMApp("resync_user", {
-                    aid: this.appId,
-                    ver: "last",
-                    version: "v2",
-                    userid: userId,
-                })
-                if (ret && typeof ret === "object" && "success" in ret) {
-                    if (ret.success === false) {
-                        console.warn(`[resyncUser] resync_user failed for ${userId}:`, ret.message || ret)
-                    } else {
-                        const freshData = ret.data
-                        if (freshData && typeof freshData === "object") {
-                            Object.assign(user as any, freshData as any)
-                            if (user.providerIp) {
-                                user.avatar = this.getMediaUrl(user.avatar, `http://${user.providerIp}`)
-                            }
-                            this.users.set(userId, user)
-                            const cachedUser = { ...(user as any) }
-                            delete cachedUser.client
-                            sessionStorage.setItem(userId, JSON.stringify(cachedUser))
-                        }
-                    }
-                }
-            } catch (error) {
-                console.warn(`[resyncUser] resync_user RPC failed for ${userId}:`, error)
-            }
-            return user
         },
 
         /**
@@ -1495,9 +1839,9 @@ export const useTweetStore = defineStore('tweetStore', {
         async getUser(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
             // check if the user has been cached (unless forcing refresh)
             if (!forceRefresh && this.loginUser && this.loginUser.mid == userId)
-                return this.loginUser
+                return await this._ensureUserRootHost(this.loginUser)
             if (!forceRefresh && this.users.get(userId))
-                return this.users.get(userId)
+                return await this._ensureUserRootHost(this.users.get(userId) as User)
 
             // Deduplicate concurrent fetches for the same user.
             // Use separate keys for forced vs normal fetches so a cached (fast)
@@ -1506,7 +1850,11 @@ export const useTweetStore = defineStore('tweetStore', {
             const pending = this._pendingUserFetches.get(pendingKey)
             if (pending) return pending
 
-            const fetchPromise = this._fetchUser(userId, forceRefresh)
+            const fetchPromise = (async () => {
+                const fetched = await this._fetchUser(userId, forceRefresh)
+                if (!fetched) return undefined
+                return await this._ensureUserRootHost(fetched as User)
+            })()
             this._pendingUserFetches.set(pendingKey, fetchPromise)
             try {
                 return await fetchPromise
@@ -1515,18 +1863,77 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
 
+        /**
+         * Ensures a user object's providerIp/client point at the read/access node.
+         * Mirrors iOS: baseUrl/providerIp is for reads; writableHostIp is resolved
+         * separately from hostIds[0] only for mutations.
+         */
+        async _ensureUserRootHost(user: User): Promise<User> {
+            if (!user.hostIds?.length) return user
+            if (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true) {
+                if (!user.client) {
+                    user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
+                }
+                return user
+            }
+            try {
+                const readIp = await this.getUserReadIp(user, false)
+                if (!readIp) return user
+                if (user.providerIp !== readIp) {
+                    user.providerIp = readIp
+                }
+                user.client = createPooledClient(readIp, this.lapi.connectionPool)
+                if (user.avatar) {
+                    user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${readIp}`)
+                }
+                if (user.writableHostIp === undefined) {
+                    user.writableHostIp = null
+                }
+
+                this.users.set(user.mid, user)
+                this._rewriteUserMediaHosts(user.mid, readIp)
+                setStoredUser(user.mid, user)
+                if (this._user?.mid === user.mid) {
+                    setStoredLoginUser(user)
+                }
+                return user
+            } catch (error) {
+                console.warn(`[ensureUserReadHost] Failed for ${user.mid}:`, error)
+                return user
+            }
+        },
+
+        /**
+         * Fetch user core data from the user's root host (hostIds[0]).
+         * This is used by profile surfaces that must read from source-of-truth.
+         */
+        async getUserFromRootHost(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
+            return await this.getUser(userId, forceRefresh)
+        },
+
         async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {
-            // Try sessionStorage cache for faster initial display
-            // Trust the cached IP — if it's stale, the RPC call will fail and the
-            // retry loop (attempt 2) will resolve a fresh IP automatically.
             if (!forceRefresh) {
-                const cached = sessionStorage.getItem(userId)
-                if (cached) {
+                if (this._isFetchCoolingDown(userId)) {
+                    const f = this._resourceFetchFailures.get(userId)!
+                    console.warn(`[_fetchUser] ${userId} in cooldown (${Math.ceil((f.cooldownUntil - Date.now()) / 1000)}s left, ${f.count} failures), skipping`)
+                    return undefined
+                }
+            }
+
+            // Try the persistent user cache for faster initial display. Route state
+            // is restored from NodePool, whose map is session-scoped like iOS.
+            if (!forceRefresh) {
+                const cachedUser = getStoredUser(userId)
+                if (cachedUser) {
                     try {
-                        const cachedUser = JSON.parse(cached)
-                        if (cachedUser && cachedUser.mid && cachedUser.hostIds && cachedUser.providerIp) {
-                            cachedUser.client = createPooledClient(cachedUser.providerIp, this.lapi.connectionPool)
-                            cachedUser.avatar = this.getMediaUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
+                        if (cachedUser && cachedUser.mid && cachedUser.hostIds) {
+                            const providerIp = await this.getUserReadIp(cachedUser, false)
+                            if (!providerIp) {
+                                return undefined
+                            }
+                            cachedUser.providerIp = providerIp
+                            cachedUser.client = createPooledClient(providerIp, this.lapi.connectionPool)
+                            cachedUser.avatar = this.normalizeAvatarUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
                             if (cachedUser.writableHostIp === undefined) {
                                 cachedUser.writableHostIp = null
                             }
@@ -1543,9 +1950,17 @@ export const useTweetStore = defineStore('tweetStore', {
             // Resolve all provider IPs (up to 2) and race them in parallel.
             // Whichever node responds first with valid user data wins; dead nodes
             // simply lose the race instead of blocking sequentially on a 15s timeout.
-            const providerIps = await this.getProviderIps(userId, v4Only, forceRefresh)
+            let providerIps: string[]
+            try {
+                providerIps = await this.getProviderIps(userId, v4Only, forceRefresh)
+            } catch (e) {
+                console.warn(`[_fetchUser] getProviderIps threw for ${userId}:`, e)
+                this._recordFetchFailure(userId, `user:${userId}`)
+                return undefined
+            }
             if (providerIps.length === 0) {
                 console.warn(`[_fetchUser] No provider IPs for user ${userId}`)
+                this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
 
@@ -1563,11 +1978,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     throw new Error(result.message || 'get_user failed')
                 }
                 return result
-            })
+            }, `user ${userId}`)
 
             if (!raceResult) {
                 console.error(`[_fetchUser] All provider IPs failed for user ${userId}`)
                 this._nullifyCachedIp(userId)
+                this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
 
@@ -1577,23 +1993,43 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
                 console.error(`[_fetchUser] Invalid user object for ${userId}:`, user)
                 this._nullifyCachedIp(userId)
+                this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
 
             // cache the user data
             user.providerIp = providerIp
+            const accessNodeId = user.hostIds?.[1] ?? user.hostIds?.[0]
+            if (accessNodeId) {
+                nodePool.updateNode(accessNodeId, [providerIp])
+            }
             // Use server's cloudDrivePort if available
             // IMPORTANT: Use nullish coalescing (??) to allow 0 as a valid value (meaning no service)
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
             user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
-            sessionStorage.setItem(userId, JSON.stringify(user))
+            setStoredUser(userId, user)
+            this._clearFetchFailure(userId)
             user.client = createPooledClient(providerIp, this.lapi.connectionPool)
-            user.avatar = this.getMediaUrl(user.avatar, `http://${providerIp}`)
+            user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
             delete user.baseUrl
             delete user.writableUrl
             // Initialize writableHostIp if not already set
             if (user.writableHostIp === undefined) {
                 user.writableHostIp = null
+            }
+            if (this._user?.mid === userId) {
+                const previousWritableHostIp = this._user.writableHostIp
+                const previousClient = this._user.client
+                Object.assign(this._user as any, user as any)
+                if (previousWritableHostIp) {
+                    this._user.writableHostIp = previousWritableHostIp
+                    if (previousClient) this._user.client = previousClient
+                }
+                this.users.set(userId, this._user)
+                setStoredUser(userId, this._user)
+                setStoredLoginUser(this._user)
+                this._rewriteUserMediaHosts(userId, providerIp)
+                return this._user
             }
             const existingUser = this.users.get(userId)
             if (existingUser) {
@@ -1666,12 +2102,8 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns True if server responds, false otherwise
          */
         async isServerHealthy(ip: string, timeoutMs: number = 5000): Promise<boolean> {
-            const cacheTTL = 30 * 60 * 1000;
-            const cached = this.healthCheckCache.get(ip);
-            if (cached && (Date.now() - cached.timestamp) < cacheTTL) {
-                console.log(`[isServerHealthy] cached ${ip}: ${cached.isHealthy ? 'healthy' : 'unhealthy'}`);
-                return cached.isHealthy;
-            }
+            const cachedStatus = this.getFreshHealthStatus(ip);
+            if (cachedStatus !== undefined) return cachedStatus;
 
             const inProgress = this.healthCheckInProgress.get(ip);
             if (inProgress) return await inProgress;
@@ -1705,6 +2137,14 @@ export const useTweetStore = defineStore('tweetStore', {
             return probe;
         },
 
+        getFreshHealthStatus(ip: string): boolean | undefined {
+            const cached = this.healthCheckCache.get(ip);
+            if (cached && (Date.now() - cached.timestamp) < HEALTH_CHECK_CACHE_TTL) {
+                return cached.isHealthy;
+            }
+            return undefined;
+        },
+
         async isServerHealthyWithTimeout(ip: string, timeout: number = 5000): Promise<boolean> {
             return this.isServerHealthy(ip, timeout);
         },
@@ -1724,13 +2164,15 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async raceProviderIps<T>(
             ips: string[],
-            apiCall: (ip: string, client: any) => Promise<T>
+            apiCall: (ip: string, client: any) => Promise<T>,
+            context?: string
         ): Promise<{ result: T, ip: string } | null> {
             if (ips.length === 0) {
                 return null;
             }
 
-            console.log(`[raceProviderIps] Racing ${ips.length} IP(s):`, ips);
+            const contextLabel = context ? ` for ${context}` : ''
+            console.log(`[raceProviderIps] Racing ${ips.length} IP(s)${contextLabel}:`, ips);
 
             // Create promises for each IP with individual timeouts.
             //
@@ -1753,10 +2195,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         )
                     ]);
 
-                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}`);
+                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}${contextLabel}`);
                     return { result, ip };
                 } catch (error) {
-                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}`, error);
+                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}${contextLabel}`, error);
                     throw error; // Re-throw so Promise.any sees this as a rejection
                 }
             });
@@ -1768,7 +2210,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const winner = await Promise.any(racePromises);
                 return winner;
             } catch (error) {
-                console.error(`[raceProviderIps] All IPs failed:`, error);
+                console.error(`[raceProviderIps] All IPs failed${contextLabel}:`, error);
                 return null;
             }
         },
@@ -1785,21 +2227,43 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Nullify the providerIp in the sessionStorage cache for a user,
+         * Nullify the providerIp in the per-tab user cache,
          * so the next fetch won't reuse a stale IP while preserving other cached data.
          */
         _nullifyCachedIp(userId: string) {
             nodePool.invalidate(userId)
-            const cached = sessionStorage.getItem(userId)
+            const cached = getStoredUser(userId)
             if (cached) {
                 try {
-                    const cachedUser = JSON.parse(cached)
-                    cachedUser.providerIp = null
-                    sessionStorage.setItem(userId, JSON.stringify(cachedUser))
+                    const cachedUser = cached
+                    const accessNodeId = cachedUser.hostIds?.[1] ?? cachedUser.hostIds?.[0]
+                    if (accessNodeId) nodePool.invalidate(accessNodeId)
+                    setStoredUser(userId, cachedUser)
                 } catch (e) {
-                    sessionStorage.removeItem(userId)
+                    clearStoredUser(userId)
                 }
             }
+        },
+
+        _isFetchCoolingDown(resourceId: string): boolean {
+            const failure = this._resourceFetchFailures.get(resourceId)
+            return !!failure && Date.now() < failure.cooldownUntil
+        },
+
+        _recordFetchFailure(resourceId: string, label: string = resourceId) {
+            const prev = this._resourceFetchFailures.get(resourceId)
+            const count = (prev?.count ?? 0) + 1
+            if (count >= 2) {
+                const backoff = Math.min(USER_FETCH_COOLDOWN_BASE_MS * Math.pow(2, count - 2), USER_FETCH_COOLDOWN_MAX_MS)
+                this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: Date.now() + backoff })
+                console.warn(`[fetchFailure] ${label} failed ${count}x; cooling down for ${backoff / 1000}s`)
+            } else {
+                this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: 0 })
+            }
+        },
+
+        _clearFetchFailure(resourceId: string) {
+            this._resourceFetchFailures.delete(resourceId)
         },
 
         /**
@@ -1809,7 +2273,141 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of IP addresses (up to 2), or empty array if none found
          */
         async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
-            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, refresh), refresh);
+            if (!refresh) {
+                const pooledIp = nodePool.getIPForNode(mid)
+                if (pooledIp) {
+                    const cachedStatus = this.getFreshHealthStatus(pooledIp)
+                    if (cachedStatus === true) return [pooledIp]
+
+                    if (cachedStatus === false) {
+                        console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(mid, pooledIp)
+                    } else {
+                        console.log(`[getProviderIps] Found pooled IP for ${mid}: ${pooledIp}, testing health`)
+                        const healthy = await this.isServerHealthyWithTimeout(pooledIp, 3000)
+                        if (healthy) {
+                            return [pooledIp]
+                        }
+                        console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(mid, pooledIp)
+                    }
+                }
+            }
+            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, refresh), true);
+        },
+
+        async getUserReadIp(user: User, refresh: boolean = false): Promise<string | null> {
+            const accessNodeId = user.hostIds?.[1] ?? user.hostIds?.[0]
+            if (accessNodeId) {
+                const nodeIp = await this.getNodeIpByHostId(accessNodeId, refresh)
+                if (nodeIp) {
+                    return nodeIp
+                }
+            }
+            const providerIp = await this.getProviderIp(user.mid, v4Only, refresh)
+            if (providerIp && accessNodeId) {
+                nodePool.updateNode(accessNodeId, [providerIp])
+            }
+            return providerIp
+        },
+
+        async getNodeIpByHostId(hostId: string, refresh: boolean = false): Promise<string | null> {
+            if (!refresh && this._isFetchCoolingDown(hostId)) {
+                const f = this._resourceFetchFailures.get(hostId)!
+                console.warn(`[getNodeIp] ${hostId} in cooldown (${Math.ceil((f.cooldownUntil - Date.now()) / 1000)}s left), skipping`)
+                return null
+            }
+            if (!refresh) {
+                const pooledIp = nodePool.getIPForNode(hostId)
+                if (pooledIp) {
+                    const cachedStatus = this.getFreshHealthStatus(pooledIp)
+                    if (cachedStatus === true) return pooledIp
+
+                    if (cachedStatus === false) {
+                        console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(hostId, pooledIp)
+                    } else {
+                        console.log(`[getNodeIp] Found pooled IP for node ${hostId}: ${pooledIp}, testing health`)
+                        const healthy = await this.isServerHealthyWithTimeout(pooledIp, 5000)
+                        if (healthy) {
+                            return pooledIp
+                        }
+                        console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(hostId, pooledIp)
+                    }
+                }
+            }
+
+            const ips = await nodePool.resolveIPs(hostId, () => this._resolveNodeIps(hostId), true)
+            if (ips.length > 0) {
+                this._clearFetchFailure(hostId)
+                return ips[0]
+            }
+            this._recordFetchFailure(hostId, `node:${hostId}`)
+            return null
+        },
+
+        async _resolveNodeIps(hostId: string): Promise<string[]> {
+            try {
+                const params: any = {
+                    aid: this.lapi.appId, ver: "last", version: "v2",
+                    nodeid: hostId,
+                };
+                if (v4Only) params.v4only = "true";
+
+                const ipResponse = await this.lapi.client.RunMApp("get_node_ips", params);
+                if (!ipResponse) {
+                    console.error(`[getNodeIp] No response for nodeId ${hostId}`);
+                    return [];
+                }
+
+                let ipList: string[] = [];
+                if (Array.isArray(ipResponse)) ipList = ipResponse;
+                else if (typeof ipResponse === 'string') ipList = [ipResponse];
+                else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) ipList = ipResponse.data;
+                else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') ipList = [ipResponse.data];
+                else {
+                    console.error(`[getNodeIp] Invalid response for nodeId ${hostId}:`, ipResponse);
+                    return [];
+                }
+
+                const ipAddresses = ipList
+                    .map(ip => ip.trim())
+                    .filter(ip => {
+                        if (!ip) return false;
+                        if (v4Only && (ip.includes('[') || (ip.match(/:/g) || []).length > 1)) return false;
+                        return !this.isLocalIP(ip) && !isTailscaleAddress(ip);
+                    });
+
+                if (ipAddresses.length === 0) {
+                    console.error(`[getNodeIp] No valid IPs for nodeId ${hostId}`);
+                    return [];
+                }
+
+                const candidates = ipAddresses.slice(0, 2);
+                const winner = await new Promise<string | null>((resolve) => {
+                    let settled = 0;
+                    for (const ip of candidates) {
+                        this.isServerHealthyWithTimeout(ip, 5000).then(healthy => {
+                            if (healthy) { resolve(ip); return; }
+                            if (++settled === candidates.length) resolve(null);
+                        }).catch(() => {
+                            if (++settled === candidates.length) resolve(null);
+                        });
+                    }
+                });
+
+                if (!winner) {
+                    console.error(`[getNodeIp] All health checks failed for nodeId ${hostId}`);
+                    return [];
+                }
+
+                console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
+                return [winner];
+            } catch (error) {
+                console.error(`[getNodeIp] Error for nodeId ${hostId}:`, error);
+                return [];
+            }
         },
 
         /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
@@ -1885,9 +2483,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     return [];
                 }
 
-                // Race all candidate IPs in parallel; return the first one that passes
+                // Race the first pair of candidate IPs in parallel; return the first one that passes
                 // a health check. Remaining checks are abandoned once a winner is found.
-                const candidates = ipAddresses.slice(0, 4);
+                const candidates = ipAddresses.slice(0, 2);
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
@@ -1901,14 +2499,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    console.warn(`[getProviderIps] All health checks failed for ${mid}, falling back to first candidate:`, candidates[0]);
-                    return [candidates[0]];
+                    throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
                 }
 
                 console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner);
                 return [winner];
 
             } catch (error) {
+                if (error instanceof Error && error.message.startsWith('[getProviderIps] All provider health checks failed')) {
+                    throw error;
+                }
                 console.error("[getProviderIps] Error getting provider IPs for", mid, error);
                 return [];
             }
@@ -2035,10 +2635,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (ud?.mid && ud?.hostIds) {
                                     ud.providerIp = tweetProvider
                                     ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                    ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
                                     if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                    this.users.set(authorId, ud)
-                                    setCommentAuthor(commentMid, ud)
+                                    const rooted = await this._ensureUserRootHost(ud as User)
+                                    this.users.set(authorId, rooted)
+                                    setCommentAuthor(commentMid, rooted)
                                     return
                                 }
                             } catch (err) {
@@ -2046,16 +2647,15 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
 
-                        // 3. User's own provider — checks sessionStorage then network, with retries
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                            if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
-                            try {
-                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
-                                if (author) { setCommentAuthor(commentMid, author); return }
-                            } catch (error: any) {
-                                if (!error?.message?.includes('timeout'))
-                                    console.warn("Error loading comment author:", authorId, error)
-                            }
+                        // 3. User's own provider — one fallback attempt. Comment
+                        // text can render without repeatedly blocking on author
+                        // decoration when a node is slow.
+                        try {
+                            const author = await this._getUserForProviderRetryAttempt(authorId, 1)
+                            if (author) { setCommentAuthor(commentMid, author); return }
+                        } catch (error: any) {
+                            if (!error?.message?.includes('timeout'))
+                                console.warn("Error loading comment author:", authorId, error)
                         }
                     })()
                 }
@@ -2234,10 +2834,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 if (ud?.mid && ud?.hostIds) {
                                     ud.providerIp = tweetProvider
                                     ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    ud.avatar = this.getMediaUrl(ud.avatar, `http://${tweetProvider}`)
+                                    ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
                                     if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                    this.users.set(authorId, ud)
-                                    setCommentAuthor(commentMid, ud)
+                                    const rooted = await this._ensureUserRootHost(ud as User)
+                                    this.users.set(authorId, rooted)
+                                    setCommentAuthor(commentMid, rooted)
                                     return
                                 }
                             } catch (err) {
@@ -2245,15 +2846,12 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
 
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                            if (attempt > 1) await new Promise(r => setTimeout(r, 5000))
-                            try {
-                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
-                                if (author) { setCommentAuthor(commentMid, author); return }
-                            } catch (error: any) {
-                                if (!error?.message?.includes('timeout'))
-                                    console.warn("[loadMoreComments] Error loading author:", authorId, error)
-                            }
+                        try {
+                            const author = await this._getUserForProviderRetryAttempt(authorId, 1)
+                            if (author) { setCommentAuthor(commentMid, author); return }
+                        } catch (error: any) {
+                            if (!error?.message?.includes('timeout'))
+                                console.warn("[loadMoreComments] Error loading author:", authorId, error)
                         }
                     })()
                 }
@@ -2274,6 +2872,27 @@ export const useTweetStore = defineStore('tweetStore', {
                 return import.meta.env.VITE_APP_LOGO
             }
             return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
+        },
+
+        /**
+         * Normalize user avatar to a concrete URL on the given base URL.
+         * - If avatar is already a full URL, keep path and only swap host.
+         * - If avatar is a raw mimei hash/id, build URL via getMediaUrl.
+         */
+        normalizeAvatarUrl(avatar: string | undefined, baseUrl: string): string {
+            if (!avatar) return import.meta.env.VITE_APP_LOGO
+            if (/^https?:\/\//i.test(avatar)) {
+                // Only swap host for node-scoped media URLs.
+                // Keep static/default avatar URLs (e.g. app CDN/logo) unchanged.
+                if (/^https?:\/\/[^/]+\/(?:ipfs|mm)\//i.test(avatar)) {
+                    return avatar.replace(/^https?:\/\/[^/]+/i, baseUrl)
+                }
+                return avatar
+            }
+            if (avatar.startsWith('/')) {
+                return `${baseUrl}${avatar}`
+            }
+            return this.getMediaUrl(avatar, baseUrl)
         },
 
         /**
@@ -2387,10 +3006,24 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
 
                         // Store user data and create client with auth provider IP
-                        sessionStorage.setItem("user", JSON.stringify(user))
+                        setStoredLoginUser(user)
                         user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
                         this._user = user
                         this.addFollowing(userId)
+
+                        // Resolve the writable host in the background and fix the avatar URL.
+                        // The avatar CID was uploaded to the writable host; the providerIp used
+                        // during _fetchUser may be a different replica that hasn't replicated it.
+                        // When this resolves, _mergeUserIntoCachedRefs triggers the AppHeader
+                        // watcher which resets isAccountAvatarBroken and retries the image load.
+                        this.resolveWritableHostIp(user).then(writableIp => {
+                            if (!writableIp || this._user?.mid !== user.mid) return
+                            const current = this._user?.avatar
+                            if (!current) return
+                            const fixed = this.normalizeAvatarUrl(current, `http://${writableIp}`)
+                            if (fixed !== current) this._mergeUserIntoCachedRefs(user.mid, { avatar: fixed })
+                        }).catch(() => {})
+
                         console.log(`[login] Login flow completed successfully for ${username}`);
                         useAlertStore().success(i18n.global.t("auth.loginSuccessful"))
                         return user
@@ -2432,10 +3065,13 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         logout() {
             sessionStorage.clear()
+            clearStoredLoginUser()
             this._user = null
             this._followings = []
             this.tweets = []
             this.tweetIndex.clear()
+            this.feedTweetIds.clear()
+            this.feedPendingCandidateIds.clear()
             this._deletedTweetIds.clear()
             this.originalTweets = []
             this.originalTweetIndex.clear()
@@ -2475,15 +3111,9 @@ export const useTweetStore = defineStore('tweetStore', {
             // handler runs. The cross-node delegation path in toggle_following.js
             // drops the response payload (Java-Map-backed bridge object whose
             // keys are not JS-enumerable), turning a clearly successful op into
-            // a client-side failure. Falls back to loginUser.client if the
-            // writable host can't be resolved.
-            let homeClient = loginUser.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(loginUser)
-                homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[toggleFollowing] Could not resolve home host, using current client:', e)
-            }
+            // a client-side failure.
+            const writableIp = await this.resolveWritableHostIp(loginUser)
+            const homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
 
             // Follow can RPC to home node and sync many tweets; default pooled timeout (15s) is often too short.
             const originalTimeout = homeClient.timeout
@@ -2519,23 +3149,17 @@ export const useTweetStore = defineStore('tweetStore', {
 
             const targetUser = this.users.get(followingId)
 
-            if (isFollowing && !wasFollowing) {
-                if (this.loginUser) {
-                    this.loginUser.followingCount = (this.loginUser.followingCount ?? 0) + 1
-                }
-                if (targetUser) {
-                    targetUser.followersCount = (targetUser.followersCount ?? 0) + 1
-                }
-            } else if (!isFollowing && wasFollowing) {
-                if (this.loginUser) {
-                    this.loginUser.followingCount = Math.max(0, (this.loginUser.followingCount ?? 0) - 1)
-                }
-                if (targetUser) {
-                    targetUser.followersCount = Math.max(0, (targetUser.followersCount ?? 0) - 1)
-                }
+            const followDelta = isFollowing ? 1 : -1
+            if (this.loginUser) {
+                this.loginUser.followingCount = Math.max(0, (this.loginUser.followingCount ?? 0) + followDelta)
+                this.users.set(this.loginUser.mid, this.loginUser)
+            }
+            if (targetUser) {
+                targetUser.followersCount = Math.max(0, (targetUser.followersCount ?? 0) + followDelta)
+                setStoredUser(followingId, targetUser)
             }
 
-            sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+            setStoredLoginUser(this.loginUser)
             return isFollowing
         },
 
@@ -2549,30 +3173,65 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error('Not authorized to delete this tweet')
             }
 
+            console.log('[deleteTweet] Starting delete', {
+                tweetId,
+                authorId,
+                callerId: this.loginUser.mid,
+            })
+
             const tweetIndex = this.tweets.findIndex(e => e.mid === tweetId)
             if (tweetIndex >= 0) {
                 this._deletedTweetIds.add(tweetId)
                 this.tweets.splice(tweetIndex, 1)
                 this.tweetIndex.delete(tweetId)
+                this.feedTweetIds.delete(tweetId)
+                console.log('[deleteTweet] Removed tweet from local cache', {
+                    tweetId,
+                    tweetIndex,
+                    cachedTweets: this.tweets.length,
+                })
+            } else {
+                console.log('[deleteTweet] Tweet was not in local cache before server delete', { tweetId })
             }
 
-            const author = await this.getUser(authorId)
-            if (!author?.client) {
-                throw new Error('Tweet author provider is unavailable')
+            if (!this.loginUser.client) {
+                console.error('[deleteTweet] Provider unavailable', { tweetId, authorId })
+                throw new Error('Tweet delete provider is unavailable')
             }
 
             const payload: Record<string, any> = {
                 aid: this.appId,
                 ver: "last",
-                appuserid: this.loginUser.mid, // caller identity (admin or owner)
+                version: "v3",
+                userid: this.loginUser.mid, // caller identity (admin or owner)
                 tweetid: tweetId,
-                userid: authorId, // tweet owner
-            }
-            if (author.hostIds?.[0]) {
-                payload.hostid = author.hostIds[0]
+                authorid: authorId, // tweet owner
             }
 
-            await author.client.RunMApp("delete_tweet", payload)
+            console.log('[deleteTweet] Calling delete_tweet', payload)
+            try {
+                let response: any = await this.loginUser.client.RunMApp("delete_tweet", payload)
+                console.log('[deleteTweet] delete_tweet response', { tweetId, response })
+                for (let depth = 0; depth < 3 && response && typeof response === "object"; depth++) {
+                    if (response.success === false) {
+                        throw new Error(typeof response.message === "string" ? response.message : "Delete tweet failed")
+                    }
+                    if (response.success === true && "data" in response && response.data !== undefined) {
+                        response = response.data
+                        continue
+                    }
+                    break
+                }
+                const deletedTweetId = response?.tweetid
+                if (typeof deletedTweetId !== "string" || !deletedTweetId) {
+                    throw new Error("Delete tweet failed: server returned success but no tweetid")
+                }
+                console.log('[deleteTweet] Delete completed', { tweetId, deletedTweetId })
+                return deletedTweetId
+            } catch (error) {
+                console.error('[deleteTweet] Delete failed', { tweetId, authorId, error })
+                throw error
+            }
         },
 
         /**
@@ -2668,19 +3327,9 @@ export const useTweetStore = defineStore('tweetStore', {
             // Point the main client at the writable host (hostIds[0]) for writes.
             // Matches iOS appUser.resolveWritableUrl; runs once per session then
             // caches via user.writableHostIp.
-            if (!this.loginUser.writableHostIp && this.loginUser.hostIds?.[0]) {
-                try {
-                    const writableIp = await Promise.race([
-                        this.resolveWritableHostIp(this.loginUser),
-                        new Promise<string>((_, reject) =>
-                            setTimeout(() => reject(new Error('writable host discovery timeout')), 5000))
-                    ])
-                    this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
-                    sessionStorage.setItem('user', JSON.stringify(this.loginUser))
-                } catch (error) {
-                    console.warn('[TWEET-STORE] Writable host unavailable, using current client:', error)
-                }
-            }
+            const writableIp = await this.resolveWritableHostIp(this.loginUser)
+            this.loginUser.client = createPooledClient(writableIp, this.lapi.connectionPool)
+            setStoredLoginUser(this.loginUser)
 
             // Leither may be busy after video processing; allow 5 minutes per write.
             const effectiveTimeout = 5 * 60 * 1000
@@ -2730,6 +3379,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 const errorMessage = ret?.message || 'Unknown error occurred during tweet upload'
                 throw new Error(errorMessage);
             }
+            if (!tweetId && this.loginUser) {
+                this.loginUser.tweetCount = (this.loginUser.tweetCount ?? 0) + 1
+                this.users.set(this.loginUser.mid, this.loginUser)
+                setStoredUser(this.loginUser.mid, this.loginUser)
+                setStoredLoginUser(this.loginUser)
+            }
             return ret.mid
         },
         /**
@@ -2774,22 +3429,29 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             try {
                 const targetAuthorId = authorId ?? this.loginUser.mid
+                console.log('[updateTweet] Starting update', {
+                    tweetId,
+                    targetAuthorId,
+                    callerId: this.loginUser.mid,
+                    contentLength: content.length,
+                })
                 let targetAuthor: User | undefined
                 if (targetAuthorId !== this.loginUser.mid) {
                     targetAuthor = await this.getUser(targetAuthorId)
+                    console.log('[updateTweet] Resolved target author', {
+                        tweetId,
+                        targetAuthorId,
+                        hasAuthor: !!targetAuthor,
+                        providerIp: targetAuthor?.providerIp,
+                    })
                 }
 
                 // update_tweet enforces author identity in appuserid, so for admin edits
                 // we must act on the tweet owner's node and pass owner id as appuserid.
-                let client = targetAuthor?.client ?? this.loginUser.client
-                if (!targetAuthor && this.loginUser) {
-                    try {
-                        const writableIp = await this.resolveWritableHostIp(this.loginUser)
-                        client = createPooledClient(writableIp, this.lapi.connectionPool)
-                    } catch (e) {
-                        console.warn('[updateTweet] Could not resolve writable host, using current client:', e)
-                    }
-                }
+                const writeUser = targetAuthor ?? this.loginUser
+                if (!writeUser) throw new Error('Not logged in')
+                const writableIp = await this.resolveWritableHostIp(writeUser)
+                const client = createPooledClient(writableIp, this.lapi.connectionPool)
                 const ret = await client.RunMApp("update_tweet",
                     {aid: this.appId, ver: "last",
                         appuserid: targetAuthorId,
@@ -2797,6 +3459,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         hostid: targetAuthor?.hostIds?.[0],
                         tweetid: tweetId,
                         content: content})
+                console.log('[updateTweet] update_tweet response', { tweetId, ret })
                 if (!ret || !ret.success) {
                     throw new Error(ret?.message || 'Failed to update tweet')
                 }
@@ -2804,10 +3467,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 const idx = this.tweets.findIndex(t => t.mid === tweetId)
                 if (idx !== -1) {
                     this.tweets[idx].content = content
+                    console.log('[updateTweet] Updated local tweet cache', { tweetId, tweetIndex: idx })
+                } else {
+                    console.log('[updateTweet] Tweet was not in local cache after server update', { tweetId })
                 }
+                console.log('[updateTweet] Update completed', { tweetId, returnedMid: ret.mid })
                 return ret.mid
             } catch (error) {
-                console.error('[TWEET-STORE] Update tweet failed:', error)
+                console.error('[updateTweet] Update failed', { tweetId, authorId, error })
                 throw error
             }
         },
@@ -2912,12 +3579,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleFavorite(tweet: Tweet) {
+            const loginUser = this.loginUser
+            if (!loginUser) throw new Error('Not logged in')
+            const userHostId = loginUser.hostIds?.[0]
+            if (!userHostId) throw new Error('Writable host not configured')
             const params = {
                 aid: this.appId, ver: "last", version: "v2",
-                appuserid: this.loginUser?.mid,
+                appuserid: loginUser.mid,
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
-                userhostid: this.loginUser?.hostIds?.[0],
+                userhostid: userHostId,
             }
             const author = tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_favorite')
@@ -2931,12 +3602,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleBookmark(tweet: Tweet) {
+            const loginUser = this.loginUser
+            if (!loginUser) throw new Error('Not logged in')
+            const userHostId = loginUser.hostIds?.[0]
+            if (!userHostId) throw new Error('Writable host not configured')
             const params = {
                 aid: this.appId, ver: "last", version: "v2",
-                userid: this.loginUser?.mid,
+                userid: loginUser.mid,
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
-                userhostid: this.loginUser?.hostIds?.[0],
+                userhostid: userHostId,
             }
             const author = tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_bookmark')
@@ -2961,12 +3636,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (idx >= 0) {
                     Object.assign(this.tweets[idx], updated)
                 }
-                localStorage.setItem(tweet.mid, JSON.stringify(updated))
+                localStorage.setItem(tweet.mid, JSON.stringify(tweetForSessionStorage(updated)))
 
                 // Update login user from server response (like Android's appUser.from)
                 if (response.user && this.loginUser) {
                     Object.assign(this.loginUser, response.user)
-                    sessionStorage.setItem("user", JSON.stringify(this.loginUser))
+                    setStoredLoginUser(this.loginUser)
                 }
 
                 return updated
@@ -3192,77 +3867,12 @@ export const useTweetStore = defineStore('tweetStore', {
          * address, or null if none are usable.
          */
         async getNodeIp(user: User): Promise<string | null> {
-            try {
-                const hostId = user.hostIds?.[0];
-                if (!hostId) {
-                    console.error("[getNodeIp] User has no hostIds[0]");
-                    return null;
-                }
-
-                const params: any = {
-                    aid: this.lapi.appId, ver: "last", version: "v2",
-                    nodeid: hostId,
-                };
-                if (v4Only) params.v4only = "true";
-
-                const ipResponse = await user.client.RunMApp("get_node_ips", params);
-                if (!ipResponse) {
-                    console.error(`[getNodeIp] No response for nodeId ${hostId}`);
-                    return null;
-                }
-
-                // get_node_ips may return array, {data: array|string}, or a bare string.
-                let ipList: string[] = [];
-                if (Array.isArray(ipResponse)) ipList = ipResponse;
-                else if (typeof ipResponse === 'string') ipList = [ipResponse];
-                else if (typeof ipResponse === 'object' && Array.isArray(ipResponse.data)) ipList = ipResponse.data;
-                else if (typeof ipResponse === 'object' && typeof ipResponse.data === 'string') ipList = [ipResponse.data];
-                else {
-                    console.error(`[getNodeIp] Invalid response for nodeId ${hostId}:`, ipResponse);
-                    return null;
-                }
-
-                const ipAddresses = ipList
-                    .map(ip => ip.trim())
-                    .filter(ip => {
-                        if (!ip) return false;
-                        // Filter IPv6 (brackets or multiple colons) when v4Only.
-                        if (v4Only && (ip.includes('[') || (ip.match(/:/g) || []).length > 1)) return false;
-                        // Skip local and VPN-only addresses.
-                        return !this.isLocalIP(ip) && !isTailscaleAddress(ip);
-                    });
-
-                if (ipAddresses.length === 0) {
-                    console.error(`[getNodeIp] No valid IPs for nodeId ${hostId}`);
-                    return null;
-                }
-
-                // Race all candidates in parallel (matches iOS _getHostIP withTaskGroup).
-                // Return the first IP that passes a health check; cancel the rest.
-                const candidates = ipAddresses.slice(0, 4);
-                const winner = await new Promise<string | null>((resolve) => {
-                    let settled = 0;
-                    for (const ip of candidates) {
-                        this.isServerHealthyWithTimeout(ip, 5000).then(healthy => {
-                            if (healthy) { resolve(ip); return; }
-                            if (++settled === candidates.length) resolve(null);
-                        }).catch(() => {
-                            if (++settled === candidates.length) resolve(null);
-                        });
-                    }
-                });
-
-                if (winner) {
-                    console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
-                    return winner;
-                }
-                console.error(`[getNodeIp] All health checks failed for nodeId ${hostId}`);
-                return null;
-
-            } catch (error) {
-                console.error(`[getNodeIp] Error for nodeId ${user.hostIds?.[0] || 'unknown'}:`, error);
+            const hostId = user.hostIds?.[0];
+            if (!hostId) {
+                console.error("[getNodeIp] User has no hostIds[0]");
                 return null;
             }
+            return await this.getNodeIpByHostId(hostId)
         },
 
         /**
@@ -3464,10 +4074,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     Array.isArray(registeredUserBlob.hostIds) &&
                     registeredUserBlob.hostIds.length > 0
                 ) {
+                    const accessNodeId = registeredUserBlob.hostIds[1] ?? registeredUserBlob.hostIds[0]
+                    nodePool.updateNode(accessNodeId, [usableIp])
                     const seeded = { ...registeredUserBlob, mid: registeredUserId, providerIp: usableIp }
                     delete (seeded as any).password
                     delete (seeded as any).client
-                    sessionStorage.setItem(registeredUserId, JSON.stringify(seeded))
+                    setStoredUser(registeredUserId, seeded)
                 }
 
                 // Same as `toggleFollowing`: follower's node — use known IP from register response or entry node.
@@ -3521,6 +4133,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 profile: updates.profile ?? user.profile ?? "",
                 timestamp: typeof user.timestamp === 'number' ? user.timestamp : Date.now(),
                 cloudDrivePort: updates.cloudDrivePort ?? user.cloudDrivePort ?? 0,
+                // Include cached stats/avatar so the server doesn't need a get_user_core_data
+                // round-trip to merge them (avoids a redundant second set_author_core_data call).
+                avatar: user.avatar ?? "",
+                followingCount: user.followingCount ?? 0,
+                followersCount: user.followersCount ?? 0,
+                tweetCount: user.tweetCount ?? 0,
+                bookmarksCount: user.bookmarksCount ?? 0,
+                favoritesCount: user.favoritesCount ?? 0,
+                commentsCount: user.commentsCount ?? 0,
+                lastLogin: user.lastLogin ?? 0,
             }
             if (updates.password) {
                 userObj.password = updates.password
@@ -3538,15 +4160,10 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Mutation: route through user's writable host (hostIds[0]).
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[updateProfile] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("set_author_core_data", {
@@ -3572,7 +4189,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 user.hostIds = [updates.hostId.trim()]
             }
             this._user = user
-            sessionStorage.setItem("user", JSON.stringify(user))
+            this._mergeUserIntoCachedRefs(user.mid, user)
 
             return true
         },
@@ -3597,15 +4214,10 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Mutation: route through user's writable host (hostIds[0]).
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[updateAgentPublicKey] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("set_author_core_data", {
@@ -3628,7 +4240,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
             user.agentPublicKey = tokenResult.publicKey
             this._user = user
-            sessionStorage.setItem("user", JSON.stringify(user))
+            setStoredLoginUser(user)
 
             return tokenResult.tokenString
         },
@@ -3647,15 +4259,10 @@ export const useTweetStore = defineStore('tweetStore', {
             // Mutation: route through user's writable host (hostIds[0]) so the
             // change lands on the writable node directly instead of relying on
             // server-side replication from a read-only host.
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[setUserAvatar] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let confirmedAvatar: string = cid
             try {
                 const ret = await writeClient.RunMApp("set_user_avatar", {
@@ -3668,11 +4275,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 writeClient.timeout = originalTimeout
             }
 
-            // Avatar display uses user.providerIp (read host), not the writable host.
-            const displayIp = user.providerIp || user.writableHostIp
-            const updatedUser = { ...user, avatar: this.getMediaUrl(confirmedAvatar, `http://${displayIp}`) }
-            this._user = updatedUser
-            sessionStorage.setItem("user", JSON.stringify(updatedUser))
+            // Use writableIp for display: the CID was just uploaded there and is
+            // guaranteed to exist. providerIp (read host) may not have replicated it yet,
+            // which would cause a 404 and permanently break the avatar in AppHeader.
+            const avatar = this.getMediaUrl(confirmedAvatar, `http://${writableIp}`)
+            this._mergeUserIntoCachedRefs(user.mid, { avatar })
 
             return confirmedAvatar
         },
@@ -3715,15 +4322,10 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!user) throw new Error("Not logged in")
 
             // Mutation: route through user's writable host (hostIds[0]).
-            let writeClient = user.client
-            try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-            } catch (e) {
-                console.warn('[deleteAccount] Could not resolve writable host, using current client:', e)
-            }
+            const writableIp = await this.resolveWritableHostIp(user)
+            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 15000
+            writeClient.timeout = 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("delete_account", {
