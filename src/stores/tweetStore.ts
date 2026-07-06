@@ -3579,12 +3579,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleFavorite(tweet: Tweet) {
+            const loginUser = this.loginUser
+            if (!loginUser) throw new Error('Not logged in')
+            const userHostId = loginUser.hostIds?.[0]
+            if (!userHostId) throw new Error('Writable host not configured')
             const params = {
                 aid: this.appId, ver: "last", version: "v2",
-                appuserid: this.loginUser?.mid,
+                appuserid: loginUser.mid,
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
-                userhostid: this.loginUser?.hostIds?.[0],
+                userhostid: userHostId,
             }
             const author = tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_favorite')
@@ -3598,12 +3602,16 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The updated tweet object
          */
         async toggleBookmark(tweet: Tweet) {
+            const loginUser = this.loginUser
+            if (!loginUser) throw new Error('Not logged in')
+            const userHostId = loginUser.hostIds?.[0]
+            if (!userHostId) throw new Error('Writable host not configured')
             const params = {
                 aid: this.appId, ver: "last", version: "v2",
-                userid: this.loginUser?.mid,
+                userid: loginUser.mid,
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
-                userhostid: this.loginUser?.hostIds?.[0],
+                userhostid: userHostId,
             }
             const author = tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_bookmark')
