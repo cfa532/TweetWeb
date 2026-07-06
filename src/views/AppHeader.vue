@@ -16,10 +16,15 @@ const isLoggedIn = computed(() => !!tweetStore.loginUser)
 
 const emit = defineEmits<{ (e: 'refresh'): void }>()
 
-/** Logo: on home feed → emit refresh; anywhere else → navigate home. */
+/** Logo: on home feed as a logged-in user -> self profile; anywhere else -> home. */
 function onAppAvatarClick() {
     if (route.name !== 'main') {
         router.push({ name: 'main' })
+        return
+    }
+    const loginUserId = tweetStore.loginUser?.mid
+    if (loginUserId) {
+        router.push({ name: 'UserPage', params: { authorId: loginUserId } })
         return
     }
     emit('refresh')
