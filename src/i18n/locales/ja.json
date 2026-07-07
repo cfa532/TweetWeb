@@ -104,6 +104,7 @@
     "loadingUsername": "読み込み中",
     "editTweet": "ツイートを編集",
     "failedUpdateTweet": "ツイートの更新に失敗しました",
+    "failedDeleteTweet": "ツイートの削除に失敗しました",
     "updateSuccess": "ツイートを更新しました。",
     "deleteSuccess": "ツイートを削除しました。",
     "commentDeleted": "コメントを削除しました。",

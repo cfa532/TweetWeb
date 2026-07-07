@@ -104,36 +104,16 @@ function socketAddressFromUrlHostPort(hostname: string, port: string): string | 
     return port ? `${hostname}:${port}` : hostname
 }
 
-/** Normalize host/IP so we can run range checks on raw addresses and URLs. */
-function hostFromAddress(address: string): string {
-    const raw = String(address ?? "").trim()
-    if (!raw) return ""
+function socketAddressFromUrlLike(raw: unknown): string | undefined {
+    if (typeof raw !== 'string' || !raw.trim()) return undefined
+    const value = raw.trim()
     try {
-        if (raw.includes("://")) {
-            const hostname = new URL(raw).hostname
-            if (hostname) return hostname
-        }
+        const url = new URL(value)
+        return socketAddressFromUrlHostPort(url.hostname, url.port)
     } catch {
-        // Fall through to manual parsing for non-standard input.
+        if (/^[\w.:\[\]-]+$/.test(value) && !value.includes('://')) return value
     }
-    let candidate = raw
-    const slashIndex = candidate.indexOf("/")
-    if (slashIndex >= 0) candidate = candidate.slice(0, slashIndex)
-    if (candidate.startsWith("[")) {
-        const end = candidate.indexOf("]")
-        if (end > 1) return candidate.slice(1, end)
-    }
-    const ipv4WithOptionalPort = candidate.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?$/)
-    if (ipv4WithOptionalPort) return ipv4WithOptionalPort[1]
-    const hostPort = candidate.match(/^([^:]+):\d+$/)
-    if (hostPort) return hostPort[1]
-    return candidate
-}
-
-/** Tailscale typically uses the RFC6598 shared range 100.64.0.0/10. */
-function isTailscaleAddress(address: string): boolean {
-    const host = hostFromAddress(address)
-    return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+    return undefined
 }
 
 /** Prefer host:port from API user blob; avoids get_provider for the new mid right after register. */
@@ -141,22 +121,11 @@ function providerIpFromRegisteredUserBlob(u: any): string | undefined {
     if (!u || typeof u !== 'object') return undefined
     const direct = u.providerIp
     if (typeof direct === 'string' && direct.trim() && !String(direct).includes('://')) {
-        const normalizedDirect = direct.trim()
-        if (!isTailscaleAddress(normalizedDirect)) return normalizedDirect
+        return direct.trim()
     }
     for (const key of ['writableUrl', 'baseUrl'] as const) {
-        const raw = u[key]
-        if (typeof raw !== 'string' || !raw.trim()) continue
-        try {
-            const url = new URL(raw.trim())
-            const host = url.hostname
-            if (!host) continue
-            const candidate = socketAddressFromUrlHostPort(host, url.port) ?? host
-            if (!isTailscaleAddress(candidate)) return candidate
-        } catch {
-            const s = raw.trim()
-            if (/^[\w.:\[\]-]+$/.test(s) && !s.includes('://') && !isTailscaleAddress(s)) return s
-        }
+        const candidate = socketAddressFromUrlLike(u[key])
+        if (candidate) return candidate
     }
     return undefined
 }
@@ -2011,8 +1980,6 @@ export const useTweetStore = defineStore('tweetStore', {
             this._clearFetchFailure(userId)
             user.client = createPooledClient(providerIp, this.lapi.connectionPool)
             user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
-            delete user.baseUrl
-            delete user.writableUrl
             // Initialize writableHostIp if not already set
             if (user.writableHostIp === undefined) {
                 user.writableHostIp = null
@@ -2376,7 +2343,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     .filter(ip => {
                         if (!ip) return false;
                         if (v4Only && (ip.includes('[') || (ip.match(/:/g) || []).length > 1)) return false;
-                        return !this.isLocalIP(ip) && !isTailscaleAddress(ip);
+                        return !this.isLocalIP(ip);
                     });
 
                 if (ipAddresses.length === 0) {
@@ -2472,9 +2439,6 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         // Filter out private/local IPs (not reachable from public internet)
                         if (this.isLocalIP(ip)) return false;
-                        // Explicit guard for VPN-assigned Tailscale addresses.
-                        if (isTailscaleAddress(ip)) return false;
-
                         return true;
                     });
 
@@ -3172,6 +3136,9 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!this.loginUser) {
                 throw new Error('Not authorized to delete this tweet')
             }
+            if (this.loginUser.username !== 'admin' && this.loginUser.mid !== authorId) {
+                throw new Error('Not authorized to delete this tweet')
+            }
 
             console.log('[deleteTweet] Starting delete', {
                 tweetId,
@@ -3180,6 +3147,7 @@ export const useTweetStore = defineStore('tweetStore', {
             })
 
             const tweetIndex = this.tweets.findIndex(e => e.mid === tweetId)
+            const removedTweet = tweetIndex >= 0 ? this.tweets[tweetIndex] : undefined
             if (tweetIndex >= 0) {
                 this._deletedTweetIds.add(tweetId)
                 this.tweets.splice(tweetIndex, 1)
@@ -3194,23 +3162,30 @@ export const useTweetStore = defineStore('tweetStore', {
                 console.log('[deleteTweet] Tweet was not in local cache before server delete', { tweetId })
             }
 
-            if (!this.loginUser.client) {
-                console.error('[deleteTweet] Provider unavailable', { tweetId, authorId })
-                throw new Error('Tweet delete provider is unavailable')
-            }
-
-            const payload: Record<string, any> = {
-                aid: this.appId,
-                ver: "last",
-                version: "v3",
-                userid: this.loginUser.mid, // caller identity (admin or owner)
-                tweetid: tweetId,
-                authorid: authorId, // tweet owner
-            }
-
-            console.log('[deleteTweet] Calling delete_tweet', payload)
             try {
-                let response: any = await this.loginUser.client.RunMApp("delete_tweet", payload)
+                const targetAuthor = authorId === this.loginUser.mid
+                    ? this.loginUser
+                    : await this.getUser(authorId)
+                if (!targetAuthor) {
+                    throw new Error('Tweet author not found')
+                }
+                const hostId = targetAuthor.hostIds?.[0]
+                const writableIp = await this.resolveWritableHostIp(targetAuthor)
+                const deleteClient = createPooledClient(writableIp, this.lapi.connectionPool)
+
+                const payload: Record<string, any> = {
+                    aid: this.appId,
+                    ver: "last",
+                    version: "v3",
+                    appuserid: this.loginUser.mid, // caller identity (admin or owner)
+                    userid: authorId, // tweet owner; backend resolves this user's host
+                    tweetid: tweetId,
+                    authorid: authorId, // tweet owner
+                    hostid: hostId,
+                }
+
+                console.log('[deleteTweet] Calling delete_tweet', { ...payload, writableIp })
+                let response: any = await deleteClient.RunMApp("delete_tweet", payload)
                 console.log('[deleteTweet] delete_tweet response', { tweetId, response })
                 for (let depth = 0; depth < 3 && response && typeof response === "object"; depth++) {
                     if (response.success === false) {
@@ -3230,6 +3205,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 return deletedTweetId
             } catch (error) {
                 console.error('[deleteTweet] Delete failed', { tweetId, authorId, error })
+                if (removedTweet) {
+                    this._deletedTweetIds.delete(tweetId)
+                    const restoreIndex = Math.min(tweetIndex, this.tweets.length)
+                    this.tweets.splice(restoreIndex, 0, removedTweet)
+                    this.tweetIndex.set(tweetId, removedTweet)
+                    this.feedTweetIds.add(tweetId)
+                }
                 throw error
             }
         },
@@ -3712,7 +3694,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 /^10\./, // Class A private
                 /^192\.168\./, // Class C private
                 /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // Class B private
-                /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // RFC 6598 Shared Address Space (Tailscale)
             ];
 
             // IPv6 local patterns
@@ -3863,7 +3844,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * Resolves a user's hostIds[0] to an IP via get_node_ips (v2).
-         * Returns the first non-local, non-VPN, non-IPv6 (when v4Only is on)
+         * Returns the first non-local, non-IPv6 (when v4Only is on)
          * address, or null if none are usable.
          */
         async getNodeIp(user: User): Promise<string | null> {
@@ -3883,9 +3864,17 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async resolveWritableHostIp(user: User): Promise<string> {
             const hostId = user.hostIds?.[0]
-            if (!hostId) {
-                throw new Error('Upload server not configured: user has no hostIds[0]')
+            const writableUrlHost = socketAddressFromUrlLike(user.writableUrl)
+            if (writableUrlHost) {
+                if (hostId) {
+                    this._writableHostCache.set(hostId, { ip: writableUrlHost, expiresAt: Date.now() + 5 * 60 * 1000 })
+                    nodePool.updateNode(hostId, [writableUrlHost])
+                }
+                user.writableHostIp = writableUrlHost
+                return writableUrlHost
             }
+
+            if (!hostId) throw new Error('Upload server not configured: user has no writableUrl or hostIds[0]')
 
             const TTL = 5 * 60 * 1000 // 5 minutes
             const cached = this._writableHostCache.get(hostId)
@@ -4053,14 +4042,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     (followerProviderIp && followerProviderIp.trim()) ||
                     (this.lapi.hostIP && String(this.lapi.hostIP).trim()) ||
                     ''
-                if (ip && isTailscaleAddress(ip)) {
-                    console.warn("[register:autoFollow] Ignoring Tailscale provider IP hint", ip)
-                }
-                const usableIp = ip && !isTailscaleAddress(ip)
-                    ? ip
-                    : ((this.lapi.hostIP && String(this.lapi.hostIP).trim() && !isTailscaleAddress(String(this.lapi.hostIP).trim()))
-                        ? String(this.lapi.hostIP).trim()
-                        : '')
+                const usableIp = ip
                 if (!usableIp) {
                     console.warn("[register:autoFollow] No provider IP hint or entry hostIP; cannot auto-follow")
                     return

@@ -104,6 +104,7 @@
     "loadingUsername": "加载中",
     "editTweet": "编辑推文",
     "failedUpdateTweet": "更新推文失败",
+    "failedDeleteTweet": "删除推文失败",
     "updateSuccess": "推文已更新。",
     "deleteSuccess": "推文已删除。",
     "commentDeleted": "评论已删除。",

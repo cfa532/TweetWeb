@@ -104,6 +104,7 @@
     "loadingUsername": "loading",
     "editTweet": "Edit Tweet",
     "failedUpdateTweet": "Failed to update tweet",
+    "failedDeleteTweet": "Failed to delete tweet",
     "updateSuccess": "Tweet updated successfully.",
     "deleteSuccess": "Tweet deleted.",
     "commentDeleted": "Comment deleted.",

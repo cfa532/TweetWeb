@@ -22,6 +22,8 @@ interface User {
     agentPublicKey?: string;
     hostIds?: MimeiId[];  // Array of host IDs, where hostIds[0] may be read host and hostIds[1] may be write host
     providerIp?: string;  // Provider's IP that has write permission
+    baseUrl?: string;
+    writableUrl?: string;
     writableHostIp?: string | null;  // Cached writable host IP, fetched lazily when needed
     client?: any;       // Hprose client handler
     timestamp: string | number;
