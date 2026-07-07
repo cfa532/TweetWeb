@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { computed, onMounted, onActivated, ref, onUnmounted, watch, nextTick, type Ref } from 'vue';
+import { computed, onMounted, onActivated, onDeactivated, ref, onUnmounted, watch, nextTick, type Ref } from 'vue';
 defineOptions({ name: 'MainPage' })
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -250,6 +250,8 @@ onMounted(async () => {
     // App-wide poll for new following tweets (3 min). Singleton — also started by
     // UserPage, so the banner stays current on either the main feed or a profile.
     stopFeedPolling = startFeedPolling(180_000, handleFeedPollingResult);
+    // Scrolling back to the top consumes pending tweets directly and drops the banner.
+    window.addEventListener('scroll', onWindowScroll, { passive: true });
 });
 
 // Kept alive across navigation, so onMounted won't re-run on return. Guard the
@@ -257,6 +259,7 @@ onMounted(async () => {
 // user must get a fresh feed. The common case (same user returning) does nothing,
 // preserving scroll position.
 onActivated(() => {
+    isPageActive.value = true;
     if (!tweetStore.loginUser) {
         router.replace(`/author/${tweetStore.followings[0]}`);
         return;
@@ -269,6 +272,8 @@ onActivated(() => {
         loadTweetsWithMinimum();
         return;
     }
+    // Returning while already at the top: fold pending tweets straight in.
+    if (pendingCount.value > 0 && canRenderPendingDirectly()) consumePendingAtTop();
     // Navigated back from another page with the "show new" intent (e.g. UserPage banner tap).
     void consumeShowNewQuery();
 });
@@ -276,6 +281,7 @@ onActivated(() => {
 onUnmounted(() => {
     loadMoreObserver?.disconnect();
     clearLoadMoreSpinnerDelay();
+    window.removeEventListener('scroll', onWindowScroll);
     hideBanner();
     stopFeedPolling?.();
 });
@@ -308,9 +314,31 @@ watch(
     { immediate: true },
 );
 
+// New tweets render directly (no banner) while the feed is already at the top;
+// the banner is only for a viewport somewhere in the middle of the list, where
+// a direct prepend would shift the content under the reader.
+function canRenderPendingDirectly() {
+    return isPageActive.value && !isRestoringFeed.value && isAtTop();
+}
+function consumePendingAtTop() {
+    hideBanner();
+    const candidateIds = new Set(tweetStore.feedPendingCandidateIds);
+    appendNewToDisplayed(candidateIds, true);
+    tweetStore.clearFeedPendingCandidates();
+}
+function onWindowScroll() {
+    if (pendingCount.value > 0 && canRenderPendingDirectly()) consumePendingAtTop();
+}
+// Keep-alive: the pendingCount watch also fires while this page is deactivated
+// (the poller keeps filling the store). isPageActive stops it from reading
+// another page's scroll position and appending into a hidden list.
+const isPageActive = ref(true);
+onDeactivated(() => { isPageActive.value = false; });
+
 watch(pendingCount, (count, prev) => {
-    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
-    else if (count === 0) hideBanner();
+    if (count === 0) { hideBanner(); return; }
+    if (canRenderPendingDirectly()) { consumePendingAtTop(); return; }
+    if (prev === 0 || !bannerVisible.value) showBanner();
 });
 
 // Prepend newer tweets (and append older ones) from the store into the displayed list.

@@ -811,7 +811,12 @@ export const useTweetStore = defineStore('tweetStore', {
                                 }
                             }
                             const storedTweet = this.tweetIndex.get(tweet.mid)
-                            if (storedTweet && (!storedTweet.originalTweetId || storedTweet.originalTweet)) {
+                            // A quote tweet whose original is unavailable is stored with
+                            // originalTweet === undefined and still renders (quote wrapper
+                            // only) — it must count as a candidate, matching the
+                            // displayability filter in UserPage, or it lingers as
+                            // "pending" and keeps the new-tweets banner up.
+                            if (storedTweet && (!storedTweet.originalTweetId || storedTweet.originalTweet !== null)) {
                                 options.candidateIds?.add(storedTweet.mid)
                             }
                         }

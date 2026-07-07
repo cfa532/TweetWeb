@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, onActivated, ref, onUnmounted, watch, computed, nextTick } from 'vue';
+import { onMounted, onActivated, onDeactivated, ref, onUnmounted, watch, computed, nextTick } from 'vue';
 defineOptions({ name: 'UserPage' })
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
@@ -146,10 +146,13 @@ async function maybeScrollToDeepLinkedTweet() {
 onMounted(() => {
     nextTick(() => setupLoadMoreObserver());
     startFeedPolling();
+    // Scrolling back to the top consumes pending tweets directly and drops the banner.
+    window.addEventListener('scroll', onWindowScroll, { passive: true });
 });
 
 onUnmounted(() => {
     loadMoreObserver?.disconnect();
+    window.removeEventListener('scroll', onWindowScroll);
     hideBanner();
 });
 
@@ -436,19 +439,32 @@ onActivated(async () => {
 });
 
 const displayedTweets = ref<Tweet[]>([]);
-const pendingCount = computed(() => {
-    if (initialLoad.value) return 0;
+// The global store also holds this author's OLDER tweets pulled in by other
+// flows (home feed, feed polling, bookmarks/favorites) that profile pagination
+// simply hasn't reached yet. Only tweets strictly newer than the newest
+// displayed tweet are genuinely "new" for the banner.
+function pendingNewTweetIds(): Set<string> {
+    const ids = new Set<string>();
+    if (initialLoad.value) return ids;
     const existingIds = new Set(displayedTweets.value.map(t => t.mid));
     const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
-    return tweetStore.tweets.filter(e => {
-        if (existingIds.has(e.mid)) return false;
-        if (pinnedIds.has(e.mid)) return false;
+    const topTimestamp = displayedTweets.value.length > 0
+        ? (displayedTweets.value[0].timestamp as number)
+        : -Infinity;
+    for (const e of tweetStore.tweets) {
+        if (existingIds.has(e.mid)) continue;
+        if (pinnedIds.has(e.mid)) continue;
+        if ((e.timestamp as number) <= topTimestamp) continue;
         const isAuthorMatch = e.isPrivate
             ? tweetStore.loginUser?.mid === e.authorId && e.authorId === authorId.value
             : e.authorId === authorId.value;
-        return isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null);
-    }).length;
-});
+        if (isAuthorMatch && (!e.originalTweetId || e.originalTweet !== null)) {
+            ids.add(e.mid);
+        }
+    }
+    return ids;
+}
+const pendingCount = computed(() => pendingNewTweetIds().size);
 const profilePendingCountLabel = computed(() => pendingCount.value > 9 ? '9+' : String(pendingCount.value));
 const profilePendingBannerText = computed(() => t(
     pendingCount.value === 1 ? 'tweet.showNewTweetCapped' : 'tweet.showNewTweetsCapped',
@@ -457,10 +473,36 @@ const profilePendingBannerText = computed(() => t(
 function handlePendingBannerClick() {
     showPendingTweets();
 }
+// New tweets render directly (no banner) while the list is already at the top;
+// the banner is only for a viewport somewhere in the middle of the list, where
+// a direct prepend would shift the content under the reader.
+function canRenderPendingDirectly() {
+    return isPageActive.value
+        && userView.value === 'tweets'
+        && !isRestoringFeed.value
+        && isAtTop();
+}
+function consumePendingAtTop() {
+    hideBanner();
+    appendNewToDisplayed(pendingNewTweetIds());
+}
 watch(pendingCount, (count, prev) => {
-    if (count > 0 && (prev === 0 || !bannerVisible.value)) showBanner();
-    else if (count === 0) hideBanner();
+    if (count === 0) { hideBanner(); return; }
+    if (canRenderPendingDirectly()) { consumePendingAtTop(); return; }
+    if (prev === 0 || !bannerVisible.value) showBanner();
 });
+function onWindowScroll() {
+    if (pendingCount.value > 0 && canRenderPendingDirectly()) consumePendingAtTop();
+}
+// Keep-alive: the pendingCount watch also fires while this page is deactivated
+// (feed polling keeps filling the store). isPageActive stops it from reading
+// another page's scroll position and appending into a hidden list.
+const isPageActive = ref(true);
+onActivated(() => {
+    isPageActive.value = true;
+    if (pendingCount.value > 0 && canRenderPendingDirectly()) consumePendingAtTop();
+});
+onDeactivated(() => { isPageActive.value = false; });
 // The authorId this profile has already loaded. Survives the route hop through
 // /media-viewer (where authorId becomes undefined), unlike the watch's
 // oldValue — so returning to the same user doesn't re-fetch the whole profile.
@@ -545,7 +587,10 @@ function appendNewToDisplayed(candidateIds?: Set<string>) {
 
 function showPendingTweets() {
     hideBanner();
-    appendNewToDisplayed();
+    // Append only the tweets the banner counted — an unfiltered append would
+    // also splice the author's older store tweets (from the home feed etc.)
+    // into the bottom of the list, out of order with pagination.
+    appendNewToDisplayed(pendingNewTweetIds());
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -577,6 +622,9 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
     loadedForUser.value = nv;
 
     console.log('UserPage loading authorId:', nv);
+    // Each profile tracks its own new tweets — never carry banner state from
+    // the previously viewed profile into this one.
+    hideBanner();
     pageNumber.value = 0;
     hasMoreTweets.value = true;
     loadError.value = '';
