@@ -150,7 +150,7 @@ async function loadDetail() {
         // transiently return empty on first page load (RPC not yet warm).
         for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) await new Promise(r => setTimeout(r, 5000))
-            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true) as Tweet
+            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true, false, true) as Tweet
             if (tweet.value) break
         }
 
@@ -182,9 +182,6 @@ async function showTweet(timeoutId?: number) {
         isLoading.value = false
 
         // Load comments and additional data in parallel (truly non-blocking)
-        // Track which tweet owns the comments so we can sync after load.
-        let commentOwner: Tweet | null = null
-
         const loadPromises = []
 
         // Load original tweet if needed
@@ -198,14 +195,10 @@ async function showTweet(timeoutId?: number) {
                     if (!tweetHasOwnBody(tweet.value) && originTweet.value) {
                         // Pure retweet (no added content): show the original's comments.
                         isRetweet.value = true
-                        const failed = await tweetStore.loadComments(originTweet.value)
-                        commentOwner = originTweet.value
-                        failed.forEach(id => failedCommentIds.value.add(id))
+                        await tweetStore.loadComments(originTweet.value)
                     } else {
                         // Quote-retweet: comments belong to the outer tweet.
-                        const failed = await tweetStore.loadComments(tweet.value)
-                        commentOwner = tweet.value
-                        failed.forEach(id => failedCommentIds.value.add(id))
+                        await tweetStore.loadComments(tweet.value)
                     }
                 } catch (error) {
                     console.warn('[TweetDetail] Failed to load original tweet:', error)
@@ -214,9 +207,7 @@ async function showTweet(timeoutId?: number) {
         } else {
             loadPromises.push((async () => {
                 try {
-                    const failed = await tweetStore.loadComments(tweet.value)
-                    commentOwner = tweet.value
-                    failed.forEach(id => failedCommentIds.value.add(id))
+                    await tweetStore.loadComments(tweet.value)
                 } catch (error) {
                     console.warn('[TweetDetail] Failed to load comments:', error)
                 }
@@ -234,19 +225,16 @@ async function showTweet(timeoutId?: number) {
         hasMoreComments.value = true
         setupCommentObserver()
 
-        // Mirrors iOS TweetDetailView.setupInitialData: when the author's write node
-        // (hostIds[0]) and read node (hostIds[1]) differ, refresh tweet detail and
-        // sync failed comments immediately, then repeat every 5 minutes.
-        if (commentOwner && authorNodesDiffer(commentOwner)) {
-            const owner = commentOwner
-            void resyncDetailTweets()
-            void syncMissingComments(owner)
-            if (syncTimer) clearInterval(syncTimer)
-            syncTimer = setInterval(() => {
-                void resyncDetailTweets()
-                void syncMissingComments(owner)
-            }, 5 * 60 * 1000)
-        }
+        // Content above is shown immediately (possibly from cache). Follow up
+        // with one server refresh so counts/content catch up — the server
+        // (get_tweet with fromdetailview) handles syncing the author's write
+        // node to the read node itself when they differ.
+        void resyncDetailTweets()
+
+        // Independent of the tweet-content resync above: poll for new comments
+        // on a slower cadence, starting a short while after the initial load.
+        const commentOwner = isRetweet.value ? originTweet.value : tweet.value
+        if (commentOwner) startCommentRefreshLoop(commentOwner)
     } catch (error) {
         console.error('Error in showTweet:', error)
         if (timeoutId) clearTimeout(timeoutId)
@@ -290,8 +278,7 @@ watch(tweetId, async (newValue, oldValue)=>{
         isRetweet.value = false
         commentPage.value = 0
         hasMoreComments.value = true
-        failedCommentIds.value = new Set()
-        if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
+        stopCommentRefreshLoop()
         await loadDetail()
     }
 });
@@ -580,11 +567,43 @@ const isLoadingMoreComments = ref(false)
 const hasMoreComments = ref(true)
 const commentBottomSentinel = ref<HTMLElement | null>(null)
 let commentObserver: IntersectionObserver | null = null
-const failedCommentIds = ref<Set<string>>(new Set())
-let syncTimer: ReturnType<typeof setInterval> | null = null
 let detailResyncInFlight = false
 let lastDetailResyncAt = 0
 const DETAIL_RESYNC_MIN_INTERVAL_MS = 60 * 1000
+
+// Independent periodic comment refresh: first check 15s after the initial
+// load, then every 5 minutes, so new comments show up without a full reload.
+let commentRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const COMMENT_REFRESH_INITIAL_DELAY_MS = 15 * 1000
+const COMMENT_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+
+// loadComments mutates owner.comments in place; triggerRef is required to
+// notify Vue since nothing else re-reads tweet/originTweet after this fires.
+async function refreshCommentsAndNotify(owner: Tweet) {
+    await tweetStore.loadComments(owner)
+    triggerRef(tweet)
+    triggerRef(originTweet)
+}
+
+function startCommentRefreshLoop(owner: Tweet) {
+    stopCommentRefreshLoop()
+    commentRefreshTimer = setTimeout(() => {
+        console.log('[commentRefreshLoop] Initial refresh triggered for', owner.mid)
+        void refreshCommentsAndNotify(owner)
+        commentRefreshTimer = setInterval(() => {
+            console.log('[commentRefreshLoop] Periodic refresh triggered for', owner.mid)
+            void refreshCommentsAndNotify(owner)
+        }, COMMENT_REFRESH_INTERVAL_MS)
+    }, COMMENT_REFRESH_INITIAL_DELAY_MS)
+}
+
+function stopCommentRefreshLoop() {
+    if (commentRefreshTimer) {
+        clearTimeout(commentRefreshTimer)
+        clearInterval(commentRefreshTimer)
+        commentRefreshTimer = null
+    }
+}
 
 function setupCommentObserver() {
     if (commentObserver) {
@@ -633,8 +652,9 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
     target.comments = existingComments
 }
 
-// Mirrors iOS TweetDetailView.doResyncTweet: refresh_tweet on the read node so
-// detail payload is pulled from hostIds[0] when nodes differ.
+// Refreshes the detail tweet(s) from the server via get_tweet(fromDetailView),
+// which syncs the author's write node to the read node itself when they
+// differ. Run once after the cached/initial content is shown.
 async function resyncDetailTweets() {
     if (detailResyncInFlight) return
     const now = Date.now()
@@ -650,6 +670,7 @@ async function resyncDetailTweets() {
                 tweet.value.originalTweetId as MimeiId,
                 tweet.value.originalAuthorId as MimeiId,
                 false,
+                true,
                 true
             )
             if (refreshedOriginal && originTweet.value) {
@@ -660,11 +681,12 @@ async function resyncDetailTweets() {
         }
 
         const [refreshedTweet, refreshedOriginal] = await Promise.all([
-            tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true),
+            tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true, true),
             tweetStore.getTweet(
                 tweet.value.originalTweetId as MimeiId,
                 tweet.value.originalAuthorId as MimeiId,
                 false,
+                true,
                 true
             ),
         ])
@@ -679,7 +701,7 @@ async function resyncDetailTweets() {
         return
     }
 
-    const refreshed = await tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true)
+    const refreshed = await tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true, true)
     if (refreshed && tweet.value) {
         applyRefreshedTweet(tweet.value, refreshed)
         triggerRef(tweet)
@@ -689,42 +711,12 @@ async function resyncDetailTweets() {
     }
 }
 
-// Mirrors iOS TweetDetailView.syncMissingComments:
-// For each comment ID that arrived from the server but couldn't be parsed,
-// call node_update_mid_by_score on the write node to push it to the read node,
-// then prepend the recovered comment to the list.
-async function syncMissingComments(parentTweet: Tweet) {
-    const ids = Array.from(failedCommentIds.value)
-    if (ids.length === 0) return
-    for (const commentId of ids) {
-        const comment = await tweetStore.syncComment(commentId as any, parentTweet)
-        if (comment) {
-            failedCommentIds.value.delete(commentId)
-            // Prepend only if not already in the list
-            const existing = parentTweet.comments ?? []
-            if (!existing.some(c => c.mid === comment.mid)) {
-                parentTweet.comments = [comment, ...existing]
-            }
-        }
-    }
-}
-
-// Returns true when the tweet author's write node (hostIds[0]) and read node
-// (hostIds[1]) are different — mirroring iOS's hostIds check in setupInitialData.
-function authorNodesDiffer(t: Tweet): boolean {
-    const ids = (t.author as any)?.hostIds as string[] | undefined
-    return Array.isArray(ids) && ids.length >= 2 && ids[0] !== ids[1]
-}
-
 onUnmounted(() => {
     if (commentObserver) {
         commentObserver.disconnect()
         commentObserver = null
     }
-    if (syncTimer) {
-        clearInterval(syncTimer)
-        syncTimer = null
-    }
+    stopCommentRefreshLoop()
 })
 
 // Store navigation metadata in sessionStorage to persist across route changes
