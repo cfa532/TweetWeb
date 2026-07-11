@@ -3248,10 +3248,10 @@ export const useTweetStore = defineStore('tweetStore', {
                             throw new Error('Parent tweet author has no hostIds[0]')
                         }
                         return await this.loginUser!.client.RunMApp('add_comment', {
-                            aid: this.appId, ver: 'last',
+                            aid: this.appId, ver: 'last', version: 'v2',
                             tweetid: tweetId,
                             comment: JSON.stringify(tweet),
-                            userid: this.loginUser!.mid,
+                            tweetauthorid: parentTweet.authorId,
                             hostid: parentAuthorHostId,
                         })
                     }
