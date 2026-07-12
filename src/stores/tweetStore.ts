@@ -1595,8 +1595,8 @@ export const useTweetStore = defineStore('tweetStore', {
             console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (authorId: ${authorId}, useRacing: ${useRacing})`)
             let author: any, providerClient: any, providerIp: any, tweetInDB: any
 
-            if (authorId) {
-                // Step 1: resolve author to get their node, then use refresh_tweet
+            if (authorId && forceRefresh) {
+                // Explicit recovery only: resolve the author and synchronize from root.
                 author = await this.getUser(authorId)
                 if (author && author.providerIp) {
                     providerIp = author.providerIp
@@ -1616,7 +1616,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             if (!tweetInDB) {
-                // Step 2: no authorId, or author-based fetch failed — resolve provider IP from tweetId.
+                // Step 2: ordinary read, or author-based recovery failed — resolve by tweet ID.
                 // Use get_tweet WITHOUT version:"v3" here, because v3 requires userid and returns null without it.
                 // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
                 if (useRacing) {
@@ -1891,6 +1891,65 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async getUserFromRootHost(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
             return await this.getUser(userId, forceRefresh)
+        },
+
+        /**
+         * Explicit profile recovery. Mirrors iOS resyncUser: synchronize the User
+         * and its directly referenced Tweets, then merge both into live caches.
+         */
+        async resyncUser(userId: MimeiId): Promise<{ user: User, tweets: Tweet[] }> {
+            const currentUser = await this.getUser(userId)
+            if (!currentUser?.client) {
+                throw new Error(`Route unavailable for resync user ${userId}`)
+            }
+
+            const rawResponse = await currentUser.client.RunMApp("resync_user", {
+                aid: this.appId,
+                ver: "last",
+                version: "v3",
+                userid: userId,
+                appuserid: this.loginUser?.mid ?? GUEST_ID,
+            })
+            if (!rawResponse) throw new Error(`No response from resync_user for ${userId}`)
+            if (rawResponse?.success === false) {
+                throw new Error(rawResponse.message || `resync_user failed for ${userId}`)
+            }
+
+            const response = rawResponse?.success === true && rawResponse.data != null
+                ? rawResponse.data
+                : rawResponse
+            const userData = response?.user ?? (response?.username ? response : undefined)
+            if (!userData || userData.mid !== userId || !userData.username) {
+                throw new Error(`Invalid resync_user response for ${userId}`)
+            }
+
+            const providerIp = currentUser.providerIp
+            const updates = { ...userData } as Partial<User>
+            if (providerIp) {
+                updates.providerIp = providerIp
+                if (updates.avatar) updates.avatar = this.normalizeAvatarUrl(updates.avatar, `http://${providerIp}`)
+            }
+            updates.client = currentUser.client
+            updates.writableHostIp = currentUser.writableHostIp
+            this._mergeUserIntoCachedRefs(userId, updates)
+            const syncedUser = this.users.get(userId) ?? currentUser
+
+            const tweetRows = Array.isArray(response?.tweets)
+                ? response.tweets
+                : response?.tweets && typeof response.tweets === 'object'
+                    ? [response.tweets]
+                    : []
+            const syncedTweets: Tweet[] = []
+            for (const row of tweetRows) {
+                if (!row?.mid || !row?.authorId) continue
+                const incoming = { ...row } as Tweet
+                if (incoming.authorId === userId) incoming.author = syncedUser
+                await this.addTweetToStore(incoming)
+                const cached = this.tweetIndex.get(incoming.mid)
+                if (cached) syncedTweets.push(cached)
+            }
+
+            return { user: syncedUser, tweets: syncedTweets }
         },
 
         async _fetchUser(userId: MimeiId, forceRefresh: boolean): Promise<User | undefined> {

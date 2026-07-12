@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
-import { normalizeMediaType, isWeChatBrowser } from '@/lib';
+import { normalizeMediaType, isBrowserReload, isWeChatBrowser, shouldResyncUser } from '@/lib';
 import { LOAD_TIMEOUT_MS } from '@/constants';
 
 const { t } = useI18n();
@@ -28,6 +28,9 @@ const isLoading = ref(false)
 const loadError = ref(false)
 const tweetNotFound = ref(false)
 const hasLoadAttempted = ref(false)
+// TweetDetail can be reused for later detail routes; only the route that was
+// present during the document reload owns this recovery trigger.
+const reloadRecoveryTweetId = isBrowserReload() ? tweetId.value : undefined
 
 function tweetHasOwnBody(tweetValue: Tweet | null | undefined): boolean {
     if (!tweetValue) return false
@@ -225,11 +228,9 @@ async function showTweet(timeoutId?: number) {
         hasMoreComments.value = true
         setupCommentObserver()
 
-        // Content above is shown immediately (possibly from cache). Follow up
-        // with one server refresh so counts/content catch up — the server
-        // (get_tweet with fromdetailview) handles syncing the author's write
-        // node to the read node itself when they differ.
-        void resyncDetailTweets()
+        // Browser reload is Web's explicit recovery trigger. Start only after
+        // content renders and never await it, so synchronization cannot block UI.
+        if (reloadRecoveryTweetId === tweetId.value) void resyncDetailTweets()
 
         // Independent of the tweet-content resync above: poll for new comments
         // on a slower cadence, starting a short while after the initial load.
@@ -652,27 +653,39 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
     target.comments = existingComments
 }
 
-// Refreshes the detail tweet(s) from the server via get_tweet(fromDetailView),
-// which syncs the author's write node to the read node itself when they
-// differ. Run once after the cached/initial content is shown.
+async function refreshDetailTarget(target: Tweet | undefined, targetTweetId: MimeiId, targetAuthorId: MimeiId) {
+    const targetAuthor = target?.author ?? await tweetStore.getUser(targetAuthorId)
+    if (!shouldResyncUser(targetAuthor)) {
+        console.log(`[TweetDetail] Skipping refresh_tweet for ${targetTweetId}: read/root nodes do not differ`)
+        return null
+    }
+
+    console.log(`[TweetDetail] Calling refresh_tweet for ${targetTweetId}`)
+    const refreshed = await tweetStore.getTweet(targetTweetId, targetAuthorId, false, true, true)
+    console.log(`[TweetDetail] Completed refresh_tweet for ${targetTweetId}`)
+    return refreshed
+}
+
+// Refreshes only detail tweet(s) whose author read node differs from root.
+// Runs in the background after cached/initial content is already shown.
 async function resyncDetailTweets() {
     if (detailResyncInFlight) return
     const now = Date.now()
     if (now - lastDetailResyncAt < DETAIL_RESYNC_MIN_INTERVAL_MS) return
     detailResyncInFlight = true
     lastDetailResyncAt = now
+    const recoveryTweetId = tweet.value?.mid
     try {
     if (!tweet.value) return
     const isPureRetweet = !!tweet.value.originalTweetId && !tweet.value.content && !tweet.value.attachments?.length
     if (tweet.value.originalTweetId && tweet.value.originalAuthorId) {
         if (isPureRetweet) {
-            const refreshedOriginal = await tweetStore.getTweet(
+            const refreshedOriginal = await refreshDetailTarget(
+                originTweet.value,
                 tweet.value.originalTweetId as MimeiId,
-                tweet.value.originalAuthorId as MimeiId,
-                false,
-                true,
-                true
+                tweet.value.originalAuthorId as MimeiId
             )
+            if (tweet.value?.mid !== recoveryTweetId) return
             if (refreshedOriginal && originTweet.value) {
                 applyRefreshedTweet(originTweet.value, refreshedOriginal)
                 triggerRef(originTweet)
@@ -681,15 +694,14 @@ async function resyncDetailTweets() {
         }
 
         const [refreshedTweet, refreshedOriginal] = await Promise.all([
-            tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true, true),
-            tweetStore.getTweet(
+            refreshDetailTarget(tweet.value, tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId),
+            refreshDetailTarget(
+                originTweet.value,
                 tweet.value.originalTweetId as MimeiId,
-                tweet.value.originalAuthorId as MimeiId,
-                false,
-                true,
-                true
+                tweet.value.originalAuthorId as MimeiId
             ),
         ])
+        if (tweet.value?.mid !== recoveryTweetId) return
         if (refreshedTweet && tweet.value) {
             applyRefreshedTweet(tweet.value, refreshedTweet)
             triggerRef(tweet)
@@ -701,7 +713,8 @@ async function resyncDetailTweets() {
         return
     }
 
-    const refreshed = await tweetStore.getTweet(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId, false, true, true)
+    const refreshed = await refreshDetailTarget(tweet.value, tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId)
+    if (tweet.value?.mid !== recoveryTweetId) return
     if (refreshed && tweet.value) {
         applyRefreshedTweet(tweet.value, refreshed)
         triggerRef(tweet)

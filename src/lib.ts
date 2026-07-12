@@ -3,6 +3,32 @@ import i18n from './i18n'
 // Global Constants
 export const v4Only = true;
 
+type NavigationPerformance = Pick<Performance, 'getEntriesByType'>
+
+/** True only when this document was created by an explicit browser reload. */
+export function isBrowserReload(
+    performanceApi: NavigationPerformance | undefined = typeof performance === 'undefined' ? undefined : performance,
+    currentHref: string | undefined = typeof location === 'undefined' ? undefined : location.href,
+): boolean {
+    const navigation = performanceApi?.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    if (navigation?.type !== 'reload' || !navigation.name || !currentHref) return false
+    try {
+        const loadedUrl = new URL(navigation.name, currentHref)
+        const currentUrl = new URL(currentHref)
+        return loadedUrl.pathname === currentUrl.pathname && loadedUrl.search === currentUrl.search
+    } catch {
+        return false
+    }
+}
+
+/** Mirrors iOS: resync only when the current read node is not the root node. */
+export function shouldResyncUser(user: Pick<User, 'hostIds'> | undefined | null): boolean {
+    const rootHostId = user?.hostIds?.[0]
+    if (!rootHostId) return false
+    const readHostId = user?.hostIds?.[1] ?? rootHostId
+    return readHostId !== rootHostId
+}
+
 // Media Type Constants
 export const MEDIA_TYPES = {
     IMAGE: 'image',

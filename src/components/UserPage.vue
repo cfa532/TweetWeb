@@ -6,7 +6,7 @@ import { useTweetStore } from '@/stores';
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router';
 import { LOAD_TIMEOUT_MS } from '@/constants';
 import { AppHeader } from '@/views';
-import { isWeChatBrowser } from '@/lib';
+import { isBrowserReload, isWeChatBrowser, shouldResyncUser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { useScrollRestore } from '@/composables/useScrollRestore';
 import { startFeedPolling } from '@/composables/useFeedPolling';
@@ -32,6 +32,10 @@ const scrollThreshold = 200; // Distance from bottom to trigger load
 const route = useRoute();
 const router = useRouter();
 const authorId = computed(() => route.params.authorId as MimeiId);
+// Capture the document's original route once. UserPage is kept alive, so the
+// global navigation type alone must not make later profile switches recover.
+const reloadRecoveryAuthorId = isBrowserReload() ? authorId.value : undefined;
+const recoveredProfileIds = new Set<MimeiId>();
 const pinnedTweets = ref<Tweet[]>([]);
 const pageSize = 5; // Using the same page size as MainPage
 const initialLoad = ref(true);
@@ -197,6 +201,7 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
         });
 
         const freshPinned = await Promise.race([pinnedPromise, pinnedTimeout]);
+        if (route.params.authorId !== authorId) return;
         if (freshPinned?.length) {
             freshPinned.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
 
@@ -594,6 +599,36 @@ function showPendingTweets() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+async function recoverReloadedProfile(targetAuthorId: MimeiId) {
+    if (recoveredProfileIds.has(targetAuthorId)) return;
+    recoveredProfileIds.add(targetAuthorId);
+
+    try {
+        const refreshedUser = await tweetStore.getUser(targetAuthorId, true);
+        if (!refreshedUser) return;
+
+        // Keep this work detached from initial rendering. Only visible-profile
+        // updates are guarded; cache updates for the original user remain valid.
+        if (authorId.value === targetAuthorId) {
+            await loadPinnedTweetsForUser(targetAuthorId);
+        }
+        if (!shouldResyncUser(refreshedUser)) {
+            console.log(`[UserPage] Skipping resync_user for ${targetAuthorId}: read/root nodes do not differ`);
+            return;
+        }
+
+        console.log(`[UserPage] Calling resync_user for ${targetAuthorId}`);
+        const result = await tweetStore.resyncUser(targetAuthorId);
+        console.log(`[UserPage] Completed resync_user for ${targetAuthorId}; synchronized tweets: ${result.tweets.length}`);
+        if (authorId.value !== targetAuthorId || userView.value !== 'tweets') return;
+
+        const syncedIds = new Set(result.tweets.map(t => t.mid));
+        appendNewToDisplayed(syncedIds);
+    } catch (error) {
+        console.warn(`[UserPage] Background resync failed for ${targetAuthorId}:`, error);
+    }
+}
+
 // Remove deleted tweets from the feed immediately. (Additions are reflected by
 // the pendingCount computed, so they don't need handling here.)
 watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
@@ -652,6 +687,7 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
     await initialLoadTweets(nv);
     await maybeScrollToDeepLinkedTweet();
     if (!hasScrollTweet) await restoreAfterLoad();
+    if (reloadRecoveryAuthorId === nv) void recoverReloadedProfile(nv);
 }, { immediate: true });
 
 onBeforeRouteUpdate(async (to, from) => {
