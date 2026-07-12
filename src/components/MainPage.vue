@@ -5,8 +5,8 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from '@/stores';
 import { AppHeader } from '@/views';
-import { LoadingSpinner, PageLayout, TweetList } from '@/components';
-import { isWeChatBrowser, avatarSrc } from '@/lib';
+import { LoadingSpinner, PageLayout, TweetList, UserAvatar } from '@/components';
+import { isWeChatBrowser } from '@/lib';
 import { useScrollRestore } from '@/composables/useScrollRestore';
 import { useFeedPendingCount } from '@/composables/useFeedPendingCount';
 import { startFeedPolling } from '@/composables/useFeedPolling';
@@ -410,8 +410,8 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
                     <path d="M6 13V1M6 1L1 6M6 1L11 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
                 <div v-if="pendingAuthors.length > 0" class="banner-avatars">
-                    <img v-for="(author, i) in pendingAuthors" :key="author.mid"
-                         :src="avatarSrc(author.avatar)"
+                    <UserAvatar v-for="(author, i) in pendingAuthors" :key="author.mid"
+                         :user="author"
                          class="banner-avatar"
                          :style="{ marginLeft: i > 0 ? '-8px' : '0', zIndex: 3 - i }"/>
                 </div>

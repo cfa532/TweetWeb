@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { useAlertStore } from '@/stores/alert.store';
-import { DownloadPrompt, DownloadModal } from '@/components';
+import { DownloadPrompt, DownloadModal, UserAvatar } from '@/components';
 import { formatTimeDifference, avatarSrc } from '@/lib';
 
 const { t } = useI18n()
@@ -421,9 +421,10 @@ async function onAccountAvatarError() {
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <img :src="user ? avatarSrc(user.avatar) : avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
-                        class="rounded-circle"
-                        :title="user ? `ID: ${user.mid}\nBase URL: ${user.providerIp ?? 'N/A'}\nHost ID: ${user.hostIds?.[0] ?? 'N/A'}` : undefined" />
+                    <UserAvatar v-if="user" :user="user" @click="onAppAvatarClick" @error="onAvatarError" alt="User Avatar"
+                        class="rounded-circle" />
+                    <img v-else :src="avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
+                        class="rounded-circle" />
                 </div>
                 <!-- User Info -->
                 <div v-if="user" class="user-info flex-grow-1">
@@ -458,7 +459,7 @@ async function onAccountAvatarError() {
                     :aria-expanded="isAccountMenuOpen"
                     aria-haspopup="true"
                 >
-                    <img v-if="accountAvatarSrc" :src="accountAvatarSrc"
+                    <UserAvatar v-if="accountAvatarSrc && tweetStore.loginUser" :user="tweetStore.loginUser" :src="accountAvatarSrc"
                         class="account-avatar rounded-circle"
                         @error="onAccountAvatarError" />
                     <svg v-else xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"

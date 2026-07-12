@@ -2,7 +2,8 @@
 import { computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { formatTimeDifference, avatarSrc } from '@/lib';
+import { formatTimeDifference } from '@/lib';
+import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { useI18n } from 'vue-i18n';
 import { CornerMenu } from '@/views';
@@ -118,7 +119,7 @@ function openDetailView() {
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
     <div :class="['avatar', 'me-2', 'author-avatar', { 'comment-avatar': isComment }]">
-      <img v-if='headerAuthor' :src='avatarSrc(headerAuthor.avatar)' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(headerAuthor.mid)' @error='handleAvatarError'>
+      <UserAvatar v-if='headerAuthor' :user='headerAuthor' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(headerAuthor.mid)' @error='handleAvatarError' />
       <div v-else class='rounded-circle loading-avatar'></div>
     </div>
     <!-- User Info -->

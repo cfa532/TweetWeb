@@ -5,6 +5,7 @@ import { useTweetStore, useAlertStore } from '@/stores';
 import { useRouter, useRoute } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import AvatarCropper from '@/views/AvatarCropper.vue';
+import UserAvatar from '@/components/UserAvatar.vue';
 
 const { t } = useI18n();
 
@@ -455,8 +456,9 @@ function goBack() {
             <!-- PROFILE VIEW (matches iOS ProfileView.swift) -->
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
-                    <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                    <UserAvatar v-if="user" :user="user" :src="localAvatarUrl || user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
                         alt="Avatar" @error="onProfileAvatarError" />
+                    <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" alt="Avatar" />
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
                     <span class="text-muted">@{{ user?.username }}</span>
                 </div>
@@ -529,8 +531,9 @@ function goBack() {
             <form v-if="activeView === 'edit'" @submit.prevent="handleUpdateProfile">
                 <div class="text-center mb-3">
                     <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
-                        <img :src="localAvatarUrl || user?.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                        <UserAvatar v-if="user" :user="user" :src="localAvatarUrl || user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
                             alt="Avatar" @error="onProfileAvatarError" />
+                        <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" alt="Avatar" />
                         <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
                             <span class="spinner-border spinner-border-sm text-white"></span>
                         </div>

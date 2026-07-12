@@ -6,7 +6,8 @@ import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import { CidModal } from '@/views'
 import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
-import { MEDIA_TYPES, isVideoType, isImageType, avatarSrc } from '@/lib'
+import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
+import { UserAvatar } from '@/components'
 
 interface HTMLInputEvent extends Event {
   target: HTMLInputElement & EventTarget
@@ -546,7 +547,7 @@ function handleDragEnd() {
 
   <div style='background-color:aliceblue;'>
       <div class='editor-header'>
-        <img :key='avatarRetry' :src='avatarSrc(author.avatar)' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer' @error='onAvatarError'>
+        <UserAvatar :key='avatarRetry' :user='author' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer' @error='onAvatarError' />
         <div class='editor-author' @click='openUserPage' style='cursor:pointer'>
           <div class='fw-bold'>{{ author.name }}</div>
           <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>

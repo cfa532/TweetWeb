@@ -2,7 +2,8 @@
 import { onMounted, ref, watch, computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
-import { formatTimeDifference, avatarSrc } from '@/lib';
+import { formatTimeDifference } from '@/lib';
+import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
 import { useI18n } from 'vue-i18n';
@@ -32,14 +33,6 @@ const canShowFollowButton = computed(() => {
     !!tweetStore.loginUser &&
     !!user.value &&
     user.value.mid !== tweetStore.loginUser.mid
-})
-
-const avatarTooltip = computed(() => {
-  if (!user.value) return ''
-  const u = user.value
-  const hostId = u.hostIds?.[0] ?? 'N/A'
-  const baseIp = u.providerIp ?? 'N/A'
-  return `User ID: ${u.mid}\nHost ID: ${hostId}\nBase IP: ${baseIp}`
 })
 
 /** Bold name — use username when display name is missing (same as ItemHeader). */
@@ -127,7 +120,7 @@ async function onToggleFollow(event: Event) {
   <div v-else-if="user" class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <img :src="avatarSrc(user.avatar)" :title="avatarTooltip" alt="User Avatar" class="rounded-circle">
+      <UserAvatar :user="user" alt="User Avatar" class="rounded-circle" />
     </div>
 
     <!-- User Info -->
