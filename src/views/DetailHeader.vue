@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
+import { CornerMenu } from '@/views';
 
 const props = defineProps({
   author: { type: Object as PropType<User>, required: true },
@@ -12,7 +13,11 @@ const props = defineProps({
   isRetweet: { type: Boolean, required: false, default: false },
   by: { type: String, required: false },
   /** Omit the tweet currently shown on the detail page from the carousel */
-  excludeTweetId: { type: String, required: false }
+  excludeTweetId: { type: String, required: false },
+  tweet: { type: Object as PropType<Tweet>, required: false },
+  editTweet: { type: Object as PropType<Tweet>, required: false },
+  parentTweet: { type: Object as PropType<Tweet>, required: false },
+  isComment: { type: Boolean, required: false, default: false }
 });
 
 const tweetStore = useTweetStore();
@@ -215,6 +220,9 @@ watch(
           </div>
         </div>
       </div>
+      <div v-if='tweet' class='corner-menu-container' @click.stop>
+        <CornerMenu :tweet='tweet' :edit-tweet='editTweet' :parent-tweet='parentTweet' :is-comment='isComment' />
+      </div>
     </div>
     <div
       v-if='stripReady && carouselItems.length'
@@ -265,6 +273,13 @@ watch(
   width: 100%;
   margin: 0;
   padding: 8px 0;
+}
+.corner-menu-container {
+  height: 100%;
+  display: flex;
+  /* Above flex siblings so mobile hit-testing targets the menu, not the card header */
+  position: relative;
+  z-index: 2;
 }
 .author-carousel-outer {
   width: calc(100% + 16px);

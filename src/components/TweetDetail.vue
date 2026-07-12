@@ -851,10 +851,12 @@ function retryLoad() {
         <div class="card-header d-flex align-items-stretch">
             <DetailHeader class="w-100" v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
                 :is-retweet="isRetweet" :by="tweet.author.username"
-                :exclude-tweet-id="tweet.originalTweet?.mid">
+                :exclude-tweet-id="tweet.originalTweet?.mid"
+                :tweet="tweet" :edit-tweet="tweet.originalTweet">
             </DetailHeader>
             <DetailHeader class="w-100" v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"
-                :exclude-tweet-id="tweet.mid">
+                :exclude-tweet-id="tweet.mid"
+                :tweet="tweet">
             </DetailHeader>
         </div>
         
