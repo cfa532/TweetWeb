@@ -426,6 +426,27 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     },
     actions: {
+        resolvedInteractionFlags(tweet: Tweet): boolean[] {
+            const flags = Array.isArray(tweet.favorites)
+                ? [...tweet.favorites]
+                : [false, false, false]
+            while (flags.length < 3) flags.push(false)
+
+            const override = this.interactionOverrides.get(tweet.mid)
+            if (override?.favorite !== undefined) flags[0] = override.favorite
+            if (override?.bookmark !== undefined) flags[1] = override.bookmark
+            return flags
+        },
+
+        setInteractionOverride(
+            tweetId: string,
+            kind: 'favorite' | 'bookmark',
+            value: boolean,
+        ) {
+            const override = this.interactionOverrides.get(tweetId) ?? {}
+            this.interactionOverrides.set(tweetId, { ...override, [kind]: value })
+        },
+
         persistLoginUser(user?: User | null) {
             const userToPersist = user ?? this._user
             if (userToPersist) setStoredLoginUser(userToPersist)

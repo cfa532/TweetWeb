@@ -25,8 +25,9 @@ const emit = defineEmits<{
 // Index matches iOS UserActions.{FAVORITE=0, BOOKMARK=1, RETWEET=2}.
 const FAVORITE_IDX = 0;
 const BOOKMARK_IDX = 1;
-const isLiked = computed(() => !!props.tweet.favorites?.[FAVORITE_IDX] && tweetStore.loginUser != null);
-const isBookmarked = computed(() => !!props.tweet.favorites?.[BOOKMARK_IDX] && tweetStore.loginUser != null);
+const resolvedFavorites = computed(() => tweetStore.resolvedInteractionFlags(props.tweet));
+const isLiked = computed(() => !!resolvedFavorites.value[FAVORITE_IDX] && tweetStore.loginUser != null);
+const isBookmarked = computed(() => !!resolvedFavorites.value[BOOKMARK_IDX] && tweetStore.loginUser != null);
 
 function formatCount(count?: number): string {
   if (!count || count <= 0) return '';
@@ -92,17 +93,26 @@ async function onLike() {
     redirectToLogin();
     return;
   }
-  const original = { ...props.tweet };
+  const original = {
+    ...props.tweet,
+    favorites: [...resolvedFavorites.value],
+    favoriteOverride: resolvedFavorites.value[FAVORITE_IDX],
+    bookmarkOverride: resolvedFavorites.value[BOOKMARK_IDX],
+  };
   const wasLiked = !!original.favorites?.[FAVORITE_IDX];
+  const nextLiked = !wasLiked;
+  tweetStore.setInteractionOverride(original.mid, 'favorite', nextLiked);
   emit('updated', {
     ...original,
     likeCount: Math.max(0, (original.likeCount ?? 0) + (wasLiked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, FAVORITE_IDX),
+    favoriteOverride: nextLiked,
   });
   try {
     const serverResult = await tweetStore.toggleFavorite(original);
     emit('updated', serverResult);
   } catch (e) {
+    tweetStore.setInteractionOverride(original.mid, 'favorite', wasLiked);
     emit('updated', original);
     console.error('[onLike] failed:', e);
     alertStore.error(e, { fallbackMessage: t('tweet.likeFailed') });
@@ -114,17 +124,26 @@ async function onBookmark() {
     redirectToLogin();
     return;
   }
-  const original = { ...props.tweet };
+  const original = {
+    ...props.tweet,
+    favorites: [...resolvedFavorites.value],
+    favoriteOverride: resolvedFavorites.value[FAVORITE_IDX],
+    bookmarkOverride: resolvedFavorites.value[BOOKMARK_IDX],
+  };
   const wasBookmarked = !!original.favorites?.[BOOKMARK_IDX];
+  const nextBookmarked = !wasBookmarked;
+  tweetStore.setInteractionOverride(original.mid, 'bookmark', nextBookmarked);
   emit('updated', {
     ...original,
     bookmarkCount: Math.max(0, (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, BOOKMARK_IDX),
+    bookmarkOverride: nextBookmarked,
   });
   try {
     const serverResult = await tweetStore.toggleBookmark(original);
     emit('updated', serverResult);
   } catch (e) {
+    tweetStore.setInteractionOverride(original.mid, 'bookmark', wasBookmarked);
     emit('updated', original);
     console.error('[onBookmark] failed:', e);
     alertStore.error(e, { fallbackMessage: t('tweet.bookmarkFailed') });
