@@ -50,6 +50,10 @@ interface Tweet {
     originalTweetId?: MimeiId;
     originalTweet?: Tweet | null;
     originalAuthorId?: MimeiId;
+    /** Immediate parent tweet/comment for comments and replies. */
+    parentTweetId?: MimeiId;
+    /** Saved-list-only embedded parent; never persisted as retweet state. */
+    savedParentTweet?: Tweet | null;
     comments?: Tweet[];
 
     likeCount?: number;

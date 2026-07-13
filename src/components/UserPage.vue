@@ -365,7 +365,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         // (node unreachable, timeout) keep cached tweets on screen.
         if (loadSucceeded) {
             const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
-            const filtered = displayedTweets.value.filter(t => storeIds.has(t.mid));
+            const filtered = displayedTweets.value.filter(t => !t.parentTweetId && storeIds.has(t.mid));
             if (filtered.length !== displayedTweets.value.length) {
                 displayedTweets.value = filtered;
             }
@@ -457,6 +457,7 @@ function pendingNewTweetIds(): Set<string> {
         ? (displayedTweets.value[0].timestamp as number)
         : -Infinity;
     for (const e of tweetStore.tweets) {
+        if (e.parentTweetId) continue;
         if (existingIds.has(e.mid)) continue;
         if (pinnedIds.has(e.mid)) continue;
         if ((e.timestamp as number) <= topTimestamp) continue;
@@ -572,6 +573,7 @@ function appendNewToDisplayed(candidateIds?: Set<string>) {
     const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
     const newTweets = tweetStore.tweets
         .filter(e => {
+            if (e.parentTweetId) return false;
             if (existingIds.has(e.mid)) return false;
             if (pinnedIds.has(e.mid)) return false;
             if (candidateIds && !candidateIds.has(e.mid)) return false;
@@ -669,7 +671,7 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
     pinnedTweets.value = tweetStore.getCachedPinnedTweets(nv);
     const cached = tweetStore.getCachedUserTweets(nv);
     const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
-    displayedTweets.value = cached.filter(t => !pinnedIds.has(t.mid));
+    displayedTweets.value = cached.filter(t => !t.parentTweetId && !pinnedIds.has(t.mid));
     if (cached.length > 0) {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }

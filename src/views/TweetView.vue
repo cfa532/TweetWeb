@@ -39,7 +39,9 @@ function tweetHasOwnBody(tweet: Tweet | null | undefined): boolean {
 }
 
 onMounted(async () => {
-  if (currentTweet.value.originalTweetId) {
+  if (currentTweet.value.savedParentTweet) {
+    originalTweet.value = currentTweet.value.savedParentTweet;
+  } else if (currentTweet.value.originalTweetId) {
     // Use already-loaded originalTweet (e.g. from pinned tweet cache) if available,
     // otherwise fetch it from the store/network
     originalTweet.value = currentTweet.value.originalTweet
@@ -614,7 +616,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         </div>
       </div>
       <!-- Embedded original tweet for quote tweets -->
-      <blockquote v-if="!isRetweet && !isQuoted && currentTweet.originalTweetId" class="quoted-tweet">
+      <blockquote v-if="!isRetweet && !isQuoted && (currentTweet.originalTweetId || currentTweet.savedParentTweet)" class="quoted-tweet">
         <TweetView v-if="originalTweet" :tweet="originalTweet" :is-quoted="true" />
         <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
       </blockquote>

@@ -1230,6 +1230,10 @@ export const useTweetStore = defineStore('tweetStore', {
             const result: Tweet[] = []
             for (const t of data) {
                 if (!t || !t.mid) continue
+                const flags = Array.isArray(t.favorites) ? [...t.favorites] : [false, false, false]
+                while (flags.length < 3) flags.push(false)
+                flags[type === 'bookmark_list' ? 1 : 0] = true
+                t.favorites = flags
                 try {
                     await this.addTweetToStore(t)
                 } catch (e) {
@@ -1237,7 +1241,19 @@ export const useTweetStore = defineStore('tweetStore', {
                     continue
                 }
                 const stored = this.tweetIndex.get(t.mid)
-                if (stored) result.push(stored)
+                if (stored) {
+                    let displayTweet = stored
+                    // Saved comments reuse the existing quote presentation, with
+                    // their immediate parent embedded. A missing parent leaves the
+                    // comment as a normal row rather than dropping it.
+                    if (stored.parentTweetId) {
+                        const parent = await this.fetchTweet(stored.parentTweetId, undefined)
+                        if (parent) {
+                            displayTweet = { ...stored, savedParentTweet: parent }
+                        }
+                    }
+                    result.push(displayTweet)
+                }
             }
             return result
         },
@@ -3302,17 +3318,29 @@ export const useTweetStore = defineStore('tweetStore', {
                 const uploadPromise = (async () => {
                     if (tweetId) {
                         const parentTweet = await this.getTweet(tweetId)
-                        const parentAuthorHostId = parentTweet?.author?.hostIds?.[0]
+                        if (!parentTweet) throw new Error('Parent tweet not found')
+                        const parentAuthor = parentTweet.author ?? await this.getUser(parentTweet.authorId)
+                        if (!parentAuthor) throw new Error('Parent tweet author not found')
+                        const parentAuthorHostId = parentAuthor.hostIds?.[0]
                         if (!parentAuthorHostId) {
                             throw new Error('Parent tweet author has no hostIds[0]')
                         }
-                        return await this.loginUser!.client.RunMApp('add_comment', {
-                            aid: this.appId, ver: 'last', version: 'v2',
-                            tweetid: tweetId,
-                            comment: JSON.stringify(tweet),
-                            tweetauthorid: parentTweet.authorId,
-                            hostid: parentAuthorHostId,
-                        })
+                        const parentWritableIp = await this.resolveWritableHostIp(parentAuthor)
+                        const parentClient = createPooledClient(parentWritableIp, this.lapi.connectionPool)
+                        tweet.parentTweetId = tweetId
+                        const parentOriginalTimeout = parentClient.timeout
+                        parentClient.timeout = effectiveTimeout
+                        try {
+                            return await parentClient.RunMApp('add_comment', {
+                                aid: this.appId, ver: 'last', version: 'v2',
+                                tweetid: tweetId,
+                                comment: JSON.stringify(tweet),
+                                tweetauthorid: parentAuthor.mid,
+                                hostid: parentAuthorHostId,
+                            })
+                        } finally {
+                            parentClient.timeout = parentOriginalTimeout
+                        }
                     }
                     return await this.loginUser!.client.RunMApp('add_tweet', {
                         aid: this.appId, ver: 'last',
