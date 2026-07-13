@@ -54,6 +54,10 @@ interface Tweet {
     parentTweetId?: MimeiId;
     /** Saved-list-only embedded parent; never persisted as retweet state. */
     savedParentTweet?: Tweet | null;
+    /** Parent author whose root stores this comment; runtime-only. */
+    interactionHostAuthor?: User | null;
+    favoriteOverride?: boolean;
+    bookmarkOverride?: boolean;
     comments?: Tweet[];
 
     likeCount?: number;

@@ -363,6 +363,7 @@ export const useTweetStore = defineStore('tweetStore', {
     state: () => ({
         tweets: [] as Tweet[],      // tweets
         tweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
+        interactionOverrides: new Map<string, { favorite?: boolean; bookmark?: boolean }>(),
         // Mids that belong to the main following feed (loaded by getTweetFeed /
         // updateFollowingTweets). `tweets` is a shared cache that profile and pinned
         // loaders also push into, so the feed banner must count only these — otherwise
@@ -553,6 +554,12 @@ export const useTweetStore = defineStore('tweetStore', {
         async addTweetToStore(tweet: Tweet, isFeedTweet: boolean = false) {
             try {
                 if (this._deletedTweetIds.has(tweet.mid)) return
+                if (tweet.favoriteOverride !== undefined || tweet.bookmarkOverride !== undefined) {
+                    this.interactionOverrides.set(tweet.mid, {
+                        favorite: tweet.favoriteOverride,
+                        bookmark: tweet.bookmarkOverride,
+                    })
+                }
                 const existing = this.tweetIndex.get(tweet.mid)
                 if (existing) {
                     // Tweet already cached — refresh mutable fields from fresh data.
@@ -1234,6 +1241,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 while (flags.length < 3) flags.push(false)
                 flags[type === 'bookmark_list' ? 1 : 0] = true
                 t.favorites = flags
+                if (type === 'bookmark_list') t.bookmarkOverride = true
+                else t.favoriteOverride = true
+                const savedOverride = this.interactionOverrides.get(t.mid) ?? {}
+                if (type === 'bookmark_list') savedOverride.bookmark = true
+                else savedOverride.favorite = true
+                this.interactionOverrides.set(t.mid, savedOverride)
                 try {
                     await this.addTweetToStore(t)
                 } catch (e) {
@@ -2614,6 +2627,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (!e) continue  // null entry — comment not yet synced to read node, no ID available
                     if (!e.mid) continue
                     if (!e.authorId) continue  // has mid but malformed — skip
+                    const locallyKnown = this.tweetIndex.get(e.mid)
+                    const override = this.interactionOverrides.get(e.mid)
+                    const serverFlags = Array.isArray(e.favorites) ? [...e.favorites] : [false, false, false]
+                    while (serverFlags.length < 3) serverFlags.push(false)
+                    if (override?.favorite !== undefined) serverFlags[0] = override.favorite
+                    if (override?.bookmark !== undefined) serverFlags[1] = override.bookmark
                     const comment: any = {
                         mid: e.mid,
                         authorId: e.authorId,
@@ -2624,7 +2643,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         likeCount: e.favoriteCount ?? e.likeCount ?? 0,
                         bookmarkCount: e.bookmarkCount ?? 0,
                         commentCount: e.commentCount ?? 0,
-                        favorites: e.favorites,
+                        favorites: serverFlags,
+                        interactionHostAuthor: tweet.author,
+                        favoriteOverride: override?.favorite ?? locallyKnown?.favoriteOverride,
+                        bookmarkOverride: override?.bookmark ?? locallyKnown?.bookmarkOverride,
                         comments: [],
                         attachments: e.attachments?.filter((a: MimeiFileType | null) => a !== null && a !== undefined)
                             .map((a: MimeiFileType) => {
@@ -2736,6 +2758,12 @@ export const useTweetStore = defineStore('tweetStore', {
 
             for (const e of rawComments) {
                 if (!e || !e.mid || !e.authorId || existingMids.has(e.mid)) continue
+                const locallyKnown = this.tweetIndex.get(e.mid)
+                const override = this.interactionOverrides.get(e.mid)
+                const serverFlags = Array.isArray(e.favorites) ? [...e.favorites] : [false, false, false]
+                while (serverFlags.length < 3) serverFlags.push(false)
+                if (override?.favorite !== undefined) serverFlags[0] = override.favorite
+                if (override?.bookmark !== undefined) serverFlags[1] = override.bookmark
                 newComments.push({
                     mid: e.mid,
                     authorId: e.authorId,
@@ -2746,7 +2774,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     likeCount: e.favoriteCount ?? e.likeCount ?? 0,
                     bookmarkCount: e.bookmarkCount ?? 0,
                     commentCount: e.commentCount ?? 0,
-                    favorites: e.favorites,
+                    favorites: serverFlags,
+                    interactionHostAuthor: tweet.author,
+                    favoriteOverride: override?.favorite ?? locallyKnown?.favoriteOverride,
+                    bookmarkOverride: override?.bookmark ?? locallyKnown?.bookmarkOverride,
                     comments: [],
                     attachments: e.attachments
                         ?.filter((a: any) => a != null)
@@ -3023,6 +3054,7 @@ export const useTweetStore = defineStore('tweetStore', {
             this._followings = []
             this.tweets = []
             this.tweetIndex.clear()
+            this.interactionOverrides.clear()
             this.feedTweetIds.clear()
             this.feedPendingCandidateIds.clear()
             this._deletedTweetIds.clear()
@@ -3573,7 +3605,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 authorid: tweet.authorId,
                 userhostid: userHostId,
             }
-            const author = tweet.author ?? this.users.get(tweet.authorId)
+            const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_favorite')
             const writableIp = await this.resolveWritableHostIp(author)
             const ret = await createPooledClient(writableIp, this.lapi.connectionPool).RunMApp("toggle_favorite", params)
@@ -3596,7 +3628,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 authorid: tweet.authorId,
                 userhostid: userHostId,
             }
-            const author = tweet.author ?? this.users.get(tweet.authorId)
+            const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_bookmark')
             const writableIp = await this.resolveWritableHostIp(author)
             const ret = await createPooledClient(writableIp, this.lapi.connectionPool).RunMApp("toggle_bookmark", params)
@@ -3614,7 +3646,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     retweetCount: s.retweetCount ?? tweet.retweetCount,
                     // [favorite, bookmark, retweeted] per appUser.
                     favorites: Array.isArray(s.favorites) ? s.favorites : tweet.favorites,
+                    favoriteOverride: Array.isArray(s.favorites) ? Boolean(s.favorites[0]) : tweet.favoriteOverride,
+                    bookmarkOverride: Array.isArray(s.favorites) ? Boolean(s.favorites[1]) : tweet.bookmarkOverride,
                 }
+                this.interactionOverrides.set(tweet.mid, {
+                    favorite: updated.favoriteOverride,
+                    bookmark: updated.bookmarkOverride,
+                })
                 const idx = this.tweets.findIndex(e => e.mid == tweet.mid)
                 if (idx >= 0) {
                     Object.assign(this.tweets[idx], updated)
