@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { useI18n } from 'vue-i18n';
@@ -66,6 +66,14 @@ function handleAvatarError(event: Event) {
   img.dataset.refreshed = '1'
   tweetStore.getUser(authorId, true).catch(() => undefined)
 }
+
+/** VITE_APP_LOGO is a remote URL; if it also fails to load, fall back to a
+ * same-origin asset that doesn't depend on any external host. */
+function handleFallbackAvatarError(event: Event) {
+  const img = event.target as HTMLImageElement | null
+  if (!img || img.src.endsWith('/ic_splash.png')) return
+  img.src = '/ic_splash.png'
+}
 function openDetailView() {
     sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
     const authorId = props.tweet?.author?.mid || props.tweet?.authorId;
@@ -120,7 +128,7 @@ function openDetailView() {
     <!-- User Avatar -->
     <div :class="['avatar', 'me-2', 'author-avatar', { 'comment-avatar': isComment }]">
       <UserAvatar v-if='headerAuthor' :user='headerAuthor' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(headerAuthor.mid)' @error='handleAvatarError' />
-      <div v-else class='rounded-circle loading-avatar'></div>
+      <img v-else :src='avatarSrc(undefined)' alt='User Avatar' class='rounded-circle' @error='handleFallbackAvatarError' />
     </div>
     <!-- User Info -->
     <div class='user-info flex-grow-1' @click.stop.prevent='openDetailView'>
