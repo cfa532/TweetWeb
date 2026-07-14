@@ -170,8 +170,7 @@ async function deleteItem() {
       if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
         const commentIdToDelete = props.tweet.mid
         const parentTweet = props.parentTweet
-        const hadCommentsArray = Array.isArray(parentTweet.comments)
-        const previousComments = hadCommentsArray ? [...parentTweet.comments] : undefined
+        const previousComments = Array.isArray(parentTweet.comments) ? [...parentTweet.comments] : undefined
         const previousCount = parentTweet.commentCount
 
         // Remove optimistically so the UI updates immediately; roll back if the
