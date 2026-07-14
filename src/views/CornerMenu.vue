@@ -169,26 +169,34 @@ async function deleteItem() {
       // Delete comment - requires comment author OR parent tweet author OR admin
       if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
         const commentIdToDelete = props.tweet.mid
+        const parentTweet = props.parentTweet
+        const hadCommentsArray = Array.isArray(parentTweet.comments)
+        const previousComments = hadCommentsArray ? [...parentTweet.comments] : undefined
+        const previousCount = parentTweet.commentCount
 
-        await tweetStore.deleteComment(
-          commentIdToDelete,
-          props.tweet.authorId,
-          props.parentTweet.mid,
-          props.parentTweet.authorId
-        )
-
-        // Force update by replacing the comments array to trigger Vue reactivity
-        if (props.parentTweet.comments && Array.isArray(props.parentTweet.comments)) {
-          // Remove the comment from the array
-          props.parentTweet.comments = props.parentTweet.comments.filter((c: Tweet) => c && c.mid !== commentIdToDelete)
-
-          // Update comment count if it exists
-          if (props.parentTweet.commentCount !== undefined) {
-            props.parentTweet.commentCount = Math.max(0, (props.parentTweet.commentCount || 0) - 1)
+        // Remove optimistically so the UI updates immediately; roll back if the
+        // server call fails (e.g. writable host is unavailable).
+        if (previousComments) {
+          parentTweet.comments = previousComments.filter((c: Tweet) => c && c.mid !== commentIdToDelete)
+          if (previousCount !== undefined) {
+            parentTweet.commentCount = Math.max(0, (previousCount || 0) - 1)
           }
-
-          // Force Vue to update by using nextTick
           await nextTick()
+        }
+
+        try {
+          await tweetStore.deleteComment(
+            commentIdToDelete,
+            props.tweet.authorId,
+            props.parentTweet.mid,
+            props.parentTweet.authorId
+          )
+        } catch (error) {
+          if (previousComments) {
+            parentTweet.comments = previousComments
+            parentTweet.commentCount = previousCount
+          }
+          throw error
         }
         didDelete = true
       }

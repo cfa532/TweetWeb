@@ -771,13 +771,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 params.userid = user.mid
 
                 try {
-                    if (attempt > 1) {
-                        const hostId = user.hostIds?.[0]
-                        if (hostId) this._writableHostCache.delete(hostId)
-                        user.writableHostIp = null
+                    const readIp = await this.getUserReadIp(user, attempt > 1)
+                    if (!readIp) {
+                        throw new Error(`Tweets by user unavailable: could not resolve a read host for ${user.mid}`)
                     }
-                    const writableIp = await this.resolveWritableHostIp(user)
-                    const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                    const profileClient = createPooledClient(readIp, this.lapi.connectionPool)
                     const response = await profileClient.RunMApp("get_tweets_by_user", params)
 
                     // Check success status first
@@ -1119,13 +1117,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 try {
-                    if (attempt > 1) {
-                        const hostId = user.hostIds?.[0]
-                        if (hostId) this._writableHostCache.delete(hostId)
-                        user.writableHostIp = null
+                    const readIp = await this.getUserReadIp(user, attempt > 1)
+                    if (!readIp) {
+                        throw new Error(`Pinned tweets unavailable: could not resolve a read host for ${user.mid}`)
                     }
-                    const writableIp = await this.resolveWritableHostIp(user)
-                    const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                    const profileClient = createPooledClient(readIp, this.lapi.connectionPool)
                     const raw = await profileClient.RunMApp("get_pinned_tweets", params)
 
                     // v2 wraps payloads as { success, data, message }. Unwrap.
@@ -1238,8 +1234,11 @@ export const useTweetStore = defineStore('tweetStore', {
 
             let raw: any
             try {
-                const writableIp = await this.resolveWritableHostIp(user)
-                const profileClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                const readIp = await this.getUserReadIp(user)
+                if (!readIp) {
+                    throw new Error(`User meta unavailable: could not resolve a read host for ${user.mid}`)
+                }
+                const profileClient = createPooledClient(readIp, this.lapi.connectionPool)
                 raw = await profileClient.RunMApp("get_user_meta", params)
             } catch (e) {
                 console.warn(`[loadUserTweetsByType] ${type} RPC failed for ${userId}:`, e)
@@ -1309,13 +1308,11 @@ export const useTweetStore = defineStore('tweetStore', {
             let lastError: unknown = null
             for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
-                if (attempt > 1) {
-                    const hostId = user.hostIds?.[0]
-                    if (hostId) this._writableHostCache.delete(hostId)
-                    user.writableHostIp = null
+                const readIp = await this.getUserReadIp(user, attempt > 1)
+                if (!readIp) {
+                    throw new Error(`Tweet feed unavailable: could not resolve a read host for ${user.mid}`)
                 }
-                const writableIp = await this.resolveWritableHostIp(user)
-                const feedClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                const feedClient = createPooledClient(readIp, this.lapi.connectionPool)
                 const params = {
                     aid: this.appId,
                     ver: "last",
@@ -3270,24 +3267,31 @@ export const useTweetStore = defineStore('tweetStore', {
         async deleteComment(commentId: MimeiId, commentAuthorId: MimeiId, parentTweetId: MimeiId, parentAuthorId: MimeiId) {
             // Verify authorization: can be called by comment author or parent tweet author
             if (!this.loginUser || (this.loginUser.username !== 'admin' && this.loginUser.mid !== commentAuthorId && this.loginUser.mid !== parentAuthorId)) {
-                console.error("Unauthorized: Only comment author, parent tweet author, or admin can delete comments")
-                return
+                throw new Error("Not authorized to delete this comment")
             }
 
-            // Get parent tweet author's client (comments are stored on the same node as the tweet)
-            let parentAuthor = await this.getUser(parentAuthorId)
-            if (!parentAuthor || !parentAuthor.client) {
-                console.error("Failed to get parent tweet author's client for deleting comment")
-                return
+            // Get parent tweet author (comments are stored on the same node as the tweet).
+            // Use loginUser directly when they are the parent tweet author, same as deleteTweet,
+            // instead of re-fetching via getUser which races provider IPs and can spuriously
+            // report "User not found" / enter cooldown for the caller's own account.
+            const parentAuthor = parentAuthorId === this.loginUser.mid
+                ? this.loginUser
+                : await this.getUser(parentAuthorId)
+            if (!parentAuthor) {
+                throw new Error("Failed to get parent tweet author for deleting comment")
             }
-            
+
             if (!parentAuthor.hostIds || !parentAuthor.hostIds[0]) {
-                console.error("Parent tweet author's hostIds[0] is missing")
-                return
+                throw new Error("Parent tweet author's hostIds[0] is missing")
             }
+
+            // Resolve a fresh writable IP rather than reusing parentAuthor.client, which may
+            // be pinned to a stale/unhealthy IP from a previous race.
+            const writableIp = await this.resolveWritableHostIp(parentAuthor)
+            const deleteClient = createPooledClient(writableIp, this.lapi.connectionPool)
 
             // Call delete_comment API with proper parameters matching server expectations
-            await parentAuthor.client.RunMApp("delete_comment", {
+            await deleteClient.RunMApp("delete_comment", {
                 aid: this.appId,
                 ver: "last",
                 appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
