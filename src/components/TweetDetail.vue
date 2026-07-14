@@ -870,11 +870,11 @@ function retryLoad() {
             <DetailHeader class="w-100" v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
                 :is-retweet="isRetweet" :by="tweet.author.username"
                 :exclude-tweet-id="tweet.originalTweet?.mid"
-                :tweet="tweet" :edit-tweet="tweet.originalTweet">
+                :tweet="tweet" :edit-tweet="tweet.originalTweet" @deleted="goBack">
             </DetailHeader>
             <DetailHeader class="w-100" v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"
                 :exclude-tweet-id="tweet.mid"
-                :tweet="tweet">
+                :tweet="tweet" @deleted="goBack">
             </DetailHeader>
         </div>
         

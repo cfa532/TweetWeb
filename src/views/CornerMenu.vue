@@ -24,6 +24,7 @@ const props = defineProps({
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false}
 })
+const emit = defineEmits<{ (e: 'deleted'): void }>()
 
 // Truncate mid with ellipsis in the middle if too long
 const displayMid = computed(() => {
@@ -196,6 +197,7 @@ async function deleteItem() {
       if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId) {
         await tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
         didDelete = true
+        emit('deleted')
       }
     }
   } catch (error: any) {

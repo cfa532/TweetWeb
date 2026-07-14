@@ -19,6 +19,7 @@ const props = defineProps({
   parentTweet: { type: Object as PropType<Tweet>, required: false },
   isComment: { type: Boolean, required: false, default: false }
 });
+const emit = defineEmits<{ (e: 'deleted'): void }>();
 
 const tweetStore = useTweetStore();
 const router = useRouter();
@@ -221,7 +222,7 @@ watch(
         </div>
       </div>
       <div v-if='tweet' class='corner-menu-container' @click.stop>
-        <CornerMenu :tweet='tweet' :edit-tweet='editTweet' :parent-tweet='parentTweet' :is-comment='isComment' />
+        <CornerMenu :tweet='tweet' :edit-tweet='editTweet' :parent-tweet='parentTweet' :is-comment='isComment' @deleted='emit("deleted")' />
       </div>
     </div>
     <div
