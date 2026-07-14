@@ -127,7 +127,14 @@ onMounted(async () => {
         }, 30000)
     }, 2000)
 });
+// Bumped on every loadDetail() call so a stale in-flight attempt (e.g. one
+// still running past the safety timeout below) can recognize it's been
+// superseded by a retry and avoid clobbering the newer attempt's state.
+let loadGeneration = 0
+
 async function loadDetail() {
+    const myGeneration = ++loadGeneration
+
     isLoading.value = true
     loadError.value = false
     tweetNotFound.value = false
@@ -137,6 +144,7 @@ async function loadDetail() {
     // of reloading the page. Reload-based recovery multiplied retries and made
     // transient node slowness feel much worse.
     const timeoutId: number = window.setTimeout(() => {
+        if (myGeneration !== loadGeneration) return
         if (tweet.value) {
             // Tweet content rendered (cached path). Just stop the spinner.
             console.warn(`[TweetDetail] Secondary load timeout after ${LOAD_TIMEOUT_MS}ms; keeping rendered view`)
@@ -151,20 +159,26 @@ async function loadDetail() {
     try {
         // Retry up to 3 times with a short delay — provider IP resolution can
         // transiently return empty on first page load (RPC not yet warm).
+        let fetchedTweet: Tweet | undefined
         for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) await new Promise(r => setTimeout(r, 5000))
-            tweet.value = await tweetStore.getTweet(tweetId.value, authorId.value, true, false, true) as Tweet
-            if (tweet.value) break
+            if (myGeneration !== loadGeneration) return
+            fetchedTweet = await tweetStore.getTweet(tweetId.value, authorId.value, true, false, true) as Tweet
+            if (fetchedTweet) break
         }
 
-        if (!tweet.value) {
+        if (myGeneration !== loadGeneration) return
+
+        if (!fetchedTweet) {
             throw new Error('Tweet not found (null response)')
         }
 
+        tweet.value = fetchedTweet
         loadError.value = false
-        await showTweet(timeoutId)
+        await showTweet(myGeneration, timeoutId)
     } catch (error) {
         clearTimeout(timeoutId)
+        if (myGeneration !== loadGeneration) return
         console.error('[TweetDetail] Error loading tweet detail:', error)
 
         const isTweetNotFound = error && typeof error === 'object' && 'message' in error &&
@@ -177,7 +191,7 @@ async function loadDetail() {
         }
     }
 }
-async function showTweet(timeoutId?: number) {
+async function showTweet(myGeneration: number, timeoutId?: number) {
     try {
         // Tweet content is ready to display - set loading to false early
         document.title = formattedTitle.value
@@ -219,6 +233,10 @@ async function showTweet(timeoutId?: number) {
 
         // Await comments loading, then trigger Vue reactivity
         await Promise.allSettled(loadPromises)
+        // A retry may have started (and possibly already finished) while the
+        // above awaits were pending; bail out so this stale call doesn't
+        // duplicate observers/timers on top of the newer attempt's.
+        if (myGeneration !== loadGeneration) return
         // Use triggerRef to notify Vue that the ref's inner value has changed
         triggerRef(tweet)
         triggerRef(originTweet)
