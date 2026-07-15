@@ -5,6 +5,7 @@ import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
+import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -2572,19 +2573,23 @@ export const useTweetStore = defineStore('tweetStore', {
                         const colonCount = (ip.match(/:/g) || []).length;
                         if (v4only && colonCount > 1) return false;
 
-                        // Filter out private/local IPs (not reachable from public internet)
-                        if (this.isLocalIP(ip)) return false;
                         return true;
                     });
 
-                if (ipAddresses.length === 0) {
+                // A public page cannot contact RFC1918/RFC6598 routes even when
+                // the device itself belongs to that tailnet: Chrome blocks the
+                // request through Private Network Access before it reaches the
+                // network. Private-origin deployments retain those routes.
+                const candidates = browserUsableProviderRoutes(ipAddresses, window.location.hostname);
+
+                if (candidates.length === 0) {
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
                 }
 
-                // Race the first pair of candidate IPs in parallel; return the first one that passes
-                // a health check. Remaining checks are abandoned once a winner is found.
-                const candidates = ipAddresses.slice(0, 2);
+                // Race every browser-usable route. Filtering must happen before
+                // limiting candidates, otherwise early Tailscale routes hide a
+                // later public route and public deep links cannot load.
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
