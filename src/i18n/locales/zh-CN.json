@@ -111,7 +111,7 @@
     "commentDeleted": "评论已删除。",
     "unknownFile": "未知文件",
     "tweetNotFound": "推文未找到",
-    "tweetNotFoundDesc": "该推文不存在或已被删除。",
+    "tweetNotFoundDesc": "该推文可能已被删除，或暂时无法找到。请重试，或返回上一页。",
     "goBack": "返回",
     "unableToLoad": "无法加载推文",
     "loadError": "加载此推文时出错。",

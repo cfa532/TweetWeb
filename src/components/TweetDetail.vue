@@ -841,11 +841,17 @@ function retryLoad() {
         ← {{ $t('common.back') }}
     </div>
     
-    <!-- Tweet not found error - specific message for non-existent tweets -->
+    <!-- Tweet not found - resolution came back empty after all retries. This can
+         mean the tweet was deleted, but can equally mean the multi-provider
+         lookup itself failed transiently, so offer both Retry and Go Back. -->
     <div v-if="tweetNotFound && !isLoading && hasLoadAttempted && !tweet" class="loading-retry-message text-center my-4">
         <div class="alert alert-warning" role="alert">
             <h5 class="alert-heading">{{ $t('tweet.tweetNotFound') }}</h5>
             <p class="mb-3">{{ $t('tweet.tweetNotFoundDesc') }}</p>
+            <button @click="retryLoad" class="btn btn-primary me-2">
+                <span v-if="isLoading" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                {{ $t('common.retry') }}
+            </button>
             <button @click="goBack" class="btn btn-secondary">
                 {{ $t('tweet.goBack') }}
             </button>

@@ -111,7 +111,7 @@
     "commentDeleted": "Comment deleted.",
     "unknownFile": "Unknown file",
     "tweetNotFound": "Tweet Not Found",
-    "tweetNotFoundDesc": "This tweet doesn't exist or may have been deleted.",
+    "tweetNotFoundDesc": "This tweet may have been deleted, or it could not be found right now. Try again, or go back.",
     "goBack": "Go Back",
     "unableToLoad": "Unable to Load Tweet",
     "loadError": "There was an error loading this tweet.",
