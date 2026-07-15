@@ -1606,11 +1606,20 @@ export const useTweetStore = defineStore('tweetStore', {
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
                 const cachedAuthorId = t.author?.mid ?? t.authorId
                 if (t.author && cachedAuthorId) {
-                    const authorIp = await this.getProviderIp(cachedAuthorId, v4Only, false)
-                    if (!authorIp) {
-                        console.log(`[fetchTweet] Cached tweet ${tweetId} author route missing, fetching fresh data`)
-                        sessionStorage.removeItem(tweetId)
-                    } else {
+                    // getProviderIp can throw (not just return null) when every
+                    // resolved candidate IP fails its health check — e.g. after a
+                    // page reload wipes the in-memory NodePool and a fresh RPC
+                    // resolve returns only unreachable/private addresses. That must
+                    // not discard an already-valid cached tweet; fall back to
+                    // showing the cached content without a live route rather than
+                    // failing the whole detail view.
+                    let authorIp: string | null = null
+                    try {
+                        authorIp = await this.getProviderIp(cachedAuthorId, v4Only, false)
+                    } catch (error) {
+                        console.warn(`[fetchTweet] getProviderIp threw for cached tweet ${tweetId} author ${cachedAuthorId}; showing cached content without a live route`, error)
+                    }
+                    if (authorIp) {
                         t.author.providerIp = authorIp
                         t.provider = authorIp
                         t.author.client = createPooledClient(authorIp, this.lapi.connectionPool)
@@ -1620,7 +1629,12 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         const originalAuthorId = t.originalTweet?.author?.mid ?? t.originalTweet?.authorId
                         if (t.originalTweet?.author && originalAuthorId) {
-                            const originalAuthorIp = await this.getProviderIp(originalAuthorId, v4Only, false)
+                            let originalAuthorIp: string | null = null
+                            try {
+                                originalAuthorIp = await this.getProviderIp(originalAuthorId, v4Only, false)
+                            } catch (error) {
+                                console.warn(`[fetchTweet] getProviderIp threw for cached original tweet author ${originalAuthorId}; keeping cached content without a live route`, error)
+                            }
                             if (originalAuthorIp) {
                                 t.originalTweet.author.providerIp = originalAuthorIp
                                 t.originalTweet.provider = originalAuthorIp
@@ -1630,8 +1644,10 @@ export const useTweetStore = defineStore('tweetStore', {
                                 }
                             }
                         }
-                        return t
+                    } else {
+                        console.log(`[fetchTweet] Cached tweet ${tweetId} author route unavailable; showing cached content read-only`)
                     }
+                    return t
                 } else {
                     console.log(`[fetchTweet] Cached tweet ${tweetId} missing author, fetching fresh data`)
                     // Remove invalid cache
