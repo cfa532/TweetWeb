@@ -5,7 +5,7 @@ import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
-import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
+import { browserUsableProviderRoutes, isPrivateBrowserHost } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -16,6 +16,11 @@ const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
 const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
 const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
+
+function publicGatewayOrigin(): string | null {
+    if (!window.location.hostname || isPrivateBrowserHost(window.location.hostname)) return null
+    return window.location.origin
+}
 
 type ExpiringLocalCache<T> = {
     cachedAt: number
@@ -2218,7 +2223,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 try {
                     // HEAD probe: no body sent or received — just checks TCP + HTTP reachability.
                     // no-cors is required for cross-origin servers that don't send CORS headers.
-                    await fetch(`http://${ip}`, {
+                    await fetch(publicGatewayOrigin() ?? `http://${ip}`, {
                         method: 'HEAD',
                         mode: 'no-cors',
                         cache: 'no-store',
@@ -2451,6 +2456,8 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async _resolveNodeIps(hostId: string): Promise<string[]> {
+            const gateway = publicGatewayOrigin()
+            if (gateway) return [window.location.host]
             try {
                 const params: any = {
                     aid: this.lapi.appId, ver: "last", version: "v2",
@@ -2515,6 +2522,8 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
         async _resolveProviderIps(mid: string, v4only: boolean, refresh: boolean): Promise<string[]> {
+            const gateway = publicGatewayOrigin()
+            if (gateway) return [window.location.host]
             try {
                 console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
 
@@ -2890,7 +2899,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The complete media URL
          */
         getMediaUrl(mid: string | undefined, baseUrl: string): string {
-            let url = baseUrl
+            let url = publicGatewayOrigin() ?? baseUrl
             if (!mid) {
                 return import.meta.env.VITE_APP_LOGO
             }
@@ -2903,6 +2912,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * - If avatar is a raw mimei hash/id, build URL via getMediaUrl.
          */
         normalizeAvatarUrl(avatar: string | undefined, baseUrl: string): string {
+            baseUrl = publicGatewayOrigin() ?? baseUrl
             if (!avatar) return import.meta.env.VITE_APP_LOGO
             if (/^https?:\/\//i.test(avatar)) {
                 // Only swap host for node-scoped media URLs.

@@ -5,6 +5,8 @@
  * multiple simultaneous requests to the same or different servers.
  */
 
+import { isPrivateBrowserHost } from './browserNetwork';
+
 interface PooledConnection {
   id: number;
   client: any;
@@ -19,6 +21,10 @@ interface PendingRequest {
   resolve: (client: any) => void;
   reject: (error: Error) => void;
   timestamp: number;
+}
+
+function usesPublicGateway(): boolean {
+  return window.location.hostname !== '' && !isPrivateBrowserHost(window.location.hostname);
 }
 
 class ConnectionPoolManager {
@@ -225,7 +231,10 @@ class ConnectionPoolManager {
    * @returns An hprose client instance
    */
   private createClient(ip: string): any {
-    const client = window.hprose.Client.create("ws://" + ip + "/ws/", this.ayApi);
+    const gateway = usesPublicGateway();
+    const target = gateway ? window.location.host : ip;
+    const protocol = gateway && window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const client = window.hprose.Client.create(protocol + target + "/ws/", this.ayApi);
     client.timeout = 15000;
     return client;
   }
@@ -286,4 +295,3 @@ class ConnectionPoolManager {
 }
 
 export default ConnectionPoolManager;
-

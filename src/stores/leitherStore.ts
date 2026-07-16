@@ -40,7 +40,7 @@ export const useLeitherStore = defineStore({
         hostIP: curIP,    // IP address of node to write
         baseUrl: window.location.protocol+'//'+curIP+'/',
         client: (() => {
-            const c = window.hprose.Client.create("http://" + curIP + "/webapi/", ayApi);
+            const c = window.hprose.Client.create(window.location.protocol + "//" + curIP + "/webapi/", ayApi);
             c.timeout = 15000;
             return c;
         })(),
