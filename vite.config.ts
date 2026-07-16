@@ -20,7 +20,7 @@ export default defineConfig({
       transformIndexHtml(html) {
         // Leither resolves entry object names literally and does not accept
         // Vite 8's leading "./" on the generated module path.
-        return html.replace('src="./index_entry.js"', 'src="index_entry.js?v=20260716"')
+        return html.replace('src="./index_entry.js"', 'src="index_entry.js"')
       }
     },
     // removeConsole({ includes: ["log"]})
