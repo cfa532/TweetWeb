@@ -68,6 +68,6 @@ describe('TweetActionBar interaction state', () => {
         expect(store.toggleFavorite).toHaveBeenCalledWith(expect.objectContaining({
             mid: comment.mid,
             favorites: [true, false, false],
-        }))
+        }), false)
     })
 })

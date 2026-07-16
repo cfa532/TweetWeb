@@ -100,16 +100,16 @@ async function onLike() {
     bookmarkOverride: resolvedFavorites.value[BOOKMARK_IDX],
   };
   const wasLiked = !!original.favorites?.[FAVORITE_IDX];
-  const nextLiked = !wasLiked;
-  tweetStore.setInteractionOverride(original.mid, 'favorite', nextLiked);
+  const desiredFavorite = !wasLiked;
+  tweetStore.setInteractionOverride(original.mid, 'favorite', desiredFavorite);
   emit('updated', {
     ...original,
     likeCount: Math.max(0, (original.likeCount ?? 0) + (wasLiked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, FAVORITE_IDX),
-    favoriteOverride: nextLiked,
+    favoriteOverride: desiredFavorite,
   });
   try {
-    const serverResult = await tweetStore.toggleFavorite(original);
+    const serverResult = await tweetStore.toggleFavorite(original, desiredFavorite);
     emit('updated', serverResult);
   } catch (e) {
     tweetStore.setInteractionOverride(original.mid, 'favorite', wasLiked);
@@ -131,16 +131,16 @@ async function onBookmark() {
     bookmarkOverride: resolvedFavorites.value[BOOKMARK_IDX],
   };
   const wasBookmarked = !!original.favorites?.[BOOKMARK_IDX];
-  const nextBookmarked = !wasBookmarked;
-  tweetStore.setInteractionOverride(original.mid, 'bookmark', nextBookmarked);
+  const desiredBookmark = !wasBookmarked;
+  tweetStore.setInteractionOverride(original.mid, 'bookmark', desiredBookmark);
   emit('updated', {
     ...original,
     bookmarkCount: Math.max(0, (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, BOOKMARK_IDX),
-    bookmarkOverride: nextBookmarked,
+    bookmarkOverride: desiredBookmark,
   });
   try {
-    const serverResult = await tweetStore.toggleBookmark(original);
+    const serverResult = await tweetStore.toggleBookmark(original, desiredBookmark);
     emit('updated', serverResult);
   } catch (e) {
     tweetStore.setInteractionOverride(original.mid, 'bookmark', wasBookmarked);

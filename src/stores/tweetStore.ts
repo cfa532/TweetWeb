@@ -3645,10 +3645,11 @@ export const useTweetStore = defineStore('tweetStore', {
         },
         /**
          * Toggles the like status of a tweet
-         * @param tweetId The ID of the tweet to toggle like for
+         * @param tweet The tweet to update
+         * @param isFavorite The desired favorite state
          * @returns The updated tweet object
          */
-        async toggleFavorite(tweet: Tweet) {
+        async toggleFavorite(tweet: Tweet, isFavorite: boolean) {
             const loginUser = this.loginUser
             if (!loginUser) throw new Error('Not logged in')
             const userHostId = loginUser.hostIds?.[0]
@@ -3659,6 +3660,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
                 userhostid: userHostId,
+                isfavorite: isFavorite,
             }
             const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_favorite')
@@ -3669,9 +3671,10 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * Toggles the bookmark status of a tweet
          * @param tweet The tweet to toggle bookmark for
+         * @param isBookmarked The desired bookmark state
          * @returns The updated tweet object
          */
-        async toggleBookmark(tweet: Tweet) {
+        async toggleBookmark(tweet: Tweet, isBookmarked: boolean) {
             const loginUser = this.loginUser
             if (!loginUser) throw new Error('Not logged in')
             const userHostId = loginUser.hostIds?.[0]
@@ -3682,6 +3685,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 authorid: tweet.authorId,
                 userhostid: userHostId,
+                isbookmarked: isBookmarked,
             }
             const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_bookmark')
