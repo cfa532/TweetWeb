@@ -11,6 +11,9 @@ const { t } = useI18n();
 
 const router = useRouter();
 const alertStore = useAlertStore();
+const emit = defineEmits<{
+    dismiss: []
+}>();
 
 const props = defineProps({
   redirect: {
@@ -66,13 +69,30 @@ async function onSubmit(values: any) {
     }
 }
 
+function dismissLogin() {
+    emit('dismiss');
+    if (router.currentRoute.value.name === 'login') {
+        router.replace('/');
+    }
+}
+
 </script>
 
 <template>
-<div>
-    <div class="card m-3">
-        <h4 class="card-header">{{ $t('auth.login') }}</h4>
-        <div class="card-body">
+<div class="login-modal-overlay">
+    <section class="login-modal" role="dialog" aria-modal="true" :aria-label="$t('auth.login')">
+        <div class="login-modal-header">
+            <h4 class="login-modal-title">{{ $t('auth.login') }}</h4>
+            <button
+                type="button"
+                class="login-dismiss-button"
+                :aria-label="$t('common.close')"
+                @click="dismissLogin"
+            >
+                <span aria-hidden="true">&times;</span>
+            </button>
+        </div>
+        <div class="login-modal-body">
             <Form @submit="onSubmit" :validation-schema="schema" v-slot="{ errors, isSubmitting }">
                 <div class="form-group" style="margin-top: 0px;">
                     <label>{{ $t('auth.username') }}</label>
@@ -112,14 +132,96 @@ async function onSubmit(values: any) {
                         {{ (isSubmitting || isLoading) ? $t('auth.loggingIn') : $t('auth.login') }}
                     </button>
                 </div>
+
+                <div class="login-register-action">
+                    <RouterLink
+                        :to="{ name: 'account', query: { view: 'register', redirect: props.redirect } }"
+                    >
+                        {{ $t('auth.register') }}
+                    </RouterLink>
+                </div>
             </Form>
         </div>
-    </div>
+    </section>
 </div>
 </template>
 
-<style>
+<style scoped>
+.login-modal-overlay {
+    box-sizing: border-box;
+    display: flex;
+    justify-content: center;
+    width: min(calc(100% - 16px), 420px);
+    margin: 24px auto;
+    padding: 0;
+    background: rgba(241, 243, 245, 0.94);
+    border-radius: 8px;
+}
+
+.login-modal {
+    width: 100%;
+    max-width: 420px;
+    max-height: calc(100vh - 72px);
+    overflow-y: auto;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+}
+
+.login-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.login-modal-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.login-dismiss-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #495057;
+    font-size: 1.75rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.login-dismiss-button:hover,
+.login-dismiss-button:focus-visible {
+    background: #f1f3f5;
+    color: #212529;
+}
+
+.login-modal-body {
+    padding: 18px;
+}
+
 .form-group {
     margin-top: 10px;
+}
+
+.login-register-action {
+    margin-top: 14px;
+    text-align: center;
+}
+
+@media (max-width: 480px) {
+    .login-modal-overlay {
+        width: calc(100% - 16px);
+        margin: 12px auto;
+    }
 }
 </style>

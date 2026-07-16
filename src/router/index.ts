@@ -6,6 +6,22 @@ import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFile
 } from "@/components"
 import { useAlertStore } from '@/stores';
 
+const loginModalRouteNames = new Set([
+  'main',
+  'TweetDetail',
+  'UserPage',
+  'followings',
+  'followers',
+  'shared',
+  'downloadApk',
+  'download',
+  'apk',
+  'app',
+  'install',
+  'leitherSetupNotice',
+  'contact',
+])
+
 function getStoredLoginUser() {
   return sessionStorage.getItem("user")
 }
@@ -167,6 +183,24 @@ export const router = createRouter({
 
 router.beforeEach((to, from) => {
   useAlertStore().clear()
+
+  if (to.name === 'login' && typeof to.query.redirect === 'string') {
+    const target = router.resolve(to.query.redirect)
+    const targetName = typeof target.name === 'string' ? target.name : ''
+
+    if (loginModalRouteNames.has(targetName)) {
+      return {
+        path: target.path,
+        query: {
+          ...target.query,
+          login: '1',
+          redirect: to.query.redirect,
+        },
+        hash: target.hash,
+        replace: true,
+      }
+    }
+  }
 })
 
 router.afterEach((to) => {
