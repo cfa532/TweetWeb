@@ -1777,6 +1777,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 likeCount: tweetData.favoriteCount ?? tweetData.likeCount,
                 bookmarkCount: tweetData.bookmarkCount,
                 commentCount: tweetData.commentCount,
+                retweetCount: tweetData.retweetCount,
                 favorites: tweetData.favorites,
             }
 
@@ -1805,6 +1806,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     likeCount: originalTweetData.favoriteCount ?? originalTweetData.likeCount,
                     bookmarkCount: originalTweetData.bookmarkCount,
                     commentCount: originalTweetData.commentCount,
+                    retweetCount: originalTweetData.retweetCount,
                     favorites: originalTweetData.favorites,
                 }
             }
