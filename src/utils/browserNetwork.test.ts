@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { browserUsableProviderRoutes, isPrivateBrowserHost } from './browserNetwork'
+import { browserUsableProviderRoutes, isPrivateBrowserHost, isPublicWebGatewayHost } from './browserNetwork'
 
 describe('browser provider route eligibility', () => {
   it('keeps later public routes and rejects private routes from a public origin', () => {
@@ -19,6 +19,23 @@ describe('browser provider route eligibility', () => {
       '100.79.13.15:8002',
       '220.184.34.132:8002',
     ])
+  })
+
+  it('retains node routes for legacy public Leither hosts', () => {
+    expect(browserUsableProviderRoutes([
+      '100.79.13.15:8002',
+      '220.184.34.132:8002',
+    ], 't1.fireshare.us')).toEqual([
+      '100.79.13.15:8002',
+      '220.184.34.132:8002',
+    ])
+  })
+
+  it('limits gateway mode to dTweet web hosts', () => {
+    expect(isPublicWebGatewayHost('dtweet.com')).toBe(true)
+    expect(isPublicWebGatewayHost('dl.dtweet.com')).toBe(true)
+    expect(isPublicWebGatewayHost('t1.fireshare.us')).toBe(false)
+    expect(isPublicWebGatewayHost('t1.www333.store')).toBe(false)
   })
 
   it('recognizes private IPv4-with-port and bracketed IPv6 forms', () => {

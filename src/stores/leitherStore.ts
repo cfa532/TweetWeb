@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import ConnectionPoolManager from '@/utils/connectionPool';
+import { isPublicWebGatewayHost } from '@/utils/browserNetwork';
 
 const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGetAllKeys",
     "MFOpenByPath","DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs",
@@ -40,7 +41,8 @@ export const useLeitherStore = defineStore({
         hostIP: curIP,    // IP address of node to write
         baseUrl: window.location.protocol+'//'+curIP+'/',
         client: (() => {
-            const c = window.hprose.Client.create(window.location.protocol + "//" + curIP + "/webapi/", ayApi);
+            const protocol = isPublicWebGatewayHost(window.location.hostname) ? window.location.protocol : 'http:';
+            const c = window.hprose.Client.create(protocol + "//" + curIP + "/webapi/", ayApi);
             c.timeout = 15000;
             return c;
         })(),

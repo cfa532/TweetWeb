@@ -5,7 +5,7 @@
  * multiple simultaneous requests to the same or different servers.
  */
 
-import { isPrivateBrowserHost } from './browserNetwork';
+import { isPublicWebGatewayHost } from './browserNetwork';
 
 interface PooledConnection {
   id: number;
@@ -24,7 +24,7 @@ interface PendingRequest {
 }
 
 function usesPublicGateway(): boolean {
-  return window.location.hostname !== '' && !isPrivateBrowserHost(window.location.hostname);
+  return isPublicWebGatewayHost(window.location.hostname);
 }
 
 class ConnectionPoolManager {

@@ -37,6 +37,12 @@ function ipv4Octets(host: string): number[] | undefined {
   return octets.every(octet => octet >= 0 && octet <= 255) ? octets : undefined
 }
 
+/** Hosts whose public web traffic is served through the Cloudflare gateway. */
+export function isPublicWebGatewayHost(address: string): boolean {
+  const host = hostFromAddress(address)
+  return host === 'dtweet.com' || host === 'www.dtweet.com' || host === 'dl.dtweet.com'
+}
+
 /** Whether a browser treats this host as local/private rather than public. */
 export function isPrivateBrowserHost(address: string): boolean {
   const host = hostFromAddress(address)
@@ -67,13 +73,13 @@ export function isPrivateBrowserHost(address: string): boolean {
  * same browser address space.
  */
 export function browserUsableProviderRoutes(addresses: string[], originHostname: string): string[] {
-  const publicOrigin = !isPrivateBrowserHost(originHostname)
+  const publicGateway = isPublicWebGatewayHost(originHostname)
   const seen = new Set<string>()
 
   return addresses
     .map(address => String(address ?? '').trim())
     .filter(address => hostFromAddress(address) !== '')
-    .filter(address => !publicOrigin || !isPrivateBrowserHost(address))
+    .filter(address => !publicGateway || !isPrivateBrowserHost(address))
     .filter(address => {
       if (seen.has(address)) return false
       seen.add(address)

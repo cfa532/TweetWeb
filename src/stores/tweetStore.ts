@@ -5,7 +5,7 @@ import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
-import { browserUsableProviderRoutes, isPrivateBrowserHost } from '@/utils/browserNetwork';
+import { browserUsableProviderRoutes, isPublicWebGatewayHost } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -18,8 +18,7 @@ const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
 
 function publicGatewayOrigin(): string | null {
-    if (!window.location.hostname || isPrivateBrowserHost(window.location.hostname)) return null
-    return window.location.origin
+    return isPublicWebGatewayHost(window.location.hostname) ? window.location.origin : null
 }
 
 type ExpiringLocalCache<T> = {
