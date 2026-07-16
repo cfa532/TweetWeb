@@ -19,8 +19,12 @@ export default defineConfig({
       enforce: 'post',
       transformIndexHtml(html) {
         // Leither resolves entry object names literally and does not accept
-        // Vite 8's leading "./" on the generated module path.
-        return html.replace('src="./index_entry.js"', 'src="index_entry.js"')
+        // Vite 8's leading "./" on generated local asset paths.
+        return html
+          .replace('src="./hprose.js"', 'src="hprose.js"')
+          .replace('src="./popper.min.js"', 'src="popper.min.js"')
+          .replace('src="./bootstrap.min.js"', 'src="bootstrap.min.js"')
+          .replace('src="./index_entry.js"', 'src="index_entry.js"')
       }
     },
     // removeConsole({ includes: ["log"]})
