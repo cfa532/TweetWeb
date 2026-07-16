@@ -5,10 +5,14 @@ import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
 import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { requireLoginForWritableAction } from '@/lib/authNavigation'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
 const { t } = useI18n()
+const router = useRouter()
+const route = useRoute()
 const shareMenu = ref<HTMLElement | null>(null)
 const dotBtn = ref<HTMLElement | null>(null)
 const isMenuOpen = ref(false)
@@ -136,6 +140,10 @@ function copyLink() {
 
 function openEditor() {
   if (!props.tweet) return
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
+    closeMenu()
+    return
+  }
   closeMenu()
   const target = props.editTweet || props.tweet
   editContent.value = target.content || ''
@@ -143,7 +151,11 @@ function openEditor() {
 }
 
 async function submitEdit() {
-  if (!props.tweet || !tweetStore.loginUser) return
+  if (!props.tweet) return
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
+    showEditor.value = false
+    return
+  }
   const target = props.editTweet || props.tweet
   try {
     await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
@@ -156,18 +168,27 @@ async function submitEdit() {
 }
 
 async function deleteItem() {
-  if (!props.tweet || !tweetStore.loginUser) {
+  if (!props.tweet) {
+    closeMenu()
+    return
+  }
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
+    closeMenu()
+    return
+  }
+  const loginUser = tweetStore.loginUser
+  if (!loginUser) {
     closeMenu()
     return
   }
   
   closeMenu()
-  const isAdmin = tweetStore.loginUser.username === 'admin'
+  const isAdmin = loginUser.username === 'admin'
   let didDelete = false
   try {
     if (props.isComment && props.parentTweet) {
       // Delete comment - requires comment author OR parent tweet author OR admin
-      if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId || tweetStore.loginUser.mid === props.parentTweet.authorId) {
+      if (isAdmin || loginUser.mid === props.tweet.authorId || loginUser.mid === props.parentTweet.authorId) {
         const commentIdToDelete = props.tweet.mid
         const parentTweet = props.parentTweet
         const previousComments = Array.isArray(parentTweet.comments) ? [...parentTweet.comments] : undefined
@@ -201,7 +222,7 @@ async function deleteItem() {
       }
     } else {
       // Delete regular tweet - requires tweet author OR admin
-      if (isAdmin || tweetStore.loginUser.mid === props.tweet.authorId) {
+      if (isAdmin || loginUser.mid === props.tweet.authorId) {
         await tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
         didDelete = true
         emit('deleted')

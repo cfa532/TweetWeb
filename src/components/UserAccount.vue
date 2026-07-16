@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore, useAlertStore } from '@/stores';
 import { useRouter, useRoute } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
+import { requireLoginForWritableAction } from '@/lib/authNavigation';
 import AvatarCropper from '@/views/AvatarCropper.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
 
@@ -87,6 +88,10 @@ function populateEditFields() {
 
 function clearError() {
     errorMessage.value = null;
+}
+
+function requireWritableLogin() {
+    return requireLoginForWritableAction(isLoggedIn.value, router, route.fullPath);
 }
 
 async function switchView(view: string) {
@@ -181,6 +186,7 @@ async function handleRegister() {
 // ==================== UPDATE PROFILE ====================
 function handleUpdateProfile() {
     clearError();
+    if (!requireWritableLogin()) return;
 
     if (editPassword.value && editPassword.value !== editConfirmPassword.value) {
         errorMessage.value = t('auth.passwordsMismatch');
@@ -231,6 +237,7 @@ function finishHostIdChange(message: string, type: 'success' | 'warning') {
 
 async function doUpdateProfile(hostIdChanged: boolean) {
     showHostIdChangeConfirm.value = false;
+    if (!requireWritableLogin()) return;
     const newHostId = editHostId.value.trim();
     const port = editCloudDrivePort.value.trim();
 
@@ -277,6 +284,7 @@ function handleLogout() {
 // ==================== DELETE ACCOUNT ====================
 async function handleDeleteAccount() {
     showDeleteConfirm.value = false;
+    if (!requireWritableLogin()) return;
     isLoading.value = true;
     clearError();
     try {
@@ -294,6 +302,7 @@ async function handleDeleteAccount() {
 }
 
 async function handleGenerateAgentToken() {
+    if (!requireWritableLogin()) return;
     isGeneratingAgentToken.value = true;
     clearError();
     try {
@@ -342,6 +351,10 @@ function onProfileAvatarError(event: Event) {
 }
 
 async function handleAvatarCrop(blob: Blob) {
+    if (!requireWritableLogin()) {
+        showAvatarCropper.value = false;
+        return;
+    }
     showAvatarCropper.value = false;
     isUploadingAvatar.value = true;
     // Show cropped image immediately using local blob URL

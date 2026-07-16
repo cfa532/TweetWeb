@@ -4,6 +4,7 @@ import type { PropType } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAlertStore, useTweetStore } from '@/stores';
+import { requireLoginForWritableAction } from '@/lib/authNavigation';
 
 const router = useRouter();
 const route = useRoute();
@@ -45,24 +46,21 @@ function formatCount(count?: number): string {
 }
 
 function onComment() {
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return;
   router.push({ name: 'post', params: { tweetId: props.tweet.mid } });
 }
 
-function redirectToLogin() {
-  router.push({ name: 'login', query: { redirect: route.fullPath } });
-}
-
 async function onRetweet() {
-  if (!tweetStore.loginUser) {
-    redirectToLogin();
-    return;
-  }
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return;
+  const loginUser = tweetStore.loginUser;
+  if (!loginUser) return;
+
   const original = { ...props.tweet };
   // Optimistic update
   emit('updated', { ...original, retweetCount: (original.retweetCount ?? 0) + 1 });
   try {
     const retweetPayload = {
-      authorId: tweetStore.loginUser.mid,
+      authorId: loginUser.mid,
       timestamp: Date.now(),
       originalTweetId: original.mid,
       originalAuthorId: original.authorId,
@@ -89,10 +87,7 @@ function flipFavoriteAt(current: boolean[] | undefined, idx: number): boolean[] 
 }
 
 async function onLike() {
-  if (!tweetStore.loginUser) {
-    redirectToLogin();
-    return;
-  }
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return;
   const original = {
     ...props.tweet,
     favorites: [...resolvedFavorites.value],
@@ -120,10 +115,7 @@ async function onLike() {
 }
 
 async function onBookmark() {
-  if (!tweetStore.loginUser) {
-    redirectToLogin();
-    return;
-  }
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return;
   const original = {
     ...props.tweet,
     favorites: [...resolvedFavorites.value],

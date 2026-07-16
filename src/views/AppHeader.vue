@@ -6,6 +6,7 @@ import { useTweetStore } from "@/stores";
 import { useAlertStore } from '@/stores/alert.store';
 import { DownloadPrompt, DownloadModal, UserAvatar } from '@/components';
 import { formatTimeDifference, avatarSrc } from '@/lib';
+import { redirectGuestToLogin, requireLoginForWritableAction } from '@/lib/authNavigation';
 
 const { t } = useI18n()
 const router = useRouter()
@@ -62,10 +63,8 @@ let profileFollowCooldownUntil = 0
 
 const canShowProfileFollowBtn = computed(
     () =>
-        isLoggedIn.value &&
         !!user.value &&
-        !!tweetStore.loginUser &&
-        user.value.mid !== tweetStore.loginUser.mid,
+        (!tweetStore.loginUser || user.value.mid !== tweetStore.loginUser.mid),
 )
 
 function syncFollowButtonFromServerList() {
@@ -103,7 +102,8 @@ watch(
 async function onProfileToggleFollow(event: Event) {
     event.preventDefault()
     event.stopPropagation()
-    if (!user.value || !tweetStore.loginUser || isTogglingProfileFollow.value) return
+    if (!user.value || isTogglingProfileFollow.value) return
+    if (!requireLoginForWritableAction(isLoggedIn.value, router, route.fullPath)) return
     const now = Date.now()
     if (now < profileFollowCooldownUntil) return
     profileFollowCooldownUntil = now + FOLLOW_PROFILE_DEBOUNCE_MS
@@ -194,7 +194,7 @@ const goToRegister = () => {
 
 const goToLogin = () => {
     closeAccountMenu()
-    router.push({ name: 'account', query: { view: 'login', redirect: route.fullPath } })
+    redirectGuestToLogin(router, route.fullPath)
 }
 
 function isValidCloudDrivePort(port: unknown): boolean {
@@ -255,6 +255,8 @@ async function countOriginalTweetsByUser(userId: string): Promise<number> {
 
 const uploadTweet = async () => {
     closeAccountMenu()
+    if (!requireLoginForWritableAction(isLoggedIn.value, router, route.fullPath)) return
+
     const loginUser = tweetStore.loginUser
     const hasValidCloudDrivePort = isValidCloudDrivePort(loginUser?.cloudDrivePort)
 
@@ -282,6 +284,7 @@ const uploadTweet = async () => {
 
 const openNetdisk = () => {
     closeAccountMenu()
+    if (!requireLoginForWritableAction(isLoggedIn.value, router, route.fullPath)) return
     router.push({ name: 'netdisk' })
 }
 

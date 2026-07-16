@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { CidModal } from '@/views'
 import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
 import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
+import { requireLoginForWritableAction } from '@/lib/authNavigation'
 import { UserAvatar } from '@/components'
 
 interface HTMLInputEvent extends Event {
@@ -237,10 +238,11 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 }
 
 async function onSubmit() {
-  if (!tweetStore.loginUser) {
-    useAlertStore().error(t('editor.loginToPost'))
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
     return
   }
+  const loginUser = tweetStore.loginUser
+  if (!loginUser) return
 
   loading.value = true
   let attachments = <MimeiFileType[]>[]
@@ -264,7 +266,7 @@ async function onSubmit() {
     }
 
     const tweet = {
-      authorId: tweetStore.loginUser.mid,
+      authorId: loginUser.mid,
       title: tweetTitle.value,
       content: txtConent.value,
       attachments: attachments.concat(mmFiles.value),

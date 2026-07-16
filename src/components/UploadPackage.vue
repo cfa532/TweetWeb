@@ -2,6 +2,8 @@
 import { ref, reactive, onMounted } from 'vue'
 import { Loading, Preview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
+import { useRoute, useRouter } from 'vue-router'
+import { requireLoginForWritableAction } from '@/lib/authNavigation'
 
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
@@ -18,6 +20,8 @@ const uploadProgress = reactive<number[]>([]) // New ref to store upload progres
 const loading = ref(false)
 const selectFiles = ref()
 const tweetStore = useTweetStore()
+const router = useRouter()
+const route = useRoute()
 const isAppPackage = ref(true)
 const isMini = ref(false)
 
@@ -42,6 +46,7 @@ async function uploadFile(file: File, index: number = 0): Promise<string> {
 }
 
 async function onSubmit() {
+    if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return
     loading.value = true
     try {
         if (filesUpload.value.length < 1)

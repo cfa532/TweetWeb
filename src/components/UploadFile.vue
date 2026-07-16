@@ -4,10 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { Loading, Preview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
+import { requireLoginForWritableAction } from '@/lib/authNavigation';
 import * as tus from 'tus-js-client';
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
 }
@@ -39,14 +41,15 @@ interface StoredUpload {
 onMounted(async () => {
     // Resolve writable host IP from hostIds[0] (matches iOS resolveWritableUrl)
     // rather than using the cached providerIp, which may be a read-only node.
-    if (!tweetStore.loginUser) {
-        alertStore.error(t('netdisk.uploadFailed'))
+    if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
         return
     }
+    const loginUser = tweetStore.loginUser
+    if (!loginUser) return
     try {
-        const writableIp = await tweetStore.resolveWritableHostIp(tweetStore.loginUser)
+        const writableIp = await tweetStore.resolveWritableHostIp(loginUser)
         const ip = tweetStore.getIpWithoutPort(writableIp) || writableIp
-        tusServerUrl = `http://${ip}:${tweetStore.loginUser.cloudDrivePort}`
+        tusServerUrl = `http://${ip}:${loginUser.cloudDrivePort}`
         console.log("TUS server", tusServerUrl)
     } catch (err) {
         console.error("Failed to resolve writable host for TUS upload:", err)
@@ -213,6 +216,7 @@ onBeforeUnmount(() => {
 });
 
 async function onSubmit() {
+    if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return
     loading.value = true
     try {
         if (filesUpload.value.length < 1) {

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue';
 import type { PropType } from 'vue'
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { formatTimeDifference } from '@/lib';
+import { requireLoginForWritableAction } from '@/lib/authNavigation';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   (e: 'resolve-failed', userId: MimeiId): void
 }>()
 const router = useRouter()
+const route = useRoute()
 const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
 const user = ref<User | null>(null)
@@ -30,9 +32,8 @@ const isTogglingFollow = ref(false)
 
 const canShowFollowButton = computed(() => {
   return props.showFollowButton &&
-    !!tweetStore.loginUser &&
     !!user.value &&
-    user.value.mid !== tweetStore.loginUser.mid
+    (!tweetStore.loginUser || user.value.mid !== tweetStore.loginUser.mid)
 })
 
 /** Bold name — use username when display name is missing (same as ItemHeader). */
@@ -83,7 +84,8 @@ function openUserPage(userId: string) {
 
 async function onToggleFollow(event: Event) {
     event.stopPropagation()
-    if (!user.value || !tweetStore.loginUser || isTogglingFollow.value) return
+    if (!user.value || isTogglingFollow.value) return
+    if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return
 
     const previous = localIsFollowing.value
     localIsFollowing.value = !previous
