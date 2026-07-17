@@ -19,6 +19,7 @@ const isMenuOpen = ref(false)
 const canDelete = ref(false)
 const canEdit = ref(false)
 const showEditor = ref(false)
+const showDeleteConfirmation = ref(false)
 const editContent = ref('')
 /** Ignore synthetic click right after touchend so we don't toggle twice (open then close). */
 let suppressDotClickFromTouch = false
@@ -167,7 +168,22 @@ async function submitEdit() {
   }
 }
 
-async function deleteItem() {
+function requestDeleteItem() {
+  if (!props.tweet) {
+    closeMenu()
+    return
+  }
+  if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
+    closeMenu()
+    return
+  }
+
+  closeMenu()
+  showDeleteConfirmation.value = true
+}
+
+async function confirmDeleteItem() {
+  showDeleteConfirmation.value = false
   if (!props.tweet) {
     closeMenu()
     return
@@ -264,7 +280,7 @@ async function deleteItem() {
           <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
               <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
           </div>
-          <div v-if="canDelete" class="item clickable-item" @click.stop="deleteItem">
+          <div v-if="canDelete" class="item clickable-item" @click.stop="requestDeleteItem">
               <span class="menu-text"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>
           </div>
       </div>
@@ -285,6 +301,26 @@ async function deleteItem() {
             <button class="btn-submit" @click="submitEdit">{{ $t('common.save') }}</button>
         </div>
     </div>
+</div>
+</Teleport>
+
+<!-- Delete Confirmation -->
+<Teleport to="body">
+<div v-if="showDeleteConfirmation" class="confirm-overlay" @click.self="showDeleteConfirmation = false">
+    <section
+        class="confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="$t(props.isComment ? 'tweet.deleteCommentConfirmTitle' : 'tweet.deleteTweetConfirmTitle')"
+        @click.stop
+    >
+        <h2 class="confirm-title">{{ $t(props.isComment ? 'tweet.deleteCommentConfirmTitle' : 'tweet.deleteTweetConfirmTitle') }}</h2>
+        <p class="confirm-message">{{ $t(props.isComment ? 'tweet.deleteCommentConfirmMessage' : 'tweet.deleteTweetConfirmMessage') }}</p>
+        <div class="confirm-actions">
+            <button class="btn-cancel" @click="showDeleteConfirmation = false">{{ $t('common.cancel') }}</button>
+            <button class="btn-delete" @click="confirmDeleteItem">{{ $t('common.delete') }}</button>
+        </div>
+    </section>
 </div>
 </Teleport>
 </template>
@@ -363,7 +399,8 @@ async function deleteItem() {
     background: #f5f8fa;
     transition: background-color 0.2s ease;
 }
-.edit-overlay {
+.edit-overlay,
+.confirm-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.4);
@@ -372,13 +409,29 @@ async function deleteItem() {
     align-items: center;
     justify-content: center;
 }
-.edit-modal {
+.edit-modal,
+.confirm-modal {
     background: white;
     border-radius: 8px;
     padding: 16px;
     width: 90%;
     max-width: 500px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.confirm-title {
+    margin: 0 0 12px;
+    font-size: 18px;
+}
+.confirm-message {
+    margin: 0;
+    color: #4a4a4a;
+    line-height: 1.45;
+}
+.confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
 }
 .edit-header {
     display: flex;
@@ -421,4 +474,13 @@ async function deleteItem() {
     cursor: pointer;
 }
 .btn-submit:hover { background: #1a91da; }
+.btn-delete {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    background: #d93025;
+    color: white;
+    cursor: pointer;
+}
+.btn-delete:hover { background: #b3261e; }
 </style>
