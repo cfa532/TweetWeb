@@ -16,6 +16,7 @@ const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
 const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
 const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
+const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
 
 function publicGatewayOrigin(): string | null {
     return isPublicWebGatewayHost(window.location.hostname) ? window.location.origin : null
@@ -1425,6 +1426,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 const writableIp = await this.resolveWritableHostIp(this.loginUser)
                 const updateClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                updateClient.timeout = 30000
                 const response = await updateClient.RunMApp("update_following_tweets", params)
 
                 // Check success status first
@@ -3150,9 +3152,9 @@ export const useTweetStore = defineStore('tweetStore', {
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
 
-            // Follow can RPC to home node and sync many tweets; default pooled timeout (15s) is often too short.
+            // Follow can RPC to the home node and sync many tweets, so use the shared toggle timeout.
             const originalTimeout = homeClient.timeout
-            homeClient.timeout = 120000
+            homeClient.timeout = TOGGLE_MUTATION_TIMEOUT_MS
             let ret: unknown
             try {
                 const followingUser = this.users.get(followingId)
@@ -3667,7 +3669,9 @@ export const useTweetStore = defineStore('tweetStore', {
             const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_favorite')
             const writableIp = await this.resolveWritableHostIp(author)
-            const ret = await createPooledClient(writableIp, this.lapi.connectionPool).RunMApp("toggle_favorite", params)
+            const client = createPooledClient(writableIp, this.lapi.connectionPool)
+            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+            const ret = await client.RunMApp("toggle_favorite", params)
             return this._applyServerTweet(tweet, ret)
         },
         /**
@@ -3692,7 +3696,9 @@ export const useTweetStore = defineStore('tweetStore', {
             const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
             if (!author) throw new Error('Author not found for toggle_bookmark')
             const writableIp = await this.resolveWritableHostIp(author)
-            const ret = await createPooledClient(writableIp, this.lapi.connectionPool).RunMApp("toggle_bookmark", params)
+            const client = createPooledClient(writableIp, this.lapi.connectionPool)
+            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+            const ret = await client.RunMApp("toggle_bookmark", params)
             return this._applyServerTweet(tweet, ret)
         },
         _applyServerTweet(tweet: Tweet, ret: any): Tweet {
@@ -4166,7 +4172,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 // Same as `toggleFollowing`: follower's node — use known IP from register response or entry node.
                 const followerClient = createPooledClient(usableIp, this.lapi.connectionPool)
-                followerClient.timeout = 120000
+                followerClient.timeout = TOGGLE_MUTATION_TIMEOUT_MS
 
                 for (const followingId of ids) {
                     try {
