@@ -27,9 +27,9 @@ const props = defineProps({
     tweet: {type: Object as PropType<Tweet>, required: false},
     editTweet: {type: Object as PropType<Tweet>, required: false}, // For retweets: the original tweet to edit (has content); tweet is the wrapper (used for delete)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
-    isComment: {type: Boolean, required: false, default: false}
+    isComment: {type: Boolean, required: false, default: false},
+    afterDelete: {type: Function as PropType<() => void | Promise<void>>, required: false}
 })
-const emit = defineEmits<{ (e: 'deleted'): void }>()
 
 // Truncate mid with ellipsis in the middle if too long
 const displayMid = computed(() => {
@@ -200,7 +200,6 @@ async function confirmDeleteItem() {
   
   closeMenu()
   const isAdmin = loginUser.username === 'admin'
-  let didDelete = false
   try {
     if (props.isComment && props.parentTweet) {
       // Delete comment - requires comment author OR parent tweet author OR admin
@@ -234,14 +233,23 @@ async function confirmDeleteItem() {
           }
           throw error
         }
-        didDelete = true
       }
     } else {
       // Delete regular tweet - requires tweet author OR admin
       if (isAdmin || loginUser.mid === props.tweet.authorId) {
-        await tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
-        didDelete = true
-        emit('deleted')
+        // deleteTweet removes the tweet from local state synchronously before
+        // its first network await. Start navigation immediately after that
+        // optimistic removal instead of waiting for server confirmation.
+        const deletion = tweetStore.deleteTweet(props.tweet.mid, props.tweet.authorId)
+        const navigation = props.afterDelete?.()
+        const [deletionResult, navigationResult] = await Promise.allSettled([deletion, navigation])
+
+        if (navigationResult.status === 'rejected') {
+          console.error('[CornerMenu] Failed to leave deleted tweet detail', navigationResult.reason)
+        }
+        if (deletionResult.status === 'rejected') {
+          throw deletionResult.reason
+        }
       }
     }
   } catch (error: any) {

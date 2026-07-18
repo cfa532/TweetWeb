@@ -828,6 +828,22 @@ function goBack() {
     }
 }
 
+async function leaveDeletedTweet() {
+    if (parentTweetId.value && parentAuthorId.value) {
+        await router.replace(`/tweet/${parentTweetId.value}/${parentAuthorId.value}`);
+        return;
+    }
+
+    // A history pop can be a no-op for a reloaded/deep-linked detail route.
+    // Replace the deleted route with Vue Router's recorded origin so Back
+    // cannot reopen a tweet that no longer exists.
+    const recordedBackPath = window.history.state?.back;
+    const destination = typeof recordedBackPath === 'string' && recordedBackPath !== route.fullPath
+        ? recordedBackPath
+        : router.resolve({ name: 'main' }).fullPath;
+    await router.replace(destination);
+}
+
 function retryLoad() {
     console.log('[TweetDetail] User initiated retry');
     tweetNotFound.value = false;
@@ -876,11 +892,11 @@ function retryLoad() {
             <DetailHeader class="w-100" v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
                 :is-retweet="isRetweet" :by="tweet.author.username"
                 :exclude-tweet-id="tweet.originalTweet?.mid"
-                :tweet="tweet" :edit-tweet="tweet.originalTweet" @deleted="goBack">
+                :tweet="tweet" :edit-tweet="tweet.originalTweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
             <DetailHeader class="w-100" v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"
                 :exclude-tweet-id="tweet.mid"
-                :tweet="tweet" @deleted="goBack">
+                :tweet="tweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
         </div>
         
