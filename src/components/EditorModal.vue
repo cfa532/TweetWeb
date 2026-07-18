@@ -40,6 +40,13 @@ const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
 const mmFiles = ref<MimeiFileType[]>([]);
 const showCidModal = ref(false);
+const hasDraftContent = computed(() => {
+  const hasText = (value: unknown) => typeof value === 'string' && value.trim().length > 0
+  return hasText(tweetTitle.value)
+    || hasText(txtConent.value)
+    || filesUpload.value.length > 0
+    || mmFiles.value.length > 0
+})
 
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 const avatarRetry = ref(0)
@@ -238,6 +245,10 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
 }
 
 async function onSubmit() {
+  // The submit button keeps keyboard focus after a successful post. Ignore
+  // repeated Enter presses once the draft is empty, and while a request is active.
+  if (loading.value || !hasDraftContent.value) return
+
   if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
     return
   }
@@ -603,7 +614,7 @@ function handleDragEnd() {
               </button>
             </div>
             <div class='toolbar-actions'>
-              <button class='btn submit-button' type='submit'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
+              <button class='btn submit-button' type='submit' :disabled='loading || !hasDraftContent'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
             </div>
             <div v-if='showEditorOptions' class='toolbar-options-panel'>
               <label class='toolbar-option' for='downloadable-checkbox'>
@@ -821,6 +832,11 @@ function handleDragEnd() {
 .submit-button {
   width: 104px;
   min-height: 36px;
+}
+
+.submit-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .toolbar-icon-button,
