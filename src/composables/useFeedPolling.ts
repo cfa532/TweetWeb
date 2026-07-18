@@ -5,19 +5,29 @@ type FeedPollingResult = {
     followingCandidateIds: string[]
 }
 
-let timer: ReturnType<typeof setInterval> | null = null
+const FEED_POLLING_INTERVAL_MS = 5 * 60 * 1000
+const feedPollingSession = {
+    timer: null as ReturnType<typeof setInterval> | null,
+    hasOpenedMainFeed: false,
+}
 const handlers = new Set<(result: FeedPollingResult) => boolean | void>()
 
+export function consumeMainFeedOpening(): boolean {
+    if (feedPollingSession.hasOpenedMainFeed) return false
+    feedPollingSession.hasOpenedMainFeed = true
+    return true
+}
+
 export function startFeedPolling(
-    intervalMs = 180_000,
+    intervalMs = FEED_POLLING_INTERVAL_MS,
     handler?: (result: FeedPollingResult) => boolean | void
 ) {
     if (handler) handlers.add(handler)
     const tweetStore = useTweetStore()
-    if (timer) {
+    if (feedPollingSession.timer) {
         return handler ? () => handlers.delete(handler) : undefined
     }
-    timer = setInterval(() => {
+    feedPollingSession.timer = setInterval(() => {
         const user = tweetStore.loginUser
         if (user) {
             console.log(`[feedPolling] ${new Date().toLocaleTimeString()} — polling for new tweets`)

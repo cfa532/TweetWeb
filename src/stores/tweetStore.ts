@@ -17,6 +17,7 @@ const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consec
 const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
+const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
 
 function publicGatewayOrigin(): string | null {
     return isPublicWebGatewayHost(window.location.hostname) ? window.location.origin : null
@@ -1309,7 +1310,7 @@ export const useTweetStore = defineStore('tweetStore', {
             user: User,
             pageNumber: number,
             pageSize: number,
-            options: { updateFollowing?: boolean; candidateIds?: Set<string> } = {}
+            options: { candidateIds?: Set<string> } = {}
         ): Promise<number | null> {
             let lastError: unknown = null
             for (let attempt = 1; attempt <= 2; attempt++) {
@@ -1374,18 +1375,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 this.cacheFeedTweets(user.mid)
 
-                if (options.updateFollowing !== false) {
-                    this.updateFollowingTweets({
-                        showLoginError: false,
-                        pageNumber,
-                        pageSize
-                    }).then(candidateIds => {
-                        this.addFeedPendingCandidates(candidateIds)
-                    }).catch(error => {
-                        console.error("Background updateFollowingTweets failed:", error)
-                    })
-                }
-
                 return tweetsData?.length || null
                 } catch (e) {
                     lastError = e
@@ -1413,6 +1402,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 return []
             }
+            const loginUser = this.loginUser
+            const homeHostId = loginUser.hostIds?.[0]
+            const accessHostId = loginUser.hostIds?.[1]
 
             try {
                 const params = {
@@ -1420,13 +1412,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     ver: "last",
                     pn: options.pageNumber ?? 0,
                     ps: options.pageSize ?? TWEET_COUNT,
-                    appuserid: this.loginUser.mid,
-                    hostid: this.loginUser.hostIds?.[0]
+                    appuserid: loginUser.mid,
+                    hostid: homeHostId
                 }
 
-                const writableIp = await this.resolveWritableHostIp(this.loginUser)
+                const writableIp = await this.resolveWritableHostIp(loginUser)
                 const updateClient = createPooledClient(writableIp, this.lapi.connectionPool)
-                updateClient.timeout = 30000
+                updateClient.timeout = UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS
                 const response = await updateClient.RunMApp("update_following_tweets", params)
 
                 // Check success status first
@@ -1438,25 +1430,63 @@ export const useTweetStore = defineStore('tweetStore', {
                     return []
                 }
 
+                // Extract tweets from the response format (same as getTweetFeed)
+                const tweetsData = response.tweets
+                if (this.loginUser?.mid !== loginUser.mid) return []
+                await this.syncFollowingTweetsToAccessHostIfNeeded(tweetsData, params, homeHostId, accessHostId)
+                if (this.loginUser?.mid !== loginUser.mid) return []
+
                 // Cache original tweets first (same as getTweetFeed)
                 if (response.originalTweets) {
                     await this.updateOriginalTweets(response.originalTweets)
                 }
 
-                // Extract tweets from the response format (same as getTweetFeed)
-                const tweetsData = response.tweets
-
                 const candidateIds = await this.processFeedTweetRows(tweetsData, "updateFollowingTweets")
                 if (options.candidateIds) {
                     candidateIds.forEach(id => options.candidateIds!.add(id))
                 }
-                this.cacheFeedTweets(this.loginUser.mid)
+                this.cacheFeedTweets(loginUser.mid)
 
                 console.log(`Successfully updated following tweets: ${tweetsData?.length || 0} tweets processed`)
                 return candidateIds
             } catch (e) {
                 console.error("Error calling update_following_tweets:", e)
                 return []
+            }
+        },
+
+        async syncFollowingTweetsToAccessHostIfNeeded(
+            tweetsData: any[] | undefined,
+            params: Record<string, any>,
+            homeHostId: string | undefined,
+            accessHostId: string | undefined,
+        ): Promise<void> {
+            const newTweetCount = Array.isArray(tweetsData)
+                ? tweetsData.filter(tweet => tweet != null).length
+                : 0
+            if (newTweetCount === 0) return
+
+            if (!homeHostId || !accessHostId || accessHostId === homeHostId) return
+
+            try {
+                const accessHostIp = await this.getNodeIpByHostId(accessHostId)
+                if (!accessHostIp) {
+                    console.warn(`Could not resolve access host ${accessHostId}; skipping following-tweets sync`)
+                    return
+                }
+
+                const accessClient = createPooledClient(accessHostIp, this.lapi.connectionPool)
+                accessClient.timeout = UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS
+                const response = await accessClient.RunMApp("update_following_tweets", {
+                    ...params,
+                    homeupdated: true,
+                })
+                if (response?.success !== true) {
+                    console.warn("Access-host following-tweets sync failed:", response?.message || response)
+                }
+            } catch (error) {
+                // The home host already completed successfully, so access-host sync is best-effort.
+                console.warn("Error syncing following tweets to access host:", error)
             }
         },
 
@@ -1510,7 +1540,6 @@ export const useTweetStore = defineStore('tweetStore', {
 
             const candidateIds = new Set<string>()
             await this.getTweetFeed(user, 0, pageSize, {
-                updateFollowing: false,
                 candidateIds
             })
             if (this.loginUser?.mid !== userId) {

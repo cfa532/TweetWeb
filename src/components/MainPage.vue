@@ -9,7 +9,7 @@ import { LoadingSpinner, PageLayout, TweetList, UserAvatar } from '@/components'
 import { isWeChatBrowser } from '@/lib';
 import { useScrollRestore } from '@/composables/useScrollRestore';
 import { useFeedPendingCount } from '@/composables/useFeedPendingCount';
-import { startFeedPolling } from '@/composables/useFeedPolling';
+import { consumeMainFeedOpening, startFeedPolling } from '@/composables/useFeedPolling';
 
 
 const { t } = useI18n();
@@ -155,6 +155,17 @@ async function loadMoreTweets() {
             router.replace(`/author/${tweetStore.followings[0]}`);
             return;
         }
+        if (loadedPageNumber === 0 && consumeMainFeedOpening()) {
+            void tweetStore.updateFollowingTweets({
+                showLoginError: false,
+                pageNumber: 0,
+                pageSize,
+            }).then(candidateIds => {
+                tweetStore.addFeedPendingCandidates(candidateIds);
+            }).catch(error => {
+                console.error('Main-feed opening updateFollowingTweets failed:', error);
+            });
+        }
         const tweetsLoaded = await tweetStore.getTweetFeed(user, loadedPageNumber, pageSize, {
             candidateIds: feedCandidateIds,
         });
@@ -247,9 +258,9 @@ onMounted(async () => {
     await consumeShowNewQuery();
     nextTick(() => setupLoadMoreObserver());
 
-    // App-wide poll for new following tweets (3 min). Singleton — also started by
+    // App-wide poll for new following tweets (5 min). Singleton — also started by
     // UserPage, so the banner stays current on either the main feed or a profile.
-    stopFeedPolling = startFeedPolling(180_000, handleFeedPollingResult);
+    stopFeedPolling = startFeedPolling(undefined, handleFeedPollingResult);
     // Scrolling back to the top consumes pending tweets directly and drops the banner.
     window.addEventListener('scroll', onWindowScroll, { passive: true });
 });
