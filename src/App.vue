@@ -53,7 +53,7 @@ function closeLoginModal() {
 <style scoped>
 .container-fluid {
     padding: 0px;
-    max-width: 600px;
+    max-width: var(--content-max-width);
 }
 
 .login-modal-host {
@@ -61,7 +61,7 @@ function closeLoginModal() {
     top: 72px;
     left: 50%;
     z-index: 2000;
-    width: min(100vw, 600px);
+    width: min(100vw, var(--content-max-width));
     transform: translateX(-50%);
     pointer-events: none;
 }

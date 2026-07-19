@@ -494,7 +494,7 @@ async function confirmDeleteItem() {
     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 }
 .edit-modal--attachments {
-    max-width: 720px;
+    max-width: var(--content-max-width);
     max-height: calc(100vh - 32px);
     padding: 0;
     overflow-x: hidden;
