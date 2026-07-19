@@ -1174,7 +1174,39 @@ export const useTweetStore = defineStore('tweetStore', {
                         // Check if tweet is already in cache
                         let existingTweet = this.tweetIndex.get(tweetObject.mid)
                         if (existingTweet) {
-                            // Update existing tweet with pin timestamp info
+                            this.refreshCachedTweet(existingTweet, tweetObject)
+
+                            const freshAttachments = Array.isArray(tweetObject.attachments)
+                                ? tweetObject.attachments as MimeiFileType[]
+                                : []
+                            const existingAttachments = Array.isArray(existingTweet.attachments)
+                                ? existingTweet.attachments
+                                : []
+                            const referenceId = (mid: string) => {
+                                const value = String(mid || '').trim()
+                                const separator = value.lastIndexOf('/')
+                                return separator >= 0 ? value.substring(separator + 1) : value
+                            }
+                            const freshIds = freshAttachments.map(attachment => referenceId(attachment.mid))
+                            const existingIds = existingAttachments.map(attachment => referenceId(attachment.mid))
+                            const attachmentSetChanged = JSON.stringify(freshIds) !== JSON.stringify(existingIds)
+                            const cachedMediaNeedsUrls = existingAttachments.some(attachment =>
+                                !/^https?:\/\//i.test(attachment.mid)
+                            )
+
+                            // Pinned tweets can come from a persistent cache that predates
+                            // an edit. Replace media only when it changed (or is still raw)
+                            // so unchanged pinned videos keep their live component state.
+                            if (attachmentSetChanged || cachedMediaNeedsUrls) {
+                                const mediaHost = existingTweet.provider || existingTweet.author?.providerIp
+                                const baseUrl = mediaHost ? `http://${mediaHost}` : window.location.origin
+                                existingTweet.attachments = freshAttachments.map(attachment => ({
+                                    ...attachment,
+                                    mid: this.getMediaUrl(referenceId(attachment.mid), baseUrl),
+                                    downloadable: tweetObject.downloadable ?? attachment.downloadable,
+                                }))
+                            }
+
                             tweetsWithPinTime.push({tweet: existingTweet, pinTimestamp})
                         } else {
                             // Process through addTweetToStore so media URLs are constructed
@@ -3568,6 +3600,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!writeUser) throw new Error('Not logged in')
                 const writableIp = await this.resolveWritableHostIp(writeUser)
                 const client = createPooledClient(writableIp, this.lapi.connectionPool)
+                const attachmentReferences = attachments?.map(attachment => {
+                    const mid = String(attachment.mid || '').trim()
+                    const separator = mid.lastIndexOf('/')
+                    return {
+                        ...attachment,
+                        mid: separator >= 0 ? mid.substring(separator + 1) : mid,
+                    }
+                })
                 const request: Record<string, unknown> = {
                     aid: this.appId,
                     ver: "last",
@@ -3577,8 +3617,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     tweetid: tweetId,
                     content: content,
                 }
-                if (attachments !== undefined) {
-                    request.attachments = JSON.stringify(attachments)
+                if (attachmentReferences !== undefined) {
+                    request.attachments = JSON.stringify(attachmentReferences)
                 }
                 if (options?.downloadable !== undefined) {
                     request.downloadable = options.downloadable
@@ -3595,8 +3635,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 const idx = this.tweets.findIndex(t => t.mid === tweetId)
                 if (idx !== -1) {
                     this.tweets[idx].content = content
-                    if (attachments !== undefined) {
-                        this.tweets[idx].attachments = attachments
+                    if (attachmentReferences !== undefined) {
+                        this.tweets[idx].attachments = attachmentReferences.map(attachment => ({
+                            ...attachment,
+                            mid: this.getMediaUrl(attachment.mid, `http://${writableIp}`),
+                            downloadable: options?.downloadable ?? attachment.downloadable,
+                        }))
                     }
                     if (options?.downloadable !== undefined) {
                         this.tweets[idx].downloadable = options.downloadable

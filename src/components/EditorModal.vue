@@ -44,6 +44,23 @@ const author = tweetStore.loginUser!  // the page is accessible only by login us
 const mmFiles = ref<MimeiFileType[]>([]);
 const showCidModal = ref(false);
 const isEditing = computed(() => !!props.editTweet)
+
+function attachmentReferenceId(mid: string): string {
+  const value = String(mid || '').trim()
+  const separator = value.lastIndexOf('/')
+  return separator >= 0 ? value.substring(separator + 1) : value
+}
+
+function displayAttachments(attachments: MimeiFileType[]): MimeiFileType[] {
+  const mediaHost = author.writableHostIp || props.editTweet?.provider || props.editTweet?.author?.providerIp
+  const baseUrl = mediaHost ? `http://${mediaHost}` : window.location.origin
+  return attachments.map(attachment => ({
+    ...attachment,
+    mid: tweetStore.getMediaUrl(attachmentReferenceId(attachment.mid), baseUrl),
+    downloadable: downloadable.value,
+  }))
+}
+
 const hasDraftContent = computed(() => {
   // Editing must remain submittable after removing the last attachment from
   // an attachment-only tweet; new tweets still require some draft content.
@@ -303,18 +320,24 @@ async function onSubmit() {
         throw new Error('Not authorized to edit this tweet')
       }
       const content = txtConent.value || ''
+      // Feed attachments contain display URLs, while update_tweet and Mimei
+      // references require the underlying CID/MID only.
+      const attachmentReferences = finalAttachments.map(attachment => ({
+        ...attachment,
+        mid: attachmentReferenceId(attachment.mid),
+      }))
       const result = await tweetStore.updateTweet(
         props.editTweet.mid,
         content,
         props.editTweet.authorId,
-        finalAttachments,
+        attachmentReferences,
         { downloadable: downloadable.value, isPrivate: isPrivate.value },
       )
       if (!result) {
         throw new Error('Tweet update failed: No response from server')
       }
       props.editTweet.content = content
-      props.editTweet.attachments = finalAttachments
+      props.editTweet.attachments = displayAttachments(attachmentReferences)
       props.editTweet.downloadable = downloadable.value
       props.editTweet.isPrivate = isPrivate.value
       useAlertStore().success(t('tweet.updateSuccess'))

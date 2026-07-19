@@ -229,6 +229,20 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
                     if (ft.favorites !== undefined) {
                         existing.favorites = ft.favorites;
                     }
+                    const referenceId = (mid: string) => {
+                        const value = String(mid || '').trim();
+                        const separator = value.lastIndexOf('/');
+                        return separator >= 0 ? value.substring(separator + 1) : value;
+                    };
+                    const freshAttachmentIds = (ft.attachments || []).map(attachment => referenceId(attachment.mid));
+                    const existingAttachmentIds = (existing.attachments || []).map(attachment => referenceId(attachment.mid));
+                    const attachmentSetChanged = JSON.stringify(freshAttachmentIds) !== JSON.stringify(existingAttachmentIds);
+                    const cachedMediaNeedsUrls = (existing.attachments || []).some(attachment =>
+                        !/^https?:\/\//i.test(attachment.mid)
+                    );
+                    if (attachmentSetChanged || cachedMediaNeedsUrls) {
+                        existing.attachments = ft.attachments;
+                    }
                     // Keep provider/avatar in sync so cached pinned tweets don't keep stale hosts.
                     if (ft.provider) existing.provider = ft.provider;
                     if (ft.author) {
