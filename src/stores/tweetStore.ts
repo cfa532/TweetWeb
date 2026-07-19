@@ -566,7 +566,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     })
                     return list
                         .sort((a: any, b: any) => b["value"] - a["value"])
-                        .slice(0, 50)
+                        .slice(0, 200)
                         .map((e: any) => e["field"])
                 } catch (error) {
                     console.error(`[${rpcName}] Failed for ${userId} attempt ${attempt}/2:`, error)
