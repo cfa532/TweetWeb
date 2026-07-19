@@ -8,6 +8,7 @@ import type { PropType } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { requireLoginForWritableAction } from '@/lib/authNavigation'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
+import EditorModal from '@/components/EditorModal.vue'
 const tweetStore = useTweetStore()
 const alertStore = useAlertStore()
 const { t } = useI18n()
@@ -19,6 +20,8 @@ const isMenuOpen = ref(false)
 const canDelete = ref(false)
 const canEdit = ref(false)
 const showEditor = ref(false)
+const showAttachmentEditor = ref(false)
+const attachmentEditTweet = ref<Tweet>()
 const showDeleteConfirmation = ref(false)
 const editContent = ref('')
 /** Ignore synthetic click right after touchend so we don't toggle twice (open then close). */
@@ -147,8 +150,21 @@ function openEditor() {
   }
   closeMenu()
   const target = props.editTweet || props.tweet
+  // Top-level tweets live on their author's root node, which is also where
+  // EditorModal uploads new files. Comments follow their parent author's
+  // routing contract and keep the existing content-only path here.
+  if (!props.isComment && tweetStore.loginUser?.mid === target.authorId) {
+    attachmentEditTweet.value = target
+    showAttachmentEditor.value = true
+    return
+  }
   editContent.value = target.content || ''
   showEditor.value = true
+}
+
+function closeAttachmentEditor() {
+  showAttachmentEditor.value = false
+  attachmentEditTweet.value = undefined
 }
 
 async function submitEdit() {
@@ -312,6 +328,19 @@ async function confirmDeleteItem() {
 </div>
 </Teleport>
 
+<!-- The login user's own tweets use the full attachment-capable editor. -->
+<Teleport to="body">
+<div v-if="showAttachmentEditor" class="edit-overlay" @click.self="closeAttachmentEditor">
+    <div class="edit-modal edit-modal--attachments" @click.stop>
+        <EditorModal
+            v-if="attachmentEditTweet"
+            :edit-tweet="attachmentEditTweet"
+            @hide="closeAttachmentEditor"
+        />
+    </div>
+</div>
+</Teleport>
+
 <!-- Delete Confirmation -->
 <Teleport to="body">
 <div v-if="showDeleteConfirmation" class="confirm-overlay" @click.self="showDeleteConfirmation = false">
@@ -425,6 +454,13 @@ async function confirmDeleteItem() {
     width: 90%;
     max-width: 500px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.edit-modal--attachments {
+    max-width: 720px;
+    max-height: calc(100vh - 32px);
+    padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 .confirm-title {
     margin: 0 0 12px;

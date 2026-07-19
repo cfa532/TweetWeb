@@ -15,6 +15,9 @@ interface HTMLInputEvent extends Event {
 }
 const { t } = useI18n();
 const emit = defineEmits(['uploaded', 'hide'])
+const props = defineProps<{
+  editTweet?: Tweet
+}>()
 const route = useRoute()
 const router = useRouter()
 const tweetId = computed(() => route.params.tweetId as MimeiId | undefined)
@@ -40,7 +43,11 @@ const tweet = ref<Tweet>()
 const author = tweetStore.loginUser!  // the page is accessible only by login user.
 const mmFiles = ref<MimeiFileType[]>([]);
 const showCidModal = ref(false);
+const isEditing = computed(() => !!props.editTweet)
 const hasDraftContent = computed(() => {
+  // Editing must remain submittable after removing the last attachment from
+  // an attachment-only tweet; new tweets still require some draft content.
+  if (isEditing.value) return true
   const hasText = (value: unknown) => typeof value === 'string' && value.trim().length > 0
   return hasText(tweetTitle.value)
     || hasText(txtConent.value)
@@ -120,7 +127,18 @@ async function retryUpload<T>(
 }
 
 onMounted(() => {
-  tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
+  if (props.editTweet) {
+    tweet.value = props.editTweet
+    txtConent.value = props.editTweet.content || ''
+    mmFiles.value = [...(props.editTweet.attachments || [])]
+    downloadable.value = props.editTweet.downloadable ?? true
+    isPrivate.value = props.editTweet.isPrivate ?? false
+    if (mmFiles.value.length > 0 && divAttach.value) {
+      divAttach.value.hidden = false
+    }
+  } else {
+    tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
+  }
   document.addEventListener('paste', onSelect as EventListener)
 })
 
@@ -276,11 +294,41 @@ async function onSubmit() {
       }
     }
 
+    const finalAttachments = isEditing.value
+      ? mmFiles.value.concat(attachments)
+      : attachments.concat(mmFiles.value)
+
+    if (props.editTweet) {
+      if (props.editTweet.authorId !== loginUser.mid) {
+        throw new Error('Not authorized to edit this tweet')
+      }
+      const content = txtConent.value || ''
+      const result = await tweetStore.updateTweet(
+        props.editTweet.mid,
+        content,
+        props.editTweet.authorId,
+        finalAttachments,
+        { downloadable: downloadable.value, isPrivate: isPrivate.value },
+      )
+      if (!result) {
+        throw new Error('Tweet update failed: No response from server')
+      }
+      props.editTweet.content = content
+      props.editTweet.attachments = finalAttachments
+      props.editTweet.downloadable = downloadable.value
+      props.editTweet.isPrivate = isPrivate.value
+      useAlertStore().success(t('tweet.updateSuccess'))
+      submitFailed.value = false
+      emit('uploaded', result)
+      emit('hide')
+      return
+    }
+
     const tweet = {
       authorId: loginUser.mid,
       title: tweetTitle.value,
       content: txtConent.value,
-      attachments: attachments.concat(mmFiles.value),
+      attachments: finalAttachments,
       isPrivate: isPrivate.value,
       downloadable: downloadable.value,
       timestamp: Date.now(),
@@ -434,7 +482,7 @@ async function onSelect(e: Event) {
       }
 
       // Assign content if neither title nor content is set
-      if (!tweetTitle.value && !txtConent.value) {
+      if (!isEditing.value && !tweetTitle.value && !txtConent.value) {
         txtConent.value = file.name.replace(/\.[^.]+$/, '');
       }
 
@@ -474,6 +522,10 @@ function removeFile(f: File) {
 }
 
 function goBack() {
+  if (isEditing.value) {
+    emit('hide')
+    return
+  }
   router.back()
 }
 
@@ -483,11 +535,23 @@ function openUserPage() {
 }
 
 const handleCids = (ids: MimeiFileType[]) => {
-  mmFiles.value = ids;
+  if (isEditing.value) {
+    const merged = [...mmFiles.value]
+    const existingIds = new Set(merged.map(file => file.mid))
+    ids.forEach(file => {
+      if (!existingIds.has(file.mid)) {
+        existingIds.add(file.mid)
+        merged.push(file)
+      }
+    })
+    mmFiles.value = merged
+  } else {
+    mmFiles.value = ids;
+  }
   showCidModal.value = false;
   if (ids.length > 0) {
     divAttach.value.hidden = false
-    if (!tweetTitle.value && !txtConent.value) {
+    if (!isEditing.value && !tweetTitle.value && !txtConent.value) {
       txtConent.value = ids[0].fileName?.replace(/\.[^.]+$/, '') || '';
     }
   }
@@ -571,7 +635,7 @@ function handleDragEnd() {
       </div>
         <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
-          <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
+          <input v-if='!isEditing' type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
           <textarea v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
@@ -614,7 +678,7 @@ function handleDragEnd() {
               </button>
             </div>
             <div class='toolbar-actions'>
-              <button class='btn submit-button' type='submit' :disabled='loading || !hasDraftContent'>{{ submitFailed ? $t('editor.resubmit') : $t('common.submit') }}</button>
+              <button class='btn submit-button' type='submit' :disabled='loading || !hasDraftContent'>{{ submitFailed ? $t('editor.resubmit') : (isEditing ? $t('common.save') : $t('common.submit')) }}</button>
             </div>
             <div v-if='showEditorOptions' class='toolbar-options-panel'>
               <label class='toolbar-option' for='downloadable-checkbox'>
@@ -629,7 +693,7 @@ function handleDragEnd() {
                 <input type='checkbox' v-model='noResample' id='noresample-checkbox'>
                 <span>{{ $t('editor.preserveQuality') }}</span>
               </label>
-              <label v-if='tweetId' class='toolbar-option' for='quoting-checkbox'>
+              <label v-if='!isEditing && tweetId' class='toolbar-option' for='quoting-checkbox'>
                 <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>
                 <span>{{ $t('editor.quoteTweet') }}</span>
               </label>
@@ -654,7 +718,7 @@ function handleDragEnd() {
           @drag-end="handleDragEnd"
         ></Preview>
         <CidPreview @link-removed="removeMimei(m)" v-for="(m, index) in mmFiles" :key="index"
-          :src="m.fileName as string" />
+          :src="m.fileName || m.mid" />
       </div>
     </div>
 </template>
