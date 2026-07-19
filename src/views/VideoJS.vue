@@ -1247,7 +1247,12 @@ function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
           hls?.stopLoad();
           return;
         }
-        console.log(`HLS Error (${sourceName}):`, data);
+        // fragParsingError is expected for some corrupted/incompatible segments
+        // and is already recovered from below without affecting playback -
+        // logging it every time is just noise.
+        if (data.fatal || data.details !== 'fragParsingError') {
+          console.log(`HLS Error (${sourceName}):`, data);
+        }
 
         if (data.fatal && sourceName === 'master' && !hasTriedPlaylistFallback) {
           console.log('HLS.js: master playlist failed, trying playlist.m3u8');
@@ -1319,7 +1324,6 @@ function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
 
                 // Check if we've already tried to recover this fragment
                 if (failedFragments.has(fragUrl)) {
-                  console.log(`Fragment ${fragUrl} has already failed - keeping current frame and loading after ${nextLoadPosition}`);
                   hls?.startLoad(nextLoadPosition);
                   return;
                 }
@@ -1328,7 +1332,6 @@ function setupHLSWithJS(videoElement: HTMLVideoElement, setupToken: number) {
                 // recoverMediaError(); that resets MediaSource and briefly
                 // blanks the visible video.
                 failedFragments.add(fragUrl);
-                console.log(`Fragment parsing error for ${fragUrl} - keeping current frame and loading after ${nextLoadPosition}`);
                 hls?.startLoad(nextLoadPosition);
                 return;
               }
