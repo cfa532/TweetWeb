@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // share menu or other right click items
-import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useTweetStore } from '@/stores';
 import { useAlertStore } from '@/stores/alert.store';
 import { useI18n } from 'vue-i18n';
@@ -24,6 +24,11 @@ const showAttachmentEditor = ref(false)
 const attachmentEditTweet = ref<Tweet>()
 const showDeleteConfirmation = ref(false)
 const editContent = ref('')
+const isSubmittingEdit = ref(false)
+const isAdminEditorOpen = computed(() =>
+  (showEditor.value || showAttachmentEditor.value) && tweetStore.loginUser?.username === 'admin'
+)
+let bodyOverflowBeforeAdminEdit: string | null = null
 /** Ignore synthetic click right after touchend so we don't toggle twice (open then close). */
 let suppressDotClickFromTouch = false
 const props = defineProps({
@@ -127,6 +132,24 @@ onMounted(() => {
 onUnmounted(() => {
     window.removeEventListener('resize', onViewportChange)
     window.removeEventListener('scroll', onViewportChange, true)
+    if (bodyOverflowBeforeAdminEdit !== null) {
+      document.body.style.overflow = bodyOverflowBeforeAdminEdit
+      bodyOverflowBeforeAdminEdit = null
+    }
+})
+
+watch(isAdminEditorOpen, (blocking) => {
+  if (blocking) {
+    if (bodyOverflowBeforeAdminEdit === null) {
+      bodyOverflowBeforeAdminEdit = document.body.style.overflow
+    }
+    document.body.style.overflow = 'hidden'
+    return
+  }
+  if (bodyOverflowBeforeAdminEdit !== null) {
+    document.body.style.overflow = bodyOverflowBeforeAdminEdit
+    bodyOverflowBeforeAdminEdit = null
+  }
 })
 function copyLink() {
     console.log(window.location.href);
@@ -167,13 +190,19 @@ function closeAttachmentEditor() {
   attachmentEditTweet.value = undefined
 }
 
+function closeTextEditor() {
+  if (isSubmittingEdit.value) return
+  showEditor.value = false
+}
+
 async function submitEdit() {
-  if (!props.tweet) return
+  if (!props.tweet || isSubmittingEdit.value) return
   if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) {
     showEditor.value = false
     return
   }
   const target = props.editTweet || props.tweet
+  isSubmittingEdit.value = true
   try {
     await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
     target.content = editContent.value
@@ -181,6 +210,8 @@ async function submitEdit() {
     alertStore.success(t('tweet.updateSuccess'))
   } catch (error: any) {
     alertStore.error(error, { fallbackMessage: t('tweet.failedUpdateTweet') })
+  } finally {
+    isSubmittingEdit.value = false
   }
 }
 
@@ -313,24 +344,31 @@ async function confirmDeleteItem() {
 
 <!-- Edit Modal -->
 <Teleport to="body">
-<div v-if="showEditor" class="edit-overlay" @click.self="showEditor = false">
-    <div class="edit-modal" @click.stop>
+<div v-if="showEditor" class="edit-overlay" @click.stop>
+    <section
+        class="edit-modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-busy="isSubmittingEdit"
+        :aria-label="$t('tweet.editTweet')"
+        @click.stop
+    >
         <div class="edit-header">
             <span>{{ $t('tweet.editTweet') }}</span>
-            <a href="#" @click.prevent="showEditor = false" style="color: grey; text-decoration: none;">&times;</a>
+            <button class="edit-close" type="button" :disabled="isSubmittingEdit" @click="closeTextEditor">&times;</button>
         </div>
-        <textarea v-model="editContent" class="edit-textarea" rows="6"></textarea>
+        <textarea v-model="editContent" class="edit-textarea" rows="6" :disabled="isSubmittingEdit"></textarea>
         <div class="edit-actions">
-            <button class="btn-cancel" @click="showEditor = false">{{ $t('common.cancel') }}</button>
-            <button class="btn-submit" @click="submitEdit">{{ $t('common.save') }}</button>
+            <button class="btn-cancel" :disabled="isSubmittingEdit" @click="closeTextEditor">{{ $t('common.cancel') }}</button>
+            <button class="btn-submit" :disabled="isSubmittingEdit" @click="submitEdit">{{ $t('common.save') }}</button>
         </div>
-    </div>
+    </section>
 </div>
 </Teleport>
 
 <!-- The login user's own tweets use the full attachment-capable editor. -->
 <Teleport to="body">
-<div v-if="showAttachmentEditor" class="edit-overlay" @click.self="closeAttachmentEditor">
+<div v-if="showAttachmentEditor" class="edit-overlay" @click.stop>
     <div class="edit-modal edit-modal--attachments" @click.stop>
         <EditorModal
             v-if="attachmentEditTweet"
@@ -484,6 +522,21 @@ async function confirmDeleteItem() {
     font-weight: bold;
     margin-bottom: 12px;
     font-size: 16px;
+}
+.edit-close {
+    border: none;
+    background: transparent;
+    color: grey;
+    padding: 0 4px;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+.edit-close:disabled,
+.btn-cancel:disabled,
+.btn-submit:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 .edit-textarea {
     width: 100%;
