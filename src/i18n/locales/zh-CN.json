@@ -162,6 +162,7 @@
     "loginToPost": "请登录以发布推文",
     "tweetUploaded": "推文上传成功！",
     "uploadSizeExceeds": "上传总大小超过4GB限制。",
+    "emptyFile": "文件 {name} 为空。请选择原始文件后重试。",
     "fileTooLarge": "文件 {name} 太大。最大大小为4GB。",
     "networkError": "上传 {name} 时网络错误",
     "uploadTimeout": "上传 {name} 超时",

@@ -239,6 +239,10 @@ export async function uploadVideo(
   noResample: boolean = false,
   retryCount: number = 0
 ): Promise<VideoUploadResponse> {
+  if (file.size === 0) {
+    throw new Error(`File ${file.name} is empty and cannot be uploaded.`);
+  }
+
   // Validate file size (4GB limit to match backend)
   const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
   if (file.size > maxFileSize) {

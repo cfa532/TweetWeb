@@ -473,18 +473,17 @@ async function onSelect(e: Event) {
     (e as HTMLInputEvent).target.files ||       // select input file
     (e as DragEvent).dataTransfer?.files        // drag and drop
 
-  // For clipboard paste, prefer items (supports multiple files) over files (often capped at one)
+  // Clipboard items can expose a named but empty File for OS-copied videos.
+  // Prefer the browser's file list and keep item extraction as a fallback.
   if (!files?.length && e.type === 'paste') {
     const clipboard = (e as ClipboardEvent).clipboardData
-    if (clipboard?.items?.length) {
-      const itemFiles = Array.from(clipboard.items)
+    if (clipboard?.files?.length) {
+      files = clipboard.files
+    } else if (clipboard?.items?.length) {
+      files = Array.from(clipboard.items)
         .filter(item => item.kind === 'file')
         .map(item => item.getAsFile())
         .filter((f): f is File => f !== null)
-      if (itemFiles.length > 0) files = itemFiles
-    }
-    if (!files?.length && clipboard?.files?.length) {
-      files = clipboard.files
     }
   }
 
@@ -497,6 +496,12 @@ async function onSelect(e: Event) {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+
+      if (file.size === 0) {
+        useAlertStore().error(t('editor.emptyFile', { name: file.name }));
+        continue;
+      }
+
       totalSize += file.size;
 
       if (totalSize > MAX_UPLOAD_SIZE) {
@@ -519,8 +524,10 @@ async function onSelect(e: Event) {
       }
     }
 
-    divAttach.value!.hidden = false;
-    dropHere.value!.hidden = true;
+    if (filesUpload.value.length > 0) {
+      divAttach.value!.hidden = false;
+      dropHere.value!.hidden = true;
+    }
   }
   // No files — let the default paste behaviour handle text insertion into the textarea
 }

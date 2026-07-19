@@ -162,6 +162,7 @@
     "loginToPost": "ツイートを投稿するにはログインしてください",
     "tweetUploaded": "ツイートのアップロードに成功しました！",
     "uploadSizeExceeds": "アップロード合計サイズが4GB制限を超えています。",
+    "emptyFile": "ファイル {name} は空です。元のファイルを選択して、もう一度お試しください。",
     "fileTooLarge": "ファイル {name} が大きすぎます。最大サイズは4GBです。",
     "networkError": "{name} のアップロード中にネットワークエラー",
     "uploadTimeout": "{name} のアップロードがタイムアウト",
