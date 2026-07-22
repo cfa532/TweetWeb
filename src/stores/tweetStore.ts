@@ -18,6 +18,7 @@ const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
 const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
+const UPDATE_TWEET_TIMEOUT_MS = 30_000
 
 function publicGatewayOrigin(): string | null {
     return isPublicWebGatewayHost(window.location.hostname) ? window.location.origin : null
@@ -3600,6 +3601,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!writeUser) throw new Error('Not logged in')
                 const writableIp = await this.resolveWritableHostIp(writeUser)
                 const client = createPooledClient(writableIp, this.lapi.connectionPool)
+                client.timeout = UPDATE_TWEET_TIMEOUT_MS
                 const attachmentReferences = attachments?.map(attachment => {
                     const mid = String(attachment.mid || '').trim()
                     const separator = mid.lastIndexOf('/')
