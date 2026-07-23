@@ -29,6 +29,26 @@ type ExpiringLocalCache<T> = {
     value: T
 }
 
+type SavedListType = 'bookmark_list' | 'favorite_list'
+
+function savedListCacheKey(userId: string, type: SavedListType): string {
+    return `saved_tweets_${type}_${userId}`
+}
+
+function unwrapNestedV2Map(response: any): Record<string, any> | null {
+    let current = response
+    for (let depth = 0; depth < 3; depth++) {
+        if (!current || typeof current !== 'object' || Array.isArray(current)) return null
+        if (current.success === false) return null
+        if (current.success === true && current.data && typeof current.data === 'object') {
+            current = current.data
+            continue
+        }
+        return current
+    }
+    return current && typeof current === 'object' ? current : null
+}
+
 /**
  * Comma-separated ids from `VITE_DEFAULT_FOLLOWINGS`: same role as iOS `AppConfig.alphaId` /
  * `Gadget.getAlphaIds()` — guest following seed and post-register auto-follow targets.
@@ -372,6 +392,8 @@ export const useTweetStore = defineStore('tweetStore', {
         tweets: [] as Tweet[],      // tweets
         tweetIndex: new Map<string, Tweet>(),  // O(1) lookup by mid
         interactionOverrides: new Map<string, { favorite?: boolean; bookmark?: boolean }>(),
+        optimisticSavedListStates: new Map<string, { favorite?: boolean; bookmark?: boolean }>(),
+        savedListTweets: {} as Record<string, Tweet[]>,
         // Mids that belong to the main following feed (loaded by getTweetFeed /
         // updateFollowingTweets). `tweets` is a shared cache that profile and pinned
         // loaders also push into, so the feed banner must count only these — otherwise
@@ -899,6 +921,173 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
 
+        cacheUserTweetsByType(
+            userId: string,
+            type: SavedListType,
+            tweets: Tweet[]
+        ) {
+            try {
+                const serializable = tweets.map(tweet => {
+                    const cached = tweetForSessionStorage(tweet)
+                    cached.comments = []
+                    return cached
+                })
+                setLocalCache(savedListCacheKey(userId, type), serializable)
+            } catch (e) {
+                console.warn(`Failed to cache ${type} for ${userId}:`, e)
+            }
+        },
+
+        loadCachedUserTweetsByType(
+            userId: string,
+            type: SavedListType
+        ): Tweet[] {
+            const key = savedListCacheKey(userId, type)
+            try {
+                const cachedTweets = getLocalCache<Tweet[]>(key) ?? []
+                const result: Tweet[] = []
+                for (const cachedTweet of cachedTweets) {
+                    if (this._deletedTweetIds.has(cachedTweet.mid)) continue
+                    if (cachedTweet.author) {
+                        delete (cachedTweet.author as any).providerIp
+                        if (attachNodePoolRoute(cachedTweet.author, this.lapi.connectionPool)) {
+                            cachedTweet.provider = cachedTweet.author.providerIp
+                        }
+                        const sharedAuthor = this.users.get(cachedTweet.authorId)
+                        if (sharedAuthor) cachedTweet.author = sharedAuthor
+                        else this.users.set(cachedTweet.authorId, cachedTweet.author)
+                    }
+                    cachedTweet.comments = []
+
+                    const existing = this.tweetIndex.get(cachedTweet.mid)
+                    if (existing) {
+                        this.refreshCachedTweet(existing, cachedTweet)
+                        result.push(existing)
+                    } else {
+                        this.tweets.push(cachedTweet)
+                        this.tweetIndex.set(cachedTweet.mid, cachedTweet)
+                        result.push(cachedTweet)
+                    }
+                    if (
+                        cachedTweet.favoriteOverride !== undefined ||
+                        cachedTweet.bookmarkOverride !== undefined
+                    ) {
+                        this.interactionOverrides.set(cachedTweet.mid, {
+                            favorite: cachedTweet.favoriteOverride,
+                            bookmark: cachedTweet.bookmarkOverride,
+                        })
+                    }
+                }
+                this.savedListTweets[key] = result
+                return result
+            } catch (e) {
+                console.warn(`Failed to load cached ${type} for ${userId}:`, e)
+                this.savedListTweets[key] = []
+                return []
+            }
+        },
+
+        getLoadedUserTweetsByType(
+            userId: string,
+            type: SavedListType
+        ): Tweet[] {
+            return this.savedListTweets[savedListCacheKey(userId, type)] ?? []
+        },
+
+        setLoadedUserTweetsByType(
+            userId: string,
+            type: SavedListType,
+            tweets: Tweet[]
+        ) {
+            const key = savedListCacheKey(userId, type)
+            this.savedListTweets[key] = tweets
+            this.cacheUserTweetsByType(userId, type, tweets)
+        },
+
+        applyOptimisticSavedTweet(
+            tweet: Tweet,
+            kind: 'favorite' | 'bookmark',
+            desiredState: boolean,
+            previousState: boolean,
+            phase: 'optimistic' | 'rollback' = 'optimistic',
+        ): Tweet {
+            const index = kind === 'favorite' ? 0 : 1
+            const flags = Array.isArray(tweet.favorites)
+                ? [...tweet.favorites]
+                : [false, false, false]
+            while (flags.length < 3) flags.push(false)
+            flags[index] = desiredState
+
+            let updated: Tweet = {
+                ...tweet,
+                favorites: flags,
+                favoriteOverride: kind === 'favorite'
+                    ? desiredState
+                    : tweet.favoriteOverride,
+                bookmarkOverride: kind === 'bookmark'
+                    ? desiredState
+                    : tweet.bookmarkOverride,
+            }
+            this.setInteractionOverride(tweet.mid, kind, desiredState)
+            const pendingState = this.optimisticSavedListStates.get(tweet.mid) ?? {}
+            if (phase === 'optimistic') {
+                this.optimisticSavedListStates.set(tweet.mid, {
+                    ...pendingState,
+                    [kind]: desiredState,
+                })
+            } else {
+                const remainingState = { ...pendingState }
+                delete remainingState[kind]
+                if (
+                    remainingState.favorite === undefined &&
+                    remainingState.bookmark === undefined
+                ) {
+                    this.optimisticSavedListStates.delete(tweet.mid)
+                } else {
+                    this.optimisticSavedListStates.set(tweet.mid, remainingState)
+                }
+            }
+
+            const storedTweet = this.tweetIndex.get(tweet.mid)
+            if (storedTweet) {
+                Object.assign(storedTweet, updated)
+                updated = storedTweet
+            }
+
+            const loginUser = this.loginUser
+            if (!loginUser) return updated
+            if (desiredState !== previousState) {
+                if (kind === 'favorite') {
+                    loginUser.favoritesCount = Math.max(
+                        0,
+                        (loginUser.favoritesCount ?? 0) + (desiredState ? 1 : -1)
+                    )
+                } else {
+                    loginUser.bookmarksCount = Math.max(
+                        0,
+                        (loginUser.bookmarksCount ?? 0) + (desiredState ? 1 : -1)
+                    )
+                }
+            }
+
+            const idField = kind === 'favorite' ? 'favoriteTweets' : 'bookmarkedTweets'
+            const savedIds = loginUser[idField] ?? []
+            loginUser[idField] = desiredState
+                ? [tweet.mid, ...savedIds.filter(id => id !== tweet.mid)]
+                : savedIds.filter(id => id !== tweet.mid)
+            setStoredLoginUser(loginUser)
+
+            const type: SavedListType = kind === 'favorite'
+                ? 'favorite_list'
+                : 'bookmark_list'
+            const current = this.getLoadedUserTweetsByType(loginUser.mid, type)
+            const next = desiredState
+                ? [updated, ...current.filter(item => item.mid !== tweet.mid)]
+                : current.filter(item => item.mid !== tweet.mid)
+            this.setLoadedUserTweetsByType(loginUser.mid, type, next)
+            return updated
+        },
+
         cacheFeedTweets(userId?: string) {
             const cacheUserId = userId ?? this.loginUser?.mid
             if (!cacheUserId) return
@@ -1254,12 +1443,12 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async loadUserTweetsByType(
             userId: string,
-            type: 'bookmark_list' | 'favorite_list',
+            type: SavedListType,
             pageNumber: number = 0,
             pageSize: number = 20
         ): Promise<Tweet[]> {
             const user = await this.getUser(userId)
-            if (!user) return []
+            if (!user) throw new Error(`User not available for ${type}: ${userId}`)
 
             const params = {
                 aid: this.appId,
@@ -1282,7 +1471,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 raw = await profileClient.RunMApp("get_user_meta", params)
             } catch (e) {
                 console.warn(`[loadUserTweetsByType] ${type} RPC failed for ${userId}:`, e)
-                return []
+                throw e
             }
 
             const data = (raw && typeof raw === 'object' && 'success' in raw)
@@ -1290,22 +1479,28 @@ export const useTweetStore = defineStore('tweetStore', {
                 : raw
 
             if (!Array.isArray(data)) {
-                console.warn(`[loadUserTweetsByType] ${type} response not an array for ${userId}:`, data)
-                return []
+                throw new Error(`[loadUserTweetsByType] ${type} response not an array for ${userId}`)
             }
 
+            const previousList = this.getLoadedUserTweetsByType(userId, type)
             const result: Tweet[] = []
             for (const t of data) {
                 if (!t || !t.mid) continue
+                const pendingState = this.optimisticSavedListStates.get(t.mid)
+                const optimisticState = type === 'bookmark_list'
+                    ? pendingState?.bookmark
+                    : pendingState?.favorite
+                if (optimisticState === false) continue
+
                 const flags = Array.isArray(t.favorites) ? [...t.favorites] : [false, false, false]
                 while (flags.length < 3) flags.push(false)
-                flags[type === 'bookmark_list' ? 1 : 0] = true
+                flags[type === 'bookmark_list' ? 1 : 0] = optimisticState ?? true
                 t.favorites = flags
-                if (type === 'bookmark_list') t.bookmarkOverride = true
-                else t.favoriteOverride = true
+                if (type === 'bookmark_list') t.bookmarkOverride = optimisticState ?? true
+                else t.favoriteOverride = optimisticState ?? true
                 const savedOverride = this.interactionOverrides.get(t.mid) ?? {}
-                if (type === 'bookmark_list') savedOverride.bookmark = true
-                else savedOverride.favorite = true
+                if (type === 'bookmark_list') savedOverride.bookmark = optimisticState ?? true
+                else savedOverride.favorite = optimisticState ?? true
                 this.interactionOverrides.set(t.mid, savedOverride)
                 try {
                     await this.addTweetToStore(t)
@@ -1328,7 +1523,25 @@ export const useTweetStore = defineStore('tweetStore', {
                     result.push(displayTweet)
                 }
             }
-            return result
+
+            const resultIds = new Set(result.map(tweet => tweet.mid))
+            const optimisticAdditions = pageNumber === 0
+                ? previousList.filter(tweet => {
+                    const state = this.optimisticSavedListStates.get(tweet.mid)
+                    const isSaved = type === 'bookmark_list'
+                        ? state?.bookmark
+                        : state?.favorite
+                    return isSaved === true && !resultIds.has(tweet.mid)
+                })
+                : []
+            const finalResult = [...optimisticAdditions, ...result]
+                .filter((tweet, index, tweets) =>
+                    tweets.findIndex(candidate => candidate.mid === tweet.mid) === index
+                )
+            if (pageNumber === 0) {
+                this.setLoadedUserTweetsByType(userId, type, finalResult)
+            }
+            return finalResult
         },
 
         /**
@@ -3762,6 +3975,59 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param isFavorite The desired favorite state
          * @returns The updated tweet object
          */
+        async _removeSavedTweetFromLoginUser(
+            tweet: Tweet,
+            kind: 'favorite' | 'bookmark',
+        ): Promise<Tweet> {
+            const loginUser = this.loginUser
+            if (!loginUser) throw new Error('Not logged in')
+            const writableIp = await this.resolveWritableHostIp(loginUser)
+            const client = createPooledClient(writableIp, this.lapi.connectionPool)
+            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+            const entry = kind === 'favorite'
+                ? 'toggle_favorite_by_user'
+                : 'toggle_bookmark_by_user'
+            const stateParameter = kind === 'favorite'
+                ? 'isfavorite'
+                : 'isbookmarked'
+            const ret = await client.RunMApp(entry, {
+                aid: this.appId,
+                ver: 'last',
+                version: 'v2',
+                userid: loginUser.mid,
+                tweetid: tweet.mid,
+                [stateParameter]: false,
+                skipcontentsync: true,
+            })
+            const updatedUser = unwrapNestedV2Map(ret)
+            if (!updatedUser) throw new Error(`${entry} returned invalid user data`)
+            Object.assign(loginUser, updatedUser)
+            setStoredLoginUser(loginUser)
+
+            const storedTweet = this.tweetIndex.get(tweet.mid)
+            if (storedTweet) return { ...storedTweet }
+
+            const flags = this.resolvedInteractionFlags(tweet)
+            const index = kind === 'favorite' ? 0 : 1
+            flags[index] = false
+            return {
+                ...tweet,
+                favorites: flags,
+                likeCount: kind === 'favorite'
+                    ? Math.max(0, (tweet.likeCount ?? 0) - 1)
+                    : tweet.likeCount,
+                bookmarkCount: kind === 'bookmark'
+                    ? Math.max(0, (tweet.bookmarkCount ?? 0) - 1)
+                    : tweet.bookmarkCount,
+                favoriteOverride: kind === 'favorite'
+                    ? false
+                    : tweet.favoriteOverride,
+                bookmarkOverride: kind === 'bookmark'
+                    ? false
+                    : tweet.bookmarkOverride,
+            }
+        },
+
         async toggleFavorite(tweet: Tweet, isFavorite: boolean) {
             const loginUser = this.loginUser
             if (!loginUser) throw new Error('Not logged in')
@@ -3775,13 +4041,22 @@ export const useTweetStore = defineStore('tweetStore', {
                 userhostid: userHostId,
                 isfavorite: isFavorite,
             }
-            const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
-            if (!author) throw new Error('Author not found for toggle_favorite')
-            const writableIp = await this.resolveWritableHostIp(author)
-            const client = createPooledClient(writableIp, this.lapi.connectionPool)
-            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            const ret = await client.RunMApp("toggle_favorite", params)
-            return this._applyServerTweet(tweet, ret)
+            try {
+                const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
+                if (!author) throw new Error('Author not found for toggle_favorite')
+                const writableIp = await this.resolveWritableHostIp(author)
+                const client = createPooledClient(writableIp, this.lapi.connectionPool)
+                client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+                const ret = await client.RunMApp("toggle_favorite", params)
+                return this._applyServerTweet(tweet, ret)
+            } catch (primaryError) {
+                if (isFavorite) throw primaryError
+                console.warn(
+                    `[toggleFavorite] Author mutation failed; removing ${tweet.mid} from login user favorites`,
+                    primaryError,
+                )
+                return this._removeSavedTweetFromLoginUser(tweet, 'favorite')
+            }
         },
         /**
          * Toggles the bookmark status of a tweet
@@ -3802,13 +4077,22 @@ export const useTweetStore = defineStore('tweetStore', {
                 userhostid: userHostId,
                 isbookmarked: isBookmarked,
             }
-            const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
-            if (!author) throw new Error('Author not found for toggle_bookmark')
-            const writableIp = await this.resolveWritableHostIp(author)
-            const client = createPooledClient(writableIp, this.lapi.connectionPool)
-            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            const ret = await client.RunMApp("toggle_bookmark", params)
-            return this._applyServerTweet(tweet, ret)
+            try {
+                const author = tweet.interactionHostAuthor ?? tweet.author ?? this.users.get(tweet.authorId)
+                if (!author) throw new Error('Author not found for toggle_bookmark')
+                const writableIp = await this.resolveWritableHostIp(author)
+                const client = createPooledClient(writableIp, this.lapi.connectionPool)
+                client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+                const ret = await client.RunMApp("toggle_bookmark", params)
+                return this._applyServerTweet(tweet, ret)
+            } catch (primaryError) {
+                if (isBookmarked) throw primaryError
+                console.warn(
+                    `[toggleBookmark] Author mutation failed; removing ${tweet.mid} from login user bookmarks`,
+                    primaryError,
+                )
+                return this._removeSavedTweetFromLoginUser(tweet, 'bookmark')
+            }
         },
         _applyServerTweet(tweet: Tweet, ret: any): Tweet {
             // Unwrap v2 response: if ret has data field, use it
@@ -3843,7 +4127,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 return updated
             }
-            return { ...tweet }
+            throw new Error('Saved tweet mutation returned invalid data')
         },
 
         /**

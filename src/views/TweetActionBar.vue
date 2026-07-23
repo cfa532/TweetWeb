@@ -96,19 +96,25 @@ async function onLike() {
   };
   const wasLiked = !!original.favorites?.[FAVORITE_IDX];
   const desiredFavorite = !wasLiked;
-  tweetStore.setInteractionOverride(original.mid, 'favorite', desiredFavorite);
-  emit('updated', {
+  const optimisticTweet = tweetStore.applyOptimisticSavedTweet({
     ...original,
     likeCount: Math.max(0, (original.likeCount ?? 0) + (wasLiked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, FAVORITE_IDX),
     favoriteOverride: desiredFavorite,
-  });
+  }, 'favorite', desiredFavorite, wasLiked);
+  emit('updated', optimisticTweet);
   try {
     const serverResult = await tweetStore.toggleFavorite(original, desiredFavorite);
     emit('updated', serverResult);
   } catch (e) {
-    tweetStore.setInteractionOverride(original.mid, 'favorite', wasLiked);
-    emit('updated', original);
+    const rolledBackTweet = tweetStore.applyOptimisticSavedTweet(
+      original,
+      'favorite',
+      wasLiked,
+      desiredFavorite,
+      'rollback',
+    );
+    emit('updated', rolledBackTweet);
     console.error('[onLike] failed:', e);
     alertStore.error(e, { fallbackMessage: t('tweet.likeFailed') });
   }
@@ -124,19 +130,25 @@ async function onBookmark() {
   };
   const wasBookmarked = !!original.favorites?.[BOOKMARK_IDX];
   const desiredBookmark = !wasBookmarked;
-  tweetStore.setInteractionOverride(original.mid, 'bookmark', desiredBookmark);
-  emit('updated', {
+  const optimisticTweet = tweetStore.applyOptimisticSavedTweet({
     ...original,
     bookmarkCount: Math.max(0, (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, BOOKMARK_IDX),
     bookmarkOverride: desiredBookmark,
-  });
+  }, 'bookmark', desiredBookmark, wasBookmarked);
+  emit('updated', optimisticTweet);
   try {
     const serverResult = await tweetStore.toggleBookmark(original, desiredBookmark);
     emit('updated', serverResult);
   } catch (e) {
-    tweetStore.setInteractionOverride(original.mid, 'bookmark', wasBookmarked);
-    emit('updated', original);
+    const rolledBackTweet = tweetStore.applyOptimisticSavedTweet(
+      original,
+      'bookmark',
+      wasBookmarked,
+      desiredBookmark,
+      'rollback',
+    );
+    emit('updated', rolledBackTweet);
     console.error('[onBookmark] failed:', e);
     alertStore.error(e, { fallbackMessage: t('tweet.bookmarkFailed') });
   }

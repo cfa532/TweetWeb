@@ -535,23 +535,32 @@ const userView = computed<'tweets' | 'bookmarks' | 'favorites'>(() => {
     return v === 'bookmarks' || v === 'favorites' ? v : 'tweets'
 });
 
-const metaTweets = ref<Tweet[]>([]);
+const metaType = computed<'bookmark_list' | 'favorite_list'>(() =>
+    userView.value === 'bookmarks' ? 'bookmark_list' : 'favorite_list'
+);
+const metaTweets = computed(() => {
+    if (userView.value === 'tweets' || !authorId.value) return [];
+    return tweetStore.getLoadedUserTweetsByType(authorId.value, metaType.value);
+});
 const isMetaLoading = ref(false);
 
 watch(
     () => [route.params.authorId, userView.value] as const,
     async ([uid, view]) => {
         if (view === 'tweets' || !uid) {
-            metaTweets.value = []
+            isMetaLoading.value = false
             return
         }
         const type = view === 'bookmarks' ? 'bookmark_list' : 'favorite_list'
+        tweetStore.loadCachedUserTweetsByType(uid as string, type)
         isMetaLoading.value = true
+        // Vue must paint the cached list before user/node resolution starts.
+        await nextTick()
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
         try {
-            metaTweets.value = await tweetStore.loadUserTweetsByType(uid as string, type)
+            await tweetStore.loadUserTweetsByType(uid as string, type)
         } catch (e) {
             console.warn('[UserPage] loadUserTweetsByType failed:', e)
-            metaTweets.value = []
         } finally {
             isMetaLoading.value = false
         }

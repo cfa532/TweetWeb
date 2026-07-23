@@ -32,6 +32,8 @@ interface User {
     tweetCount?: number;
     bookmarksCount?: number;
     favoritesCount?: number;
+    bookmarkedTweets?: MimeiId[];
+    favoriteTweets?: MimeiId[];
     commentsCount?: number;
     lastLogin?: number;
     cloudDrivePort?: number;  // Port for backend service (undefined/null/0 means no service)
