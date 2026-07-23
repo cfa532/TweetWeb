@@ -620,15 +620,11 @@ async function recoverReloadedProfile(targetAuthorId: MimeiId) {
     recoveredProfileIds.add(targetAuthorId);
 
     try {
-        const refreshedUser = await tweetStore.getUser(targetAuthorId, true);
-        if (!refreshedUser) return;
-
-        // Keep this work detached from initial rendering. Only visible-profile
-        // updates are guarded; cache updates for the original user remain valid.
-        if (authorId.value === targetAuthorId) {
-            await loadPinnedTweetsForUser(targetAuthorId);
-        }
-        if (!shouldResyncUser(refreshedUser)) {
+        // Use the existing route when available. A cache miss performs the one
+        // user read needed to discover the access node before synchronization.
+        const currentUser = await tweetStore.getUser(targetAuthorId);
+        if (!currentUser) return;
+        if (!shouldResyncUser(currentUser)) {
             console.log(`[UserPage] Skipping resync_user for ${targetAuthorId}: read/root nodes do not differ`);
             return;
         }
@@ -641,7 +637,7 @@ async function recoverReloadedProfile(targetAuthorId: MimeiId) {
         const syncedIds = new Set(result.tweets.map(t => t.mid));
         appendNewToDisplayed(syncedIds);
     } catch (error) {
-        console.warn(`[UserPage] Background resync failed for ${targetAuthorId}:`, error);
+        console.warn(`[UserPage] Reload recovery resync failed for ${targetAuthorId}:`, error);
     }
 }
 
@@ -690,11 +686,17 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }
 
-    // Keep cached profile/avatar data on the fast path. The tweet load below
-    // refreshes stale routes on retry, and avatar errors still force a repair.
-    tweetStore.getUserFromRootHost(nv, false).then(u => {
-        console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
-    });
+    // A browser reload is the Web profile's explicit recovery action. Finish
+    // access-node synchronization before fresh pinned/timeline reads. Ordinary
+    // SPA navigation keeps the normal cached route lookup and does not resync.
+    if (reloadRecoveryAuthorId === nv) {
+        await recoverReloadedProfile(nv);
+        if (authorId.value !== nv || userView.value !== 'tweets') return;
+    } else {
+        tweetStore.getUserFromRootHost(nv, false).then(u => {
+            console.log(`[UserPage] providerIp for ${nv}:`, u?.providerIp ?? 'not resolved')
+        });
+    }
     // A scrollTweet deep link owns the scroll target. Otherwise only hide the feed
     // while paging back to a previously saved deep scroll position; a fresh load
     // with no saved spot (e.g. tapping the Tweets tab) loads normally — no veil.
@@ -703,7 +705,6 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
     await initialLoadTweets(nv);
     await maybeScrollToDeepLinkedTweet();
     if (!hasScrollTweet) await restoreAfterLoad();
-    if (reloadRecoveryAuthorId === nv) void recoverReloadedProfile(nv);
 }, { immediate: true });
 
 onBeforeRouteUpdate(async (to, from) => {
