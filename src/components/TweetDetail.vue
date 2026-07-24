@@ -131,6 +131,39 @@ onMounted(async () => {
 // still running past the safety timeout below) can recognize it's been
 // superseded by a retry and avoid clobbering the newer attempt's state.
 let loadGeneration = 0
+const DETAIL_FETCH_ATTEMPTS = 3
+const DETAIL_FETCH_RETRY_DELAY_MS = 5000
+
+async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Promise<Tweet | null> {
+    if (parentTweet.originalTweet) return parentTweet.originalTweet
+    if (!parentTweet.originalTweetId) return null
+
+    for (let attempt = 0; attempt < DETAIL_FETCH_ATTEMPTS; attempt++) {
+        if (attempt > 0) {
+            await new Promise(resolve => setTimeout(resolve, DETAIL_FETCH_RETRY_DELAY_MS))
+        }
+        if (myGeneration !== loadGeneration) return null
+
+        try {
+            const original = await tweetStore.getTweet(
+                parentTweet.originalTweetId,
+                parentTweet.originalAuthorId,
+                true,
+                false,
+                true
+            ) as Tweet | null
+            if (original) return original
+        } catch (error) {
+            if (attempt === DETAIL_FETCH_ATTEMPTS - 1) throw error
+            console.warn(
+                `[TweetDetail] Original tweet load attempt ${attempt + 1} failed; retrying`,
+                error
+            )
+        }
+    }
+
+    return null
+}
 
 async function loadDetail() {
     const myGeneration = ++loadGeneration
@@ -160,8 +193,10 @@ async function loadDetail() {
         // Retry up to 3 times with a short delay — provider IP resolution can
         // transiently return empty on first page load (RPC not yet warm).
         let fetchedTweet: Tweet | undefined
-        for (let attempt = 0; attempt < 3; attempt++) {
-            if (attempt > 0) await new Promise(r => setTimeout(r, 5000))
+        for (let attempt = 0; attempt < DETAIL_FETCH_ATTEMPTS; attempt++) {
+            if (attempt > 0) {
+                await new Promise(resolve => setTimeout(resolve, DETAIL_FETCH_RETRY_DELAY_MS))
+            }
             if (myGeneration !== loadGeneration) return
             fetchedTweet = await tweetStore.getTweet(tweetId.value, authorId.value, true, false, true) as Tweet
             if (fetchedTweet) break
@@ -207,8 +242,9 @@ async function showTweet(myGeneration: number, timeoutId?: number) {
                 try {
                     // If the parent tweet came from cache it already carries
                     // its originalTweet; reuse it instead of refetching.
-                    originTweet.value = tweet.value.originalTweet
-                        ?? await tweetStore.getTweet(tweet.value.originalTweetId, tweet.value.originalAuthorId!)
+                    const loadedOriginal = await loadOriginalTweet(tweet.value, myGeneration)
+                    if (myGeneration !== loadGeneration) return
+                    originTweet.value = loadedOriginal
                     if (!tweetHasOwnBody(tweet.value) && originTweet.value) {
                         // Pure retweet (no added content): show the original's comments.
                         isRetweet.value = true
