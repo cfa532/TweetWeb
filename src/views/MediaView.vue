@@ -22,6 +22,7 @@ const props = defineProps({
 
 const router = useRouter();
 const setFeedMediaElement = inject(TWEET_MEDIA_ELEMENT_REGISTRY_KEY, null);
+const mediaRegistrationId = Symbol('tweet-media-instance');
 
 const mediaMid = computed(() => {
     return props.media.mid.substring(props.media.mid.lastIndexOf("/")+1)
@@ -84,7 +85,7 @@ const resolvedAutoplay = computed(() => {
 function setMediaRootElement(refValue: Element | ComponentPublicInstance | null) {
     if (!props.tweet?.mid) return;
     const element = refValue instanceof Element ? refValue : null;
-    setFeedMediaElement?.(props.tweet.mid, props.media, element);
+    setFeedMediaElement?.(mediaRegistrationId, props.tweet.mid, props.media, element);
 }
 
 onBeforeUnmount(() => {

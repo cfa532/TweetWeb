@@ -4,7 +4,12 @@ import { hasPrimaryVideo, primaryVideoHealthy } from './useVideoPlaybackCoordina
 
 export type MediaLoadState = 'idle' | 'preload' | 'visible'
 export const TWEET_MEDIA_PRELOAD_STALE_EVENT = 'tweet-media-preload-stale'
-export type TweetMediaElementRegistrar = (tweetId: string, media: MimeiFileType, element: Element | null) => void
+export type TweetMediaElementRegistrar = (
+  registrationId: symbol,
+  tweetId: string,
+  media: MimeiFileType,
+  element: Element | null,
+) => void
 export const TWEET_MEDIA_ELEMENT_REGISTRY_KEY: InjectionKey<TweetMediaElementRegistrar> = Symbol('tweet-media-element-registry')
 
 interface TweetEntry {
@@ -15,6 +20,7 @@ interface TweetEntry {
 }
 
 interface MediaEntry {
+  key: string
   tweetId: string
   media: MimeiFileType
   element: HTMLElement
@@ -77,7 +83,10 @@ function debugMediaPlan(message: string, payload: Record<string, unknown>) {
 
 export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
   const entries = new Map<string, TweetEntry>()
-  const mediaEntries = new Map<string, MediaEntry>()
+  // The same tweet can appear in several quote/retweet cards at once. Track
+  // each rendered instance separately so their template refs cannot replace
+  // one another and trigger a reactive update loop.
+  const mediaEntries = new Map<symbol, MediaEntry>()
   const version = ref(0)
   const scrollDirection = ref<'down' | 'up'>('down')
   const canPreloadIdleMedia = ref(true)
@@ -109,8 +118,8 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
   function visibleMediaKeys(): Set<string> {
     version.value
     const keys = new Set<string>()
-    for (const [key, entry] of mediaEntries) {
-      if (entry.visible) keys.add(key)
+    for (const entry of mediaEntries.values()) {
+      if (entry.visible) keys.add(entry.key)
     }
     return keys
   }
@@ -266,22 +275,32 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
     bump()
   }
 
-  function setMediaElement(tweetId: string, media: MimeiFileType, element: Element | null) {
+  function setMediaElement(
+    registrationId: symbol,
+    tweetId: string,
+    media: MimeiFileType,
+    element: Element | null,
+  ) {
     const key = mediaKey(tweetId, media)
-    const existing = mediaEntries.get(key)
+    const existing = mediaEntries.get(registrationId)
     if (existing && existing.element === element) {
+      const keyChanged = existing.key !== key
+      existing.key = key
+      existing.tweetId = tweetId
       existing.media = media
+      if (keyChanged) bump()
       return
     }
 
     if (existing && existing.element !== element) {
       observer?.unobserve(existing.element)
-      mediaEntries.delete(key)
+      mediaEntries.delete(registrationId)
     }
 
     if (element instanceof HTMLElement) {
       const visibility = visibilityForElement(element)
-      mediaEntries.set(key, {
+      mediaEntries.set(registrationId, {
+        key,
         tweetId,
         media,
         element,
@@ -291,7 +310,7 @@ export function useTweetMediaLoadingCoordinator(tweets: Ref<Tweet[]>) {
       })
       observer?.observe(element)
     }
-    bump()
+    if (existing || element instanceof HTMLElement) bump()
   }
 
   function updateViewportState() {
