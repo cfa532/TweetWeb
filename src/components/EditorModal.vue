@@ -40,10 +40,30 @@ const isQuoting = ref(false)    // whether to also post as a quote tweet (commen
 const showEditorOptions = ref(false)
 const tweetStore = useTweetStore()
 const tweet = ref<Tweet>()
-const author = tweetStore.loginUser!  // the page is accessible only by login user.
+const resolvedEditAuthor = ref<User>()
+const author = computed(() =>
+  resolvedEditAuthor.value
+  || props.editTweet?.author
+  || tweetStore.loginUser!
+)
 const mmFiles = ref<MimeiFileType[]>([]);
 const showCidModal = ref(false);
 const isEditing = computed(() => !!props.editTweet)
+
+async function resolveEditAuthor(): Promise<User> {
+  const loginUser = tweetStore.loginUser
+  if (!loginUser) throw new Error('Not logged in')
+  if (!props.editTweet || props.editTweet.authorId === loginUser.mid) {
+    return loginUser
+  }
+  const targetAuthor = props.editTweet.author
+    || await tweetStore.getUser(props.editTweet.authorId)
+  if (!targetAuthor) {
+    throw new Error('Could not resolve the tweet author')
+  }
+  resolvedEditAuthor.value = targetAuthor
+  return targetAuthor
+}
 
 function attachmentReferenceId(mid: string): string {
   const value = String(mid || '').trim()
@@ -52,7 +72,7 @@ function attachmentReferenceId(mid: string): string {
 }
 
 function displayAttachments(attachments: MimeiFileType[]): MimeiFileType[] {
-  const mediaHost = author.writableHostIp || props.editTweet?.provider || props.editTweet?.author?.providerIp
+  const mediaHost = author.value.writableHostIp || props.editTweet?.provider || author.value.providerIp
   const baseUrl = mediaHost ? `http://${mediaHost}` : window.location.origin
   return attachments.map(attachment => ({
     ...attachment,
@@ -76,7 +96,7 @@ const MAX_UPLOAD_SIZE = 4 * 1024 * 1024 * 1024; // 4GB
 const avatarRetry = ref(0)
 async function onAvatarError() {
   if (avatarRetry.value >= 3) return
-  await tweetStore.getUser(author.mid)
+  await tweetStore.getUser(author.value.mid)
   avatarRetry.value++  // key change remounts the img, forcing browser to re-request the (possibly updated) URL
 }
 
@@ -150,11 +170,20 @@ onMounted(() => {
     mmFiles.value = [...(props.editTweet.attachments || [])]
     downloadable.value = props.editTweet.downloadable ?? true
     isPrivate.value = props.editTweet.isPrivate ?? false
+    // Most tweet surfaces already provide the author object. If they do not,
+    // resolve it without delaying editor initialization; submit will retry and
+    // surface an error if the target author remains unavailable.
+    void resolveEditAuthor().catch(() => undefined)
     if (mmFiles.value.length > 0 && divAttach.value) {
       divAttach.value.hidden = false
     }
   } else {
-    tweet.value = { mid: 'dfdfd', authorId: author.mid, author: author, timestamp: Date.now() }
+    tweet.value = {
+      mid: 'dfdfd',
+      authorId: author.value.mid,
+      author: author.value,
+      timestamp: Date.now(),
+    }
   }
   document.addEventListener('paste', onSelect as EventListener)
 })
@@ -164,7 +193,10 @@ onUnmounted(() => {
 })
 
 // Upload files and store them as IPFS or Mimei type
-async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<MimeiFileType>[]> {
+async function uploadAttachedFiles(
+  files: File[],
+  uploadAuthor: User,
+): Promise<PromiseSettledResult<MimeiFileType>[]> {
   const results: PromiseSettledResult<MimeiFileType>[] = [];
 
   for (let i = 0; i < files.length; i++) {
@@ -178,7 +210,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       let cid: string = '';
 
       if (isImageType(fileType)) {
-        cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
+        cid = await retryUpload(() => uploadFileFromFile(file, i, uploadAuthor), file.name);
 
       } else if (isVideoType(fileType)) {
         uploadProgress[i] = 5; // Show initial progress
@@ -186,13 +218,13 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
         let backendVideoSize: number | undefined;
         let backendVideoAspectRatio: number | undefined;
 
-        if (!author.cloudDrivePort) {
+        if (!uploadAuthor.cloudDrivePort) {
           // No backend HLS service configured: upload as a regular IPFS file
           // regardless of size.
-          cid = await retryUpload(() => uploadFileFromFile(file, i), file.name);
+          cid = await retryUpload(() => uploadFileFromFile(file, i, uploadAuthor), file.name);
         } else {
-          const cloudDrivePort = String(author.cloudDrivePort);
-          const rawWritableHost = author.writableHostIp || await tweetStore.resolveWritableHostIp(author);
+          const cloudDrivePort = String(uploadAuthor.cloudDrivePort);
+          const rawWritableHost = uploadAuthor.writableHostIp || await tweetStore.resolveWritableHostIp(uploadAuthor);
           const ipAddress = rawWritableHost.includes(':') ? rawWritableHost.split(':')[0] : rawWritableHost;
           const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
 
@@ -236,7 +268,7 @@ async function uploadAttachedFiles(files: File[]): Promise<PromiseSettledResult<
       } else {
         // Handle other file types with new upload_ipfs API (matches iOS)
         cid = await retryUpload(
-          () => uploadFileFromFile(processedFile, i),
+          () => uploadFileFromFile(processedFile, i, uploadAuthor),
           file.name
         );
       }
@@ -293,17 +325,23 @@ async function onSubmit() {
   loading.value = true
   let attachments = <MimeiFileType[]>[]
   try {
+    if (props.editTweet
+      && props.editTweet.authorId !== loginUser.mid
+      && loginUser.username !== 'admin') {
+      throw new Error('Not authorized to edit this tweet')
+    }
+    const uploadAuthor = await resolveEditAuthor()
     // Resolve writable host once upfront so attachment uploads and uploadTweet share the cached IP.
-    if (author.hostIds?.[0] && !author.writableHostIp) {
+    if (uploadAuthor.hostIds?.[0] && !uploadAuthor.writableHostIp) {
       try {
-        await tweetStore.resolveWritableHostIp(author)
+        await tweetStore.resolveWritableHostIp(uploadAuthor)
       } catch (e) {
         console.warn('[EDITOR] Writable host resolution failed, configured video backend uploads may fail:', e)
       }
     }
 
     if (filesUpload.value.length > 0) {
-      attachments = (await uploadAttachedFiles(filesUpload.value))
+      attachments = (await uploadAttachedFiles(filesUpload.value, uploadAuthor))
         .filter((v) => v.status === 'fulfilled')
         .map((v: any) => v.value)
       if (attachments.length < filesUpload.value.length) {
@@ -316,9 +354,6 @@ async function onSubmit() {
       : attachments.concat(mmFiles.value)
 
     if (props.editTweet) {
-      if (props.editTweet.authorId !== loginUser.mid) {
-        throw new Error('Not authorized to edit this tweet')
-      }
       const content = txtConent.value || ''
       // Feed attachments contain display URLs, while update_tweet and Mimei
       // references require the underlying CID/MID only.
@@ -432,11 +467,14 @@ async function onSubmit() {
 
 // Upload a file via upload_ipfs (store helper handles writable-host resolution
 // and chunking).
-async function uploadFileFromFile(file: File, fileIndex: number): Promise<string> {
-  if (!tweetStore.loginUser) throw new Error('Not logged in')
+async function uploadFileFromFile(
+  file: File,
+  fileIndex: number,
+  uploadAuthor: User,
+): Promise<string> {
   const data = await file.arrayBuffer()
   const cid = await tweetStore.uploadBlobToIpfs(
-    tweetStore.loginUser,
+    uploadAuthor,
     data,
     (percent) => { uploadProgress[fileIndex] = percent }
   )
@@ -560,8 +598,8 @@ function goBack() {
 }
 
 function openUserPage() {
-  tweetStore.addFollowing(author.mid)
-  router.push(`/author/${author.mid}`)
+  tweetStore.addFollowing(author.value.mid)
+  router.push(`/author/${author.value.mid}`)
 }
 
 const handleCids = (ids: MimeiFileType[]) => {

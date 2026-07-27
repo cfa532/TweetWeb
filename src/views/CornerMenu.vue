@@ -174,9 +174,12 @@ function openEditor() {
   closeMenu()
   const target = props.editTweet || props.tweet
   // Top-level tweets live on their author's root node, which is also where
-  // EditorModal uploads new files. Comments follow their parent author's
+  // EditorModal uploads new files. Admin edits use the same editor and route
+  // uploads through the target author. Comments follow their parent author's
   // routing contract and keep the existing content-only path here.
-  if (!props.isComment && tweetStore.loginUser?.mid === target.authorId) {
+  const canEditAttachments = tweetStore.loginUser?.mid === target.authorId
+    || tweetStore.loginUser?.username === 'admin'
+  if (!props.isComment && canEditAttachments) {
     attachmentEditTweet.value = target
     showAttachmentEditor.value = true
     return
