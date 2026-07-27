@@ -963,13 +963,14 @@ function retryLoad() {
                     'media-attachments--video-only': isSingleVideo,
                 }]"
                 :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
-                <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
+                <!-- Keep stateful media components attached to a media ID, not an array position. -->
+                <MediaView v-for="(media, index) in mediaAttachments" :key="media.mid" :media=media
                     v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid"></MediaView>
             </div>
             <div v-if='documentAttachments.length > 0' class='document-attachments'>
                 <div
-                    v-for='(doc, index) in documentAttachments'
-                    :key='index'
+                    v-for='doc in documentAttachments'
+                    :key='doc.mid'
                     class='document-row'
                     @click='handleDocumentClick($event, doc)'
                 >
@@ -999,14 +1000,14 @@ function retryLoad() {
                     'media-attachments--video-only': isSingleVideo,
                 }]"
                 :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
-                <MediaView v-for="(media, index) in mediaAttachments" :key="index" :media=media
+                <MediaView v-for="(media, index) in mediaAttachments" :key="media.mid" :media=media
                     v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
                 </MediaView>
             </div>
             <div v-if='documentAttachments.length > 0' class='document-attachments'>
                 <div 
-                    v-for='(doc, index) in documentAttachments' 
-                    :key='index' 
+                    v-for='doc in documentAttachments'
+                    :key='doc.mid'
                     class='document-row'
                     @click='handleDocumentClick($event, doc)'
                 >
