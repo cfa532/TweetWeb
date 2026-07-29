@@ -1867,6 +1867,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param tweetId The ID of the tweet to fetch
          * @param authorId Optional author ID to help locate the tweet
          * @param useRacing If true, race multiple provider IPs for faster loading (TweetDetail page only)
+         * @param loadMissingOriginalTweet If false, return the outer tweet without separately fetching a missing embedded tweet
          * @returns The tweet object or undefined if not found
          */
         async fetchTweet(
@@ -1874,7 +1875,8 @@ export const useTweetStore = defineStore('tweetStore', {
             authorId: MimeiId | undefined = undefined,
             useRacing: boolean = false,
             forceRefresh: boolean = false,
-            fromDetailView: boolean = false
+            fromDetailView: boolean = false,
+            loadMissingOriginalTweet: boolean = true
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
@@ -2024,7 +2026,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (tweetInDB.length > 1) {
                     // Use the second element as originalTweet
                     originalTweetData = tweetInDB[1]
-                } else {
+                } else if (loadMissingOriginalTweet) {
                     // Fallback: fetch original tweet separately
                     originalTweetData = await this.fetchTweet(tweetData.originalTweetId, tweetData.originalAuthorId, false, false, fromDetailView)
                     if (!originalTweetData) {

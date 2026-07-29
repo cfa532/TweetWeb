@@ -131,38 +131,99 @@ onMounted(async () => {
 // still running past the safety timeout below) can recognize it's been
 // superseded by a retry and avoid clobbering the newer attempt's state.
 let loadGeneration = 0
-const DETAIL_FETCH_ATTEMPTS = 3
-const DETAIL_FETCH_RETRY_DELAY_MS = 5000
+const DETAIL_FETCH_RETRY_DELAY_MS = 6000
+
+type DetailFetchOutcome = {
+    tweet: Tweet | null
+    error?: unknown
+}
+
+// Start exactly one retry if the initial request has not produced a tweet
+// within six seconds. The first successful request wins; failures are only
+// surfaced after both requests have finished.
+function fetchTweetWithSingleRetry(
+    request: () => Promise<Tweet | null>,
+    myGeneration: number,
+    label: string
+): Promise<Tweet | null> {
+    return new Promise((resolve, reject) => {
+        let settled = false
+        let retryTimer: number | undefined
+        const outcomes: [DetailFetchOutcome | undefined, DetailFetchOutcome | undefined] = [undefined, undefined]
+
+        const finishAttempt = (attempt: number, outcome: DetailFetchOutcome) => {
+            if (settled) return
+            if (myGeneration !== loadGeneration) {
+                settled = true
+                if (retryTimer !== undefined) clearTimeout(retryTimer)
+                resolve(null)
+                return
+            }
+
+            outcomes[attempt] = outcome
+            if (outcome.tweet) {
+                settled = true
+                if (retryTimer !== undefined) clearTimeout(retryTimer)
+                resolve(outcome.tweet)
+                return
+            }
+
+            const initialOutcome = outcomes[0]
+            const retryOutcome = outcomes[1]
+            if (initialOutcome && retryOutcome) {
+                settled = true
+                if (retryTimer !== undefined) clearTimeout(retryTimer)
+                if ('error' in retryOutcome) {
+                    reject(retryOutcome.error)
+                } else {
+                    resolve(null)
+                }
+            }
+        }
+
+        const runAttempt = async (attempt: number) => {
+            try {
+                finishAttempt(attempt, { tweet: await request() })
+            } catch (error) {
+                finishAttempt(attempt, { tweet: null, error })
+            }
+        }
+
+        retryTimer = window.setTimeout(() => {
+            if (settled) return
+            if (myGeneration !== loadGeneration) {
+                settled = true
+                resolve(null)
+                return
+            }
+            console.warn(
+                `[TweetDetail] ${label} did not load within ${DETAIL_FETCH_RETRY_DELAY_MS}ms; starting one retry`
+            )
+            void runAttempt(1)
+        }, DETAIL_FETCH_RETRY_DELAY_MS)
+
+        void runAttempt(0)
+    })
+}
 
 async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Promise<Tweet | null> {
     if (parentTweet.originalTweet) return parentTweet.originalTweet
     if (!parentTweet.originalTweetId) return null
+    const originalTweetId = parentTweet.originalTweetId
+    const originalAuthorId = parentTweet.originalAuthorId
 
-    for (let attempt = 0; attempt < DETAIL_FETCH_ATTEMPTS; attempt++) {
-        if (attempt > 0) {
-            await new Promise(resolve => setTimeout(resolve, DETAIL_FETCH_RETRY_DELAY_MS))
-        }
-        if (myGeneration !== loadGeneration) return null
-
-        try {
-            const original = await tweetStore.getTweet(
-                parentTweet.originalTweetId,
-                parentTweet.originalAuthorId,
-                true,
-                false,
-                true
-            ) as Tweet | null
-            if (original) return original
-        } catch (error) {
-            if (attempt === DETAIL_FETCH_ATTEMPTS - 1) throw error
-            console.warn(
-                `[TweetDetail] Original tweet load attempt ${attempt + 1} failed; retrying`,
-                error
-            )
-        }
-    }
-
-    return null
+    return fetchTweetWithSingleRetry(
+        () => tweetStore.fetchTweet(
+            originalTweetId,
+            originalAuthorId,
+            true,
+            false,
+            true,
+            false
+        ),
+        myGeneration,
+        'Original tweet'
+    )
 }
 
 async function loadDetail() {
@@ -190,17 +251,13 @@ async function loadDetail() {
     }, LOAD_TIMEOUT_MS)
 
     try {
-        // Retry up to 3 times with a short delay — provider IP resolution can
-        // transiently return empty on first page load (RPC not yet warm).
-        let fetchedTweet: Tweet | undefined
-        for (let attempt = 0; attempt < DETAIL_FETCH_ATTEMPTS; attempt++) {
-            if (attempt > 0) {
-                await new Promise(resolve => setTimeout(resolve, DETAIL_FETCH_RETRY_DELAY_MS))
-            }
-            if (myGeneration !== loadGeneration) return
-            fetchedTweet = await tweetStore.getTweet(tweetId.value, authorId.value, true, false, true) as Tweet
-            if (fetchedTweet) break
-        }
+        // Cold node resolution can be slow on first page load. Give the initial
+        // request six seconds, then start one (and only one) retry.
+        const fetchedTweet = await fetchTweetWithSingleRetry(
+            () => tweetStore.fetchTweet(tweetId.value, authorId.value, true, false, true, false),
+            myGeneration,
+            'Tweet'
+        )
 
         if (myGeneration !== loadGeneration) return
 
