@@ -131,7 +131,7 @@ onMounted(async () => {
 // still running past the safety timeout below) can recognize it's been
 // superseded by a retry and avoid clobbering the newer attempt's state.
 let loadGeneration = 0
-const DETAIL_FETCH_RETRY_DELAY_MS = 6000
+const DETAIL_FETCH_RETRY_DELAY_MS = 8000
 
 type DetailFetchOutcome = {
     tweet: Tweet | null
@@ -139,7 +139,7 @@ type DetailFetchOutcome = {
 }
 
 // Start exactly one retry if the initial request has not produced a tweet
-// within six seconds. The first successful request wins; failures are only
+// within eight seconds. The first successful request wins; failures are only
 // surfaced after both requests have finished.
 function fetchTweetWithSingleRetry(
     request: () => Promise<Tweet | null>,
@@ -252,7 +252,7 @@ async function loadDetail() {
 
     try {
         // Cold node resolution can be slow on first page load. Give the initial
-        // request six seconds, then start one (and only one) retry.
+        // request eight seconds, then start one (and only one) retry.
         const fetchedTweet = await fetchTweetWithSingleRetry(
             () => tweetStore.fetchTweet(tweetId.value, authorId.value, true, false, true, false),
             myGeneration,
