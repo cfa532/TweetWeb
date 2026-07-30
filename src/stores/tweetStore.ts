@@ -5,7 +5,7 @@ import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, v4Only } from '@/lib';
-import { browserUsableProviderRoutes, isPublicWebGatewayHost } from '@/utils/browserNetwork';
+import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -19,10 +19,6 @@ const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
 const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
 const UPDATE_TWEET_TIMEOUT_MS = 30_000
-
-function publicGatewayOrigin(): string | null {
-    return isPublicWebGatewayHost(window.location.hostname) ? window.location.origin : null
-}
 
 type ExpiringLocalCache<T> = {
     cachedAt: number
@@ -2505,7 +2501,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 try {
                     // HEAD probe: no body sent or received — just checks TCP + HTTP reachability.
                     // no-cors is required for cross-origin servers that don't send CORS headers.
-                    await fetch(publicGatewayOrigin() ?? `http://${ip}`, {
+                    await fetch(`http://${ip}`, {
                         method: 'HEAD',
                         mode: 'no-cors',
                         cache: 'no-store',
@@ -2665,21 +2661,26 @@ export const useTweetStore = defineStore('tweetStore', {
         async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
             if (!refresh) {
                 const pooledIp = nodePool.getIPForNode(mid)
-                if (pooledIp) {
-                    const cachedStatus = this.getFreshHealthStatus(pooledIp)
-                    if (cachedStatus === true) return [pooledIp]
+                const usablePooledIp = pooledIp
+                    ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
+                    : undefined
+                if (pooledIp && !usablePooledIp) {
+                    nodePool.removeIP(mid, pooledIp)
+                } else if (usablePooledIp) {
+                    const cachedStatus = this.getFreshHealthStatus(usablePooledIp)
+                    if (cachedStatus === true) return [usablePooledIp]
 
                     if (cachedStatus === false) {
-                        console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                        nodePool.removeIP(mid, pooledIp)
+                        console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(mid, usablePooledIp)
                     } else {
-                        console.log(`[getProviderIps] Found pooled IP for ${mid}: ${pooledIp}, testing health`)
-                        const healthy = await this.isServerHealthyWithTimeout(pooledIp, 3000)
+                        console.log(`[getProviderIps] Found pooled IP for ${mid}: ${usablePooledIp}, testing health`)
+                        const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, 3000)
                         if (healthy) {
-                            return [pooledIp]
+                            return [usablePooledIp]
                         }
-                        console.warn(`[getProviderIps] Pooled IP ${pooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                        nodePool.removeIP(mid, pooledIp)
+                        console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(mid, usablePooledIp)
                     }
                 }
             }
@@ -2709,21 +2710,26 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             if (!refresh) {
                 const pooledIp = nodePool.getIPForNode(hostId)
-                if (pooledIp) {
-                    const cachedStatus = this.getFreshHealthStatus(pooledIp)
-                    if (cachedStatus === true) return pooledIp
+                const usablePooledIp = pooledIp
+                    ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
+                    : undefined
+                if (pooledIp && !usablePooledIp) {
+                    nodePool.removeIP(hostId, pooledIp)
+                } else if (usablePooledIp) {
+                    const cachedStatus = this.getFreshHealthStatus(usablePooledIp)
+                    if (cachedStatus === true) return usablePooledIp
 
                     if (cachedStatus === false) {
-                        console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
-                        nodePool.removeIP(hostId, pooledIp)
+                        console.warn(`[getNodeIp] Pooled IP ${usablePooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(hostId, usablePooledIp)
                     } else {
-                        console.log(`[getNodeIp] Found pooled IP for node ${hostId}: ${pooledIp}, testing health`)
-                        const healthy = await this.isServerHealthyWithTimeout(pooledIp, 5000)
+                        console.log(`[getNodeIp] Found pooled IP for node ${hostId}: ${usablePooledIp}, testing health`)
+                        const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, 5000)
                         if (healthy) {
-                            return pooledIp
+                            return usablePooledIp
                         }
-                        console.warn(`[getNodeIp] Pooled IP ${pooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
-                        nodePool.removeIP(hostId, pooledIp)
+                        console.warn(`[getNodeIp] Pooled IP ${usablePooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        nodePool.removeIP(hostId, usablePooledIp)
                     }
                 }
             }
@@ -2743,8 +2749,6 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async _resolveNodeIps(hostId: string, refresh: boolean = false): Promise<string[]> {
-            const gateway = publicGatewayOrigin()
-            if (gateway) return [window.location.host]
             try {
                 const params: any = {
                     aid: this.lapi.appId, ver: "last", version: "v2",
@@ -2773,15 +2777,16 @@ export const useTweetStore = defineStore('tweetStore', {
                     .filter(ip => {
                         if (!ip) return false;
                         if (v4Only && (ip.includes('[') || (ip.match(/:/g) || []).length > 1)) return false;
-                        return !this.isLocalIP(ip);
+                        return true;
                     });
 
-                if (ipAddresses.length === 0) {
+                const candidates = browserUsableProviderRoutes(ipAddresses, window.location.hostname);
+
+                if (candidates.length === 0) {
                     console.error(`[getNodeIp] No valid IPs for nodeId ${hostId}`);
                     return [];
                 }
 
-                const candidates = ipAddresses.slice(0, 2);
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
@@ -2809,8 +2814,6 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
         async _resolveProviderIps(mid: string, v4only: boolean, refresh: boolean): Promise<string[]> {
-            const gateway = publicGatewayOrigin()
-            if (gateway) return [window.location.host]
             try {
                 console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
 
@@ -2879,6 +2882,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 const candidates = browserUsableProviderRoutes(ipAddresses, window.location.hostname);
 
                 if (candidates.length === 0) {
+                    if (!refresh) {
+                        console.warn(`[getProviderIps] Only unusable cached routes returned for ${mid}; retrying with refresh`);
+                        return this._resolveProviderIps(mid, v4only, true);
+                    }
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
                 }
@@ -3186,11 +3193,10 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The complete media URL
          */
         getMediaUrl(mid: string | undefined, baseUrl: string): string {
-            let url = publicGatewayOrigin() ?? baseUrl
             if (!mid) {
                 return import.meta.env.VITE_APP_LOGO
             }
-            return mid.length > 27 ? url + "/ipfs/" + mid : url + "/mm/" + mid
+            return mid.length > 27 ? baseUrl + "/ipfs/" + mid : baseUrl + "/mm/" + mid
         },
 
         /**
@@ -3199,7 +3205,6 @@ export const useTweetStore = defineStore('tweetStore', {
          * - If avatar is a raw mimei hash/id, build URL via getMediaUrl.
          */
         normalizeAvatarUrl(avatar: string | undefined, baseUrl: string): string {
-            baseUrl = publicGatewayOrigin() ?? baseUrl
             if (!avatar) return import.meta.env.VITE_APP_LOGO
             if (/^https?:\/\//i.test(avatar)) {
                 // Only swap host for node-scoped media URLs.

@@ -7,6 +7,7 @@
  * - Deduplicates: if multiple callers resolve the same MID simultaneously,
  *   only one RPC is made and all callers share the result
  */
+import { isPublicWebGatewayHost } from './browserNetwork'
 
 interface NodeInfo {
     mid: string
@@ -46,6 +47,16 @@ class NodePool {
         return normalized.replace(/\/+$/, "")
     }
 
+    private normalizeNodeIPs(ips: string[]): string[] {
+        return Array.from(new Set(
+            ips
+                .map(ip => this.normalizeIP(ip))
+                // Web entry domains can resolve provider metadata, but they are
+                // not storage nodes and must never enter the shared route cache.
+                .filter(ip => ip.length > 0 && !isPublicWebGatewayHost(ip))
+        ))
+    }
+
     private getPreferredIP(ips: string[]): string | undefined {
         return ips.find(ip => {
             const normalized = this.normalizeIP(ip)
@@ -65,7 +76,7 @@ class NodePool {
             if (!Array.isArray(parsed.nodes)) return
 
             const now = Date.now()
-            let droppedExpired = false
+            let changed = false
             for (const node of parsed.nodes) {
                 if (
                     typeof node?.mid !== 'string' ||
@@ -75,11 +86,16 @@ class NodePool {
                     continue
                 }
 
-                const ips = node.ips.filter(ip => typeof ip === 'string' && ip.length > 0)
-                if (ips.length === 0) continue
+                const storedIps = node.ips.filter(ip => typeof ip === 'string')
+                const ips = this.normalizeNodeIPs(storedIps)
+                if (ips.length !== storedIps.length) changed = true
+                if (ips.length === 0) {
+                    changed = true
+                    continue
+                }
 
                 if (now - node.lastUpdate > this.cacheTTL) {
-                    droppedExpired = true
+                    changed = true
                     continue
                 }
 
@@ -91,7 +107,7 @@ class NodePool {
                 })
             }
 
-            if (droppedExpired) {
+            if (changed) {
                 this.persistToStorage()
             }
         } catch (error) {
@@ -128,7 +144,18 @@ class NodePool {
             this.persistToStorage()
             return null
         }
-        return node.ips
+        const ips = this.normalizeNodeIPs(node.ips)
+        if (ips.length !== node.ips.length) {
+            if (ips.length === 0) {
+                this.nodes.delete(mid)
+                this.persistToStorage()
+                return null
+            }
+            node.ips = ips
+            this.nodes.set(mid, node)
+            this.persistToStorage()
+        }
+        return ips
     }
 
     /** Get the preferred cached IP for a node MID, preferring IPv4. */
@@ -141,9 +168,14 @@ class NodePool {
     /** Update node with resolved IPs */
     updateNode(mid: string, ips: string[]) {
         const existing = this.nodes.get(mid)
-        const normalizedIps = ips
-            .map(ip => this.normalizeIP(ip))
-            .filter(ip => ip.length > 0)
+        const normalizedIps = this.normalizeNodeIPs(ips)
+        if (normalizedIps.length === 0) {
+            if (existing) {
+                this.nodes.delete(mid)
+                this.persistToStorage()
+            }
+            return
+        }
         this.nodes.set(mid, {
             mid,
             ips: normalizedIps,
@@ -156,7 +188,7 @@ class NodePool {
     /** Add an IP to a node without replacing the existing list. */
     addIPToNode(mid: string, ip: string) {
         const normalizedIP = this.normalizeIP(ip)
-        if (!normalizedIP) return
+        if (!normalizedIP || isPublicWebGatewayHost(normalizedIP)) return
 
         const existing = this.nodes.get(mid)
         if (!existing) {
@@ -221,10 +253,13 @@ class NodePool {
         // Make the actual RPC call
         const promise = resolver()
             .then(ips => {
-                if (ips.length > 0) {
-                    this.updateNode(mid, ips)
+                const normalizedIps = this.normalizeNodeIPs(ips)
+                if (normalizedIps.length > 0) {
+                    this.updateNode(mid, normalizedIps)
+                } else {
+                    this.invalidate(mid)
                 }
-                return ips
+                return normalizedIps
             })
             .finally(() => {
                 this.inflightRequests.delete(cacheKey)

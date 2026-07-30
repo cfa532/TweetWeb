@@ -79,6 +79,10 @@ export function browserUsableProviderRoutes(addresses: string[], originHostname:
   return addresses
     .map(address => String(address ?? '').trim())
     .filter(address => hostFromAddress(address) !== '')
+    // dTweet domains are web entry/gateway hosts, never provider nodes. Reject
+    // them regardless of the current origin so stale routes cannot be restored
+    // when the app is embedded or opened through a legacy Leither hostname.
+    .filter(address => !isPublicWebGatewayHost(address))
     .filter(address => !publicGateway || !isPrivateBrowserHost(address))
     .filter(address => {
       if (seen.has(address)) return false
