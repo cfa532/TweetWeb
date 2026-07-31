@@ -144,24 +144,39 @@ const tweetContentHtml = computed(() => {
   return linkify(normalizedContent);
 });
 
+const isContentExpanded = ref(false);
 const contentClampMaxHeight = computed(() =>
-  props.maxContentLines && props.maxContentLines > 0
+  !isContentExpanded.value && props.maxContentLines && props.maxContentLines > 0
     ? `${props.maxContentLines * CONTENT_CLAMP_LINE_HEIGHT}em`
     : 'none',
 );
 
 const contentElement = ref<HTMLElement | null>(null);
+const tweetContainerElement = ref<HTMLElement | null>(null);
 const isContentClipped = ref(false);
 let contentResizeObserver: ResizeObserver | null = null;
+let tweetVisibilityObserver: IntersectionObserver | null = null;
 
 function updateContentOverflow() {
   const element = contentElement.value;
   isContentClipped.value = !!(
     element &&
+    !isContentExpanded.value &&
     props.maxContentLines &&
     props.maxContentLines > 0 &&
     element.scrollHeight > element.clientHeight + 1
   );
+}
+
+function expandContent() {
+  isContentExpanded.value = true;
+  isContentClipped.value = false;
+}
+
+function restoreCollapsedContent() {
+  if (!isContentExpanded.value) return;
+  isContentExpanded.value = false;
+  void nextTick(updateContentOverflow);
 }
 
 watch(
@@ -177,10 +192,19 @@ watch(
 onMounted(() => {
   contentResizeObserver = new ResizeObserver(updateContentOverflow);
   if (contentElement.value) contentResizeObserver.observe(contentElement.value);
+
+  tweetVisibilityObserver = new IntersectionObserver(([entry]) => {
+    if (entry && !entry.isIntersecting) restoreCollapsedContent();
+  });
+  if (tweetContainerElement.value) tweetVisibilityObserver.observe(tweetContainerElement.value);
+
   void nextTick(updateContentOverflow);
 });
 
-onUnmounted(() => contentResizeObserver?.disconnect());
+onUnmounted(() => {
+  contentResizeObserver?.disconnect();
+  tweetVisibilityObserver?.disconnect();
+});
 
 // iOS MediaGrid algorithm implementation
 const gridAspectRatio = computed(() => {
@@ -392,7 +416,11 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 </script>
 
 <template>
-  <div :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']" :data-tweet-mid='props.tweet.mid'>
+  <div
+    ref='tweetContainerElement'
+    :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']"
+    :data-tweet-mid='props.tweet.mid'
+  >
     <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -425,7 +453,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           v-if='isContentClipped'
           type='button'
           class='tweet-content-more'
-          @click.stop='openDetailView'
+          @click.stop='expandContent'
         >
           {{ t('tweet.showMore') }}...
         </button>
