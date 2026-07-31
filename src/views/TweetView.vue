@@ -1,5 +1,5 @@
 <script setup lang='ts'>
-import { onMounted, ref, computed } from 'vue';
+import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
@@ -19,6 +19,7 @@ const props = defineProps({
   isComment: { type: Boolean, required: false, default: false },
   parentTweet: { type: Object as PropType<Tweet>, required: false },
   mediaLoadStateFor: { type: Function as PropType<(media: MimeiFileType) => MediaLoadState>, required: false },
+  maxContentLines: { type: Number, required: false },
 });
 
 const originalTweet = ref<Tweet | null>();
@@ -26,8 +27,6 @@ const isRetweet = ref(false);
 const retweetedBy = ref<string | undefined>(undefined);
 const currentTweet = ref(props.tweet);
 
-const MAX_LINES = 10;
-const MAX_CHARS_CHINESE = 300;
 /** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
 const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
 
@@ -124,9 +123,9 @@ function linkify(text: string) {
   return text.replace(urlPattern, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
-const tweetContentProcessing = computed(() => {
+const tweetContentHtml = computed(() => {
   if (!displayedTweet.value.content) {
-    return { html: '', clipped: false, useHeightClamp: false };
+    return '';
   }
 
   // Some providers encode line breaks as `<br>` tags; normalize to `\n`
@@ -142,41 +141,46 @@ const tweetContentProcessing = computed(() => {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n');
 
-  const linkedText = linkify(normalizedContent);
-  const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
-
-  const clipped =
-    (isChinese && linkedText.length > MAX_CHARS_CHINESE) ||
-    (!isChinese && linkedText.split('\n').length > MAX_LINES);
-
-  if (!clipped) {
-    return { html: linkedText, clipped: false, useHeightClamp: false };
-  }
-
-  let html = isChinese
-    ? linkedText.substring(0, MAX_CHARS_CHINESE)
-    : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
-  // If truncation cut mid-word, trim back to the last word boundary
-  if (isChinese && html.length < linkedText.length && /\S$/.test(html) && /\S/.test(linkedText[html.length] ?? ' ')) {
-    const trimmed = html.replace(/\S+$/, '');
-    if (trimmed.length > 0) html = trimmed;
-  }
-  return {
-    html: html.trimEnd() + `<span class="tweet-content-more">${t('tweet.showMore')}...</span>`,
-    clipped: true,
-    // For Chinese we already truncate by character count; extra height clamping can hide `showMore`.
-    useHeightClamp: !isChinese,
-  };
+  return linkify(normalizedContent);
 });
 
-const truncatedContentHtml = computed(() => tweetContentProcessing.value.html);
-const isContentClipped = computed(() => tweetContentProcessing.value.clipped);
-const useContentHeightClamp = computed(() => tweetContentProcessing.value.useHeightClamp);
 const contentClampMaxHeight = computed(() =>
-  (isContentClipped.value && useContentHeightClamp.value)
-    ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
+  props.maxContentLines && props.maxContentLines > 0
+    ? `${props.maxContentLines * CONTENT_CLAMP_LINE_HEIGHT}em`
     : 'none',
 );
+
+const contentElement = ref<HTMLElement | null>(null);
+const isContentClipped = ref(false);
+let contentResizeObserver: ResizeObserver | null = null;
+
+function updateContentOverflow() {
+  const element = contentElement.value;
+  isContentClipped.value = !!(
+    element &&
+    props.maxContentLines &&
+    props.maxContentLines > 0 &&
+    element.scrollHeight > element.clientHeight + 1
+  );
+}
+
+watch(
+  [contentElement, tweetContentHtml, () => props.maxContentLines],
+  ([element], [previousElement]) => {
+    if (previousElement instanceof HTMLElement) contentResizeObserver?.unobserve(previousElement);
+    if (element instanceof HTMLElement) contentResizeObserver?.observe(element);
+    void nextTick(updateContentOverflow);
+  },
+  { flush: 'post' },
+);
+
+onMounted(() => {
+  contentResizeObserver = new ResizeObserver(updateContentOverflow);
+  if (contentElement.value) contentResizeObserver.observe(contentElement.value);
+  void nextTick(updateContentOverflow);
+});
+
+onUnmounted(() => contentResizeObserver?.disconnect());
 
 // iOS MediaGrid algorithm implementation
 const gridAspectRatio = computed(() => {
@@ -416,7 +420,15 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         class='tweet-content-wrapper'
         @click='onTextClick'
       >
-        <p class='tweet-content-clamp' v-html='truncatedContentHtml'></p>
+        <p ref='contentElement' class='tweet-content-clamp' v-html='tweetContentHtml'></p>
+        <button
+          v-if='isContentClipped'
+          type='button'
+          class='tweet-content-more'
+          @click.stop='openDetailView'
+        >
+          {{ t('tweet.showMore') }}...
+        </button>
       </div>
       <AudioPlaylistPlayer
         v-if='audioAttachments.length > 0'
@@ -625,7 +637,12 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       </div>
       <!-- Embedded original tweet for quote tweets -->
       <blockquote v-if="!isRetweet && !isQuoted && (currentTweet.originalTweetId || currentTweet.savedParentTweet)" class="quoted-tweet">
-        <TweetView v-if="originalTweet" :tweet="originalTweet" :is-quoted="true" />
+        <TweetView
+          v-if="originalTweet"
+          :tweet="originalTweet"
+          :is-quoted="true"
+          :max-content-lines="props.maxContentLines"
+        />
         <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
       </blockquote>
     </div>
@@ -1067,11 +1084,15 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   text-decoration: underline;
 }
 
-.tweet-content-clamp :deep(.tweet-content-more) {
+.tweet-content-more {
+  display: block;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--bs-link-color, blue);
   text-decoration: none;
-  white-space: nowrap;
-  margin-left: 0.25em;
+  line-height: v-bind('CONTENT_CLAMP_LINE_HEIGHT');
+  cursor: pointer;
 }
 
 .tweet-audio-player {

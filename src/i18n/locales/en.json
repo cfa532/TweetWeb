@@ -170,8 +170,25 @@
   },
   "download": {
     "downloadApp": "Download app for better experience",
+    "openInApp": "Open in app",
+    "openInDefaultBrowser": "Tap ... in the top-right corner and select \"Open in browser,\" then tap \"Open in app\" again.",
     "downloading": "Downloading...",
-    "downloadApk": "Download Android APK with browser"
+    "downloadApk": "Download Android APK with browser",
+    "page": {
+      "browserNotice": "Tap ... in the top-right corner and select \"Open in browser\" for the best download experience.",
+      "downloadAndroidApk": "Download Android APK",
+      "downloading": "Downloading...",
+      "instructionsTitle": "Installation instructions",
+      "instructionStepRename": "If the downloaded file has a .zip extension, rename it to use .apk.",
+      "instructionStepUnknownSources": "Allow installation from unknown sources on your Android device.",
+      "instructionStepInstall": "Tap the renamed .apk file to install it.",
+      "instructionStepComplete": "Follow the on-screen instructions to finish installation.",
+      "alternativeOptions": "Alternative download options",
+      "appStore": "App Store",
+      "googlePlay": "Google Play",
+      "linkUnavailable": "The download link is not available.",
+      "downloadFailed": "Download failed. Please try again."
+    }
   },
   "netdisk": {
     "root": "Root",

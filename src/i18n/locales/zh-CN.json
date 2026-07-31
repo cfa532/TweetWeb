@@ -170,8 +170,25 @@
   },
   "download": {
     "downloadApp": "下载APP获得最佳体验",
+    "openInApp": "在应用中打开",
+    "openInDefaultBrowser": "请点击右上角的 ...，选择“在默认浏览器中打开”，然后再次点击“在应用中打开”。",
     "downloading": "下载中...",
-    "downloadApk": "通过浏览器下载安卓APK"
+    "downloadApk": "通过浏览器下载安卓APK",
+    "page": {
+      "browserNotice": "点击右上角的 ...，选择“在浏览器中打开”，以获得最佳下载体验。",
+      "downloadAndroidApk": "下载 Android APK",
+      "downloading": "正在下载...",
+      "instructionsTitle": "安装说明",
+      "instructionStepRename": "如果下载的文件扩展名为 .zip，请将其重命名为 .apk。",
+      "instructionStepUnknownSources": "在 Android 设备上允许安装来自未知来源的应用。",
+      "instructionStepInstall": "点击重命名后的 .apk 文件进行安装。",
+      "instructionStepComplete": "按照屏幕上的提示完成安装。",
+      "alternativeOptions": "其他下载方式",
+      "appStore": "App Store",
+      "googlePlay": "Google Play",
+      "linkUnavailable": "下载链接不可用。",
+      "downloadFailed": "下载失败，请重试。"
+    }
   },
   "netdisk": {
     "root": "根目录",

@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, provide, ref, toRef } from 'vue'
 import type { ComponentPublicInstance, PropType } from 'vue'
 import { TweetView } from '@/views'
+import { TWEET_LIST_CONTENT_MAX_LINES } from '@/constants'
 import {
     TWEET_MEDIA_ELEMENT_REGISTRY_KEY,
     useTweetMediaLoadingCoordinator,
@@ -57,6 +58,7 @@ onUnmounted(() => window.removeEventListener('scroll', onWindowScroll))
                 :is-comment="props.isComment"
                 :parent-tweet="props.parentTweet"
                 :media-load-state-for="(media) => getMediaLoadState(tweet.mid, media)"
+                :max-content-lines="TWEET_LIST_CONTENT_MAX_LINES"
             />
         </div>
     </div>

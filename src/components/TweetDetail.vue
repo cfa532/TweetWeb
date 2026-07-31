@@ -4,9 +4,14 @@ import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
-import { DownloadModal, LoadingSpinner, PageLayout, TweetList } from "@/components";
+import { LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isBrowserReload, isWeChatBrowser, shouldResyncUser } from '@/lib';
-import { LOAD_TIMEOUT_MS } from '@/constants';
+import {
+    APP_DOWNLOAD_FALLBACK_QUERY,
+    APP_LINK_ORIGIN,
+    LOAD_TIMEOUT_MS,
+    TWEET_LIST_CONTENT_MAX_LINES,
+} from '@/constants';
 
 const { t } = useI18n();
 
@@ -39,10 +44,8 @@ function tweetHasOwnBody(tweetValue: Tweet | null | undefined): boolean {
     return Array.isArray(tweetValue.attachments) && tweetValue.attachments.length > 0
 }
 
-// Download prompt variables
+// Open-in-app prompt variables
 const showDownloadPrompt = ref(false)
-const showDownloadModal = ref(false)
-const isDownloading = ref(false)
 
 // Draggable button state
 const btnEl = ref<HTMLElement | null>(null)
@@ -98,12 +101,20 @@ function onWindowDragEnd() {
     window.removeEventListener('touchmove', onWindowDragMove)
     window.removeEventListener('touchend', onWindowDragEnd)
     if (!dragMoved.value) {
-        openDownloadModal()
+        openInApp()
     }
 }
 
 
 onMounted(async () => {
+    // dtweet.com opens the native app when it is installed. Its browser
+    // fallback preserves the path and query, so only an unhandled web
+    // navigation reaches this branch and continues to the download page.
+    if (route.query[APP_DOWNLOAD_FALLBACK_QUERY] === '1') {
+        await router.replace({ name: 'apk' })
+        return
+    }
+
     if (sessionStorage["isBot"] != "No" && isWeChatBrowser()) {
         if (confirm(t('botVerification'))) {
             sessionStorage["isBot"] = "No"
@@ -406,84 +417,15 @@ function linkify(text: string) {
     return text.replace(urlPattern, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
-// Keep the same truncation behavior as `src/views/TweetView.vue`
-const MAX_LINES = 10;
-const MAX_CHARS_CHINESE = 300;
-const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
-
-function truncateTweetContent(content: string) {
-    // Normalize `<br>` tags into real newlines so line-based truncation matches `TweetView.vue`.
-    const normalizedContent = content
-        // Match `<br>`, `<br/>`, and `<br ...>` (with attributes) safely.
-        .replace(/<br\b[^>]*\/?>/gi, '\n')
-        // Paragraph / block separators (best-effort) to keep line counting consistent.
-        .replace(/<\/p>/gi, '\n')
-        .replace(/<\/div>/gi, '\n')
-        // Remove any remaining HTML tags so truncation never cuts through markup.
-        .replace(/<[^>]+>/g, '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n');
-    const linkedText = linkify(normalizedContent);
-    const isChinese = /[\u4e00-\u9fa5]/.test(linkedText);
-
-    const clipped =
-        (isChinese && linkedText.length > MAX_CHARS_CHINESE) ||
-        (!isChinese && linkedText.split('\n').length > MAX_LINES);
-
-    if (!clipped) {
-        return { html: linkedText, clipped: false, useHeightClamp: false };
+function openInApp() {
+    if (isWeChatBrowser()) {
+        window.alert(t('download.openInDefaultBrowser'))
+        return
     }
 
-    let html = isChinese
-        ? linkedText.substring(0, MAX_CHARS_CHINESE)
-        : linkedText.split('\n').slice(0, MAX_LINES).join('\n');
-
-    // If truncation cut mid-word, trim back to the last word boundary
-    if (isChinese && html.length < linkedText.length && /\S$/.test(html) && /\S/.test(linkedText[html.length] ?? ' ')) {
-        const trimmed = html.replace(/\S+$/, '');
-        if (trimmed.length > 0) html = trimmed;
-    }
-
-    return {
-        html: html.trimEnd() + `<span class="tweet-content-more">${t('tweet.showMore')}...</span>`,
-        clipped: true,
-        // For Chinese we already truncate by character count; extra height clamping can hide `showMore`.
-        useHeightClamp: !isChinese,
-    };
-}
-
-// Download prompt functions
-function openDownloadModal() {
-    showDownloadModal.value = true
-}
-
-function closeDownloadModal() {
-    showDownloadModal.value = false
-}
-
-function openAppStore() {
-    window.open('https://apps.apple.com/app/dtweet/id6751131431', '_blank')
-}
-
-function openPlayStore() {
-    window.open('https://play.google.com/store/apps/details?id=us.fireshare.tweet', '_blank')
-}
-
-async function startDirectDownload() {
-    if (tweetStore.installApk) {
-        isDownloading.value = true
-        try {
-            await tweetStore.downloadBlob(tweetStore.installApk)
-        } catch (error) {
-            console.error('Download failed:', error)
-        } finally {
-            isDownloading.value = false
-        }
-    }
-}
-
-function openInBrowser(url: string) {
-    window.open(url, '_blank')
+    const appLink = new URL(route.path, APP_LINK_ORIGIN)
+    appLink.searchParams.set(APP_DOWNLOAD_FALLBACK_QUERY, '1')
+    window.location.assign(appLink.toString())
 }
 
 function isVideoMedia(media?: MimeiFileType) {
@@ -901,18 +843,6 @@ const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
 const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
 const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
-const truncatedTweetContent = computed(() => {
-    const content = tweet.value?.content;
-    if (!content) return { html: '', clipped: false, useHeightClamp: false };
-    return truncateTweetContent(content);
-});
-
-const truncatedOriginTweetContent = computed(() => {
-    const content = originTweet.value?.content;
-    if (!content) return { html: '', clipped: false, useHeightClamp: false };
-    return truncateTweetContent(content);
-});
-
 function goBack() {
     if (parentTweetId.value && parentAuthorId.value) {
         router.push(`/tweet/${parentTweetId.value}/${parentAuthorId.value}`);
@@ -998,14 +928,7 @@ function retryLoad() {
             <p
                 v-if="originTweet.content"
                 class="card-text"
-                v-html="isFromComment ? truncatedOriginTweetContent.html : linkify(originTweet.content)"
-                :style="isFromComment ? {
-                    lineHeight: CONTENT_CLAMP_LINE_HEIGHT,
-                    maxHeight: (truncatedOriginTweetContent.clipped && truncatedOriginTweetContent.useHeightClamp)
-                        ? `${MAX_LINES * CONTENT_CLAMP_LINE_HEIGHT}em`
-                        : 'none',
-                    overflow: 'hidden',
-                } : undefined"
+                v-html="linkify(originTweet.content)"
             ></p>
 
             <AudioPlaylistPlayer
@@ -1076,7 +999,12 @@ function retryLoad() {
 
             <!-- quoted tweet -->
             <blockquote v-if="!isRetweet && tweet.originalTweetId" class="quoted-tweet">
-                <TweetView v-if="originTweet" :tweet="originTweet" :is-quoted=true></TweetView>
+                <TweetView
+                    v-if="originTweet"
+                    :tweet="originTweet"
+                    :is-quoted="true"
+                    :max-content-lines="TWEET_LIST_CONTENT_MAX_LINES"
+                />
                 <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
             </blockquote>
 
@@ -1113,17 +1041,7 @@ function retryLoad() {
         <LoadingSpinner />
     </div>
 
-    <DownloadModal
-        :show="showDownloadModal"
-        :isDownloading="isDownloading"
-        @close="closeDownloadModal"
-        @startDownload="startDirectDownload"
-        @openAppStore="openAppStore"
-        @openPlayStore="openPlayStore"
-        @openBrowser="openInBrowser"
-    />
-
-    <!-- Download Button -->
+    <!-- Open in App Button -->
     <div
         v-if="showDownloadPrompt"
         ref="btnEl"
@@ -1135,7 +1053,7 @@ function retryLoad() {
     >
         <button class="download-button">
             <img src="/src/ic_splash.png" alt="App Icon" class="download-icon" />
-            <span class="download-text">{{ $t('download.downloadApp') }}</span>
+            <span class="download-text">{{ $t('download.openInApp') }}</span>
         </button>
     </div>
 </PageLayout>
@@ -1226,12 +1144,6 @@ function retryLoad() {
     font-size: medium;
     white-space: pre-wrap;
     padding: 0px 8px;
-}
-.card-text :deep(.tweet-content-more) {
-    color: var(--bs-link-color, blue);
-    text-decoration: none;
-    white-space: nowrap;
-    margin-left: 0.25em;
 }
 .card-text a {
     color: blue;
@@ -1622,11 +1534,14 @@ function retryLoad() {
 }
 
 .download-button {
+    --download-button-height: 36px;
+    position: relative;
+    height: var(--download-button-height);
     background: #5a67d8;
     color: #ffffff;
     border: none;
     border-radius: 999px;
-    padding: 6px 24px;
+    padding: 0 44px;
     font-size: 1rem;
     font-weight: 500;
     cursor: inherit;
@@ -1635,15 +1550,19 @@ function retryLoad() {
     white-space: nowrap;
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
 }
 
 .download-icon {
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    object-fit: contain;
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: var(--download-button-height);
+    height: var(--download-button-height);
+    display: block;
+    object-fit: cover;
+    border-radius: 50%;
 }
 
 .download-text {
@@ -1662,18 +1581,15 @@ function retryLoad() {
 
 @media (max-width: 768px) {
     .download-button {
+        --download-button-height: 30px;
         font-size: 0.9rem;
-        padding: 5px 20px;
+        padding: 0 40px;
     }
 
     .download-text {
         font-size: 0.9rem;
     }
 
-    .download-icon {
-        width: 20px;
-        height: 20px;
-    }
 }
 
 </style>

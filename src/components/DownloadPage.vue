@@ -10,7 +10,7 @@
         <div class="download-section">
           <div class="browser-notice">
             <div class="notice-icon">🌐</div>
-            <p class="notice-text">{{ browserNoticeText }}</p>
+            <p class="notice-text">{{ $t('download.page.browserNotice') }}</p>
           </div>
           
           <div class="download-button-container">
@@ -20,38 +20,44 @@
               class="download-button"
             >
               <span v-if="isDownloading" class="spinner"></span>
-              {{ isDownloading ? downloadingText : downloadButtonText }}
+              {{ isDownloading ? $t('download.page.downloading') : $t('download.page.downloadAndroidApk') }}
             </button>
           </div>
           
           <div v-if="showInstructions" class="instructions">
-            <h3>{{ instructionsTitle }}</h3>
+            <h3>{{ $t('download.page.instructionsTitle') }}</h3>
             <ol class="instruction-steps">
-              <li v-for="(step, index) in instructionSteps" :key="index">
-                {{ step }}
+              <li v-for="stepKey in instructionStepKeys" :key="stepKey">
+                {{ $t(stepKey) }}
               </li>
             </ol>
           </div>
         </div>
         
         <div class="alternative-options">
-          <h3>{{ alternativeTitle }}</h3>
+          <h3>{{ $t('download.page.alternativeOptions') }}</h3>
           <div class="store-buttons">
             <a 
               href="https://apps.apple.com/app/dtweet/id6751131431" 
               target="_blank" 
+              rel="noopener noreferrer"
               class="store-button apple"
             >
-              <img src="/src/apple.png" alt="App Store" />
-              <span>App Store</span>
+              <svg class="store-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M17.05 20.28c-.95.92-1.99.78-2.99.35-1.06-.44-2.03-.46-3.15 0-1.4.6-2.14.43-3-.35C3.03 15.25 3.75 7.59 9.3 7.31c1.35.07 2.29.74 3.08.79 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.78 4.09ZM12.03 7.25C11.89 5.02 13.69 3.18 15.77 3c.29 2.58-2.34 4.5-3.74 4.25Z"/>
+              </svg>
+              <span>{{ $t('download.page.appStore') }}</span>
             </a>
             <a 
               href="https://play.google.com/store/apps/details?id=us.fireshare.tweet" 
               target="_blank" 
+              rel="noopener noreferrer"
               class="store-button google"
             >
-              <img src="/src/android.png" alt="Google Play" />
-              <span>Google Play</span>
+              <svg class="store-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M3 20.5v-17c0-.59.34-1.11.84-1.35L13.69 12l-9.85 9.85A1.5 1.5 0 0 1 3 20.5Zm13.81-5.38L6.05 21.34l8.49-8.49 2.27 2.27Zm3.35-4.31c.37.28.59.71.59 1.19s-.22.9-.57 1.18l-2.29 1.32-2.5-2.5 2.5-2.5 2.27 1.31ZM6.05 2.66l10.76 6.22-2.27 2.27-8.49-8.49Z"/>
+              </svg>
+              <span>{{ $t('download.page.googlePlay') }}</span>
             </a>
           </div>
         </div>
@@ -62,96 +68,27 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTweetStore } from '@/stores'
 
 const tweetStore = useTweetStore()
+const { t } = useI18n()
 const isDownloading = ref(false)
-
-// Localization
-const language = computed(() => navigator.language || 'en')
-
-const browserNoticeText = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return '点击右上角的 ... 选择 "在浏览器中打开"，以获得最佳下载体验。'
-  } else if (language.value.startsWith('ja')) {
-    return '最適なダウンロード体験のために、右上の ... をクリックし、"ブラウザで開く" を選択してください。'
-  } else {
-    return 'Click the ... in the top right corner and select "Open in browser" for the best download experience.'
-  }
-})
-
-const downloadButtonText = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return '下载安卓 APK'
-  } else if (language.value.startsWith('ja')) {
-    return 'Android APK をダウンロード'
-  } else {
-    return 'Download Android APK'
-  }
-})
-
-const downloadingText = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return '下载中...'
-  } else if (language.value.startsWith('ja')) {
-    return 'ダウンロード中...'
-  } else {
-    return 'Downloading...'
-  }
-})
 
 const showInstructions = computed(() => {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
 })
 
-const instructionsTitle = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return '安装说明'
-  } else if (language.value.startsWith('ja')) {
-    return 'インストール手順'
-  } else {
-    return 'Installation Instructions'
-  }
-})
-
-const instructionSteps = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return [
-      '下载完成后，如果文件显示为 .zip 格式，请将其重命名为 .apk 格式',
-      '在 Android 设备上启用"未知来源"安装',
-      '点击重命名后的 .apk 文件进行安装',
-      '按照屏幕提示完成安装'
-    ]
-  } else if (language.value.startsWith('ja')) {
-    return [
-      'ダウンロード後、ファイルが .zip 形式で表示される場合は、.apk 形式にリネーム',
-      'Android デバイスで「不明なソース」からのインストールを有効にする',
-      'リネームした .apk ファイルをタップしてインストール',
-      '画面の指示に従ってインストールを完了'
-    ]
-  } else {
-    return [
-      'After download, if the file appears as .zip format, rename it to .apk format',
-      'Enable "Unknown sources" installation on your Android device',
-      'Tap the renamed .apk file to install',
-      'Follow the on-screen prompts to complete installation'
-    ]
-  }
-})
-
-const alternativeTitle = computed(() => {
-  if (language.value.startsWith('zh')) {
-    return '其他下载方式'
-  } else if (language.value.startsWith('ja')) {
-    return 'その他のダウンロード方法'
-  } else {
-    return 'Alternative Download Options'
-  }
-})
+const instructionStepKeys = [
+  'download.page.instructionStepRename',
+  'download.page.instructionStepUnknownSources',
+  'download.page.instructionStepInstall',
+  'download.page.instructionStepComplete',
+] as const
 
 const startDownload = async () => {
   if (!tweetStore.installApk) {
-    alert('Download link not available')
+    alert(t('download.page.linkUnavailable'))
     return
   }
   
@@ -160,7 +97,7 @@ const startDownload = async () => {
     await tweetStore.downloadBlob(tweetStore.installApk)
   } catch (error) {
     console.error('Download failed:', error)
-    alert('Download failed. Please try again.')
+    alert(t('download.page.downloadFailed'))
   } finally {
     isDownloading.value = false
   }
@@ -387,9 +324,11 @@ onMounted(() => {
   transform: translateY(-2px);
 }
 
-.store-button img {
-  width: 20px;
-  height: 20px;
+.store-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex-shrink: 0;
 }
 
 @media (max-width: 480px) {

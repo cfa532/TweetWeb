@@ -170,8 +170,25 @@
   },
   "download": {
     "downloadApp": "アプリをダウンロードしてより良い体験を",
+    "openInApp": "アプリで開く",
+    "openInDefaultBrowser": "右上の ... をタップして「ブラウザで開く」を選択し、もう一度「アプリで開く」をタップしてください。",
     "downloading": "ダウンロード中...",
-    "downloadApk": "ブラウザでAndroid APKをダウンロード"
+    "downloadApk": "ブラウザでAndroid APKをダウンロード",
+    "page": {
+      "browserNotice": "右上の ... をタップして「ブラウザで開く」を選択すると、最適な状態でダウンロードできます。",
+      "downloadAndroidApk": "Android APKをダウンロード",
+      "downloading": "ダウンロード中...",
+      "instructionsTitle": "インストール手順",
+      "instructionStepRename": "ダウンロードしたファイルの拡張子が .zip の場合は、.apk に変更してください。",
+      "instructionStepUnknownSources": "Android端末で提供元不明のアプリのインストールを許可してください。",
+      "instructionStepInstall": "名前を変更した .apk ファイルをタップしてインストールしてください。",
+      "instructionStepComplete": "画面の案内に従ってインストールを完了してください。",
+      "alternativeOptions": "その他のダウンロード方法",
+      "appStore": "App Store",
+      "googlePlay": "Google Play",
+      "linkUnavailable": "ダウンロードリンクを利用できません。",
+      "downloadFailed": "ダウンロードに失敗しました。もう一度お試しください。"
+    }
   },
   "netdisk": {
     "root": "ルート",

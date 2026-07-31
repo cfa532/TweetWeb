@@ -51,6 +51,7 @@ onUnmounted(() => {
 })
 
 const downloadPageUrl = computed(() => {
+    // Download fallback stays on the domain currently serving TweetWeb.
     return `${window.location.origin}/apk`
 })
 </script>
