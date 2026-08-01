@@ -6,7 +6,8 @@ Complete documentation for the TweetWeb decentralized social media platform.
 
 ### Getting Started
 
-- **[Setup & Installation Guide](SETUP.md)** - Complete setup instructions for development and production
+- **[Setup & Installation Guide](SETUP.md)** - Local development and service setup instructions
+- **[Publication & Deployment Guide](DEPLOYMENT.md)** - Canonical TweetWeb production release procedure
 - **[Quick Start](#quick-start)** - Get up and running in 5 minutes
 
 ### Core Documentation
@@ -91,7 +92,7 @@ open http://localhost:5173
 ### For System Administrators
 
 **Deployment:**
-1. [Setup Guide - Production Deployment](SETUP.md#production-deployment)
+1. [Publication & Deployment Guide](DEPLOYMENT.md)
 2. [Architecture - Deployment Architecture](ARCHITECTURE.md#deployment-architecture)
 
 **Monitoring:**
@@ -144,16 +145,12 @@ ffmpeg -encoders | grep h264
 
 ### Deploy to Production
 
-See: [Setup Guide - Production Deployment](SETUP.md#production-deployment)
+See: [Publication & Deployment Guide](DEPLOYMENT.md)
 
-```bash
-# Using PM2
-npm install -g pm2
-cd tus-server
-pm2 start app.js --name tweetweb-backend
-pm2 save
-pm2 startup
-```
+The release guide contains the complete commands for disabling local test
+overrides, building once, copying the generated assets, publishing with
+`tweet1.sh`, deploying the Worker, verifying public hashes, and restoring the
+local environment.
 
 ### Troubleshoot Video Conversion
 
@@ -336,8 +333,8 @@ MIT License - see LICENSE file for details
 ## Links
 
 - **Main README**: [/README.md](../README.md)
-- **Production**: http://tweet2.fireshare.uk/
-- **Alternative**: http://tweet1.sharefire.store/
+- **Production**: https://dtweet.com/
+- **Browser fallback**: https://dl.dtweet.com/
 - **GitHub Issues**: Report bugs and request features
 
 ## Version History
@@ -368,4 +365,3 @@ After reading the documentation, try:
 4. **Optimize Performance**: Read [VIDEO_CONVERSION.md](VIDEO_CONVERSION.md)
 
 Happy coding! 🚀
-

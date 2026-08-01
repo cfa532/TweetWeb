@@ -118,13 +118,11 @@ A centralized provider gateway is explicitly outside this fix.
 
 ## Deployment
 
-A web release has two distinct publication targets:
-
-1. Build `TweetWeb/dist`.
-2. Copy the built package into `/home/pi/demo/tweet1` on gen8 and run
-   `/home/pi/demo/tweet1.sh` to publish the Leither app.
-3. From `../Tweet-iOS/cloudflare/dtweet-worker`, run `npx wrangler deploy`.
-   This uploads the same `TweetWeb/dist` into the Worker's `ASSETS` binding.
+Follow the canonical [TweetWeb Publication and Deployment](../../DEPLOYMENT.md)
+guide. A web release has two distinct publication targets: the Leither `tweet1`
+app on gen8 and the `dtweet-deeplink` Cloudflare Worker. Both targets must
+receive the same production build, created without a `VITE_LEITHER_NODE` test
+override.
 
 Publishing only on gen8 leaves Cloudflare serving the previous bundled assets.
 Deploying only the Worker leaves Leither nodes on the previous package.

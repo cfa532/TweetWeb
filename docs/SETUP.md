@@ -356,108 +356,13 @@ TEMP_FILE_CLEANUP_AGE=3600000  # 1 hour
 
 ## Production Deployment
 
-### Using PM2 (Recommended)
+TweetWeb production releases use two publication targets: the Leither `tweet1`
+app on gen8 and the `dtweet-deeplink` Cloudflare Worker. Follow the canonical
+[TweetWeb Publication and Deployment](DEPLOYMENT.md) guide. Both targets must
+receive the same `dist` build.
 
-```bash
-# Install PM2 globally
-npm install -g pm2
-
-# Start backend with PM2
-cd tus-server
-pm2 start app.js --name "tweetweb-backend"
-
-# Save PM2 configuration
-pm2 save
-
-# Setup auto-start on system boot
-pm2 startup
-```
-
-### Using Docker
-
-Create `Dockerfile` in project root:
-
-```dockerfile
-FROM node:16-alpine
-
-# Install FFmpeg
-RUN apk add --no-cache ffmpeg
-
-# Set working directory
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-COPY tus-server/package*.json ./tus-server/
-
-# Install dependencies
-RUN npm install
-RUN cd tus-server && npm install
-
-# Copy application files
-COPY . .
-
-# Build frontend
-RUN npm run build
-
-# Expose ports
-EXPOSE 3000 5173
-
-# Start application
-CMD ["npm", "run", "start:all"]
-```
-
-Build and run:
-
-```bash
-docker build -t tweetweb .
-docker run -p 3000:3000 -p 5173:5173 tweetweb
-```
-
-### Using Nginx (Reverse Proxy)
-
-Create `/etc/nginx/sites-available/tweetweb`:
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    # Serve frontend
-    location / {
-        root /path/to/TweetWeb/dist;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Proxy API requests
-    location /api/ {
-        proxy_pass http://localhost:3000/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 21600s;  # 6 hours for long uploads
-    }
-
-    # WebSocket support
-    location /ws/ {
-        proxy_pass http://localhost:3000/ws/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "Upgrade";
-        proxy_set_header Host $host;
-    }
-}
-```
-
-Enable and restart:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/tweetweb /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
+Deployment of a standalone upload/video server is a separate operation; see
+the [TUS server documentation](TUS_SERVER.md).
 
 ## Troubleshooting
 
@@ -615,4 +520,3 @@ For additional help:
 - Check [GitHub Issues](https://github.com/yourusername/TweetWeb/issues)
 - Review [Documentation](README.md)
 - Contact support through the application
-

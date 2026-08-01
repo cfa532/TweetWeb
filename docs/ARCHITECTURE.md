@@ -846,29 +846,31 @@ Response:
 ### Production
 
 ```
-┌──────────────────┐
-│   Nginx          │ SSL, Static Files
-│   Port 80/443    │
-└────────┬─────────┘
-         │
-    ┌────┴────┐
-    │         │
-┌───▼───┐  ┌─▼────────┐
-│Static │  │ Backend  │
-│Files  │  │ (PM2)    │
-│(dist/)│  │Port 3000 │
-└───────┘  └──┬───────┘
-              │
-       ┌──────▼──────┐
-       │   Leither   │
-       │    IPFS     │
-       └─────────────┘
+                         one TweetWeb/dist build
+                                  │
+                  ┌───────────────┴───────────────┐
+                  │                               │
+          ┌───────▼────────┐              ┌───────▼────────┐
+          │ Cloudflare     │              │ gen8 tweet1    │
+          │ Worker ASSETS  │              │ Leither app    │
+          └───────┬────────┘              └───────┬────────┘
+                  │                               │
+    ┌─────────────┼─────────────┐                 │
+    │             │             │                 │
+dtweet.com  www.dtweet.com  dl.dtweet.com    Leither clients
 ```
+
+The Cloudflare Worker handles public app-link domains and browser assets. The
+Leither package is published independently with `tweet1.sh`; both targets must
+receive the same build. See the [Publication & Deployment Guide](DEPLOYMENT.md)
+for the complete release and verification procedure. The TUS upload/video
+server is an optional separate service and is not the TweetWeb publication
+target.
 
 ## Related Documentation
 
 - [Setup Guide](SETUP.md) - Installation and configuration
+- [Publication & Deployment Guide](DEPLOYMENT.md) - Production release procedure
 - [API Documentation](API.md) - API endpoints
 - [Video Conversion](VIDEO_CONVERSION.md) - Video processing details
 - [Privacy Policy](PRIVACY.md) - Privacy and data handling
-

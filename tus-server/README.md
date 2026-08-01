@@ -172,9 +172,9 @@ pm2 save
 pm2 startup
 ```
 
-### Using Docker
-
-See [Setup Guide - Production Deployment](../docs/SETUP.md#production-deployment)
+TweetWeb web-app publication is separate from running this upload/video
+service. See the [Publication & Deployment Guide](../docs/DEPLOYMENT.md) for the
+web release procedure.
 
 ## Troubleshooting
 

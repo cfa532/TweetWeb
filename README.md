@@ -158,8 +158,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🔗 Links
 
-- Production: http://tweet2.fireshare.uk/
-- Alternative: http://tweet1.sharefire.store/
+- Production: https://dtweet.com/
+- Browser fallback: https://dl.dtweet.com/
+- Publication and deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - Documentation: [/docs](/docs)
 
 ## 🐛 Known Issues
