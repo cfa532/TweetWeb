@@ -155,20 +155,26 @@ async function loadMoreTweets() {
             router.replace(`/author/${tweetStore.followings[0]}`);
             return;
         }
-        if (loadedPageNumber === 0 && consumeMainFeedOpening()) {
-            void tweetStore.updateFollowingTweets({
-                showLoginError: false,
-                pageNumber: 0,
-                pageSize,
-            }).then(candidateIds => {
-                tweetStore.addFeedPendingCandidates(candidateIds);
-            }).catch(error => {
-                console.error('Main-feed opening updateFollowingTweets failed:', error);
-            });
-        }
+        const shouldUpdateFollowingTweets =
+            loadedPageNumber === 0 && consumeMainFeedOpening();
         const tweetsLoaded = await tweetStore.getTweetFeed(user, loadedPageNumber, pageSize, {
             candidateIds: feedCandidateIds,
         });
+
+        // Keep the opening sequence ordered like the mobile clients: finish the
+        // main feed read before updating the following-tweets state.
+        if (shouldUpdateFollowingTweets) {
+            try {
+                const candidateIds = await tweetStore.updateFollowingTweets({
+                    showLoginError: false,
+                    pageNumber: 0,
+                    pageSize,
+                });
+                tweetStore.addFeedPendingCandidates(candidateIds);
+            } catch (error) {
+                console.error('Main-feed opening updateFollowingTweets failed:', error);
+            }
+        }
 
         if (tweetsLoaded && tweetsLoaded > 0) {
             if (tweetsLoaded < pageSize) {
