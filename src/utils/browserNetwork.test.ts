@@ -39,11 +39,11 @@ describe('browser provider route eligibility', () => {
     ], 't1.fireshare.us')).toEqual(['220.184.34.132:8002'])
   })
 
-  it('limits gateway mode to dTweet web hosts', () => {
+  it('limits gateway mode to public dTweet entry hosts', () => {
     expect(isPublicWebGatewayHost('dtweet.com')).toBe(true)
     expect(isPublicWebGatewayHost('dl.dtweet.com')).toBe(true)
     expect(isPublicWebGatewayHost('t1.fireshare.us')).toBe(false)
-    expect(isPublicWebGatewayHost('t1.www333.store')).toBe(false)
+    expect(isPublicWebGatewayHost('t1.www333.store')).toBe(true)
   })
 
   it('recognizes private IPv4-with-port and bracketed IPv6 forms', () => {

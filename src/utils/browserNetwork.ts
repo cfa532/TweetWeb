@@ -37,10 +37,13 @@ function ipv4Octets(host: string): number[] | undefined {
   return octets.every(octet => octet >= 0 && octet <= 255) ? octets : undefined
 }
 
-/** Hosts whose public web traffic is served through the Cloudflare gateway. */
+/** Public dTweet entry and browser-fallback hosts. */
 export function isPublicWebGatewayHost(address: string): boolean {
   const host = hostFromAddress(address)
-  return host === 'dtweet.com' || host === 'www.dtweet.com' || host === 'dl.dtweet.com'
+  return host === 'dtweet.com' ||
+    host === 'www.dtweet.com' ||
+    host === 'dl.dtweet.com' ||
+    host === 't1.www333.store'
 }
 
 /** Whether a browser treats this host as local/private rather than public. */

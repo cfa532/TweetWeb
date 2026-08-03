@@ -858,14 +858,18 @@ Response:
     ┌─────────────┼─────────────┐                 │
     │             │             │                 │
 dtweet.com  www.dtweet.com  dl.dtweet.com    Leither clients
+    │             │
+    └──── app links / browser 302 ───▶ http://t1.www333.store
 ```
 
-The Cloudflare Worker handles public app-link domains and browser assets. The
-Leither package is published independently with `tweet1.sh`; both targets must
-receive the same build. See the [Publication & Deployment Guide](DEPLOYMENT.md)
-for the complete release and verification procedure. The TUS upload/video
-server is an optional separate service and is not the TweetWeb publication
-target.
+The Cloudflare Worker handles public app-link domains. Installed apps claim
+supported `dtweet.com` links; browser navigations are redirected to the HTTP
+TweetWeb host at `t1.www333.store`. `dl.dtweet.com` remains a legacy Worker
+asset/origin route. The Leither package is published independently with
+`tweet1.sh`; both targets must receive the same build. See the
+[Publication & Deployment Guide](DEPLOYMENT.md) for the complete release and
+verification procedure. The TUS upload/video server is an optional separate
+service and is not the TweetWeb publication target.
 
 ## Related Documentation
 

@@ -1,6 +1,6 @@
 # Public Deep-Link Web Routing Design
 
-Updated: 2026-07-30
+Updated: 2026-08-03
 
 ## Goal
 
@@ -13,11 +13,12 @@ requiring Tailscale membership.
 - `dtweet.com` and `www.dtweet.com` are Cloudflare Worker custom domains. The
   Worker serves the iOS and Android association files so installed apps can
   claim supported deep links.
-- Browser fallback traffic is sent to `dl.dtweet.com` with the original path
-  and query.
+- Browser fallback traffic is redirected to `http://t1.www333.store` with the
+  original path and query. `/user/*` and `/profile/*` are rewritten to
+  TweetWeb's `/author/*` route.
 - `dl.dtweet.com/*` is a route on the same `dtweet-deeplink` Worker. Its
   `ASSETS` binding packages `TweetWeb/dist`, so HTML navigations and the listed
-  static assets are served at Cloudflare's edge.
+  static assets remain available for legacy direct links.
 - Non-navigation requests that must reach Leither are proxied to the existing
   HTTP origin.
 
@@ -53,17 +54,21 @@ Keep the existing domain boundary:
 
 - `dtweet.com` remains the Universal Link / Android App Link domain and serves
   the Apple and Android association files over HTTPS.
-- Browser navigations continue to use `dl.dtweet.com/<path-and-query>`, with
-  the Worker serving the built web application and proxying the HTTP-only
-  Leither requests it owns.
+- Browser navigations use `http://t1.www333.store/<path-and-query>`. The
+  separate HTTP host lets TweetWeb contact Leither's HTTP and `ws://` provider
+  endpoints without mixed-content blocking.
+- The redirect is owned by the Worker after the association-file checks. Do
+  not add a higher-priority Cloudflare Redirect Rule that bypasses the Worker.
+- `dl.dtweet.com` remains a legacy Worker route and is not the primary browser
+  fallback.
 - Cloudflare DNS remains independent of volatile provider-node addresses.
 
 Centralize browser-route classification in a small pure helper. When TweetWeb
-is loaded from a public hostname, the helper classifies RFC 6598
-`100.64.0.0/10` routes as browser-blocked alongside RFC 1918 and local IPv6
-routes. When TweetWeb itself is loaded from a private or Tailscale origin, the
-helper permits Tailscale routes so direct tailnet deployments retain their
-current behavior.
+is loaded from a public hostname, including `t1.www333.store`, the helper
+classifies RFC 6598 `100.64.0.0/10` routes as browser-blocked alongside RFC
+1918 and local IPv6 routes. When TweetWeb itself is loaded from a private or
+Tailscale origin, the helper permits Tailscale routes so direct tailnet
+deployments retain their current behavior.
 
 Provider and node resolution will filter browser-blocked candidates before
 applying any concurrency limit. It will evaluate all usable public candidates
@@ -92,8 +97,9 @@ A centralized provider gateway is explicitly outside this fix.
 ## Alternatives Rejected
 
 1. **Serve TweetWeb directly at `dtweet.com`.** The HTTPS app-link domain would
-   turn the existing HTTP provider calls into mixed content. Removing `dl`
-   therefore requires a broader HTTPS or same-origin gateway migration.
+   turn the existing HTTP provider calls into mixed content. Keeping the app
+   link as a wrapper preserves app interception while sending browsers to an
+   HTTP-capable web host.
 2. **Proxy arbitrary provider addresses through nginx or the Worker.** This
    introduces a public SSRF/open-proxy boundary and centralizes provider
    traffic. It requires a separately designed authenticated gateway.
@@ -134,6 +140,9 @@ provider IP, and do not add a fixed Cloudflare origin-port rule for that node.
 
 - Confirm the active Worker deployment is current and still has the
   `dl.dtweet.com/*`, `dtweet.com`, and `www.dtweet.com` triggers.
+- Confirm `dtweet.com/tweet/<tweet-id>/<author-id>` redirects to the same path
+  on `http://t1.www333.store`, while association-file requests remain on
+  `dtweet.com` and return JSON.
 - Compare the SHA-256 of public `dl.dtweet.com/index_entry.js` with
   `TweetWeb/dist/index_entry.js`; query-string cache busting alone is not proof
   when an edge cache ignores the query.
@@ -146,7 +155,8 @@ provider IP, and do not add a fixed Cloudflare origin-port rule for that node.
 
 Focused unit coverage must continue to assert:
 
-- a public `dl.dtweet.com` origin rejects Tailscale and RFC 1918 candidates;
+- public `dl.dtweet.com` and `t1.www333.store` origins reject Tailscale and
+  RFC 1918 candidates;
 - a Tailscale/private origin permits Tailscale candidates;
 - public candidates later in the response remain eligible and are preferred;
 - dTweet web gateway hostnames are never accepted or persisted as provider

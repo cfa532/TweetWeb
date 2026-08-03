@@ -115,24 +115,32 @@ Confirm Wrangler reports a new version and all production routes:
 - `www.dtweet.com`
 - `dl.dtweet.com/*`
 
+The `dtweet.com` zone's legacy single Redirect Rule named
+`Browser fallback to dl.dtweet.com` must remain disabled. The Worker owns the
+browser redirect after serving the iOS and Android association files. An
+active zone redirect runs before the Worker and bypasses that routing logic.
+
 ## 6. Verify Production
 
-From the `TweetWeb` repository, compare the local JavaScript bundle with every
-public hostname:
+From the `TweetWeb` repository, compare the local JavaScript bundle with the
+HTTP browser host and the legacy Worker asset host:
 
 ```bash
 shasum -a 256 dist/index_entry.js
-curl -fsSL https://dtweet.com/index_entry.js | shasum -a 256
-curl -fsSL https://www.dtweet.com/index_entry.js | shasum -a 256
+curl -fsSL http://t1.www333.store/index_entry.js | shasum -a 256
 curl -fsSL https://dl.dtweet.com/index_entry.js | shasum -a 256
 ```
 
-All four SHA-256 values must match. If an edge temporarily serves an older
+All three SHA-256 values must match. If an edge temporarily serves an older
 asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
 
-Also open a production `/tweet/<tweet-id>/<author-id>` URL and confirm that the
-page loads the current bundle.
+Also confirm that both association files return JSON directly from
+`https://dtweet.com`, then open a production
+`/tweet/<tweet-id>/<author-id>` URL. With the app installed, the operating
+system should open the app. In a browser, the Worker must return a temporary
+redirect to the same path on `http://t1.www333.store`, and that page must load
+the current bundle without mixed-content errors.
 
 ## 7. Restore Local Testing Configuration
 
@@ -155,6 +163,8 @@ assets.
 - [ ] The seven generated assets were copied to gen8.
 - [ ] `tweet1.sh` published a new Leither app version.
 - [ ] Wrangler deployed a new Worker version with all three routes.
+- [ ] The legacy `Browser fallback to dl.dtweet.com` zone rule is disabled.
 - [ ] Public asset hashes match `dist/index_entry.js`.
-- [ ] A production tweet link loads successfully.
+- [ ] Association files return JSON and a browser tweet link redirects to
+      `http://t1.www333.store` and loads successfully.
 - [ ] The developer's original local `.env` value was restored.

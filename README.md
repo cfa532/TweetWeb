@@ -159,7 +159,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🔗 Links
 
 - Production: https://dtweet.com/
-- Browser fallback: https://dl.dtweet.com/
+- Browser fallback: http://t1.www333.store/
 - Publication and deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - Documentation: [/docs](/docs)
 
