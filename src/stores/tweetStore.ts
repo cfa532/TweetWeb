@@ -2728,7 +2728,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (healthy) {
                             return usablePooledIp
                         }
-                        console.warn(`[getNodeIp] Pooled IP ${usablePooledIp} for node ${hostId} is unhealthy; removing from NodePool`)
+                        console.warn(`[getNodeIp] Pooled IP ${usablePooledIp} for node ${hostId} is unhealthy. Removing from NodePool`)
                         nodePool.removeIP(hostId, usablePooledIp)
                     }
                 }
