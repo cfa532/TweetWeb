@@ -235,12 +235,17 @@ function syncVideoReadyState() {
     // at this point creates a visible gap before 'waiting' fires again.
   }
   if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-    // Video can play forward without immediately stalling — safe to hide spinner.
-    isBuffering.value = false;
-    coordinatorAutoplayPending.value = false;
-    // Primary now has enough forward buffer — offscreen preloads may resume.
+    // HAVE_FUTURE_DATA only means that some data is buffered. It does not mean
+    // playback has resumed after a `waiting`/`stalled` event, so leave the UI
+    // buffering state to the `playing` and playback-progress handlers.
+    // The coordinator can still use this as a bandwidth-health signal.
     reportPrimaryHealth(true);
   }
+}
+
+function markVideoBuffering() {
+  isBuffering.value = true;
+  consecutiveAdvanceTicks = 0;
 }
 
 function playFeedPrimaryVideo(videoElement: HTMLVideoElement) {
@@ -643,15 +648,10 @@ onMounted(() => {
           }
         });
         video.value.addEventListener('volumechange', syncMutedState);
-        video.value.addEventListener('waiting', () => {
-          isBuffering.value = true; // Video is buffering
-          consecutiveAdvanceTicks = 0;
-        });
+        video.value.addEventListener('waiting', markVideoBuffering);
+        video.value.addEventListener('stalled', markVideoBuffering);
         video.value.addEventListener('canplay', () => {
           syncVideoReadyState();
-          if (!coordinatorAutoplayPending.value) {
-            isBuffering.value = false;
-          }
         });
         video.value.addEventListener('loadeddata', () => {
           syncVideoReadyState();
@@ -1447,7 +1447,6 @@ function setupRegularVideo() {
   // Add canplay event and start playing if autoplay is enabled
   videoElement.addEventListener('canplay', () => {
     syncVideoReadyState();
-    isBuffering.value = false;
     if (props.autoplay && !isInTweetList.value) {
       videoElement.play().catch(() => {
         // Autoplay blocked — drop back to the centered play overlay.
