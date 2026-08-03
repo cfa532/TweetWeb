@@ -123,17 +123,22 @@ active zone redirect runs before the Worker and bypasses that routing logic.
 ## 6. Verify Production
 
 From the `TweetWeb` repository, compare the local JavaScript bundle with the
-HTTP browser host and the legacy Worker asset host:
+legacy Worker asset host:
 
 ```bash
 shasum -a 256 dist/index_entry.js
-curl -fsSL http://t1.www333.store/index_entry.js | shasum -a 256
 curl -fsSL https://dl.dtweet.com/index_entry.js | shasum -a 256
 ```
 
-All three SHA-256 values must match. If an edge temporarily serves an older
+Both SHA-256 values must match. If an edge temporarily serves an older
 asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
+
+Do not hash `http://t1.www333.store/index_entry.js` directly. It is a legacy
+Leither domain whose loader generates the app entry response and resolves bare
+object names inside the published package; that URL is not a raw static-asset
+endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
+Leither package input.
 
 Also confirm that both association files return JSON directly from
 `https://dtweet.com`, then open a production

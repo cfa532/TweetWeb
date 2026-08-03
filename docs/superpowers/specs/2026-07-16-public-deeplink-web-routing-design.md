@@ -64,11 +64,10 @@ Keep the existing domain boundary:
 - Cloudflare DNS remains independent of volatile provider-node addresses.
 
 Centralize browser-route classification in a small pure helper. When TweetWeb
-is loaded from a public hostname, including `t1.www333.store`, the helper
-classifies RFC 6598 `100.64.0.0/10` routes as browser-blocked alongside RFC
-1918 and local IPv6 routes. When TweetWeb itself is loaded from a private or
-Tailscale origin, the helper permits Tailscale routes so direct tailnet
-deployments retain their current behavior.
+is loaded from a public Cloudflare gateway hostname, the helper classifies RFC
+6598 `100.64.0.0/10` routes as browser-blocked alongside RFC 1918 and local
+IPv6 routes. The HTTP fallback `t1.www333.store` remains a legacy Leither host,
+not a gateway host, and retains normal direct route discovery.
 
 Provider and node resolution will filter browser-blocked candidates before
 applying any concurrency limit. It will evaluate all usable public candidates
@@ -155,8 +154,8 @@ provider IP, and do not add a fixed Cloudflare origin-port rule for that node.
 
 Focused unit coverage must continue to assert:
 
-- public `dl.dtweet.com` and `t1.www333.store` origins reject Tailscale and
-  RFC 1918 candidates;
+- a public `dl.dtweet.com` origin rejects Tailscale and RFC 1918 candidates;
+- legacy `t1.www333.store` retains normal Leither route discovery;
 - a Tailscale/private origin permits Tailscale candidates;
 - public candidates later in the response remain eligible and are preferred;
 - dTweet web gateway hostnames are never accepted or persisted as provider
