@@ -1513,7 +1513,7 @@ function retryLoad() {
 /* Download Button Styles */
 .download-button-container {
     position: fixed;
-    bottom: 60px;
+    bottom: 16px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 1000;
@@ -1534,14 +1534,14 @@ function retryLoad() {
 }
 
 .download-button {
-    --download-button-height: 36px;
+    --download-button-height: 44px;
     position: relative;
     height: var(--download-button-height);
     background: #5a67d8;
     color: #ffffff;
     border: none;
     border-radius: 999px;
-    padding: 0 44px;
+    padding: 0 52px;
     font-size: 1rem;
     font-weight: 500;
     cursor: inherit;
@@ -1581,9 +1581,9 @@ function retryLoad() {
 
 @media (max-width: 768px) {
     .download-button {
-        --download-button-height: 30px;
+        --download-button-height: 36px;
         font-size: 0.9rem;
-        padding: 0 40px;
+        padding: 0 44px;
     }
 
     .download-text {
