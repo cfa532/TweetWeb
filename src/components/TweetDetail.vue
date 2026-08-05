@@ -46,6 +46,29 @@ function tweetHasOwnBody(tweetValue: Tweet | null | undefined): boolean {
 
 // Open-in-app prompt variables
 const showDownloadPrompt = ref(false)
+let viewportInsetRefreshTimer: number | null = null
+
+function updateDownloadButtonViewportInset() {
+    const viewport = window.visualViewport
+    if (!viewport) return
+
+    const visibleBottom = viewport.offsetTop + viewport.height
+    const browserBottomInset = Math.max(0, window.innerHeight - visibleBottom)
+    document.documentElement.style.setProperty(
+        '--tweet-detail-browser-bottom-inset',
+        `${browserBottomInset}px`
+    )
+}
+
+function refreshDownloadButtonViewportInset() {
+    updateDownloadButtonViewportInset()
+    window.requestAnimationFrame(() => updateDownloadButtonViewportInset())
+    if (viewportInsetRefreshTimer) clearTimeout(viewportInsetRefreshTimer)
+    viewportInsetRefreshTimer = window.setTimeout(() => {
+        updateDownloadButtonViewportInset()
+        viewportInsetRefreshTimer = null
+    }, 250)
+}
 
 // Draggable button state
 const btnEl = ref<HTMLElement | null>(null)
@@ -107,6 +130,11 @@ function onWindowDragEnd() {
 
 
 onMounted(async () => {
+    refreshDownloadButtonViewportInset()
+    window.visualViewport?.addEventListener('resize', updateDownloadButtonViewportInset)
+    window.visualViewport?.addEventListener('scroll', updateDownloadButtonViewportInset)
+    window.addEventListener('resize', updateDownloadButtonViewportInset)
+
     // dtweet.com opens the native app when it is installed. Its browser
     // fallback preserves the path and query, so only an unhandled web
     // navigation reaches this branch and continues to the download page.
@@ -133,6 +161,7 @@ onMounted(async () => {
     // Show download button after 2 seconds, hide it again 30 seconds later
     setTimeout(() => {
         showDownloadPrompt.value = true
+        refreshDownloadButtonViewportInset()
         setTimeout(() => {
             showDownloadPrompt.value = false
         }, 30000)
@@ -778,6 +807,15 @@ async function resyncDetailTweets() {
 }
 
 onUnmounted(() => {
+    if (viewportInsetRefreshTimer) {
+        clearTimeout(viewportInsetRefreshTimer)
+        viewportInsetRefreshTimer = null
+    }
+    window.visualViewport?.removeEventListener('resize', updateDownloadButtonViewportInset)
+    window.visualViewport?.removeEventListener('scroll', updateDownloadButtonViewportInset)
+    window.removeEventListener('resize', updateDownloadButtonViewportInset)
+    document.documentElement.style.removeProperty('--tweet-detail-browser-bottom-inset')
+
     if (commentObserver) {
         commentObserver.disconnect()
         commentObserver = null
@@ -1513,7 +1551,7 @@ function retryLoad() {
 /* Download Button Styles */
 .download-button-container {
     position: fixed;
-    bottom: 16px;
+    bottom: calc(max(var(--tweet-detail-browser-bottom-inset, 0px), env(safe-area-inset, 0px)) + 8px);
     left: 50%;
     transform: translateX(-50%);
     z-index: 1000;
