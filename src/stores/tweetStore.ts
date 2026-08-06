@@ -4,7 +4,7 @@ import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
-import { normalizeMediaType, v4Only } from '@/lib';
+import { normalizeMediaType, publicIPv4BaseUrl, v4Only } from '@/lib';
 import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -2612,6 +2612,12 @@ export const useTweetStore = defineStore('tweetStore', {
             return ips.length > 0 ? ips[0] : null;
         },
 
+        /** Resolve a fresh, healthy public IPv4 specifically for a shared URL. */
+        async getPublicProviderIPv4(mid: string): Promise<string | null> {
+            const ips = await this._resolveProviderIps(mid, true, true, true);
+            return ips[0] ?? null;
+        },
+
         /**
          * Nullify the providerIp in the per-tab user cache,
          * so the next fetch won't reuse a stale IP while preserving other cached data.
@@ -2813,7 +2819,12 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
-        async _resolveProviderIps(mid: string, v4only: boolean, refresh: boolean): Promise<string[]> {
+        async _resolveProviderIps(
+            mid: string,
+            v4only: boolean,
+            refresh: boolean,
+            publicIPv4Only: boolean = false,
+        ): Promise<string[]> {
             try {
                 console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
 
@@ -2879,12 +2890,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 // the device itself belongs to that tailnet: Chrome blocks the
                 // request through Private Network Access before it reaches the
                 // network. Private-origin deployments retain those routes.
-                const candidates = browserUsableProviderRoutes(ipAddresses, window.location.hostname);
+                const candidates = publicIPv4Only
+                    ? ipAddresses.filter(ip => publicIPv4BaseUrl(ip) !== undefined)
+                    : browserUsableProviderRoutes(ipAddresses, window.location.hostname);
 
                 if (candidates.length === 0) {
                     if (!refresh) {
                         console.warn(`[getProviderIps] Only unusable cached routes returned for ${mid}; retrying with refresh`);
-                        return this._resolveProviderIps(mid, v4only, true);
+                        return this._resolveProviderIps(mid, v4only, true, publicIPv4Only);
                     }
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];

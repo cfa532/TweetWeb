@@ -132,6 +132,7 @@
     "share": "共有",
     "copyLink": "リンクをコピー",
     "linkCopied": "リンクをコピーしました!",
+    "publicIpv4Unavailable": "このツイートで利用できるパブリック IPv4 アドレスがありません。",
     "showMore": "もっと見る",
     "likeFailed": "いいねに失敗しました。もう一度お試しください。",
     "bookmarkFailed": "ブックマークに失敗しました。もう一度お試しください。",

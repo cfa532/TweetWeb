@@ -67,16 +67,51 @@ export function tweetShareUrl(
     return `${origin}/#tweet/${tweet.mid}${authorId ? '/' + authorId : ''}`;
 }
 
-/** Provider-IP entry URL used by the TweetDetail share action. */
+/** Normalize a URL only when its host is a strictly public IPv4 address. */
+export function publicIPv4BaseUrl(value: string | undefined | null): string | undefined {
+    const raw = String(value ?? '').trim();
+    if (!raw) return undefined;
+
+    const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    let parsed: URL;
+    try {
+        parsed = new URL(normalized);
+    } catch {
+        return undefined;
+    }
+
+    const match = parsed.hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!match) return undefined;
+    const [a, b, c] = match.slice(1).map(Number);
+    if (match.slice(1).some(part => Number(part) > 255)) return undefined;
+
+    const nonPublic =
+        a === 0 || a === 10 || a === 127 || a >= 224 ||
+        (a === 100 && b >= 64 && b <= 127) ||             // RFC 6598 / Tailscale
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+        (a === 192 && b === 88 && c === 99) ||
+        (a === 198 && b >= 18 && b <= 19) ||
+        (a === 198 && b === 51 && c === 100) ||
+        (a === 203 && b === 0 && c === 113);
+    if (nonPublic) return undefined;
+
+    const port = parsed.port ? `:${parsed.port}` : '';
+    return `${parsed.protocol}//${parsed.hostname}${port}`;
+}
+
+/** Public-provider IPv4 entry URL used by the TweetDetail share action. */
 export function tweetProviderShareUrl(
     tweet: Pick<Tweet, 'mid' | 'authorId' | 'author' | 'provider'>,
     appId: string,
-    fallbackBaseUrl: string,
-): string {
-    const provider = tweet.author?.baseUrl || tweet.provider || tweet.author?.providerIp || fallbackBaseUrl;
-    const baseUrl = provider.match(/^https?:\/\//i)
-        ? provider.replace(/\/+$/, '')
-        : `http://${provider.replace(/^\/+|\/+$/g, '')}`;
+    providerOverride?: string,
+): string | undefined {
+    const baseUrl = [providerOverride, tweet.author?.baseUrl, tweet.provider, tweet.author?.providerIp]
+        .map(publicIPv4BaseUrl)
+        .find((candidate): candidate is string => candidate !== undefined);
+    if (!baseUrl) return undefined;
     return `${baseUrl}/entry?aid=${encodeURIComponent(appId)}&ver=last#/tweet/${tweet.mid}/${tweet.authorId}`;
 }
 

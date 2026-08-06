@@ -166,9 +166,22 @@ async function copyTweetId() {
 async function shareTweet() {
     const target = props.editTweet || props.tweet
     if (!target) return
-    const url = props.shareUrlStyle === 'providerIp'
-      ? tweetProviderShareUrl(target, tweetStore.appId, tweetStore.lapi.baseUrl)
-      : tweetShareUrl(target)
+    let url: string | undefined
+    if (props.shareUrlStyle === 'providerIp') {
+      url = tweetProviderShareUrl(target, tweetStore.appId)
+      if (!url) {
+        const authorId = target.author?.mid || target.authorId
+        const publicIPv4 = await tweetStore.getPublicProviderIPv4(authorId)
+        url = tweetProviderShareUrl(target, tweetStore.appId, publicIPv4 ?? undefined)
+      }
+      if (!url) {
+        alertStore.error(t('tweet.publicIpv4Unavailable'))
+        closeMenu()
+        return
+      }
+    } else {
+      url = tweetShareUrl(target)
+    }
     await copyTextToClipboard(url)
     alertStore.success(t('tweet.linkCopied'))
     closeMenu()
