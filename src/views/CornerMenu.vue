@@ -7,7 +7,7 @@ import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { requireLoginForWritableAction } from '@/lib/authNavigation'
-import { copyTextToClipboard, tweetShareUrl } from '@/lib'
+import { copyTextToClipboard, tweetProviderShareUrl, tweetShareUrl } from '@/lib'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import EditorModal from '@/components/EditorModal.vue'
 const tweetStore = useTweetStore()
@@ -37,6 +37,11 @@ const props = defineProps({
     editTweet: {type: Object as PropType<Tweet>, required: false}, // For retweets: the original tweet to edit (has content); tweet is the wrapper (used for delete)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false},
+    shareUrlStyle: {
+      type: String as PropType<'deeplink' | 'providerIp'>,
+      required: false,
+      default: 'deeplink',
+    },
     afterDelete: {type: Function as PropType<() => void | Promise<void>>, required: false}
 })
 
@@ -172,7 +177,10 @@ function copyLink() {
 async function shareTweet() {
     const target = props.editTweet || props.tweet
     if (!target) return
-    await copyTextToClipboard(tweetShareUrl(target))
+    const url = props.shareUrlStyle === 'providerIp'
+      ? tweetProviderShareUrl(target, tweetStore.appId, tweetStore.lapi.baseUrl)
+      : tweetShareUrl(target)
+    await copyTextToClipboard(url)
     alertStore.success(t('tweet.linkCopied'))
     closeMenu()
 }

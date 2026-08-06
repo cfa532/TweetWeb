@@ -222,7 +222,8 @@ watch(
         </div>
       </div>
       <div v-if='tweet' class='corner-menu-container' @click.stop>
-        <CornerMenu :tweet='tweet' :edit-tweet='editTweet' :parent-tweet='parentTweet' :is-comment='isComment' :after-delete='afterDelete' />
+        <CornerMenu :tweet='tweet' :edit-tweet='editTweet' :parent-tweet='parentTweet' :is-comment='isComment'
+          share-url-style='providerIp' :after-delete='afterDelete' />
       </div>
     </div>
     <div
