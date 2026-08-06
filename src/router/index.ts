@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router';
 import type { RouteLocationNormalized } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
@@ -73,6 +73,9 @@ normalizeLegacyExternalShareUrl()
 const leitherEntryPrefix = typeof window !== 'undefined' && window.location.pathname === '/entry'
   ? `${window.location.pathname}${window.location.search}`
   : null
+const routerHistory = leitherEntryPrefix
+  ? createWebHashHistory(leitherEntryPrefix)
+  : createWebHistory()
 
 function externalLocation(route: RouteLocationNormalized) {
   if (leitherEntryPrefix) {
@@ -82,7 +85,7 @@ function externalLocation(route: RouteLocationNormalized) {
 }
 
 export const router = createRouter({
-  history: createWebHistory(),
+  history: routerHistory,
   scrollBehavior,
   routes: [
     { 
