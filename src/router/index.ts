@@ -67,8 +67,7 @@ function normalizeLegacyExternalShareUrl() {
 
 normalizeLegacyExternalShareUrl()
 
-function externalShareLocation(route: RouteLocationNormalized) {
-  if (route.name !== 'TweetDetail' && route.name !== 'UserPage') return null
+function externalLocation(route: RouteLocationNormalized) {
   return `/#${route.fullPath.replace(/^\//, '')}`
 }
 
@@ -207,16 +206,19 @@ export const router = createRouter({
 router.beforeEach((to, from) => {
   useAlertStore().clear()
 
-  // Shared HTTP links use a hash envelope, while in-app navigation keeps
-  // history mode. Convert only supported external routes on entry.
+  // Domain URLs expose every app route inside a hash envelope, while Vue
+  // Router continues to navigate internally in history mode.
   if (to.path === '/' && to.hash) {
     const hashRoute = to.hash.replace(/^#\/?/, '')
-    if (/^(tweet|author)\//.test(hashRoute)) {
+    if (hashRoute) {
       const target = router.resolve(`/${hashRoute}`)
-      return {
-        path: target.path,
-        query: target.query,
-        replace: true,
+      if (target.matched.length > 0) {
+        return {
+          path: target.path,
+          query: target.query,
+          hash: target.hash,
+          replace: true,
+        }
       }
     }
   }
@@ -241,11 +243,10 @@ router.beforeEach((to, from) => {
 })
 
 router.afterEach((to) => {
-  // Public tweet and profile pages always expose the fragment-form sharing URL,
-  // even when opened through an internal history-mode navigation.
-  const shareLocation = externalShareLocation(to)
+  // Every domain URL exposes the fragment marker directly after the origin.
+  const shareLocation = externalLocation(to)
   const browserLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`
-  if (shareLocation && browserLocation !== shareLocation) {
+  if (browserLocation !== shareLocation) {
     window.history.replaceState(window.history.state, '', shareLocation)
   }
 
