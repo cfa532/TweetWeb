@@ -1,6 +1,6 @@
 # Public Deep-Link Web Routing Design
 
-Updated: 2026-08-03
+Updated: 2026-08-06
 
 ## Goal
 
@@ -21,6 +21,13 @@ requiring Tailscale membership.
   static assets remain available for legacy direct links.
 - Non-navigation requests that must reach Leither are proxied to the existing
   HTTP origin.
+- av1 nginx proxies `fireshare.us`, `*.fireshare.us`, `fireshare.uk`, and
+  `*.fireshare.uk` to Leither without changing the host. These domain families
+  remain valid native-client entry hosts and must not be redirected to
+  `www3.shop`.
+- av1 nginx redirects only the retired `www333.store` family to the equivalent
+  `www3.shop` host, preserving subdomains and canonicalizing external tweet and
+  author paths with the `/#` marker.
 
 The Worker source and route configuration live at
 `../Tweet-iOS/cloudflare/dtweet-worker`. Its `wrangler.toml` reads assets
@@ -62,6 +69,9 @@ Keep the existing domain boundary:
 - `dl.dtweet.com` remains a legacy Worker route and is not the primary browser
   fallback.
 - Cloudflare DNS remains independent of volatile provider-node addresses.
+- The av1 legacy-domain rule excludes both Fireshare domain families. A broad
+  regex covering `fireshare.us` or `fireshare.uk` breaks native app startup by
+  changing the claimed app-link host before the client can handle it.
 
 Centralize browser-route classification in a small pure helper. When TweetWeb
 is loaded from a public Cloudflare gateway hostname, the helper classifies RFC

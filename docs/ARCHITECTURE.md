@@ -871,6 +871,15 @@ asset/origin route. The Leither package is published independently with
 verification procedure. The TUS upload/video server is an optional separate
 service and is not the TweetWeb publication target.
 
+av1 nginx keeps the native-client Fireshare domain families separate from the
+retired web domain family. `fireshare.us`, `*.fireshare.us`, `fireshare.uk`,
+and `*.fireshare.uk` are proxied to Leither on `127.0.0.1:4801` with their
+original hostnames intact. Only `www333.store` and its subdomains redirect to
+the corresponding `www3.shop` hosts. This boundary is intentional: redirecting
+`tweet.fireshare.us` or `tweet.fireshare.uk` changes the app-link host and can
+prevent a native client from opening. The exact operational invariant and
+verification commands are in the [deployment guide](DEPLOYMENT.md#av1-nginx-domain-routing-invariant).
+
 ## Related Documentation
 
 - [Setup Guide](SETUP.md) - Installation and configuration

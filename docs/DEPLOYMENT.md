@@ -148,6 +148,37 @@ Worker must land both forms on
 `http://t1.www3.shop/#tweet/<tweet-id>/<author-id>`, and that page must load the
 current bundle without mixed-content errors.
 
+### av1 nginx domain-routing invariant
+
+The active site is `/etc/nginx/sites-available/leither-fireshare` on `av1`
+(enabled through `sites-enabled`). Preserve these host-family boundaries:
+
+| Host family | Required behavior |
+| --- | --- |
+| `fireshare.us`, `*.fireshare.us` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `www3.shop`. |
+| `fireshare.uk`, `*.fireshare.uk` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `www3.shop`. |
+| `www333.store`, `*.www333.store` | Redirect to the equivalent `www3.shop` host; preserve the route, query, and subdomain. Canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
+| `www3.shop`, `*.www3.shop` | Proxy to Leither; canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
+
+The Fireshare domains are still used by native clients. Redirecting a host such
+as `tweet.fireshare.us` to `tweet.www3.shop` changes the app-link host and can
+prevent the native app from opening. An ordinary TweetWeb release must not
+replace the Fireshare proxy block with a catch-all legacy-domain redirect.
+
+After any nginx edit, validate and reload on `av1`, then check both a Fireshare
+host and a retired `www333.store` host:
+
+```bash
+ssh root@av1 'nginx -t'
+ssh root@av1 'systemctl reload nginx'
+curl -I http://tweet.fireshare.us/
+curl -I http://tweet.fireshare.uk/
+curl -I http://t1.www333.store/tweet/example/author
+```
+
+The Fireshare roots must not return a `Location` under `www3.shop`; the
+`www333.store` request must redirect to the matching `www3.shop` host.
+
 ## 7. Restore Local Testing Configuration
 
 After verification, restore the developer's original `.env` value when local
@@ -173,4 +204,6 @@ assets.
 - [ ] Public asset hashes match `dist/index_entry.js`.
 - [ ] Association files return JSON and a browser tweet link redirects to
       `http://t1.www3.shop` and loads successfully.
+- [ ] av1 preserves `fireshare.us` and `fireshare.uk` hosts while redirecting
+      only the retired `www333.store` family to `www3.shop`.
 - [ ] The developer's original local `.env` value was restored.
