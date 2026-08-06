@@ -13,6 +13,7 @@ const GUEST_ID = "000000000000000000000000000"
 const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
 const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
+const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fast; see getFreshHealthStatus
 const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
 const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
@@ -1967,12 +1968,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Use get_tweet WITHOUT version:"v3" here, because v3 requires userid and returns null without it.
                 // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
                 if (useRacing) {
-                    const providerIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
-                    if (providerIps.length === 0) {
-                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
-                        return null
-                    }
-                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                    const raceGetTweet = (ips: string[]) => this.raceProviderIps(ips, async (ip, client) => {
                         return await client.RunMApp("get_tweet", {
                             aid: this.lapi.appId,
                             ver: "last",
@@ -1981,6 +1977,50 @@ export const useTweetStore = defineStore('tweetStore', {
                             fromdetailview: fromDetailView
                         })
                     }, `tweet ${tweetId}`)
+
+                    // The author's node also serves this tweet by id, and a detail
+                    // URL always carries the author. Resolving the tweet's own mid
+                    // can come back with nothing the browser can reach — a cold
+                    // lookup returning only private/IPv6 routes ends the load before
+                    // a single request is made — so keep the author as a second way in.
+                    const authorFallbackIps = async (): Promise<string[]> => {
+                        if (!authorId) return []
+                        const ips = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                        if (ips.length === 0) {
+                            console.warn(`[fetchTweet] Author ${authorId} has no usable route either`)
+                        }
+                        return ips
+                    }
+
+                    let providerIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                    let triedAuthorRoute = false
+                    if (providerIps.length === 0) {
+                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId}; falling back to author ${authorId}`)
+                        providerIps = await authorFallbackIps()
+                        triedAuthorRoute = true
+                    }
+                    if (providerIps.length === 0) {
+                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
+                        return null
+                    }
+
+                    let raceResult = await raceGetTweet(providerIps)
+
+                    if (!raceResult) {
+                        // The route just failed a real RPC — that is the verdict the
+                        // health probe only guessed at. Drop it so a retry resolves
+                        // afresh instead of racing the same dead route again.
+                        nodePool.invalidate(tweetId)
+
+                        if (!triedAuthorRoute) {
+                            const authorIps = await authorFallbackIps()
+                            if (authorIps.length > 0) {
+                                console.warn(`[fetchTweet] Tweet routes failed for ${tweetId}; retrying through author ${authorId}`)
+                                raceResult = await raceGetTweet(authorIps)
+                            }
+                        }
+                    }
+
                     if (!raceResult) {
                         console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
                         return null
@@ -2527,10 +2567,13 @@ export const useTweetStore = defineStore('tweetStore', {
 
         getFreshHealthStatus(ip: string): boolean | undefined {
             const cached = this.healthCheckCache.get(ip);
-            if (cached && (Date.now() - cached.timestamp) < HEALTH_CHECK_CACHE_TTL) {
-                return cached.isHealthy;
-            }
-            return undefined;
+            if (!cached) return undefined;
+            // A failed probe is far weaker evidence than a successful one: on a
+            // cold start the probe budget expires before a sleeping node answers.
+            // Remembering that "failure" for the full healthy TTL made the route
+            // unusable for half an hour and made the retry button fail instantly.
+            const ttl = cached.isHealthy ? HEALTH_CHECK_CACHE_TTL : HEALTH_CHECK_FAILURE_TTL;
+            return (Date.now() - cached.timestamp) < ttl ? cached.isHealthy : undefined;
         },
 
         async isServerHealthyWithTimeout(ip: string, timeout: number = 5000, refresh: boolean = false): Promise<boolean> {
@@ -2671,7 +2714,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // Refresh provider discovery directly, while keeping tweet retrieval
             // on the ordinary get_tweet path (not the recovery-only refresh_tweet).
             if (refresh) {
-                const refreshedIps = await this._resolveProviderIps(mid, v4only, true)
+                const refreshedIps = await this._resolveProviderIps(mid, v4only, true, false, false)
                 if (refreshedIps.length > 0) {
                     nodePool.updateNode(mid, refreshedIps)
                 } else {
@@ -2703,7 +2746,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     nodePool.removeIP(mid, usablePooledIp)
                 }
             }
-            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false), true);
+            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false, false, false), true);
         },
 
         async getUserReadIp(user: User, refresh: boolean = false): Promise<string | null> {
@@ -2816,8 +2859,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    console.error(`[getNodeIp] All health checks failed for nodeId ${hostId}`);
-                    return [];
+                    // Same reasoning as _resolveProviderIps: an unanswered probe on a
+                    // cold node must not cost the caller its route (and a fetch-failure
+                    // cooldown on top). The RPC that follows has its own timeout.
+                    console.warn(`[getNodeIp] No candidate answered the health probe for nodeId ${hostId}; returning ${candidates.length} unverified route(s)`);
+                    return candidates;
                 }
 
                 console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
@@ -2834,6 +2880,7 @@ export const useTweetStore = defineStore('tweetStore', {
             v4only: boolean,
             refresh: boolean,
             publicIPv4Only: boolean = false,
+            requireHealthy: boolean = true,
         ): Promise<string[]> {
             try {
                 console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
@@ -2907,7 +2954,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (candidates.length === 0) {
                     if (!refresh) {
                         console.warn(`[getProviderIps] Only unusable cached routes returned for ${mid}; retrying with refresh`);
-                        return this._resolveProviderIps(mid, v4only, true, publicIPv4Only);
+                        return this._resolveProviderIps(mid, v4only, true, publicIPv4Only, requireHealthy);
                     }
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
@@ -2929,7 +2976,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
+                    if (requireHealthy) {
+                        throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
+                    }
+                    // The probe picks the fastest route; it is not the authority on
+                    // reachability. A cold node (asleep, cold DNS/TCP, mobile radio
+                    // waking) routinely needs longer than the probe budget while the
+                    // real RPC — which gets 15s of its own — would have succeeded.
+                    // Hand the candidates back and let that call be the judge.
+                    console.warn(`[getProviderIps] No candidate answered the health probe for ${mid}; racing all ${candidates.length} route(s) unverified`);
+                    return candidates;
                 }
 
                 console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner);

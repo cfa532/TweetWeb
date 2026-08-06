@@ -12,6 +12,13 @@ vi.mock('@/utils/browserNetwork', () => ({
 
 import { useTweetStore } from './tweetStore'
 
+/** IP lists passed to the get_tweet races only — the author lookup races too. */
+function getTweetRaces(store: any, tweetId: string): string[][] {
+  return store.raceProviderIps.mock.calls
+    .filter((call: any[]) => call[2] === `tweet ${tweetId}`)
+    .map((call: any[]) => call[0])
+}
+
 describe('tweetStore public provider routing', () => {
   beforeEach(() => {
     ;(window as any).hprose = {
@@ -57,6 +64,84 @@ describe('tweetStore public provider routing', () => {
     await expect(store._resolveProviderIps('user-refresh', true, true))
       .resolves.toEqual([providerIp])
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a share URL strict: an unanswered probe still fails the public lookup', async () => {
+    const store = useTweetStore()
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue(['220.184.34.132:8002'])
+    store.isServerHealthyWithTimeout = vi.fn().mockResolvedValue(false)
+
+    await expect(store._resolveProviderIps('share-strict', true, true))
+      .rejects.toThrow(/All provider health checks failed/)
+  })
+
+  it('races unverified routes for a read when no candidate answers the probe', async () => {
+    const store = useTweetStore()
+    const providerIp = '220.184.34.132:8002'
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue([providerIp])
+    // A cold node that has not woken up yet: the 3s probe reports unhealthy.
+    store.isServerHealthyWithTimeout = vi.fn().mockResolvedValue(false)
+
+    await expect(store.getProviderIps('cold-tweet', true, false)).resolves.toEqual([providerIp])
+  })
+
+  it('lets an unhealthy verdict expire long before a healthy one', () => {
+    const store = useTweetStore()
+    const now = Date.now()
+    store.healthCheckCache.set('cold-ip', { isHealthy: false, timestamp: now - 5 * 60 * 1000 })
+    store.healthCheckCache.set('warm-ip', { isHealthy: true, timestamp: now - 5 * 60 * 1000 })
+
+    expect(store.getFreshHealthStatus('cold-ip')).toBeUndefined()
+    expect(store.getFreshHealthStatus('warm-ip')).toBe(true)
+  })
+
+  it('keeps unverified node routes instead of taking a fetch-failure cooldown', async () => {
+    const store = useTweetStore()
+    const nodeIp = '220.184.34.132:8002'
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue([nodeIp])
+    store.isServerHealthyWithTimeout = vi.fn().mockResolvedValue(false)
+
+    await expect(store.getNodeIpByHostId('cold-node')).resolves.toBe(nodeIp)
+    expect(store._resourceFetchFailures.get('cold-node')).toBeUndefined()
+  })
+
+  it('reaches a tweet through its author when the tweet mid resolves no usable route', async () => {
+    const store = useTweetStore()
+    const tweetId = 'tweet-without-routes'
+    const authorId = 'author-with-routes'
+    const authorIp = '220.184.34.132:8002'
+
+    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [authorIp] : [])) as any
+    store.raceProviderIps = vi.fn(async (ips: string[]) => ({
+      result: { mid: tweetId, authorId, timestamp: 1, content: 'hi' },
+      ip: ips[0],
+    })) as any
+
+    const tweet = await store.fetchTweet(tweetId, authorId, true)
+
+    expect(tweet?.mid).toBe(tweetId)
+    expect(getTweetRaces(store, tweetId)).toEqual([[authorIp]])
+  })
+
+  it('falls back to the author after the tweet route fails its RPC', async () => {
+    const store = useTweetStore()
+    const tweetId = 'tweet-with-dead-route'
+    const authorId = 'author-alive'
+    const deadIp = '220.0.0.1:8002'
+    const authorIp = '220.184.34.132:8002'
+
+    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [authorIp] : [deadIp])) as any
+    store.raceProviderIps = vi.fn(async (ips: string[]) =>
+      ips[0] === authorIp
+        ? { result: { mid: tweetId, authorId, timestamp: 1, content: 'hi' }, ip: authorIp }
+        : null,
+    ) as any
+
+    const tweet = await store.fetchTweet(tweetId, authorId, true)
+
+    expect(tweet?.mid).toBe(tweetId)
+    // Dead tweet route first, then the author's — not a give-up in between.
+    expect(getTweetRaces(store, tweetId)).toEqual([[deadIp], [authorIp]])
   })
 
   it('counts one failed node resolution once when concurrent callers share it', async () => {

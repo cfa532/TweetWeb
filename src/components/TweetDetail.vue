@@ -170,6 +170,11 @@ onMounted(async () => {
 // that it has been superseded by a user-triggered retry or route change.
 let loadGeneration = 0
 const DETAIL_FETCH_RETRY_DELAY_MS = 8000
+// A request that fails outright (rather than hanging) is retried well before the
+// timer above, but not instantly: back-to-back attempts against a node that is
+// still waking both fail, and the error UI appears within a second of opening
+// the page. One short pause is enough to let a cold route come up.
+const DETAIL_FETCH_FAILURE_RETRY_DELAY_MS = 1200
 
 type DetailFetchOutcome = {
     tweet: Tweet | null
@@ -190,7 +195,7 @@ function fetchTweetWithSingleRetry(
         let retryTimer: number | undefined
         const outcomes: [DetailFetchOutcome | undefined, DetailFetchOutcome | undefined] = [undefined, undefined]
 
-        const startRetry = (reason: string) => {
+        const startRetry = (reason: string, delayMs: number = 0) => {
             if (settled || retryStarted) return
             if (myGeneration !== loadGeneration) {
                 settled = true
@@ -200,8 +205,23 @@ function fetchTweetWithSingleRetry(
 
             retryStarted = true
             if (retryTimer !== undefined) clearTimeout(retryTimer)
-            console.warn(`[TweetDetail] ${label} ${reason}; retrying with fresh provider discovery`)
-            void runAttempt(1)
+            console.warn(`[TweetDetail] ${label} ${reason}; retrying with fresh provider discovery${delayMs > 0 ? ` in ${delayMs}ms` : ''}`)
+
+            const begin = () => {
+                if (settled) return
+                if (myGeneration !== loadGeneration) {
+                    settled = true
+                    resolve(null)
+                    return
+                }
+                void runAttempt(1)
+            }
+
+            if (delayMs > 0) {
+                retryTimer = window.setTimeout(begin, delayMs)
+            } else {
+                begin()
+            }
         }
 
         const finishAttempt = (attempt: number, outcome: DetailFetchOutcome) => {
@@ -221,10 +241,10 @@ function fetchTweetWithSingleRetry(
                 return
             }
 
-            // A fast null/error should retry immediately. Waiting for the
-            // slow-request timer made cold-start failures unnecessarily visible.
+            // A fast null/error retries well before the slow-request timer, but
+            // after a short pause — see DETAIL_FETCH_FAILURE_RETRY_DELAY_MS.
             if (attempt === 0 && !retryStarted) {
-                startRetry('initial request failed')
+                startRetry('initial request failed', DETAIL_FETCH_FAILURE_RETRY_DELAY_MS)
             }
 
             const initialOutcome = outcomes[0]
