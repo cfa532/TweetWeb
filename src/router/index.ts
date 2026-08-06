@@ -67,11 +67,10 @@ function normalizeLegacyExternalShareUrl() {
 
 normalizeLegacyExternalShareUrl()
 
-// Vue Router must resolve external share links to their history-mode route so
-// the correct component and params are available. Restore the fragment-form
-// address after that internal navigation finishes so copied URLs keep the
-// external sharing contract.
-let pendingExternalShareLocation: string | null = null
+function externalShareLocation(route: RouteLocationNormalized) {
+  if (route.name !== 'TweetDetail' && route.name !== 'UserPage') return null
+  return `/#${route.fullPath.replace(/^\//, '')}`
+}
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -214,7 +213,6 @@ router.beforeEach((to, from) => {
     const hashRoute = to.hash.replace(/^#\/?/, '')
     if (/^(tweet|author)\//.test(hashRoute)) {
       const target = router.resolve(`/${hashRoute}`)
-      pendingExternalShareLocation = to.fullPath
       return {
         path: target.path,
         query: target.query,
@@ -243,10 +241,12 @@ router.beforeEach((to, from) => {
 })
 
 router.afterEach((to) => {
-  if (pendingExternalShareLocation) {
-    const externalShareLocation = pendingExternalShareLocation
-    pendingExternalShareLocation = null
-    window.history.replaceState(window.history.state, '', externalShareLocation)
+  // Public tweet and profile pages always expose the fragment-form sharing URL,
+  // even when opened through an internal history-mode navigation.
+  const shareLocation = externalShareLocation(to)
+  const browserLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (shareLocation && browserLocation !== shareLocation) {
+    window.history.replaceState(window.history.state, '', shareLocation)
   }
 
   // This will send a page view event to Google Analytics
