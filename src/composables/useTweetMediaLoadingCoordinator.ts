@@ -4,6 +4,7 @@ import { hasPrimaryVideo, primaryVideoHealthy } from './useVideoPlaybackCoordina
 
 export type MediaLoadState = 'idle' | 'preload' | 'visible'
 export const TWEET_MEDIA_PRELOAD_STALE_EVENT = 'tweet-media-preload-stale'
+export const TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY: InjectionKey<Readonly<Ref<string>>> = Symbol('tweet-media-coordinator-tweet-id')
 export type TweetMediaElementRegistrar = (
   registrationId: symbol,
   tweetId: string,

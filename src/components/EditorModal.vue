@@ -224,7 +224,7 @@ async function uploadAttachedFiles(
           cid = await retryUpload(() => uploadFileFromFile(file, i, uploadAuthor), file.name);
         } else {
           const cloudDrivePort = String(uploadAuthor.cloudDrivePort);
-          const rawWritableHost = uploadAuthor.writableHostIp || await tweetStore.resolveWritableHostIp(uploadAuthor);
+          const rawWritableHost = await tweetStore.resolveWritableHostIp(uploadAuthor);
           const ipAddress = rawWritableHost.includes(':') ? rawWritableHost.split(':')[0] : rawWritableHost;
           const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
 
@@ -331,15 +331,6 @@ async function onSubmit() {
       throw new Error('Not authorized to edit this tweet')
     }
     const uploadAuthor = await resolveEditAuthor()
-    // Resolve writable host once upfront so attachment uploads and uploadTweet share the cached IP.
-    if (uploadAuthor.hostIds?.[0] && !uploadAuthor.writableHostIp) {
-      try {
-        await tweetStore.resolveWritableHostIp(uploadAuthor)
-      } catch (e) {
-        console.warn('[EDITOR] Writable host resolution failed, configured video backend uploads may fail:', e)
-      }
-    }
-
     if (filesUpload.value.length > 0) {
       attachments = (await uploadAttachedFiles(filesUpload.value, uploadAuthor))
         .filter((v) => v.status === 'fulfilled')

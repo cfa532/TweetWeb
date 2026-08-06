@@ -61,13 +61,19 @@ function updateMenuPermissions() {
     if (tweetStore.loginUser && props.tweet) {
         const isAdmin = tweetStore.loginUser.username === 'admin'
         const isTweetAuthor = tweetStore.loginUser.mid === props.tweet.authorId
-        const isEditTargetAuthor = tweetStore.loginUser.mid === (props.editTweet || props.tweet).authorId
+        const editTarget = props.editTweet || props.tweet
+        const isEditTargetAuthor = tweetStore.loginUser.mid === editTarget.authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
+        // update_tweet currently routes and authorizes by one user ID. A comment
+        // whose writer differs from its parent author needs separate storage-owner
+        // routing, which that API cannot express safely.
+        const hasSupportedEditRoute = !props.isComment
+          || props.parentTweet?.authorId === editTarget.authorId
 
         if (isAdmin || isTweetAuthor || isParentTweetAuthor) {
             canDelete.value = true
         }
-        if (isAdmin || isEditTargetAuthor) {
+        if (hasSupportedEditRoute && (isAdmin || isEditTargetAuthor)) {
             canEdit.value = true
         }
     }
@@ -229,6 +235,9 @@ async function submitEdit() {
   const target = props.editTweet || props.tweet
   isSubmittingEdit.value = true
   try {
+    if (props.isComment && props.parentTweet?.authorId !== target.authorId) {
+      throw new Error('This comment cannot be edited until the backend supports separate author and storage-owner routing')
+    }
     await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
     target.content = editContent.value
     showEditor.value = false

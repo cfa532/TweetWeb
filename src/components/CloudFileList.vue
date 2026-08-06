@@ -155,12 +155,25 @@ watch(
   }
 );
 // On component mount, set up TUS server URL and load initial directory
-onMounted(() => {
+onMounted(async () => {
   console.log('Component mounted, route query:', route.query);
-  let ip = tweetStore.getIpWithoutPort(tweetStore.loginUser?.providerIp as string)
-  TUS_SERVER_URL = `http://${ip}:${tweetStore.loginUser?.cloudDrivePort}`
-  console.log("TUS server", TUS_SERVER_URL)
-  loadDirectory(route.query.path as string || '');
+  const loginUser = tweetStore.loginUser
+  if (!loginUser) {
+    error.value = 'Not logged in'
+    loading.value = false
+    return
+  }
+  try {
+    const writableIp = await tweetStore.resolveWritableHostIp(loginUser)
+    const ip = tweetStore.getIpWithoutPort(writableIp) || writableIp
+    TUS_SERVER_URL = `http://${ip}:${loginUser.cloudDrivePort}`
+    console.log("TUS server", TUS_SERVER_URL)
+    await loadDirectory(route.query.path as string || '');
+  } catch (err: any) {
+    console.error('Failed to resolve cloud-drive root host:', err)
+    error.value = err?.message || t('netdisk.loadFailed')
+    loading.value = false
+  }
 });
 // Navigate to upload file page
 function uploadFile() {

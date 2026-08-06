@@ -37,6 +37,9 @@ const authorId = computed(() => route.params.authorId as MimeiId);
 const reloadRecoveryAuthorId = isBrowserReload() ? authorId.value : undefined;
 const recoveredProfileIds = new Set<MimeiId>();
 const pinnedTweets = ref<Tweet[]>([]);
+const visiblePinnedTweets = computed(() =>
+    pinnedTweets.value.filter(tweet => !tweetStore._deletedTweetIds.has(tweet.mid))
+);
 const pageSize = 5; // Using the same page size as MainPage
 const initialLoad = ref(true);
 const hasMoreTweets = ref(true); // Flag to track if more tweets are available
@@ -458,6 +461,9 @@ onActivated(async () => {
 });
 
 const displayedTweets = ref<Tweet[]>([]);
+const visibleDisplayedTweets = computed(() =>
+    displayedTweets.value.filter(tweet => !tweetStore._deletedTweetIds.has(tweet.mid))
+);
 // The global store also holds this author's OLDER tweets pulled in by other
 // flows (home feed, feed polling, bookmarks/favorites) that profile pagination
 // simply hasn't reached yet. Only tweets strictly newer than the newest
@@ -753,10 +759,10 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
 
         <!-- Default: user's own tweets (pinned + chronological). -->
         <template v-else>
-            <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
-            <TweetList :tweets="pinnedTweets" />
-            <hr v-if='pinnedTweets?.length!>0' />
-            <b v-if='pinnedTweets?.length!>0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
+            <b v-if='visiblePinnedTweets.length > 0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.pinned') }}</b>
+            <TweetList :tweets="visiblePinnedTweets" />
+            <hr v-if='visiblePinnedTweets.length > 0' />
+            <b v-if='visiblePinnedTweets.length > 0' style='color: #8899a6;'>&nbsp;&nbsp;{{ $t('profile.tweets') }}</b>
             <Transition name="tweet-banner">
                 <div v-if="pendingCount > 0 && bannerVisible && tweetStore.loginUser" class="new-tweets-banner"
                      @click="handlePendingBannerClick">
@@ -767,7 +773,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
                 </div>
             </Transition>
             <div :class="{ 'feed-restoring': isRestoringFeed }">
-                <TweetList :tweets="displayedTweets" />
+                <TweetList :tweets="visibleDisplayedTweets" />
             </div>
             <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true" />
             <div v-if='isLoading && !initialLoad' class='tweet-feed-loading-fixed'>
@@ -785,7 +791,7 @@ watch(displayedTweets, () => nextTick(() => setupLoadMoreObserver()), { flush: '
             <div v-if='!isLoading && loadError && hasMoreTweets' class='text-center my-3 small' style='color: #8899a6;'>
                 {{ loadError }}
             </div>
-            <div v-if='!isLoading && !hasMoreTweets && displayedTweets.length > 0' class='text-center my-4 small' style='color: #8899a6;'>
+            <div v-if='!isLoading && !hasMoreTweets && visibleDisplayedTweets.length > 0' class='text-center my-4 small' style='color: #8899a6;'>
                 {{ $t('tweet.noMorePosts') }}
             </div>
         </template>

@@ -58,7 +58,8 @@ async function onRetweet() {
 
   const original = { ...props.tweet };
   // Optimistic update
-  emit('updated', { ...original, retweetCount: (original.retweetCount ?? 0) + 1 });
+  const optimisticTweet = { ...original, retweetCount: (original.retweetCount ?? 0) + 1 };
+  emit('updated', optimisticTweet);
   try {
     const retweetPayload = {
       authorId: loginUser.mid,
@@ -68,7 +69,8 @@ async function onRetweet() {
     };
     const newMid = await tweetStore.uploadTweet(retweetPayload);
     if (newMid) {
-      await tweetStore.updateRetweetCount(original, newMid);
+      const updatedOriginal = await tweetStore.updateRetweetCount(original, newMid);
+      emit('updated', updatedOriginal ?? optimisticTweet);
     }
   } catch (e) {
     emit('updated', original);

@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router';
 import { Image, PDFView, VideoJS, BlobData, AudioPlayer } from './index'
 import { isVideoType, isImageType, normalizeMediaType } from '@/lib'
 import {
+    TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY,
     TWEET_MEDIA_ELEMENT_REGISTRY_KEY,
     type MediaLoadState,
 } from '@/composables/useTweetMediaLoadingCoordinator'
@@ -22,6 +23,7 @@ const props = defineProps({
 
 const router = useRouter();
 const setFeedMediaElement = inject(TWEET_MEDIA_ELEMENT_REGISTRY_KEY, null);
+const coordinatorTweetId = inject(TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY, null);
 const mediaRegistrationId = Symbol('tweet-media-instance');
 
 const mediaMid = computed(() => {
@@ -83,9 +85,10 @@ const resolvedAutoplay = computed(() => {
 });
 
 function setMediaRootElement(refValue: Element | ComponentPublicInstance | null) {
-    if (!props.tweet?.mid) return;
+    const tweetId = coordinatorTweetId?.value ?? props.tweet?.mid;
+    if (!tweetId) return;
     const element = refValue instanceof Element ? refValue : null;
-    setFeedMediaElement?.(mediaRegistrationId, props.tweet.mid, props.media, element);
+    setFeedMediaElement?.(mediaRegistrationId, tweetId, props.media, element);
 }
 
 onBeforeUnmount(() => {

@@ -1,12 +1,15 @@
 <script setup lang='ts'>
-import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue';
+import { onMounted, onUnmounted, ref, computed, nextTick, provide, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
 import { AudioPlaylistPlayer, MediaView, ItemHeader, TweetActionBar } from '@/views';
 import { useTweetStore } from '@/stores';
 import { normalizeMediaType } from '@/lib';
-import type { MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
+import {
+  TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY,
+  type MediaLoadState,
+} from '@/composables/useTweetMediaLoadingCoordinator';
 
 const { t } = useI18n();
 const tweetStore = useTweetStore()
@@ -26,6 +29,11 @@ const originalTweet = ref<Tweet | null>();
 const isRetweet = ref(false);
 const retweetedBy = ref<string | undefined>(undefined);
 const currentTweet = ref(props.tweet);
+
+// Feed scheduling is keyed by the rendered row (the retweet wrapper), while
+// the content passed to MediaView can be the original tweet. Keep registration
+// on the row ID so visibility and preload lookups use the same identity.
+provide(TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY, computed(() => props.tweet.mid));
 
 /** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
 const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
@@ -62,6 +70,14 @@ onMounted(async () => {
 const displayedTweet = computed(() => {
   return isRetweet.value && originalTweet.value ? originalTweet.value : currentTweet.value;
 });
+
+function applyActionUpdate(updatedTweet: Tweet) {
+  if (isRetweet.value && originalTweet.value) {
+    originalTweet.value = updatedTweet;
+    return;
+  }
+  currentTweet.value = updatedTweet;
+}
 
 function openDetailView() {
     sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
@@ -674,7 +690,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
       </blockquote>
     </div>
-    <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="(t) => currentTweet = t" />
+    <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="applyActionUpdate" />
   </div>
 </template>
 
