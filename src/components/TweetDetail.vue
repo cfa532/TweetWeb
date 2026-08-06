@@ -9,7 +9,6 @@ import { normalizeMediaType, isBrowserReload, isWeChatBrowser, shouldResyncUser 
 import {
     APP_DOWNLOAD_FALLBACK_QUERY,
     APP_LINK_ORIGIN,
-    LOAD_TIMEOUT_MS,
     TWEET_LIST_CONTENT_MAX_LINES,
 } from '@/constants';
 
@@ -167,9 +166,8 @@ onMounted(async () => {
         }, 30000)
     }, 2000)
 });
-// Bumped on every loadDetail() call so a stale in-flight attempt (e.g. one
-// still running past the safety timeout below) can recognize it's been
-// superseded by a retry and avoid clobbering the newer attempt's state.
+// Bumped on every loadDetail() call so a stale in-flight attempt can recognize
+// that it has been superseded by a user-triggered retry or route change.
 let loadGeneration = 0
 const DETAIL_FETCH_RETRY_DELAY_MS = 8000
 
@@ -182,14 +180,29 @@ type DetailFetchOutcome = {
 // within eight seconds. The first successful request wins; failures are only
 // surfaced after both requests have finished.
 function fetchTweetWithSingleRetry(
-    request: () => Promise<Tweet | null>,
+    request: (refreshProviderRoute: boolean) => Promise<Tweet | null>,
     myGeneration: number,
     label: string
 ): Promise<Tweet | null> {
     return new Promise((resolve, reject) => {
         let settled = false
+        let retryStarted = false
         let retryTimer: number | undefined
         const outcomes: [DetailFetchOutcome | undefined, DetailFetchOutcome | undefined] = [undefined, undefined]
+
+        const startRetry = (reason: string) => {
+            if (settled || retryStarted) return
+            if (myGeneration !== loadGeneration) {
+                settled = true
+                resolve(null)
+                return
+            }
+
+            retryStarted = true
+            if (retryTimer !== undefined) clearTimeout(retryTimer)
+            console.warn(`[TweetDetail] ${label} ${reason}; retrying with fresh provider discovery`)
+            void runAttempt(1)
+        }
 
         const finishAttempt = (attempt: number, outcome: DetailFetchOutcome) => {
             if (settled) return
@@ -208,6 +221,12 @@ function fetchTweetWithSingleRetry(
                 return
             }
 
+            // A fast null/error should retry immediately. Waiting for the
+            // slow-request timer made cold-start failures unnecessarily visible.
+            if (attempt === 0 && !retryStarted) {
+                startRetry('initial request failed')
+            }
+
             const initialOutcome = outcomes[0]
             const retryOutcome = outcomes[1]
             if (initialOutcome && retryOutcome) {
@@ -223,23 +242,14 @@ function fetchTweetWithSingleRetry(
 
         const runAttempt = async (attempt: number) => {
             try {
-                finishAttempt(attempt, { tweet: await request() })
+                finishAttempt(attempt, { tweet: await request(attempt === 1) })
             } catch (error) {
                 finishAttempt(attempt, { tweet: null, error })
             }
         }
 
         retryTimer = window.setTimeout(() => {
-            if (settled) return
-            if (myGeneration !== loadGeneration) {
-                settled = true
-                resolve(null)
-                return
-            }
-            console.warn(
-                `[TweetDetail] ${label} did not load within ${DETAIL_FETCH_RETRY_DELAY_MS}ms; starting one retry`
-            )
-            void runAttempt(1)
+            startRetry(`did not load within ${DETAIL_FETCH_RETRY_DELAY_MS}ms`)
         }, DETAIL_FETCH_RETRY_DELAY_MS)
 
         void runAttempt(0)
@@ -253,13 +263,14 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
     const originalAuthorId = parentTweet.originalAuthorId
 
     return fetchTweetWithSingleRetry(
-        () => tweetStore.fetchTweet(
+        (refreshProviderRoute) => tweetStore.fetchTweet(
             originalTweetId,
             originalAuthorId,
             true,
             false,
             true,
-            false
+            false,
+            refreshProviderRoute
         ),
         myGeneration,
         'Original tweet'
@@ -274,27 +285,21 @@ async function loadDetail() {
     tweetNotFound.value = false
     hasLoadAttempted.value = true
 
-    // Safety timeout: stop the spinner and show the existing retry UI instead
-    // of reloading the page. Reload-based recovery multiplied retries and made
-    // transient node slowness feel much worse.
-    const timeoutId: number = window.setTimeout(() => {
-        if (myGeneration !== loadGeneration) return
-        if (tweet.value) {
-            // Tweet content rendered (cached path). Just stop the spinner.
-            console.warn(`[TweetDetail] Secondary load timeout after ${LOAD_TIMEOUT_MS}ms; keeping rendered view`)
-            isLoading.value = false
-            return
-        }
-        console.warn(`[TweetDetail] Loading timeout after ${LOAD_TIMEOUT_MS}ms; showing retry UI`)
-        isLoading.value = false
-        loadError.value = true
-    }, LOAD_TIMEOUT_MS)
-
     try {
         // Cold node resolution can be slow on first page load. Give the initial
-        // request eight seconds, then start one (and only one) retry.
+        // request eight seconds, then start one fresh provider-route lookup.
+        // The request layer owns its network timeouts; a separate UI timeout
+        // used to expose an error while this retry was still in progress.
         const fetchedTweet = await fetchTweetWithSingleRetry(
-            () => tweetStore.fetchTweet(tweetId.value, authorId.value, true, false, true, false),
+            (refreshProviderRoute) => tweetStore.fetchTweet(
+                tweetId.value,
+                authorId.value,
+                true,
+                false,
+                true,
+                false,
+                refreshProviderRoute
+            ),
             myGeneration,
             'Tweet'
         )
@@ -307,9 +312,8 @@ async function loadDetail() {
 
         tweet.value = fetchedTweet
         loadError.value = false
-        await showTweet(myGeneration, timeoutId)
+        await showTweet(myGeneration)
     } catch (error) {
-        clearTimeout(timeoutId)
         if (myGeneration !== loadGeneration) return
         console.error('[TweetDetail] Error loading tweet detail:', error)
 
@@ -323,11 +327,10 @@ async function loadDetail() {
         }
     }
 }
-async function showTweet(myGeneration: number, timeoutId?: number) {
+async function showTweet(myGeneration: number) {
     try {
         // Tweet content is ready to display - set loading to false early
         document.title = formattedTitle.value
-        if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
 
         // Load comments and additional data in parallel (truly non-blocking)
@@ -389,7 +392,6 @@ async function showTweet(myGeneration: number, timeoutId?: number) {
         if (commentOwner) startCommentRefreshLoop(commentOwner)
     } catch (error) {
         console.error('Error in showTweet:', error)
-        if (timeoutId) clearTimeout(timeoutId)
         isLoading.value = false
     }
 };

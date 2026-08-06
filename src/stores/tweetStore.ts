@@ -1864,6 +1864,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param authorId Optional author ID to help locate the tweet
          * @param useRacing If true, race multiple provider IPs for faster loading (TweetDetail page only)
          * @param loadMissingOriginalTweet If false, return the outer tweet without separately fetching a missing embedded tweet
+         * @param refreshProviderRoute If true, refresh provider discovery without synchronizing tweet data
          * @returns The tweet object or undefined if not found
          */
         async fetchTweet(
@@ -1872,7 +1873,8 @@ export const useTweetStore = defineStore('tweetStore', {
             useRacing: boolean = false,
             forceRefresh: boolean = false,
             fromDetailView: boolean = false,
-            loadMissingOriginalTweet: boolean = true
+            loadMissingOriginalTweet: boolean = true,
+            refreshProviderRoute: boolean = false
         ): Promise<Tweet | null> {
             // check if the tweet has been retrieved
             let cachedTweet = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
@@ -1963,7 +1965,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Use get_tweet WITHOUT version:"v3" here, because v3 requires userid and returns null without it.
                 // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
                 if (useRacing) {
-                    const providerIps = await this.getProviderIps(tweetId)
+                    const providerIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
                     if (providerIps.length === 0) {
                         console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
                         return null
@@ -2665,32 +2667,43 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns Array of IP addresses (up to 2), or empty array if none found
          */
         async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
-            if (!refresh) {
-                const pooledIp = nodePool.getIPForNode(mid)
-                const usablePooledIp = pooledIp
-                    ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
-                    : undefined
-                if (pooledIp && !usablePooledIp) {
-                    nodePool.removeIP(mid, pooledIp)
-                } else if (usablePooledIp) {
-                    const cachedStatus = this.getFreshHealthStatus(usablePooledIp)
-                    if (cachedStatus === true) return [usablePooledIp]
+            // A cold-start retry must not join the original in-flight lookup.
+            // Refresh provider discovery directly, while keeping tweet retrieval
+            // on the ordinary get_tweet path (not the recovery-only refresh_tweet).
+            if (refresh) {
+                const refreshedIps = await this._resolveProviderIps(mid, v4only, true)
+                if (refreshedIps.length > 0) {
+                    nodePool.updateNode(mid, refreshedIps)
+                } else {
+                    nodePool.invalidate(mid)
+                }
+                return refreshedIps
+            }
 
-                    if (cachedStatus === false) {
-                        console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                        nodePool.removeIP(mid, usablePooledIp)
-                    } else {
-                        console.log(`[getProviderIps] Found pooled IP for ${mid}: ${usablePooledIp}, testing health`)
-                        const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, 3000)
-                        if (healthy) {
-                            return [usablePooledIp]
-                        }
-                        console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                        nodePool.removeIP(mid, usablePooledIp)
+            const pooledIp = nodePool.getIPForNode(mid)
+            const usablePooledIp = pooledIp
+                ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
+                : undefined
+            if (pooledIp && !usablePooledIp) {
+                nodePool.removeIP(mid, pooledIp)
+            } else if (usablePooledIp) {
+                const cachedStatus = this.getFreshHealthStatus(usablePooledIp)
+                if (cachedStatus === true) return [usablePooledIp]
+
+                if (cachedStatus === false) {
+                    console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                    nodePool.removeIP(mid, usablePooledIp)
+                } else {
+                    console.log(`[getProviderIps] Found pooled IP for ${mid}: ${usablePooledIp}, testing health`)
+                    const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, 3000)
+                    if (healthy) {
+                        return [usablePooledIp]
                     }
+                    console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
+                    nodePool.removeIP(mid, usablePooledIp)
                 }
             }
-            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, refresh), true);
+            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false), true);
         },
 
         async getUserReadIp(user: User, refresh: boolean = false): Promise<string | null> {
