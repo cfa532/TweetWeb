@@ -67,6 +67,19 @@ export function tweetShareUrl(
     return `${origin}/#tweet/${tweet.mid}${authorId ? '/' + authorId : ''}`;
 }
 
+/** Provider-IP entry URL used by the TweetDetail share action. */
+export function tweetProviderShareUrl(
+    tweet: Pick<Tweet, 'mid' | 'authorId' | 'author' | 'provider'>,
+    appId: string,
+    fallbackBaseUrl: string,
+): string {
+    const provider = tweet.author?.baseUrl || tweet.provider || tweet.author?.providerIp || fallbackBaseUrl;
+    const baseUrl = provider.match(/^https?:\/\//i)
+        ? provider.replace(/\/+$/, '')
+        : `http://${provider.replace(/^\/+|\/+$/g, '')}`;
+    return `${baseUrl}/entry?aid=${encodeURIComponent(appId)}&ver=last#/tweet/${tweet.mid}/${tweet.authorId}`;
+}
+
 /** Copy text in both secure Clipboard API contexts and legacy HTTP hosts. */
 export async function copyTextToClipboard(text: string): Promise<void> {
     if (navigator.clipboard?.writeText) {

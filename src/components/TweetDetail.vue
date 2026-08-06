@@ -997,7 +997,7 @@ function retryLoad() {
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
-            <TweetActionBar :tweet="originTweet" @updated="(t) => originTweet = t" />
+            <TweetActionBar :tweet="originTweet" share-url-style="providerIp" @updated="(t) => originTweet = t" />
         </div>
         <div v-else class="card-body">
             <p
@@ -1046,7 +1046,7 @@ function retryLoad() {
                 <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
             </blockquote>
 
-            <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
+            <TweetActionBar :tweet="tweet" share-url-style="providerIp" @updated="(t) => tweet = t" />
         </div>
     </div>
 
