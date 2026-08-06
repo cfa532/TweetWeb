@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory, createWebHistory, createMemoryHistory } from 'vue-router';
+import { createRouter, createWebHistory } from 'vue-router';
 import type { RouteLocationNormalized } from 'vue-router';
 import { UserPage, MainPage, TweetDetail, UserLogin as Login, AddPost, CloudFileList, Shared,
   IPs, UploadPackage, DownloadPackage, DownloadPage, Followings, Followers, Contact, UploadFile,
@@ -67,7 +67,17 @@ function normalizeLegacyExternalShareUrl() {
 
 normalizeLegacyExternalShareUrl()
 
+// Leither serves TweetWeb through /entry and uses the fragment only for the
+// app route. Keep that loader path and query intact when Vue Router exposes
+// the current route in the address bar.
+const leitherEntryPrefix = typeof window !== 'undefined' && window.location.pathname === '/entry'
+  ? `${window.location.pathname}${window.location.search}`
+  : null
+
 function externalLocation(route: RouteLocationNormalized) {
+  if (leitherEntryPrefix) {
+    return `${leitherEntryPrefix}#/${route.fullPath.replace(/^\//, '')}`
+  }
   return `/#${route.fullPath.replace(/^\//, '')}`
 }
 
@@ -208,7 +218,7 @@ router.beforeEach((to, from) => {
 
   // Domain URLs expose every app route inside a hash envelope, while Vue
   // Router continues to navigate internally in history mode.
-  if (to.path === '/' && to.hash) {
+  if ((to.path === '/' || to.path === '/entry') && to.hash) {
     const hashRoute = to.hash.replace(/^#\/?/, '')
     if (hashRoute) {
       const target = router.resolve(`/${hashRoute}`)
