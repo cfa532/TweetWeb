@@ -157,20 +157,9 @@ watch(isAdminEditorOpen, (blocking) => {
     bodyOverflowBeforeAdminEdit = null
   }
 })
-function copyLink() {
-    const currentUrl = route.name === 'UserPage'
-      ? `${window.location.origin}/#${route.fullPath.replace(/^\/+/, '')}`
-      : window.location.href
-    console.log(currentUrl);
-    const input = document.createElement("input");
-    input.style.position = "absolute";
-    input.style.opacity = "0";
-    input.style.pointerEvents = "none";
-    input.value = currentUrl;
-    document.body.appendChild(input);
-    input.select();
-    document.execCommand('copy');
-    document.body.removeChild(input);
+async function copyTweetId() {
+    if (!props.tweet) return
+    await copyTextToClipboard(props.tweet.mid)
     closeMenu()
 }
 
@@ -350,7 +339,7 @@ async function confirmDeleteItem() {
           class="menu"
           @click.stop
       >
-          <div class="item copy-item" @click.stop="copyLink">
+          <div class="item copy-item" @click.stop="copyTweetId">
               <span class="menu-text">
                   <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
               </span>
