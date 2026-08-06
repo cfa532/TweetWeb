@@ -58,6 +58,32 @@ export function avatarSrc(avatar: string | undefined | null): string {
     return avatar && avatar.trim() !== '' ? avatar : import.meta.env.VITE_APP_LOGO;
 }
 
+/** Canonical public URL used by every TweetWeb tweet sharing surface. */
+export function tweetShareUrl(
+    tweet: Pick<Tweet, 'mid' | 'authorId' | 'author'>,
+    origin: string = window.location.origin,
+): string {
+    const authorId = tweet.author?.mid || tweet.authorId;
+    return `${origin}/#tweet/${tweet.mid}${authorId ? '/' + authorId : ''}`;
+}
+
+/** Copy text in both secure Clipboard API contexts and legacy HTTP hosts. */
+export async function copyTextToClipboard(text: string): Promise<void> {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+}
+
 /**
  * Checks if a media type is a video (includes both regular and HLS video)
  * @param type The media type to check

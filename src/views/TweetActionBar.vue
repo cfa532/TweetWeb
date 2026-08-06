@@ -5,6 +5,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAlertStore, useTweetStore } from '@/stores';
 import { requireLoginForWritableAction } from '@/lib/authNavigation';
+import { copyTextToClipboard, tweetShareUrl } from '@/lib';
 
 const router = useRouter();
 const route = useRoute();
@@ -159,20 +160,7 @@ function onShare() {
 }
 
 async function copyLink() {
-  const authorId = props.tweet.author?.mid || props.tweet.authorId;
-  const url = `${window.location.origin}/#tweet/${props.tweet.mid}${authorId ? '/' + authorId : ''}`;
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(url);
-  } else {
-    const textarea = document.createElement('textarea');
-    textarea.value = url;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textarea);
-  }
+  await copyTextToClipboard(tweetShareUrl(props.tweet));
   copied.value = true;
   setTimeout(() => {
     copied.value = false;

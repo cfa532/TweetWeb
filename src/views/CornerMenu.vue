@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { requireLoginForWritableAction } from '@/lib/authNavigation'
+import { copyTextToClipboard, tweetShareUrl } from '@/lib'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import EditorModal from '@/components/EditorModal.vue'
 const tweetStore = useTweetStore()
@@ -165,6 +166,14 @@ function copyLink() {
     input.select();
     document.execCommand('copy');
     document.body.removeChild(input);
+    closeMenu()
+}
+
+async function shareTweet() {
+    const target = props.editTweet || props.tweet
+    if (!target) return
+    await copyTextToClipboard(tweetShareUrl(target))
+    alertStore.success(t('tweet.linkCopied'))
     closeMenu()
 }
 
@@ -337,6 +346,9 @@ async function confirmDeleteItem() {
               <span class="menu-text">
                   <font-awesome-icon icon="copy" style="margin-right: 5px;" /> {{ displayMid }}
               </span>
+          </div>
+          <div v-if="tweet" class="item clickable-item" @click.stop="shareTweet">
+              <span class="menu-text"><font-awesome-icon icon="share-from-square" style="margin-right: 5px;" />{{ $t('tweet.share') }}</span>
           </div>
           <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
               <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
