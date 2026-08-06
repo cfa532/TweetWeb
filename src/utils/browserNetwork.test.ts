@@ -43,7 +43,7 @@ describe('browser provider route eligibility', () => {
     expect(isPublicWebGatewayHost('dtweet.com')).toBe(true)
     expect(isPublicWebGatewayHost('dl.dtweet.com')).toBe(true)
     expect(isPublicWebGatewayHost('t1.fireshare.us')).toBe(false)
-    expect(isPublicWebGatewayHost('t1.www333.store')).toBe(false)
+    expect(isPublicWebGatewayHost('t1.www3.shop')).toBe(false)
   })
 
   it('recognizes private IPv4-with-port and bracketed IPv6 forms', () => {

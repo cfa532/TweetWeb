@@ -160,7 +160,7 @@ function onShare() {
 
 async function copyLink() {
   const authorId = props.tweet.author?.mid || props.tweet.authorId;
-  const url = `${window.location.origin}/tweet/${props.tweet.mid}${authorId ? '/' + authorId : ''}`;
+  const url = `${window.location.origin}/#tweet/${props.tweet.mid}${authorId ? '/' + authorId : ''}`;
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(url);
   } else {

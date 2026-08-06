@@ -134,18 +134,19 @@ Both SHA-256 values must match. If an edge temporarily serves an older
 asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
 
-Do not hash `http://t1.www333.store/index_entry.js` directly. It is a legacy
+Do not hash `http://t1.www3.shop/index_entry.js` directly. It is a legacy
 Leither domain whose loader generates the app entry response and resolves bare
 object names inside the published package; that URL is not a raw static-asset
 endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
 Leither package input.
 
 Also confirm that both association files return JSON directly from
-`https://dtweet.com`, then open a production
-`/tweet/<tweet-id>/<author-id>` URL. With the app installed, the operating
-system should open the app. In a browser, the Worker must return a temporary
-redirect to the same path on `http://t1.www333.store`, and that page must load
-the current bundle without mixed-content errors.
+`https://dtweet.com`, then open both production
+`/tweet/<tweet-id>/<author-id>` and `/#tweet/<tweet-id>/<author-id>` URLs. With
+the app installed, the operating system should open the app. In a browser, the
+Worker must land both forms on
+`http://t1.www3.shop/#tweet/<tweet-id>/<author-id>`, and that page must load the
+current bundle without mixed-content errors.
 
 ## 7. Restore Local Testing Configuration
 
@@ -171,5 +172,5 @@ assets.
 - [ ] The legacy `Browser fallback to dl.dtweet.com` zone rule is disabled.
 - [ ] Public asset hashes match `dist/index_entry.js`.
 - [ ] Association files return JSON and a browser tweet link redirects to
-      `http://t1.www333.store` and loads successfully.
+      `http://t1.www3.shop` and loads successfully.
 - [ ] The developer's original local `.env` value was restored.

@@ -49,6 +49,24 @@ function scrollBehavior(
   return { left: 0, top: 0 }
 }
 
+// Backward compatibility for external links created before the fragment-form
+// share contract. This runs before Vue Router reads the initial location and
+// does not change the app's createWebHistory() navigation mode.
+function normalizeLegacyExternalShareUrl() {
+  if (typeof window === 'undefined' || window.location.hash) return
+
+  const match = window.location.pathname.match(/^\/(tweet|author)(\/.*)$/)
+  if (!match) return
+
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `/#${match[1]}${match[2]}${window.location.search}`,
+  )
+}
+
+normalizeLegacyExternalShareUrl()
+
 export const router = createRouter({
   history: createWebHistory(),
   scrollBehavior,
@@ -183,6 +201,20 @@ export const router = createRouter({
 
 router.beforeEach((to, from) => {
   useAlertStore().clear()
+
+  // Shared HTTP links use a hash envelope, while in-app navigation keeps
+  // history mode. Convert only supported external routes on entry.
+  if (to.path === '/' && to.hash) {
+    const hashRoute = to.hash.replace(/^#\/?/, '')
+    if (/^(tweet|author)\//.test(hashRoute)) {
+      const target = router.resolve(`/${hashRoute}`)
+      return {
+        path: target.path,
+        query: target.query,
+        replace: true,
+      }
+    }
+  }
 
   if (to.name === 'login' && typeof to.query.redirect === 'string') {
     const target = router.resolve(to.query.redirect)

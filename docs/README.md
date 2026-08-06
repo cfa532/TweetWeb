@@ -334,7 +334,7 @@ MIT License - see LICENSE file for details
 
 - **Main README**: [/README.md](../README.md)
 - **Production**: https://dtweet.com/
-- **Browser fallback**: http://t1.www333.store/
+- **Browser fallback**: http://t1.www3.shop/
 - **GitHub Issues**: Report bugs and request features
 
 ## Version History

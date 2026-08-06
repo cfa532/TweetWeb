@@ -13,7 +13,7 @@ requiring Tailscale membership.
 - `dtweet.com` and `www.dtweet.com` are Cloudflare Worker custom domains. The
   Worker serves the iOS and Android association files so installed apps can
   claim supported deep links.
-- Browser fallback traffic is redirected to `http://t1.www333.store` with the
+- Browser fallback traffic is redirected to `http://t1.www3.shop` with the
   original path and query. `/user/*` and `/profile/*` are rewritten to
   TweetWeb's `/author/*` route.
 - `dl.dtweet.com/*` is a route on the same `dtweet-deeplink` Worker. Its
@@ -54,7 +54,7 @@ Keep the existing domain boundary:
 
 - `dtweet.com` remains the Universal Link / Android App Link domain and serves
   the Apple and Android association files over HTTPS.
-- Browser navigations use `http://t1.www333.store/<path-and-query>`. The
+- Browser navigations use `http://t1.www3.shop/#<route-and-query>`. The
   separate HTTP host lets TweetWeb contact Leither's HTTP and `ws://` provider
   endpoints without mixed-content blocking.
 - The redirect is owned by the Worker after the association-file checks. Do
@@ -66,7 +66,7 @@ Keep the existing domain boundary:
 Centralize browser-route classification in a small pure helper. When TweetWeb
 is loaded from a public Cloudflare gateway hostname, the helper classifies RFC
 6598 `100.64.0.0/10` routes as browser-blocked alongside RFC 1918 and local
-IPv6 routes. The HTTP fallback `t1.www333.store` remains a legacy Leither host,
+IPv6 routes. The HTTP fallback `t1.www3.shop` remains a legacy Leither host,
 not a gateway host, and retains normal direct route discovery.
 
 Provider and node resolution will filter browser-blocked candidates before
@@ -139,8 +139,8 @@ provider IP, and do not add a fixed Cloudflare origin-port rule for that node.
 
 - Confirm the active Worker deployment is current and still has the
   `dl.dtweet.com/*`, `dtweet.com`, and `www.dtweet.com` triggers.
-- Confirm `dtweet.com/tweet/<tweet-id>/<author-id>` redirects to the same path
-  on `http://t1.www333.store`, while association-file requests remain on
+- Confirm `dtweet.com/tweet/<tweet-id>/<author-id>` redirects to
+  `http://t1.www3.shop/#tweet/<tweet-id>/<author-id>`, while association-file requests remain on
   `dtweet.com` and return JSON.
 - Compare the SHA-256 of public `dl.dtweet.com/index_entry.js` with
   `TweetWeb/dist/index_entry.js`; query-string cache busting alone is not proof
@@ -155,7 +155,7 @@ provider IP, and do not add a fixed Cloudflare origin-port rule for that node.
 Focused unit coverage must continue to assert:
 
 - a public `dl.dtweet.com` origin rejects Tailscale and RFC 1918 candidates;
-- legacy `t1.www333.store` retains normal Leither route discovery;
+- legacy `t1.www3.shop` retains normal Leither route discovery;
 - a Tailscale/private origin permits Tailscale candidates;
 - public candidates later in the response remain eligible and are preferred;
 - dTweet web gateway hostnames are never accepted or persisted as provider

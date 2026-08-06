@@ -152,12 +152,15 @@ watch(isAdminEditorOpen, (blocking) => {
   }
 })
 function copyLink() {
-    console.log(window.location.href);
+    const currentUrl = route.name === 'UserPage'
+      ? `${window.location.origin}/#${route.fullPath.replace(/^\/+/, '')}`
+      : window.location.href
+    console.log(currentUrl);
     const input = document.createElement("input");
     input.style.position = "absolute";
     input.style.opacity = "0";
     input.style.pointerEvents = "none";
-    input.value = window.location.href;
+    input.value = currentUrl;
     document.body.appendChild(input);
     input.select();
     document.execCommand('copy');
