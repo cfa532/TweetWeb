@@ -5,7 +5,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAlertStore, useTweetStore } from '@/stores';
 import { requireLoginForWritableAction } from '@/lib/authNavigation';
-import { copyTextToClipboard, tweetProviderShareUrl, tweetShareUrl } from '@/lib';
+import { copyTextToClipboard, tweetShareUrl } from '@/lib';
 
 const router = useRouter();
 const route = useRoute();
@@ -17,11 +17,6 @@ const copied = ref(false);
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
-  shareUrlStyle: {
-    type: String as PropType<'deeplink' | 'providerIp'>,
-    required: false,
-    default: 'deeplink',
-  },
 });
 
 const emit = defineEmits<{
@@ -165,10 +160,7 @@ function onShare() {
 }
 
 async function copyLink() {
-  const url = props.shareUrlStyle === 'providerIp'
-    ? tweetProviderShareUrl(props.tweet, tweetStore.appId, tweetStore.lapi.baseUrl)
-    : tweetShareUrl(props.tweet, 'http://dtweet.com');
-  await copyTextToClipboard(url);
+  await copyTextToClipboard(tweetShareUrl(props.tweet, 'http://dtweet.com'));
   copied.value = true;
   setTimeout(() => {
     copied.value = false;
