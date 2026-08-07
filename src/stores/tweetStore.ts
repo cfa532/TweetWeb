@@ -4046,14 +4046,17 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                         const parentWritableIp = await this.resolveWritableHostIp(parentAuthor)
                         const parentClient = createPooledClient(parentWritableIp, this.lapi.connectionPool)
-                        tweet.parentTweetId = tweetId
+                        // Attach the parent on a copy, never on the caller's object:
+                        // the editor reuses the same payload to publish the standalone
+                        // quote tweet, which sets its own references explicitly.
+                        const commentPayload = { ...tweet, parentTweetId: tweetId }
                         const parentOriginalTimeout = parentClient.timeout
                         parentClient.timeout = effectiveTimeout
                         try {
                             return await parentClient.RunMApp('add_comment', {
                                 aid: this.appId, ver: 'last', version: 'v2',
                                 tweetid: tweetId,
-                                comment: JSON.stringify(tweet),
+                                comment: JSON.stringify(commentPayload),
                                 tweetauthorid: parentAuthor.mid,
                                 hostid: parentAuthorHostId,
                             })

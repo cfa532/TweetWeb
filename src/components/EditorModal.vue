@@ -411,8 +411,11 @@ async function onSubmit() {
     // If quoting, also publish as a standalone quote tweet
     if (targetTweetId && isQuoting.value && parentTweet) {
       try {
+        // A quote tweet stands on its own and carries both references: it
+        // quotes the target, and its body was written as a comment on it.
         const quoteTweet = {
           ...tweet,
+          parentTweetId: targetTweetId,
           originalTweetId: targetTweetId,
           originalAuthorId: parentTweet.authorId,
           timestamp: Date.now(),

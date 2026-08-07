@@ -29,6 +29,21 @@ export function shouldResyncUser(user: Pick<User, 'hostIds'> | undefined | null)
     return readHostId !== rootHostId
 }
 
+/**
+ * Whether a tweet belongs under its parent rather than in a tweet list.
+ *
+ * A parent reference alone does not make a row a comment: a quote tweet is
+ * published as a standalone tweet and carries both references — originalTweetId
+ * for what it quotes, and parentTweetId for the tweet its body was written on.
+ * Only a row with a parent and nothing quoted is a plain comment.
+ */
+export function isCommentTweet(
+    tweet: Pick<Tweet, 'parentTweetId' | 'originalTweetId'> | undefined | null,
+): boolean {
+    if (!tweet) return false
+    return !!tweet.parentTweetId && !tweet.originalTweetId
+}
+
 // Media Type Constants
 export const MEDIA_TYPES = {
     IMAGE: 'image',
