@@ -50,7 +50,7 @@ describe('tweetStore public provider routing', () => {
       '220.184.34.132:8002',
     ], window.location.hostname)
     expect(store.isServerHealthyWithTimeout).toHaveBeenCalledTimes(1)
-    expect(store.isServerHealthyWithTimeout).toHaveBeenCalledWith('220.184.34.132:8002', 3000, false)
+    expect(store.isServerHealthyWithTimeout).toHaveBeenCalledWith('220.184.34.132:8002', 6000, false)
   })
 
   it('rechecks a cached unhealthy provider during an explicit refresh', async () => {
@@ -142,6 +142,23 @@ describe('tweetStore public provider routing', () => {
     expect(tweet?.mid).toBe(tweetId)
     // Dead tweet route first, then the author's — not a give-up in between.
     expect(getTweetRaces(store, tweetId)).toEqual([[deadIp], [authorIp]])
+  })
+
+  it('clears remembered failures so a user retry does not replay them', async () => {
+    const store = useTweetStore()
+    const tweetId = 'retried-tweet'
+    const goodIp = '220.184.34.132:8002'
+
+    store.healthCheckCache.set('220.0.0.1:8002', { isHealthy: false, timestamp: Date.now() })
+    store.healthCheckCache.set(goodIp, { isHealthy: true, timestamp: Date.now() })
+    store._recordFetchFailure(tweetId)
+
+    store.clearRouteFailures([tweetId, undefined])
+
+    expect(store.healthCheckCache.has('220.0.0.1:8002')).toBe(false)
+    // A working route is still worth remembering.
+    expect(store.healthCheckCache.get(goodIp)?.isHealthy).toBe(true)
+    expect(store._resourceFetchFailures.get(tweetId)).toBeUndefined()
   })
 
   it('counts one failed node resolution once when concurrent callers share it', async () => {

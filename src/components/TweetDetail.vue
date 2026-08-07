@@ -297,7 +297,7 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
     )
 }
 
-async function loadDetail() {
+async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
     const myGeneration = ++loadGeneration
 
     isLoading.value = true
@@ -318,7 +318,7 @@ async function loadDetail() {
                 false,
                 true,
                 false,
-                refreshProviderRoute
+                refreshProviderRoute || options.forceRouteRefresh === true
             ),
             myGeneration,
             'Tweet'
@@ -930,7 +930,10 @@ async function leaveDeletedTweet() {
 function retryLoad() {
     console.log('[TweetDetail] User initiated retry');
     tweetNotFound.value = false;
-    loadDetail();
+    // Start from scratch rather than replaying the lookup that just failed —
+    // otherwise the retry resolves the same cached verdict and fails at once.
+    tweetStore.clearRouteFailures([tweetId.value, authorId.value]);
+    loadDetail({ forceRouteRefresh: true });
 }
 </script>
 
