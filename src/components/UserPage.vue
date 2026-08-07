@@ -6,7 +6,7 @@ import { useTweetStore } from '@/stores';
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router';
 import { LOAD_TIMEOUT_MS } from '@/constants';
 import { AppHeader } from '@/views';
-import { isBrowserReload, isWeChatBrowser, shouldResyncUser } from '@/lib';
+import { isBrowserReload, isCommentTweet, isWeChatBrowser, shouldResyncUser } from '@/lib';
 import { LoadingSpinner, PageLayout, TweetList } from '@/components';
 import { useScrollRestore } from '@/composables/useScrollRestore';
 import { startFeedPolling } from '@/composables/useFeedPolling';
@@ -240,11 +240,20 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
                     const freshAttachmentIds = (ft.attachments || []).map(attachment => referenceId(attachment.mid));
                     const existingAttachmentIds = (existing.attachments || []).map(attachment => referenceId(attachment.mid));
                     const attachmentSetChanged = JSON.stringify(freshAttachmentIds) !== JSON.stringify(existingAttachmentIds);
-                    const cachedMediaNeedsUrls = (existing.attachments || []).some(attachment =>
-                        !/^https?:\/\//i.test(attachment.mid)
-                    );
-                    if (attachmentSetChanged || cachedMediaNeedsUrls) {
+                    if (attachmentSetChanged) {
                         existing.attachments = ft.attachments;
+                    } else {
+                        // Same media, but `existing` comes from the pinned localStorage cache,
+                        // so its URLs still carry whichever provider node served them when they
+                        // were cached. Adopt the freshly resolved URL in place — keeping the
+                        // attachment objects avoids re-creating a playing video, and without
+                        // this the dead host is re-cached below and never repairs itself.
+                        (existing.attachments || []).forEach((attachment, index) => {
+                            const fresh = ft.attachments?.[index];
+                            if (!fresh) return;
+                            if (attachment.mid !== fresh.mid) attachment.mid = fresh.mid;
+                            if (fresh.downloadable !== undefined) attachment.downloadable = fresh.downloadable;
+                        });
                     }
                     // Keep provider/avatar in sync so cached pinned tweets don't keep stale hosts.
                     if (ft.provider) existing.provider = ft.provider;
@@ -382,7 +391,7 @@ async function loadTweetsWithMinimum(authorId: MimeiId) {
         // (node unreachable, timeout) keep cached tweets on screen.
         if (loadSucceeded) {
             const storeIds = new Set(tweetStore.tweets.map(t => t.mid));
-            const filtered = displayedTweets.value.filter(t => !t.parentTweetId && storeIds.has(t.mid));
+            const filtered = displayedTweets.value.filter(t => !isCommentTweet(t) && storeIds.has(t.mid));
             if (filtered.length !== displayedTweets.value.length) {
                 displayedTweets.value = filtered;
             }
@@ -477,7 +486,7 @@ function pendingNewTweetIds(): Set<string> {
         ? (displayedTweets.value[0].timestamp as number)
         : -Infinity;
     for (const e of tweetStore.tweets) {
-        if (e.parentTweetId) continue;
+        if (isCommentTweet(e)) continue;
         if (existingIds.has(e.mid)) continue;
         if (pinnedIds.has(e.mid)) continue;
         if ((e.timestamp as number) <= topTimestamp) continue;
@@ -602,7 +611,7 @@ function appendNewToDisplayed(candidateIds?: Set<string>) {
     const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
     const newTweets = tweetStore.tweets
         .filter(e => {
-            if (e.parentTweetId) return false;
+            if (isCommentTweet(e)) return false;
             if (existingIds.has(e.mid)) return false;
             if (pinnedIds.has(e.mid)) return false;
             if (candidateIds && !candidateIds.has(e.mid)) return false;
@@ -696,7 +705,7 @@ watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
     pinnedTweets.value = tweetStore.getCachedPinnedTweets(nv);
     const cached = tweetStore.getCachedUserTweets(nv);
     const pinnedIds = new Set(pinnedTweets.value.map(t => t.mid));
-    displayedTweets.value = cached.filter(t => !t.parentTweetId && !pinnedIds.has(t.mid));
+    displayedTweets.value = cached.filter(t => !isCommentTweet(t) && !pinnedIds.has(t.mid));
     if (cached.length > 0) {
         console.log(`Showing ${cached.length} cached tweets for ${nv}`);
     }

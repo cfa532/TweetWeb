@@ -29,7 +29,7 @@
 }
 
 .tweet-list-row .tweet-content-wrapper {
-  padding-left: 4px !important;
+  padding-left: 8px !important;
   padding-right: 4px !important;
 }
 </style>

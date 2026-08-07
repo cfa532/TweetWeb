@@ -29,6 +29,21 @@ export function shouldResyncUser(user: Pick<User, 'hostIds'> | undefined | null)
     return readHostId !== rootHostId
 }
 
+/**
+ * Whether a tweet belongs under its parent rather than in a tweet list.
+ *
+ * A parent reference alone does not make a row a comment: a quote tweet is
+ * published as a standalone tweet and carries both references — originalTweetId
+ * for what it quotes, and parentTweetId for the tweet its body was written on.
+ * Only a row with a parent and nothing quoted is a plain comment.
+ */
+export function isCommentTweet(
+    tweet: Pick<Tweet, 'parentTweetId' | 'originalTweetId'> | undefined | null,
+): boolean {
+    if (!tweet) return false
+    return !!tweet.parentTweetId && !tweet.originalTweetId
+}
+
 // Media Type Constants
 export const MEDIA_TYPES = {
     IMAGE: 'image',
@@ -102,7 +117,25 @@ export function publicIPv4BaseUrl(value: string | undefined | null): string | un
     return `${parsed.protocol}//${parsed.hostname}${port}`;
 }
 
-/** Public-provider IPv4 entry URL used by the TweetDetail share action. */
+/**
+ * Public-provider IPv4 entry URL. No share surface selects it today — both the
+ * feed and the detail corner menu use `tweetShareUrl` — but it is kept for a link
+ * that works without DNS.
+ *
+ * Composition:
+ * ```
+ * http://{public IPv4[:port]}/entry?aid={appId}&ver=last#/tweet/{mid}/{authorId}
+ * ```
+ * - host — first candidate among `providerOverride`, `author.baseUrl`,
+ *   `tweet.provider`, `author.providerIp` that survives `publicIPv4BaseUrl()`,
+ *   which rejects anything that is not a strictly public IPv4: private ranges,
+ *   RFC 6598 / Tailscale CGNAT, link-local, multicast, IPv6, and hostnames. The
+ *   function returns undefined when no candidate qualifies.
+ * - `/entry` — Leither's SPA entry point; it needs `aid` + `ver` as *query* params
+ *   to load the app bundle, which is why they sit before the `#`.
+ * - the route lives in the hash so the node serves `/entry` and the SPA router
+ *   resolves `#/tweet/...` client-side.
+ */
 export function tweetProviderShareUrl(
     tweet: Pick<Tweet, 'mid' | 'authorId' | 'author' | 'provider'>,
     appId: string,

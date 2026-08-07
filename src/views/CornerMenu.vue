@@ -37,6 +37,8 @@ const props = defineProps({
     editTweet: {type: Object as PropType<Tweet>, required: false}, // For retweets: the original tweet to edit (has content); tweet is the wrapper (used for delete)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
     isComment: {type: Boolean, required: false, default: false},
+    // Every corner menu shares the 'deeplink' style. 'providerIp' is kept for a
+    // DNS-free link — see tweetProviderShareUrl in lib.ts for its composition.
     shareUrlStyle: {
       type: String as PropType<'deeplink' | 'providerIp'>,
       required: false,

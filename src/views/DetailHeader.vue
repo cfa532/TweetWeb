@@ -222,8 +222,10 @@ watch(
         </div>
       </div>
       <div v-if='tweet' class='corner-menu-container' @click.stop>
+        <!-- share-url-style is left at its 'deeplink' default so the detail corner
+             menu shares the same link as the feed corner menu. -->
         <CornerMenu :tweet='tweet' :edit-tweet='editTweet' :parent-tweet='parentTweet' :is-comment='isComment'
-          share-url-style='providerIp' :after-delete='afterDelete' />
+          :after-delete='afterDelete' />
       </div>
     </div>
     <div

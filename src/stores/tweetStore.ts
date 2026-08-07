@@ -13,6 +13,11 @@ const GUEST_ID = "000000000000000000000000000"
 const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
 const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
+const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fast; see getFreshHealthStatus
+// Embedded browsers (WeChat above all) open a first connection far slower than a
+// standalone browser, and the probe only costs this long when every route is
+// silent — one healthy answer settles the race immediately.
+const HEALTH_PROBE_TIMEOUT_MS = 6000
 const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
 const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
@@ -378,6 +383,31 @@ function attachNodePoolRoute(user: any, connectionPool: any): boolean {
     }
     return true
 }
+
+/**
+ * Swap the host of an already-resolved media URL, keeping its /ipfs/<cid> (or
+ * /mm/<mid>) path. Raw ids and non-http values are returned untouched.
+ */
+function swapMediaHost(url: string | undefined, baseUrl: string): string | undefined {
+    if (!url) return url
+    if (!/^https?:\/\//i.test(url)) return url
+    return url.replace(/^https?:\/\/[^/]+/i, baseUrl)
+}
+
+/**
+ * Media URLs bake in the provider host at the time they are built, so a tweet
+ * restored from localStorage carries whichever node served it days ago. Re-point
+ * its attachments at the host this session resolved, otherwise the media renders
+ * broken once that old node is gone.
+ */
+function rewriteAttachmentHosts(tweet: any, providerIp: string | undefined) {
+    if (!providerIp || !Array.isArray(tweet?.attachments)) return
+    const baseUrl = `http://${providerIp}`
+    for (const attachment of tweet.attachments) {
+        const next = swapMediaHost(attachment?.mid, baseUrl)
+        if (next && next !== attachment.mid) attachment.mid = next
+    }
+}
 const TWEET_COUNT = 5
 
 export const useTweetStore = defineStore('tweetStore', {
@@ -405,7 +435,6 @@ export const useTweetStore = defineStore('tweetStore', {
         _user: null as User | null,      // login user data
         healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(),
         healthCheckInProgress: new Map<string, Promise<boolean>>(),
-        _writableHostCache: new Map<string, {ip: string, expiresAt: number}>(), // keyed by hostId
         _pendingUserFetches: new Map<string, Promise<User | undefined>>(), // Deduplicate concurrent getUser calls
         _resourceFetchFailures: new Map<string, { count: number, cooldownUntil: number }>(), // Per-resource (user/node/media) fetch failure cooldown
         _deletedTweetIds: new Set<string>() // Prevent re-insertion after optimistic delete
@@ -1106,6 +1135,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         delete (t.author as any).providerIp
                         if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
                             t.provider = t.author.providerIp
+                            rewriteAttachmentHosts(t, t.author.providerIp)
                         }
                         const mapRef = this.users.get(t.authorId)
                         if (mapRef) {
@@ -1118,6 +1148,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         delete (t.originalTweet.author as any).providerIp
                         if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
                             t.originalTweet.provider = t.originalTweet.author.providerIp
+                            rewriteAttachmentHosts(t.originalTweet, t.originalTweet.author.providerIp)
                         }
                     }
                     t.comments = []
@@ -1153,12 +1184,14 @@ export const useTweetStore = defineStore('tweetStore', {
                         delete (t.author as any).providerIp
                         if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
                             t.provider = t.author.providerIp
+                            rewriteAttachmentHosts(t, t.author.providerIp)
                         }
                     }
                     if (t.originalTweet?.author) {
                         delete (t.originalTweet.author as any).providerIp
                         if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
                             t.originalTweet.provider = t.originalTweet.author.providerIp
+                            rewriteAttachmentHosts(t.originalTweet, t.originalTweet.author.providerIp)
                         }
                     }
                     t.comments = []
@@ -1211,12 +1244,14 @@ export const useTweetStore = defineStore('tweetStore', {
                         delete (t.author as any).providerIp
                         if (attachNodePoolRoute(t.author, this.lapi.connectionPool)) {
                             t.provider = t.author.providerIp
+                            rewriteAttachmentHosts(t, t.author.providerIp)
                         }
                     }
                     if (t.originalTweet?.author) {
                         delete (t.originalTweet.author as any).providerIp
                         if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
                             t.originalTweet.provider = t.originalTweet.author.providerIp
+                            rewriteAttachmentHosts(t.originalTweet, t.originalTweet.author.providerIp)
                         }
                     }
                     t.comments = []
@@ -1373,21 +1408,31 @@ export const useTweetStore = defineStore('tweetStore', {
                             const freshIds = freshAttachments.map(attachment => referenceId(attachment.mid))
                             const existingIds = existingAttachments.map(attachment => referenceId(attachment.mid))
                             const attachmentSetChanged = JSON.stringify(freshIds) !== JSON.stringify(existingIds)
-                            const cachedMediaNeedsUrls = existingAttachments.some(attachment =>
-                                !/^https?:\/\//i.test(attachment.mid)
-                            )
+                            const mediaHost = existingTweet.provider || existingTweet.author?.providerIp
+                            const baseUrl = mediaHost ? `http://${mediaHost}` : window.location.origin
+                            const freshUrls = freshIds.map(id => this.getMediaUrl(id, baseUrl))
 
-                            // Pinned tweets can come from a persistent cache that predates
-                            // an edit. Replace media only when it changed (or is still raw)
-                            // so unchanged pinned videos keep their live component state.
-                            if (attachmentSetChanged || cachedMediaNeedsUrls) {
-                                const mediaHost = existingTweet.provider || existingTweet.author?.providerIp
-                                const baseUrl = mediaHost ? `http://${mediaHost}` : window.location.origin
-                                existingTweet.attachments = freshAttachments.map(attachment => ({
+                            // Pinned tweets can come from a persistent cache that predates an
+                            // edit, or that was built against a provider node this session no
+                            // longer uses. Rebuild the list only when the media set changed;
+                            // otherwise re-point the existing entries at the current host in
+                            // place, so an unchanged pinned video keeps its live component
+                            // state while its URL still resolves.
+                            if (attachmentSetChanged) {
+                                existingTweet.attachments = freshAttachments.map((attachment, index) => ({
                                     ...attachment,
-                                    mid: this.getMediaUrl(referenceId(attachment.mid), baseUrl),
+                                    mid: freshUrls[index],
                                     downloadable: tweetObject.downloadable ?? attachment.downloadable,
                                 }))
+                            } else {
+                                existingAttachments.forEach((attachment, index) => {
+                                    if (freshUrls[index] && attachment.mid !== freshUrls[index]) {
+                                        attachment.mid = freshUrls[index]
+                                    }
+                                    if (tweetObject.downloadable !== undefined) {
+                                        attachment.downloadable = tweetObject.downloadable
+                                    }
+                                })
                             }
 
                             tweetsWithPinTime.push({tweet: existingTweet, pinTimestamp})
@@ -1967,12 +2012,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Use get_tweet WITHOUT version:"v3" here, because v3 requires userid and returns null without it.
                 // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
                 if (useRacing) {
-                    const providerIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
-                    if (providerIps.length === 0) {
-                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
-                        return null
-                    }
-                    const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
+                    const raceGetTweet = (ips: string[]) => this.raceProviderIps(ips, async (ip, client) => {
                         return await client.RunMApp("get_tweet", {
                             aid: this.lapi.appId,
                             ver: "last",
@@ -1981,6 +2021,50 @@ export const useTweetStore = defineStore('tweetStore', {
                             fromdetailview: fromDetailView
                         })
                     }, `tweet ${tweetId}`)
+
+                    // The author's node also serves this tweet by id, and a detail
+                    // URL always carries the author. Resolving the tweet's own mid
+                    // can come back with nothing the browser can reach — a cold
+                    // lookup returning only private/IPv6 routes ends the load before
+                    // a single request is made — so keep the author as a second way in.
+                    const authorFallbackIps = async (): Promise<string[]> => {
+                        if (!authorId) return []
+                        const ips = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                        if (ips.length === 0) {
+                            console.warn(`[fetchTweet] Author ${authorId} has no usable route either`)
+                        }
+                        return ips
+                    }
+
+                    let providerIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                    let triedAuthorRoute = false
+                    if (providerIps.length === 0) {
+                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId}; falling back to author ${authorId}`)
+                        providerIps = await authorFallbackIps()
+                        triedAuthorRoute = true
+                    }
+                    if (providerIps.length === 0) {
+                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
+                        return null
+                    }
+
+                    let raceResult = await raceGetTweet(providerIps)
+
+                    if (!raceResult) {
+                        // The route just failed a real RPC — that is the verdict the
+                        // health probe only guessed at. Drop it so a retry resolves
+                        // afresh instead of racing the same dead route again.
+                        nodePool.invalidate(tweetId)
+
+                        if (!triedAuthorRoute) {
+                            const authorIps = await authorFallbackIps()
+                            if (authorIps.length > 0) {
+                                console.warn(`[fetchTweet] Tweet routes failed for ${tweetId}; retrying through author ${authorId}`)
+                                raceResult = await raceGetTweet(authorIps)
+                            }
+                        }
+                    }
+
                     if (!raceResult) {
                         console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
                         return null
@@ -2439,11 +2523,6 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         _rewriteUserMediaHosts(userId: MimeiId, newProviderIp: string) {
             const newBase = `http://${newProviderIp}`
-            const swapHost = (url: string | undefined): string | undefined => {
-                if (!url) return url
-                if (!/^https?:\/\//i.test(url)) return url
-                return url.replace(/^https?:\/\/[^/]+/, newBase)
-            }
             const fixTweet = (t: Tweet | undefined | null) => {
                 if (!t) return
                 const isOurs = (t.author && t.author.mid === userId) || t.authorId === userId
@@ -2451,14 +2530,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 t.provider = newProviderIp
                 if (t.author) {
                     if (t.author.providerIp !== newProviderIp) t.author.providerIp = newProviderIp
-                    t.author.avatar = swapHost(t.author.avatar) ?? t.author.avatar
+                    t.author.avatar = swapMediaHost(t.author.avatar, newBase) ?? t.author.avatar
                 }
-                if (t.attachments) {
-                    for (const a of t.attachments) {
-                        const next = swapHost(a.mid as any)
-                        if (next) a.mid = next
-                    }
-                }
+                rewriteAttachmentHosts(t, newProviderIp)
             }
 
             for (const t of this.tweets) {
@@ -2527,10 +2601,13 @@ export const useTweetStore = defineStore('tweetStore', {
 
         getFreshHealthStatus(ip: string): boolean | undefined {
             const cached = this.healthCheckCache.get(ip);
-            if (cached && (Date.now() - cached.timestamp) < HEALTH_CHECK_CACHE_TTL) {
-                return cached.isHealthy;
-            }
-            return undefined;
+            if (!cached) return undefined;
+            // A failed probe is far weaker evidence than a successful one: on a
+            // cold start the probe budget expires before a sleeping node answers.
+            // Remembering that "failure" for the full healthy TTL made the route
+            // unusable for half an hour and made the retry button fail instantly.
+            const ttl = cached.isHealthy ? HEALTH_CHECK_CACHE_TTL : HEALTH_CHECK_FAILURE_TTL;
+            return (Date.now() - cached.timestamp) < ttl ? cached.isHealthy : undefined;
         },
 
         async isServerHealthyWithTimeout(ip: string, timeout: number = 5000, refresh: boolean = false): Promise<boolean> {
@@ -2661,6 +2738,25 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
+         * Forget every remembered routing failure for these mids.
+         *
+         * A user-initiated retry means "try harder". Without this the retry
+         * replays the decision that just failed — same pooled route, same cached
+         * unhealthy verdict, same cooldown — and so fails again immediately,
+         * which reads as a dead button.
+         */
+        clearRouteFailures(mids: (string | undefined)[]) {
+            for (const [ip, status] of this.healthCheckCache) {
+                if (!status.isHealthy) this.healthCheckCache.delete(ip)
+            }
+            for (const mid of mids) {
+                if (!mid) continue
+                nodePool.invalidate(mid)
+                this._clearFetchFailure(mid)
+            }
+        },
+
+        /**
          * Get the first pair of provider IPs for a given mid without testing them
          * @param mid The mid to get provider IPs for
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
@@ -2671,7 +2767,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // Refresh provider discovery directly, while keeping tweet retrieval
             // on the ordinary get_tweet path (not the recovery-only refresh_tweet).
             if (refresh) {
-                const refreshedIps = await this._resolveProviderIps(mid, v4only, true)
+                const refreshedIps = await this._resolveProviderIps(mid, v4only, true, false, false)
                 if (refreshedIps.length > 0) {
                     nodePool.updateNode(mid, refreshedIps)
                 } else {
@@ -2695,7 +2791,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     nodePool.removeIP(mid, usablePooledIp)
                 } else {
                     console.log(`[getProviderIps] Found pooled IP for ${mid}: ${usablePooledIp}, testing health`)
-                    const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, 3000)
+                    const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, HEALTH_PROBE_TIMEOUT_MS)
                     if (healthy) {
                         return [usablePooledIp]
                     }
@@ -2703,7 +2799,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     nodePool.removeIP(mid, usablePooledIp)
                 }
             }
-            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false), true);
+            return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false, false, false), true);
         },
 
         async getUserReadIp(user: User, refresh: boolean = false): Promise<string | null> {
@@ -2718,13 +2814,19 @@ export const useTweetStore = defineStore('tweetStore', {
             return providerIp
         },
 
-        async getNodeIpByHostId(hostId: string, refresh: boolean = false): Promise<string | null> {
+        /**
+         * @param usePool whether NodePool may serve and record this resolution. The
+         * pool caches read-access nodes only, so write-route resolution passes false:
+         * no pooled entry is reused and none is written back. Writes are rare next to
+         * reads, so resolving hostIds[0] fresh each time costs nothing.
+         */
+        async getNodeIpByHostId(hostId: string, refresh: boolean = false, usePool: boolean = true): Promise<string | null> {
             if (!refresh && this._isFetchCoolingDown(hostId)) {
                 const f = this._resourceFetchFailures.get(hostId)!
                 console.warn(`[getNodeIp] ${hostId} in cooldown (${Math.ceil((f.cooldownUntil - Date.now()) / 1000)}s left), skipping`)
                 return null
             }
-            if (!refresh) {
+            if (!refresh && usePool) {
                 const pooledIp = nodePool.getIPForNode(hostId)
                 const usablePooledIp = pooledIp
                     ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
@@ -2740,7 +2842,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         nodePool.removeIP(hostId, usablePooledIp)
                     } else {
                         console.log(`[getNodeIp] Found pooled IP for node ${hostId}: ${usablePooledIp}, testing health`)
-                        const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, 5000)
+                        const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, HEALTH_PROBE_TIMEOUT_MS)
                         if (healthy) {
                             return usablePooledIp
                         }
@@ -2750,7 +2852,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            const ips = await nodePool.resolveIPs(hostId, async () => {
+            const resolve = async () => {
                 const resolved = await this._resolveNodeIps(hostId, refresh)
                 // This callback runs once for all callers sharing the NodePool
                 // request, so one failed probe produces one cooldown increment.
@@ -2760,7 +2862,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     this._recordFetchFailure(hostId, `node:${hostId}`)
                 }
                 return resolved
-            }, true)
+            }
+
+            // resolveIPs stores its result in NodePool, so the write route bypasses it
+            // and resolves the node directly instead.
+            const ips = usePool
+                ? await nodePool.resolveIPs(hostId, resolve, true)
+                : await resolve()
             return ips[0] ?? null
         },
 
@@ -2806,7 +2914,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
-                        this.isServerHealthyWithTimeout(ip, 5000, refresh).then(healthy => {
+                        this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS, refresh).then(healthy => {
                             if (healthy) { resolve(ip); return; }
                             if (++settled === candidates.length) resolve(null);
                         }).catch(() => {
@@ -2816,8 +2924,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    console.error(`[getNodeIp] All health checks failed for nodeId ${hostId}`);
-                    return [];
+                    // Same reasoning as _resolveProviderIps: an unanswered probe on a
+                    // cold node must not cost the caller its route (and a fetch-failure
+                    // cooldown on top). The RPC that follows has its own timeout.
+                    console.warn(`[getNodeIp] No candidate answered the health probe for nodeId ${hostId}; returning ${candidates.length} unverified route(s)`);
+                    return candidates;
                 }
 
                 console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
@@ -2834,6 +2945,7 @@ export const useTweetStore = defineStore('tweetStore', {
             v4only: boolean,
             refresh: boolean,
             publicIPv4Only: boolean = false,
+            requireHealthy: boolean = true,
         ): Promise<string[]> {
             try {
                 console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
@@ -2907,7 +3019,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (candidates.length === 0) {
                     if (!refresh) {
                         console.warn(`[getProviderIps] Only unusable cached routes returned for ${mid}; retrying with refresh`);
-                        return this._resolveProviderIps(mid, v4only, true, publicIPv4Only);
+                        return this._resolveProviderIps(mid, v4only, true, publicIPv4Only, requireHealthy);
                     }
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
@@ -2919,7 +3031,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
-                        this.isServerHealthyWithTimeout(ip, 3000, refresh).then(healthy => {
+                        this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS, refresh).then(healthy => {
                             if (healthy) { resolve(ip); return; }
                             if (++settled === candidates.length) resolve(null);
                         }).catch(() => {
@@ -2929,7 +3041,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
+                    if (requireHealthy) {
+                        throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
+                    }
+                    // The probe picks the fastest route; it is not the authority on
+                    // reachability. A cold node (asleep, cold DNS/TCP, mobile radio
+                    // waking) routinely needs longer than the probe budget while the
+                    // real RPC — which gets 15s of its own — would have succeeded.
+                    // Hand the candidates back and let that call be the judge.
+                    console.warn(`[getProviderIps] No candidate answered the health probe for ${mid}; racing all ${candidates.length} route(s) unverified`);
+                    return candidates;
                 }
 
                 console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner);
@@ -3621,6 +3742,33 @@ export const useTweetStore = defineStore('tweetStore', {
                         })
                     }
                 }
+                // Deleting a retweet/quote must unlink it from the original's retweet list,
+                // otherwise the original keeps counting a retweet that no longer exists.
+                // removedTweet was captured before the local cache was cleared above.
+                const originalTweetId = removedTweet?.originalTweetId
+                const originalAuthorId = removedTweet?.originalAuthorId
+                if (originalTweetId) {
+                    try {
+                        const original = await this.getTweet(originalTweetId, originalAuthorId)
+                        if (original) {
+                            await this.updateRetweetCount(original, tweetId, -1)
+                        } else {
+                            console.warn('[deleteTweet] Original tweet unavailable — retweetCount not decremented', {
+                                tweetId,
+                                originalTweetId,
+                            })
+                        }
+                    } catch (retweetCountError) {
+                        // The delete itself is already authoritative — never fail it because
+                        // the count update could not be applied.
+                        console.error('[deleteTweet] Failed to decrement original retweetCount', {
+                            tweetId,
+                            originalTweetId,
+                            retweetCountError,
+                        })
+                    }
+                }
+
                 console.log('[deleteTweet] Delete completed', { tweetId, deletedTweetId })
                 return deletedTweetId
             } catch (error) {
@@ -3909,14 +4057,17 @@ export const useTweetStore = defineStore('tweetStore', {
                         }
                         const parentWritableIp = await this.resolveWritableHostIp(parentAuthor)
                         const parentClient = createPooledClient(parentWritableIp, this.lapi.connectionPool)
-                        tweet.parentTweetId = tweetId
+                        // Attach the parent on a copy, never on the caller's object:
+                        // the editor reuses the same payload to publish the standalone
+                        // quote tweet, which sets its own references explicitly.
+                        const commentPayload = { ...tweet, parentTweetId: tweetId }
                         const parentOriginalTimeout = parentClient.timeout
                         parentClient.timeout = effectiveTimeout
                         try {
                             return await parentClient.RunMApp('add_comment', {
                                 aid: this.appId, ver: 'last', version: 'v2',
                                 tweetid: tweetId,
-                                comment: JSON.stringify(tweet),
+                                comment: JSON.stringify(commentPayload),
                                 tweetauthorid: parentAuthor.mid,
                                 hostid: parentAuthorHostId,
                             })
@@ -3997,11 +4148,17 @@ export const useTweetStore = defineStore('tweetStore', {
             return author
         },
         /**
-         * Registers a retweet/quote on the original object's storage root.
+         * Registers or unregisters a retweet/quote on the original object's storage root.
          * Mirrors iOS updateRetweetCount and returns the updated original tweet
          * when the server supplies it.
+         *
+         * Both entries key the original's retweet list by retweetId (Hset / Hdel), so they are
+         * idempotent. retweetCount is derived from that list, and delete_tweet never touches it
+         * — the client is what keeps the original's count honest in both directions.
+         *
+         * @param direction 1 to register the retweet, -1 to remove it.
          */
-        async updateRetweetCount(originalTweet: Tweet, retweetId: MimeiId): Promise<Tweet | null> {
+        async updateRetweetCount(originalTweet: Tweet, retweetId: MimeiId, direction: 1 | -1 = 1): Promise<Tweet | null> {
             try {
                 const loginUser = this.loginUser
                 if (!loginUser) {
@@ -4012,7 +4169,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 const writableIp = await this.resolveWritableHostIp(storageAuthor)
                 const client = createPooledClient(writableIp, this.lapi.connectionPool)
                 client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-                const ret = await client.RunMApp("retweet_added", {
+                const entry = direction === 1 ? "retweet_added" : "retweet_removed"
+                const ret = await client.RunMApp(entry, {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -4026,8 +4184,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.warn('[updateRetweetCount] Server returned invalid tweet data')
                     return null
                 }
-                // Use server count if available, otherwise keep optimistic +1 (upload already succeeded)
-                const newCount = tweetDict?.retweetCount ?? (originalTweet.retweetCount ?? 0) + 1
+                // Use server count if available, otherwise fall back to the optimistic step
+                // (the upload/delete already succeeded) — never below zero.
+                const newCount = tweetDict?.retweetCount
+                    ?? Math.max(0, (originalTweet.retweetCount ?? 0) + direction)
                 const serverFavorites = Array.isArray(tweetDict.favorites)
                     ? tweetDict.favorites
                     : originalTweet.favorites
@@ -4574,47 +4734,38 @@ export const useTweetStore = defineStore('tweetStore', {
          * Returns the first non-local, non-IPv6 (when v4Only is on)
          * address, or null if none are usable.
          */
-        async getNodeIp(user: User, refresh: boolean = false): Promise<string | null> {
+        async getNodeIp(user: User, refresh: boolean = false, usePool: boolean = true): Promise<string | null> {
             const hostId = user.hostIds?.[0];
             if (!hostId) {
                 console.error("[getNodeIp] User has no hostIds[0]");
                 return null;
             }
-            return await this.getNodeIpByHostId(hostId, refresh)
+            return await this.getNodeIpByHostId(hostId, refresh, usePool)
         },
 
         /**
          * Resolves the writable host IP for a user by resolving hostIds[0] to an IP,
          * matching iOS User.resolveWritableUrl(). File uploads must use this host
          * rather than the user's cached providerIp (which may point to a read-only node).
-         * Result is cached on user.writableHostIp.
+         * Result is exposed on user.writableHostIp for display URLs only.
+         *
+         * NodePool caches read-access nodes, so this stays out of it in both
+         * directions: no pooled entry is consulted and none is recorded. The write
+         * route is resolved fresh on every call — writes are rare next to reads, and
+         * a write must never inherit a stale route.
          */
-        async resolveWritableHostIp(user: User, refresh: boolean = false): Promise<string> {
+        async resolveWritableHostIp(user: User): Promise<string> {
             const hostId = user.hostIds?.[0]
-            const TTL = 5 * 60 * 1000 // 5 minutes
 
             if (!hostId) {
                 throw new Error('Writable host not configured: user has no hostIds[0]')
             }
 
-            if (!refresh) {
-                const cached = this._writableHostCache.get(hostId)
-                if (cached && Date.now() < cached.expiresAt) {
-                    user.writableHostIp = cached.ip
-                    return cached.ip
-                }
-            }
-
-            // A provider-discovery result may have polluted older persisted
-            // NodePool entries. The first write-route lookup in this store
-            // session must therefore resolve hostIds[0] from get_node_ips;
-            // only the dedicated in-memory writable cache is trusted afterward.
-            const ip = await this.getNodeIp(user, true)
+            const ip = await this.getNodeIp(user, true, false)
             if (!ip) {
                 throw new Error(`Upload server not responding: could not resolve hostIds[0]=${hostId}`)
             }
 
-            this._writableHostCache.set(hostId, { ip, expiresAt: Date.now() + TTL })
             user.writableHostIp = ip
             return ip
         },
@@ -4644,14 +4795,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error(`Unexpected upload_ipfs response: ${JSON.stringify(response)}`)
             }
 
-            // Matches iOS uploadRegularFile: 2 attempts; on first failure clear cached
-            // writableHostIp so resolveWritableHostIp re-resolves a fresh healthy IP.
+            // Matches iOS uploadRegularFile: 2 attempts. resolveWritableHostIp resolves
+            // hostIds[0] fresh every call, so the retry naturally re-probes the route.
             const maxAttempts = 2
             let lastError: any
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                // The retry must bypass both the failed writableUrl hint and
-                // cached host so it can discover a different healthy root route.
-                const uploadIp = await this.resolveWritableHostIp(user, attempt > 1)
+                const uploadIp = await this.resolveWritableHostIp(user)
                 console.log(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} using IP:`, uploadIp)
                 const client = await this.lapi.connectionPool.getConnection(uploadIp)
                 const originalTimeout = client.timeout
@@ -4682,9 +4831,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     lastError = error
                     console.error(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} failed:`, error)
                     if (attempt < maxAttempts) {
-                        // Invalidate cache so next attempt re-resolves a fresh IP.
-                        const hostId = user.hostIds?.[0]
-                        if (hostId) this._writableHostCache.delete(hostId)
                         user.writableHostIp = null
                         this.lapi.connectionPool.clearAll()
                         await new Promise(resolve => setTimeout(resolve, 1000))
@@ -4776,7 +4922,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 let writableIp: string
                 try {
-                    writableIp = await this.resolveWritableHostIp(registeredUserBlob as User, true)
+                    writableIp = await this.resolveWritableHostIp(registeredUserBlob as User)
                 } catch (error) {
                     console.warn("[register:autoFollow] Could not resolve registered user's hostIds[0]; cannot auto-follow", error)
                     return
