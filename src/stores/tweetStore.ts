@@ -4749,8 +4749,17 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!refresh) {
                 const cached = this._writableHostCache.get(hostId)
                 if (cached && Date.now() < cached.expiresAt) {
-                    user.writableHostIp = cached.ip
-                    return cached.ip
+                    // Matches iOS getHostIP: a remembered write route is only reused
+                    // after it passes a health check (a fresh cached verdict counts),
+                    // so a node that changed IP inside the TTL fails over on the next
+                    // write instead of failing the write.
+                    if (await this.isServerHealthyWithTimeout(cached.ip, HEALTH_PROBE_TIMEOUT_MS)) {
+                        user.writableHostIp = cached.ip
+                        return cached.ip
+                    }
+                    console.warn(`[resolveWritableHostIp] Cached writable IP ${cached.ip} for host ${hostId} is unhealthy; re-resolving`)
+                    this._writableHostCache.delete(hostId)
+                    nodePool.removeIP(hostId, cached.ip)
                 }
             }
 
