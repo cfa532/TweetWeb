@@ -3731,6 +3731,33 @@ export const useTweetStore = defineStore('tweetStore', {
                         })
                     }
                 }
+                // Deleting a retweet/quote must unlink it from the original's retweet list,
+                // otherwise the original keeps counting a retweet that no longer exists.
+                // removedTweet was captured before the local cache was cleared above.
+                const originalTweetId = removedTweet?.originalTweetId
+                const originalAuthorId = removedTweet?.originalAuthorId
+                if (originalTweetId) {
+                    try {
+                        const original = await this.getTweet(originalTweetId, originalAuthorId)
+                        if (original) {
+                            await this.updateRetweetCount(original, tweetId, -1)
+                        } else {
+                            console.warn('[deleteTweet] Original tweet unavailable — retweetCount not decremented', {
+                                tweetId,
+                                originalTweetId,
+                            })
+                        }
+                    } catch (retweetCountError) {
+                        // The delete itself is already authoritative — never fail it because
+                        // the count update could not be applied.
+                        console.error('[deleteTweet] Failed to decrement original retweetCount', {
+                            tweetId,
+                            originalTweetId,
+                            retweetCountError,
+                        })
+                    }
+                }
+
                 console.log('[deleteTweet] Delete completed', { tweetId, deletedTweetId })
                 return deletedTweetId
             } catch (error) {
@@ -4107,11 +4134,17 @@ export const useTweetStore = defineStore('tweetStore', {
             return author
         },
         /**
-         * Registers a retweet/quote on the original object's storage root.
+         * Registers or unregisters a retweet/quote on the original object's storage root.
          * Mirrors iOS updateRetweetCount and returns the updated original tweet
          * when the server supplies it.
+         *
+         * Both entries key the original's retweet list by retweetId (Hset / Hdel), so they are
+         * idempotent. retweetCount is derived from that list, and delete_tweet never touches it
+         * — the client is what keeps the original's count honest in both directions.
+         *
+         * @param direction 1 to register the retweet, -1 to remove it.
          */
-        async updateRetweetCount(originalTweet: Tweet, retweetId: MimeiId): Promise<Tweet | null> {
+        async updateRetweetCount(originalTweet: Tweet, retweetId: MimeiId, direction: 1 | -1 = 1): Promise<Tweet | null> {
             try {
                 const loginUser = this.loginUser
                 if (!loginUser) {
@@ -4122,7 +4155,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 const writableIp = await this.resolveWritableHostIp(storageAuthor)
                 const client = createPooledClient(writableIp, this.lapi.connectionPool)
                 client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-                const ret = await client.RunMApp("retweet_added", {
+                const entry = direction === 1 ? "retweet_added" : "retweet_removed"
+                const ret = await client.RunMApp(entry, {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -4136,8 +4170,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.warn('[updateRetweetCount] Server returned invalid tweet data')
                     return null
                 }
-                // Use server count if available, otherwise keep optimistic +1 (upload already succeeded)
-                const newCount = tweetDict?.retweetCount ?? (originalTweet.retweetCount ?? 0) + 1
+                // Use server count if available, otherwise fall back to the optimistic step
+                // (the upload/delete already succeeded) — never below zero.
+                const newCount = tweetDict?.retweetCount
+                    ?? Math.max(0, (originalTweet.retweetCount ?? 0) + direction)
                 const serverFavorites = Array.isArray(tweetDict.favorites)
                     ? tweetDict.favorites
                     : originalTweet.favorites
