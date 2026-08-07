@@ -435,7 +435,6 @@ export const useTweetStore = defineStore('tweetStore', {
         _user: null as User | null,      // login user data
         healthCheckCache: new Map<string, {isHealthy: boolean, timestamp: number}>(),
         healthCheckInProgress: new Map<string, Promise<boolean>>(),
-        _writableHostCache: new Map<string, {ip: string, expiresAt: number}>(), // keyed by hostId
         _pendingUserFetches: new Map<string, Promise<User | undefined>>(), // Deduplicate concurrent getUser calls
         _resourceFetchFailures: new Map<string, { count: number, cooldownUntil: number }>(), // Per-resource (user/node/media) fetch failure cooldown
         _deletedTweetIds: new Set<string>() // Prevent re-insertion after optimistic delete
@@ -2815,13 +2814,19 @@ export const useTweetStore = defineStore('tweetStore', {
             return providerIp
         },
 
-        async getNodeIpByHostId(hostId: string, refresh: boolean = false): Promise<string | null> {
+        /**
+         * @param usePool whether NodePool may serve and record this resolution. The
+         * pool caches read-access nodes only, so write-route resolution passes false:
+         * no pooled entry is reused and none is written back. Writes are rare next to
+         * reads, so resolving hostIds[0] fresh each time costs nothing.
+         */
+        async getNodeIpByHostId(hostId: string, refresh: boolean = false, usePool: boolean = true): Promise<string | null> {
             if (!refresh && this._isFetchCoolingDown(hostId)) {
                 const f = this._resourceFetchFailures.get(hostId)!
                 console.warn(`[getNodeIp] ${hostId} in cooldown (${Math.ceil((f.cooldownUntil - Date.now()) / 1000)}s left), skipping`)
                 return null
             }
-            if (!refresh) {
+            if (!refresh && usePool) {
                 const pooledIp = nodePool.getIPForNode(hostId)
                 const usablePooledIp = pooledIp
                     ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
@@ -2847,7 +2852,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            const ips = await nodePool.resolveIPs(hostId, async () => {
+            const resolve = async () => {
                 const resolved = await this._resolveNodeIps(hostId, refresh)
                 // This callback runs once for all callers sharing the NodePool
                 // request, so one failed probe produces one cooldown increment.
@@ -2857,7 +2862,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     this._recordFetchFailure(hostId, `node:${hostId}`)
                 }
                 return resolved
-            }, true)
+            }
+
+            // resolveIPs stores its result in NodePool, so the write route bypasses it
+            // and resolves the node directly instead.
+            const ips = usePool
+                ? await nodePool.resolveIPs(hostId, resolve, true)
+                : await resolve()
             return ips[0] ?? null
         },
 
@@ -4723,56 +4734,38 @@ export const useTweetStore = defineStore('tweetStore', {
          * Returns the first non-local, non-IPv6 (when v4Only is on)
          * address, or null if none are usable.
          */
-        async getNodeIp(user: User, refresh: boolean = false): Promise<string | null> {
+        async getNodeIp(user: User, refresh: boolean = false, usePool: boolean = true): Promise<string | null> {
             const hostId = user.hostIds?.[0];
             if (!hostId) {
                 console.error("[getNodeIp] User has no hostIds[0]");
                 return null;
             }
-            return await this.getNodeIpByHostId(hostId, refresh)
+            return await this.getNodeIpByHostId(hostId, refresh, usePool)
         },
 
         /**
          * Resolves the writable host IP for a user by resolving hostIds[0] to an IP,
          * matching iOS User.resolveWritableUrl(). File uploads must use this host
          * rather than the user's cached providerIp (which may point to a read-only node).
-         * Result is cached on user.writableHostIp.
+         * Result is exposed on user.writableHostIp for display URLs only.
+         *
+         * NodePool caches read-access nodes, so this stays out of it in both
+         * directions: no pooled entry is consulted and none is recorded. The write
+         * route is resolved fresh on every call — writes are rare next to reads, and
+         * a write must never inherit a stale route.
          */
-        async resolveWritableHostIp(user: User, refresh: boolean = false): Promise<string> {
+        async resolveWritableHostIp(user: User): Promise<string> {
             const hostId = user.hostIds?.[0]
-            const TTL = 5 * 60 * 1000 // 5 minutes
 
             if (!hostId) {
                 throw new Error('Writable host not configured: user has no hostIds[0]')
             }
 
-            if (!refresh) {
-                const cached = this._writableHostCache.get(hostId)
-                if (cached && Date.now() < cached.expiresAt) {
-                    // Matches iOS getHostIP: a remembered write route is only reused
-                    // after it passes a health check (a fresh cached verdict counts),
-                    // so a node that changed IP inside the TTL fails over on the next
-                    // write instead of failing the write.
-                    if (await this.isServerHealthyWithTimeout(cached.ip, HEALTH_PROBE_TIMEOUT_MS)) {
-                        user.writableHostIp = cached.ip
-                        return cached.ip
-                    }
-                    console.warn(`[resolveWritableHostIp] Cached writable IP ${cached.ip} for host ${hostId} is unhealthy; re-resolving`)
-                    this._writableHostCache.delete(hostId)
-                    nodePool.removeIP(hostId, cached.ip)
-                }
-            }
-
-            // A provider-discovery result may have polluted older persisted
-            // NodePool entries. The first write-route lookup in this store
-            // session must therefore resolve hostIds[0] from get_node_ips;
-            // only the dedicated in-memory writable cache is trusted afterward.
-            const ip = await this.getNodeIp(user, true)
+            const ip = await this.getNodeIp(user, true, false)
             if (!ip) {
                 throw new Error(`Upload server not responding: could not resolve hostIds[0]=${hostId}`)
             }
 
-            this._writableHostCache.set(hostId, { ip, expiresAt: Date.now() + TTL })
             user.writableHostIp = ip
             return ip
         },
@@ -4802,14 +4795,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error(`Unexpected upload_ipfs response: ${JSON.stringify(response)}`)
             }
 
-            // Matches iOS uploadRegularFile: 2 attempts; on first failure clear cached
-            // writableHostIp so resolveWritableHostIp re-resolves a fresh healthy IP.
+            // Matches iOS uploadRegularFile: 2 attempts. resolveWritableHostIp resolves
+            // hostIds[0] fresh every call, so the retry naturally re-probes the route.
             const maxAttempts = 2
             let lastError: any
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                // The retry must bypass both the failed writableUrl hint and
-                // cached host so it can discover a different healthy root route.
-                const uploadIp = await this.resolveWritableHostIp(user, attempt > 1)
+                const uploadIp = await this.resolveWritableHostIp(user)
                 console.log(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} using IP:`, uploadIp)
                 const client = await this.lapi.connectionPool.getConnection(uploadIp)
                 const originalTimeout = client.timeout
@@ -4840,9 +4831,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     lastError = error
                     console.error(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} failed:`, error)
                     if (attempt < maxAttempts) {
-                        // Invalidate cache so next attempt re-resolves a fresh IP.
-                        const hostId = user.hostIds?.[0]
-                        if (hostId) this._writableHostCache.delete(hostId)
                         user.writableHostIp = null
                         this.lapi.connectionPool.clearAll()
                         await new Promise(resolve => setTimeout(resolve, 1000))
@@ -4934,7 +4922,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 let writableIp: string
                 try {
-                    writableIp = await this.resolveWritableHostIp(registeredUserBlob as User, true)
+                    writableIp = await this.resolveWritableHostIp(registeredUserBlob as User)
                 } catch (error) {
                     console.warn("[register:autoFollow] Could not resolve registered user's hostIds[0]; cannot auto-follow", error)
                     return
