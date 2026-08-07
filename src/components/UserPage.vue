@@ -240,11 +240,20 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
                     const freshAttachmentIds = (ft.attachments || []).map(attachment => referenceId(attachment.mid));
                     const existingAttachmentIds = (existing.attachments || []).map(attachment => referenceId(attachment.mid));
                     const attachmentSetChanged = JSON.stringify(freshAttachmentIds) !== JSON.stringify(existingAttachmentIds);
-                    const cachedMediaNeedsUrls = (existing.attachments || []).some(attachment =>
-                        !/^https?:\/\//i.test(attachment.mid)
-                    );
-                    if (attachmentSetChanged || cachedMediaNeedsUrls) {
+                    if (attachmentSetChanged) {
                         existing.attachments = ft.attachments;
+                    } else {
+                        // Same media, but `existing` comes from the pinned localStorage cache,
+                        // so its URLs still carry whichever provider node served them when they
+                        // were cached. Adopt the freshly resolved URL in place — keeping the
+                        // attachment objects avoids re-creating a playing video, and without
+                        // this the dead host is re-cached below and never repairs itself.
+                        (existing.attachments || []).forEach((attachment, index) => {
+                            const fresh = ft.attachments?.[index];
+                            if (!fresh) return;
+                            if (attachment.mid !== fresh.mid) attachment.mid = fresh.mid;
+                            if (fresh.downloadable !== undefined) attachment.downloadable = fresh.downloadable;
+                        });
                     }
                     // Keep provider/avatar in sync so cached pinned tweets don't keep stale hosts.
                     if (ft.provider) existing.provider = ft.provider;
