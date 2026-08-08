@@ -11,6 +11,7 @@ vi.mock('@/utils/browserNetwork', () => ({
 }))
 
 import { useTweetStore } from './tweetStore'
+import { nodePool } from '@/utils/nodePool'
 
 /** IP lists passed to the get_tweet races only — the author lookup races too. */
 function getTweetRaces(store: any, tweetId: string): string[][] {
@@ -78,6 +79,28 @@ describe('tweetStore public provider routing', () => {
 
     await expect(store._resolveProviderIps('one-dead-route', true, false))
       .resolves.toEqual([fastIp])
+  })
+
+  it('returns every pooled route so the standby survives a cache hit', async () => {
+    const store = useTweetStore()
+    const mid = 'pooled-author'
+    const deadEndIp = '220.0.0.1:8002'
+    const holdingIp = '220.184.34.132:8002'
+    nodePool.updateNode(mid, [deadEndIp, holdingIp])
+    store.isServerHealthyWithTimeout = vi.fn().mockResolvedValue(true)
+    store.lapi.client.RunMApp = vi.fn()
+
+    try {
+      // The standby _resolveProviderIps kept is only useful if reading the pool
+      // hands it back. Returning ips[0] alone meant a probe winner that answers
+      // HEAD but serves nothing cost a failed RPC and a full re-discovery to
+      // reach the node already cached beside it.
+      await expect(store.getProviderIps(mid, true, false))
+        .resolves.toEqual([deadEndIp, holdingIp])
+      expect(store.lapi.client.RunMApp).not.toHaveBeenCalled()
+    } finally {
+      nodePool.invalidate(mid)
+    }
   })
 
   it('rejects a provider that answers null so the race can keep going', async () => {

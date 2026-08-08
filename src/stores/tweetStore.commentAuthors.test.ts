@@ -5,13 +5,13 @@ import { useTweetStore } from './tweetStore'
 const TWEET_PROVIDER = '220.184.34.132:8002'
 
 /**
- * Answers get_comments with one comment, and get_user with nothing — the case
- * where the tweet's own node does not carry the commenter's record, so author
- * decoration has to fall through to the commenter's own provider.
+ * Answers get_comments with the given comments, and get_user with nothing — the
+ * case where the tweet's own node does not carry the commenter's record, so
+ * author decoration has to fall through to the commenter's own provider.
  */
-function stubTweetProvider(store: any, comment: Record<string, unknown>) {
+function stubTweetProvider(store: any, ...comments: Record<string, unknown>[]) {
     vi.spyOn(store.lapi.connectionPool, 'getConnection').mockResolvedValue({
-        RunMApp: async (method: string) => (method === 'get_comments' ? [comment] : null),
+        RunMApp: async (method: string) => (method === 'get_comments' ? comments : null),
     } as any)
     vi.spyOn(store.lapi.connectionPool, 'releaseConnection').mockImplementation(() => {})
 }
@@ -62,9 +62,11 @@ describe('comment author decoration', () => {
 
         store.getProviderIps = vi.fn(async () => [emptyIp, holdingIp]) as any
         vi.spyOn(store.lapi.connectionPool, 'getConnection').mockImplementation(async (ip: string) => ({
-            // A node that never hosted this user answers success with no payload.
-            // That is "not mine", not "no such user".
-            RunMApp: async () => (ip === emptyIp ? { success: true, data: null } : record),
+            // A node holding no local copy answers NOT_LOCAL; a node running a
+            // build without the response envelope answers a bare null for the
+            // same thing. Either way it means "not mine", not "no such user",
+            // and neither may beat the node that has the record.
+            RunMApp: async () => (ip === emptyIp ? null : record),
         }) as any)
         vi.spyOn(store.lapi.connectionPool, 'releaseConnection').mockImplementation(() => {})
 
@@ -95,5 +97,36 @@ describe('comment author decoration', () => {
         // author the cheap pass already found.
         expect(attempts).toEqual([1])
         expect(tweet.comments[0].author).toEqual(author)
+    })
+
+    it('looks an author up once for a page of their comments', async () => {
+        const store = useTweetStore()
+        const authorId = 'prolific-commenter'
+        const author = { mid: authorId, username: 'Commenter', timestamp: 0, hostIds: ['host-1'] }
+        stubTweetProvider(
+            store,
+            ...Array.from({ length: 6 }, (_, i) => ({
+                mid: `comment-${i}`, authorId, content: 'hi', timestamp: i,
+            })),
+        )
+
+        const lookups: string[] = []
+        store._getUserForProviderRetryAttempt = vi.fn(async (mid: string) => {
+            lookups.push(mid)
+            return author
+        }) as any
+
+        const tweet: any = { mid: 'tweet-1', provider: TWEET_PROVIDER, comments: [] }
+        await store.loadComments(tweet)
+        await flush()
+
+        // One lookup per distinct author, not per comment. Per-comment fan-out
+        // opened more concurrent RPCs than the connection pool allows per IP, so
+        // the surplus queued behind a 15s connect timeout.
+        expect(lookups).toEqual([authorId])
+        expect(tweet.comments).toHaveLength(6)
+        for (const comment of tweet.comments) {
+            expect(comment.author).toEqual(author)
+        }
     })
 })
