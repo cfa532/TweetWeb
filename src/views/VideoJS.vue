@@ -606,6 +606,17 @@ onMounted(() => {
         // logic does not get stuck.
         syncVideoReadyState();
 
+        // Detail/modal starts fetching immediately (preload="auto" plus an
+        // explicit load()), so the spinner belongs up from the start. The
+        // initial value of isBuffering keys off props.autoplay, which both
+        // MediaView and TweetDetail deliberately force off on touch devices —
+        // so mobile detail downloaded behind a bare black box while desktop,
+        // where autoplay is on, showed a spinner. The feed is untouched: it
+        // stays quiet until the coordinator or the user starts it.
+        if (!isAudio && !isInTweetList.value && !hasCurrentFrame.value) {
+          isBuffering.value = true;
+        }
+
         // Add play/pause event listeners to track state
         video.value.addEventListener('play', () => {
           isPlaying.value = true;
@@ -1452,6 +1463,12 @@ function setupRegularVideo() {
         // Autoplay blocked — drop back to the centered play overlay.
         showPlayOverlay.value = true;
       });
+    } else if (!isInTweetList.value && videoElement.paused && !pendingUserPlayRequest) {
+      // Ready to play, but nothing is going to start it: detail view on mobile
+      // has autoplay off. Retire the initial-load spinner so the play overlay
+      // takes over, otherwise it would spin forever over a loaded video.
+      // (The HLS path gets this from its MANIFEST_PARSED handler.)
+      isBuffering.value = false;
     }
   }, { once: true });
 
