@@ -14,10 +14,15 @@ const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
 const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
 const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fast; see getFreshHealthStatus
-// Embedded browsers (WeChat above all) open a first connection far slower than a
-// standalone browser, and the probe only costs this long when every route is
-// silent — one healthy answer settles the race immediately.
-const HEALTH_PROBE_TIMEOUT_MS = 6000
+// The read-path probe is advisory: _resolveProviderIps hands its candidates back
+// even when none of them answers (requireHealthy=false), so the probe's only job
+// is to put the fastest responder first. A long budget therefore buys no
+// reliability on those paths — it is dead time in front of an RPC that gets its
+// own 15s, and a cold start pays it once per discovery. Strict callers (share-URL
+// resolution) do reject on a silent probe and keep the longer budget, which
+// embedded browsers — WeChat above all — need for a first connection.
+const HEALTH_PROBE_TIMEOUT_MS = 2500
+const HEALTH_PROBE_STRICT_TIMEOUT_MS = 6000
 const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
 const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
 const LOGIN_USER_STORAGE_KEY = "user"
@@ -715,6 +720,17 @@ export const useTweetStore = defineStore('tweetStore', {
                             if (!tweet.originalTweet) {
                                 console.log(`[addTweetToStore] First fetch attempt failed, retrying without authorId for ${tweet.originalTweetId}`)
                                 tweet.originalTweet = await this.fetchTweet(tweet.originalTweetId, undefined)
+                            }
+
+                            // fetchTweet resolves an outer tweet's author in the
+                            // background; wait for it here. This row is cached to
+                            // sessionStorage a few lines below, and the reload
+                            // repair path re-points the original's media host only
+                            // for entries that carry an author.
+                            if (tweet.originalTweet && !tweet.originalTweet.author) {
+                                const originalAuthor = await this.getUser(tweet.originalTweet.authorId)
+                                    .catch(() => undefined)
+                                if (originalAuthor) tweet.originalTweet.author = originalAuthor
                             }
                         }
                         
@@ -2201,51 +2217,55 @@ export const useTweetStore = defineStore('tweetStore', {
                 return idx >= 0 ? m.substring(idx + 1) : m
             }
 
-            // Resolve both authors in parallel BEFORE returning. This ensures
-            //   1. tweet.author and tweet.originalTweet.author are populated
-            //      (no broken header / empty avatar in the detail view).
-            //   2. Attachment URLs are rebuilt against each author's actual
-            //      provider, not the outer tweet's provider — important for
-            //      quote tweets where the original lives on a different node.
-            // Mutating attachment URLs after the caller wraps `tweet` in a Vue
-            // ref doesn't reliably propagate through the proxy, so do it now.
+            // The outer tweet's attachment URLs were already built against
+            // providerIp above — the node that just served this tweet, and
+            // therefore a node that holds it and its media. Rebuilding them
+            // against the author's own providerIp produced the same reachable
+            // host, so the outer author no longer gates the return: awaiting it
+            // parked first paint behind a whole user lookup (and, on a cold
+            // start, that lookup's own route discovery) for a header field the
+            // view already renders as a placeholder. DetailHeader and ItemHeader
+            // read tweetStore.users by author id, which _fetchUser populates, so
+            // the header fills itself in reactively when the user lands.
+            //
+            // The embedded original is a different case and IS awaited: it came
+            // inside this response, so providerIp is the OUTER author's node,
+            // which need not serve the original author's media. Its URLs cannot
+            // be built before that host is known, and — unlike the header — a
+            // late mutation of attachment URLs on a raw object the caller has
+            // wrapped in a Vue ref does not reliably re-render.
+            // Started before the original author is awaited so the two lookups
+            // still overlap, as they did when both were awaited together.
             const authorPromise = this.getUser(tweetData.authorId).catch(error => {
                 if (!error.message?.includes('timeout')) {
                     console.warn('[fetchTweet] Failed to load author:', tweetData.authorId, error)
                 }
                 return undefined
             })
-            const originalAuthorPromise = (originalTweetData && tweet.originalTweet)
-                ? this.getUser(originalTweetData.authorId).catch(error => {
+
+            // An author already in the store costs nothing to attach, and doing it
+            // here keeps tweet.author populated for callers that read it straight
+            // after the await — refreshDetailTarget's refresh_tweet copy above all,
+            // whose result is merged field-by-field over the live tweet.
+            const cachedAuthor = (this.loginUser?.mid === tweetData.authorId ? this.loginUser : undefined)
+                ?? this.users.get(tweetData.authorId)
+            if (cachedAuthor) tweet.author = cachedAuthor
+
+            if (tweet.originalTweet && originalTweetData) {
+                const resolvedOriginalAuthor = await this.getUser(originalTweetData.authorId).catch(error => {
                     if (!error.message?.includes('timeout')) {
                         console.warn('[fetchTweet] Failed to load original tweet author:', originalTweetData.authorId, error)
                     }
                     return undefined
                 })
-                : Promise.resolve(undefined)
 
-            const [resolvedAuthor, resolvedOriginalAuthor] = await Promise.all([authorPromise, originalAuthorPromise])
-
-            // Rebuild outer-tweet attachments now that we know the author host.
-            // Fall back to the discovery providerIp if the author resolution
-            // didn't yield a usable host.
-            const outerHost = resolvedAuthor?.providerIp || providerIp
-            if (resolvedAuthor) tweet.author = resolvedAuthor
-            if (tweet.attachments) {
-                tweet.attachments.forEach((e: MimeiFileType) => {
-                    e.mid = this.getMediaUrl(extractHash(e.mid), "http://" + outerHost)
-                })
-            }
-
-            // Rebuild original-tweet attachments using the original author's
-            // host. If we couldn't resolve the original author, fall back to
-            // the recursive fetch's `provider` field (which fetchTweet itself
-            // resolved), then to the outer host as a last resort.
-            if (tweet.originalTweet) {
+                // If the original author didn't resolve, fall back to the
+                // recursive fetch's `provider` field (which fetchTweet itself
+                // resolved), then to this response's host as a last resort.
                 const originalHost =
                     resolvedOriginalAuthor?.providerIp ||
                     (originalTweetData?.provider as string | undefined) ||
-                    outerHost
+                    providerIp
                 if (resolvedOriginalAuthor) {
                     tweet.originalTweet.author = resolvedOriginalAuthor
                 }
@@ -2257,7 +2277,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            sessionStorage.setItem(tweetData.mid, JSON.stringify(tweetForSessionStorage(tweet)))
+            // Cache only once the author is known. The sessionStorage read path
+            // discards an entry whose author is missing, so writing before this
+            // resolves would store something that can never be served from cache.
+            void authorPromise.then(resolvedAuthor => {
+                if (!resolvedAuthor) return
+                tweet.author = resolvedAuthor
+                sessionStorage.setItem(tweetData.mid, JSON.stringify(tweetForSessionStorage(tweet)))
+            })
+
             return tweet
         },
 
@@ -2282,11 +2310,16 @@ export const useTweetStore = defineStore('tweetStore', {
             const pending = this._pendingUserFetches.get(pendingKey)
             if (pending) return pending
 
-            const fetchPromise = (async () => {
-                const fetched = await this._fetchUser(userId, forceRefresh)
-                if (!fetched) return undefined
-                return await this._ensureUserRootHost(fetched as User)
-            })()
+            // No _ensureUserRootHost on this branch: _fetchUser resolves a read
+            // route and attaches a client on every path it returns from, so this
+            // could only re-derive what was just derived. It routinely did: the
+            // helper trusts an existing providerIp only when a *healthy* probe
+            // verdict is cached, and since 802e422 made the probe advisory a
+            // freshly resolved route commonly carries no verdict at all — sending
+            // the cold path through a second get_node_ips lookup and probe per
+            // author. The cached branches above still call it; there the route on
+            // the user object may be arbitrarily old.
+            const fetchPromise = this._fetchUser(userId, forceRefresh)
             this._pendingUserFetches.set(pendingKey, fetchPromise)
             try {
                 return await fetchPromise
@@ -2429,6 +2462,11 @@ export const useTweetStore = defineStore('tweetStore', {
                                 cachedUser.writableHostIp = null
                             }
                             this.users.set(userId, cachedUser)
+                            // Re-point already-cached media at the route just
+                            // resolved, as the race path below does. Previously
+                            // this only happened if getUser's follow-up
+                            // _ensureUserRootHost call took its slow branch.
+                            this._rewriteUserMediaHosts(userId, providerIp)
                             return cachedUser
                         }
                     } catch (e) {
@@ -2794,28 +2832,40 @@ export const useTweetStore = defineStore('tweetStore', {
                 return refreshedIps
             }
 
-            const pooledIp = nodePool.getIPForNode(mid)
-            const usablePooledIp = pooledIp
-                ? browserUsableProviderRoutes([pooledIp], window.location.hostname)[0]
-                : undefined
-            if (pooledIp && !usablePooledIp) {
-                nodePool.removeIP(mid, pooledIp)
-            } else if (usablePooledIp) {
-                const cachedStatus = this.getFreshHealthStatus(usablePooledIp)
-                if (cachedStatus === true) return [usablePooledIp]
+            // Hand back EVERY usable pooled route, not just the preferred one.
+            // _resolveProviderIps keeps one alternate behind the probe winner
+            // precisely so a caller that races has somewhere to go without a second
+            // discovery round — and reading the pool through getIPForNode threw that
+            // alternate away. A winner that answers the health probe but does not
+            // serve this object (a node that once provided the mid, or serves the
+            // author's profile but not their tweets) then cost a failed RPC plus a
+            // full re-discovery to reach the standby already sitting in the pool.
+            const pooledIps = nodePool.getIPs(mid) ?? []
+            const usable = new Set(browserUsableProviderRoutes(pooledIps, window.location.hostname))
+            for (const unusable of pooledIps) {
+                if (!usable.has(unusable)) nodePool.removeIP(mid, unusable)
+            }
 
-                if (cachedStatus === false) {
-                    console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                    nodePool.removeIP(mid, usablePooledIp)
-                } else {
-                    console.log(`[getProviderIps] Found pooled IP for ${mid}: ${usablePooledIp}, testing health`)
-                    const healthy = await this.isServerHealthyWithTimeout(usablePooledIp, HEALTH_PROBE_TIMEOUT_MS)
-                    if (healthy) {
-                        return [usablePooledIp]
-                    }
-                    console.warn(`[getProviderIps] Pooled IP ${usablePooledIp} for ${mid} is unhealthy; removing from NodePool`)
-                    nodePool.removeIP(mid, usablePooledIp)
+            const candidates = pooledIps.filter(ip => usable.has(ip))
+            if (candidates.length > 0) {
+                const known = candidates.filter(ip => this.getFreshHealthStatus(ip) !== false)
+                // Probe only when nothing in the pool is already known good. If one
+                // route is healthy the others ride along unverified: the probe is
+                // advisory, and the caller's race judges them for real.
+                if (known.length > 0 && !known.some(ip => this.getFreshHealthStatus(ip) === true)) {
+                    console.log(`[getProviderIps] Testing ${known.length} pooled route(s) for ${mid}`)
+                    await Promise.all(known.map(ip =>
+                        this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS).catch(() => false)
+                    ))
                 }
+
+                const alive = candidates.filter(ip => {
+                    if (this.getFreshHealthStatus(ip) !== false) return true
+                    console.warn(`[getProviderIps] Pooled IP ${ip} for ${mid} is unhealthy; removing from NodePool`)
+                    nodePool.removeIP(mid, ip)
+                    return false
+                })
+                if (alive.length > 0) return alive
             }
             return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false, false, false), true);
         },
@@ -3046,10 +3096,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Race every browser-usable route. Filtering must happen before
                 // limiting candidates, otherwise early Tailscale routes hide a
                 // later public route and public deep links cannot load.
+                // Strict callers reject on a silent probe, so they get the longer
+                // budget; advisory callers race the candidates regardless and only
+                // need the probe to order them.
+                const probeTimeoutMs = requireHealthy ? HEALTH_PROBE_STRICT_TIMEOUT_MS : HEALTH_PROBE_TIMEOUT_MS;
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
-                        this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS, refresh).then(healthy => {
+                        this.isServerHealthyWithTimeout(ip, probeTimeoutMs, refresh).then(healthy => {
                             if (healthy) { resolve(ip); return; }
                             if (++settled === candidates.length) resolve(null);
                         }).catch(() => {
@@ -3096,6 +3150,103 @@ export const useTweetStore = defineStore('tweetStore', {
                 return [];
             }
         },
+        /**
+         * Resolve the authors of a freshly loaded comment page and write them onto
+         * the reactive entries in tweet.comments.
+         *
+         * One lookup per distinct AUTHOR, not per comment. The per-comment loops
+         * this replaces started every request in the same tick, so their in-memory
+         * cache check never saw a result: a page of 20 comments by 3 authors opened
+         * 20 concurrent get_user calls against a single node — past the connection
+         * pool's 8-per-IP limit, so the surplus queued behind a 15s connect timeout
+         * while the rest of the detail page competed for the same slots.
+         *
+         * Phase 1 is cheap and parallel. Phase 2 forces fresh provider discovery for
+         * whoever is still missing and runs one author at a time: that path
+         * invalidates the author's NodePool route — shared with the feed, profile and
+         * media loading — so escalating every unresolved author at once discarded
+         * good routes in a burst and re-probed them all simultaneously.
+         */
+        _decorateCommentAuthors(tweet: Tweet, comments: any[], tweetProvider: string | undefined) {
+            const authorIds = new Set<MimeiId>()
+            for (const e of comments) {
+                if (!e?.mid || !e.authorId) continue
+                authorIds.add(e.authorId as MimeiId)
+            }
+            if (authorIds.size === 0) return
+
+            // Resolve the target entries at write time rather than capturing them
+            // now, so the author lands on whichever proxy tweet.comments currently
+            // holds even if the array has been replaced since.
+            const setAuthor = (authorId: MimeiId, author: any) => {
+                if (!author || !tweet.comments) return
+                for (const c of tweet.comments) {
+                    if (c.authorId === authorId) c.author = author
+                }
+            }
+
+            const unresolved: MimeiId[] = []
+            const firstPass = Array.from(authorIds).map(authorId => (async () => {
+                // 1. In-memory cache — no network, instant.
+                const inMemory = (this.loginUser?.mid === authorId ? this.loginUser : undefined)
+                    ?? this.users.get(authorId)
+                if (inMemory) { setAuthor(authorId, inMemory); return }
+
+                // 2. The tweet's own provider — known-reachable, and it serves the
+                //    comments, so it usually carries their authors too.
+                if (tweetProvider) {
+                    try {
+                        const c = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                        const result = await c.RunMApp("get_user", {
+                            aid: this.appId, ver: "last", version: "v3", userid: authorId,
+                        })
+                        const ud = (result?.success === true) ? result.data : result
+                        if (ud?.mid && ud?.hostIds) {
+                            ud.providerIp = tweetProvider
+                            ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+                            ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
+                            if (ud.writableHostIp === undefined) ud.writableHostIp = null
+                            const rooted = await this._ensureUserRootHost(ud as User)
+                            this.users.set(authorId, rooted)
+                            setAuthor(authorId, rooted)
+                            return
+                        }
+                    } catch (err) {
+                        console.warn("[commentAuthors] tweet-provider get_user failed for", authorId, err)
+                    }
+                }
+
+                // 3. The author's own provider, on its cached route.
+                try {
+                    const author = await this._getUserForProviderRetryAttempt(authorId, 1)
+                    if (author) { setAuthor(authorId, author); return }
+                } catch (error: any) {
+                    if (!error?.message?.includes('timeout'))
+                        console.warn("[commentAuthors] Error loading comment author:", authorId, error)
+                }
+
+                unresolved.push(authorId)
+            })())
+
+            void (async () => {
+                await Promise.allSettled(firstPass)
+                // Forced fresh discovery is what rescues an author whose cached
+                // route no longer resolves. Without it the header stays on
+                // "loading" for the life of the page: nothing else retries, and its
+                // only recovery hook is an avatar error handler, which never fires
+                // when there is no avatar to render.
+                for (const authorId of unresolved) {
+                    try {
+                        const author = await this._getUserForProviderRetryAttempt(authorId, 2)
+                        if (author) setAuthor(authorId, author)
+                    } catch (error: any) {
+                        if (!error?.message?.includes('timeout'))
+                            console.warn("[commentAuthors] Retry failed for comment author:", authorId, error)
+                    }
+                }
+            })()
+        },
+
         /**
          * Load comments of a tweet into its comments attribute.
          * Comments are on the same node with the tweet.
@@ -3186,68 +3337,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 const localOnly = (tweet.comments ?? []).filter(c => !freshMids.has(c.mid))
                 tweet.comments = [...validComments, ...localOnly]
 
-                // Phase 3: load authors asynchronously and write them onto the
-                // proxied entries inside tweet.comments. Looking up by mid each
-                // time guarantees we mutate the reactive proxy — which works
-                // even if the comments array gets replaced again later.
-                const setCommentAuthor = (mid: MimeiId, author: any) => {
-                    if (!author || !tweet.comments) return
-                    const rc = tweet.comments.find(c => c.mid === mid)
-                    if (rc) rc.author = author
-                }
-                for (const e of comments) {
-                    if (!e || !e.mid || !e.authorId) continue
-                    const commentMid = e.mid as MimeiId
-                    const authorId = e.authorId as MimeiId
-                    void (async () => {
-                        // 1. Synchronous in-memory cache — no network, instant
-                        const inMemory = (this.loginUser?.mid === authorId ? this.loginUser : undefined)
-                            ?? this.users.get(authorId)
-                        if (inMemory) { setCommentAuthor(commentMid, inMemory); return }
-
-                        // 2. Tweet's own provider — known-reachable, no delay
-                        if (tweetProvider) {
-                            try {
-                                const c = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                const result = await c.RunMApp("get_user", {
-                                    aid: this.appId, ver: "last", version: "v3", userid: authorId,
-                                })
-                                const ud = (result?.success === true) ? result.data : result
-                                if (ud?.mid && ud?.hostIds) {
-                                    ud.providerIp = tweetProvider
-                                    ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
-                                    if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                    const rooted = await this._ensureUserRootHost(ud as User)
-                                    this.users.set(authorId, rooted)
-                                    setCommentAuthor(commentMid, rooted)
-                                    return
-                                }
-                            } catch (err) {
-                                console.warn("[loadComments] tweet-provider get_user failed for", authorId, err)
-                            }
-                        }
-
-                        // 3. User's own provider. Attempt 1 may answer from the
-                        // stored user/route; attempt 2 invalidates that and forces
-                        // fresh discovery — the same two-pass shape every other
-                        // caller of this helper uses. A single pass left the author
-                        // stuck on "loading" for the life of the page whenever a
-                        // cached negative answered it (a fetch cooldown, or a stored
-                        // user whose route no longer resolves), because nothing here
-                        // ever retries and the header has no recovery hook without
-                        // an avatar to fail.
-                        for (let attempt = 1; attempt <= 2; attempt++) {
-                            try {
-                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
-                                if (author) { setCommentAuthor(commentMid, author); return }
-                            } catch (error: any) {
-                                if (!error?.message?.includes('timeout'))
-                                    console.warn("Error loading comment author:", authorId, error)
-                            }
-                        }
-                    })()
-                }
+                // Phase 3: resolve authors asynchronously and write them onto the
+                // proxied entries inside tweet.comments.
+                this._decorateCommentAuthors(tweet, comments, tweetProvider)
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
         },
@@ -3321,57 +3413,8 @@ export const useTweetStore = defineStore('tweetStore', {
             if (newComments.length > 0) {
                 tweet.comments = [...(tweet.comments ?? []), ...newComments]
 
-                // Load authors asynchronously — same pattern as loadComments
-                const setCommentAuthor = (mid: MimeiId, author: any) => {
-                    if (!author || !tweet.comments) return
-                    const rc = tweet.comments.find(c => c.mid === mid)
-                    if (rc) rc.author = author
-                }
-                for (const e of rawComments) {
-                    if (!e || !e.mid || !e.authorId) continue
-                    const commentMid = e.mid as MimeiId
-                    const authorId = e.authorId as MimeiId
-                    void (async () => {
-                        const inMemory = (this.loginUser?.mid === authorId ? this.loginUser : undefined)
-                            ?? this.users.get(authorId)
-                        if (inMemory) { setCommentAuthor(commentMid, inMemory); return }
-
-                        if (tweetProvider) {
-                            try {
-                                const c = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                const result = await c.RunMApp("get_user", {
-                                    aid: this.appId, ver: "last", version: "v3", userid: authorId,
-                                })
-                                const ud = (result?.success === true) ? result.data : result
-                                if (ud?.mid && ud?.hostIds) {
-                                    ud.providerIp = tweetProvider
-                                    ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                                    ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
-                                    if (ud.writableHostIp === undefined) ud.writableHostIp = null
-                                    const rooted = await this._ensureUserRootHost(ud as User)
-                                    this.users.set(authorId, rooted)
-                                    setCommentAuthor(commentMid, rooted)
-                                    return
-                                }
-                            } catch (err) {
-                                console.warn("[loadMoreComments] get_user failed for", authorId, err)
-                            }
-                        }
-
-                        // Two passes, matching loadComments: attempt 2 forces fresh
-                        // provider discovery so a cached negative cannot strand the
-                        // author on "loading" permanently.
-                        for (let attempt = 1; attempt <= 2; attempt++) {
-                            try {
-                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
-                                if (author) { setCommentAuthor(commentMid, author); return }
-                            } catch (error: any) {
-                                if (!error?.message?.includes('timeout'))
-                                    console.warn("[loadMoreComments] Error loading author:", authorId, error)
-                            }
-                        }
-                    })()
-                }
+                // Load authors asynchronously — same helper as loadComments
+                this._decorateCommentAuthors(tweet, rawComments, tweetProvider)
             }
 
             return rawComments.length >= pageSize
