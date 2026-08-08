@@ -1,14 +1,18 @@
 <script setup lang='ts'>
 import type { PropType } from 'vue';
-import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { useI18n } from 'vue-i18n';
+import { formatTimeDifference, avatarSrc } from '@/lib';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { CornerMenu } from '@/views';
 
 const props = defineProps({
-  author: { type: Object as PropType<User>, required: true },
+  /** May be absent: a comment/tweet can render before (or without) its author resolving. */
+  author: { type: Object as PropType<User | null>, required: false, default: null },
+  /** Author id of the displayed tweet, used to pick up the User once it lands in the store. */
+  authorId: { type: String, required: false },
   timestamp: { type: Number, required: false },
   isRetweet: { type: Boolean, required: false, default: false },
   by: { type: String, required: false },
@@ -23,10 +27,50 @@ const props = defineProps({
 
 const tweetStore = useTweetStore();
 const router = useRouter();
+const { t } = useI18n();
 
-function openUserPage(userId: string) {
+/**
+ * The author may not have been resolved when the detail view opens (a failed or
+ * still-pending getUser). Fall back to the store cache so the header fills in by
+ * itself once the User arrives; until then the template shows a placeholder.
+ */
+const headerAuthor = computed<User | null>(() => {
+  if (props.author) return props.author;
+  const authorId = props.authorId;
+  return authorId ? tweetStore.users.get(authorId) ?? null : null;
+});
+const authorMid = computed<string | null>(() => headerAuthor.value?.mid ?? null);
+const authorDisplayName = computed(() => {
+  const author = headerAuthor.value;
+  if (!author) return t('tweet.loadingAuthor');
+  return author.name?.trim() ? author.name : (author.username || t('tweet.loadingAuthor'));
+});
+
+function openUserPage(userId: string | null) {
+  if (!userId) return;
   tweetStore.addFollowing(userId);
   router.push(`/author/${userId}`);
+}
+
+/**
+ * One recovery attempt per author id: the detail fetch resolves authors itself,
+ * but that call can fail (dead provider, cooldown) and leave the header without
+ * one. getUser caches into tweetStore.users, which headerAuthor reads, so a late
+ * success replaces the placeholder on its own. A failure keeps the placeholder.
+ */
+const attemptedAuthorIds = new Set<string>();
+function ensureAuthorLoaded() {
+  const authorId = props.authorId;
+  if (!authorId || headerAuthor.value || attemptedAuthorIds.has(authorId)) return;
+  attemptedAuthorIds.add(authorId);
+  tweetStore.getUser(authorId).catch(() => undefined);
+}
+
+/** VITE_APP_LOGO is a remote URL; fall back to a same-origin asset if it fails too. */
+function handleFallbackAvatarError(event: Event) {
+  const img = event.target as HTMLImageElement | null;
+  if (!img || img.src.endsWith('/ic_splash.png')) return;
+  img.src = '/ic_splash.png';
 }
 
 function openUserPageToTweet(userId: string, tweetId: string) {
@@ -42,10 +86,10 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function excerptFromTweet(t: Tweet): string | null {
-  const title = t.title?.trim();
+function excerptFromTweet(peer: Tweet): string | null {
+  const title = peer.title?.trim();
   if (title) return title;
-  const raw = t.content?.trim();
+  const raw = peer.content?.trim();
   if (!raw) return null;
   const plain = stripHtml(raw);
   return plain.length ? plain : null;
@@ -92,30 +136,36 @@ function scheduleStripReveal(delayMs: number) {
 }
 
 function rebuildCarousel() {
-  const userId = props.author.mid;
+  const userId = authorMid.value;
+  if (!userId) {
+    carouselItems.value = [];
+    currentIdx.value = 0;
+    return;
+  }
   const exclude = props.excludeTweetId;
   const merged = new Map<string, Tweet>();
-  for (const t of tweetStore.getCachedUserTweets(userId)) {
-    merged.set(t.mid, t);
+  for (const peer of tweetStore.getCachedUserTweets(userId)) {
+    merged.set(peer.mid, peer);
   }
-  for (const t of tweetStore.tweets) {
-    if (t.authorId === userId) merged.set(t.mid, t);
+  for (const peer of tweetStore.tweets) {
+    if (peer.authorId === userId) merged.set(peer.mid, peer);
   }
   const sorted = [...merged.values()].sort(
     (a, b) => Number(b.timestamp) - Number(a.timestamp)
   );
   const items: { excerpt: string; tweetId: string }[] = [];
-  for (const t of sorted) {
-    if (exclude && t.mid === exclude) continue;
-    const ex = excerptFromTweet(t);
-    if (ex) items.push({ excerpt: ex, tweetId: t.mid });
+  for (const peer of sorted) {
+    if (exclude && peer.mid === exclude) continue;
+    const ex = excerptFromTweet(peer);
+    if (ex) items.push({ excerpt: ex, tweetId: peer.mid });
   }
   carouselItems.value = items;
   if (currentIdx.value >= items.length) currentIdx.value = 0;
 }
 
 async function loadPeerTweets() {
-  const userId = props.author.mid;
+  const userId = authorMid.value;
+  if (!userId) return;
   try {
     await tweetStore.loadTweetsByUser(userId, 0, 20);
   } catch (e) {
@@ -137,10 +187,11 @@ function clearPeerTweetsSchedule() {
 
 function schedulePeerTweetsLoad() {
   clearPeerTweetsSchedule();
-  const scheduledAuthorId = props.author.mid;
+  const scheduledAuthorId = authorMid.value;
+  if (!scheduledAuthorId) return;
   let started = false;
   const start = () => {
-    if (started || props.author.mid !== scheduledAuthorId) return;
+    if (started || authorMid.value !== scheduledAuthorId) return;
     started = true;
     clearPeerTweetsSchedule();
     void loadPeerTweets();
@@ -154,10 +205,13 @@ function schedulePeerTweetsLoad() {
 }
 
 onMounted(() => {
+  ensureAuthorLoaded();
   rebuildCarousel();
   schedulePeerTweetsLoad();
   scheduleStripReveal(5000);
 });
+
+watch(() => props.authorId, () => ensureAuthorLoaded());
 
 onUnmounted(() => {
   if (revealTimer !== null) {
@@ -168,20 +222,28 @@ onUnmounted(() => {
   clearCarouselTicker();
 });
 
-watch(
-  () => props.author.mid,
-  () => {
-    currentIdx.value = 0;
-    rebuildCarousel();
-    schedulePeerTweetsLoad();
-    if (revealTimer !== null) {
-      clearTimeout(revealTimer);
-      revealTimer = null;
-    }
-    stripReady.value = true;
-    startCarouselTicker();
+watch(authorMid, (newMid, oldMid) => {
+  currentIdx.value = 0;
+  rebuildCarousel();
+  schedulePeerTweetsLoad();
+  if (revealTimer !== null) {
+    clearTimeout(revealTimer);
+    revealTimer = null;
   }
-);
+  if (!newMid) {
+    stripReady.value = false;
+    clearCarouselTicker();
+    return;
+  }
+  if (!oldMid) {
+    // Author arrived late (placeholder header): give the page the same brief
+    // settle time the first paint gets before the strip appears.
+    scheduleStripReveal(5000);
+    return;
+  }
+  stripReady.value = true;
+  startCarouselTicker();
+});
 
 watch(
   () => props.excludeTweetId,
@@ -193,8 +255,8 @@ watch(
 watch(
   () =>
     tweetStore.tweets
-      .filter((t) => t.authorId === props.author.mid)
-      .map((t) => t.mid)
+      .filter((tweet) => tweet.authorId === authorMid.value)
+      .map((tweet) => tweet.mid)
       .sort()
       .join(','),
   () => rebuildCarousel()
@@ -206,15 +268,19 @@ watch(
     <div class='d-flex justify-content-between align-items-center' style='width: 100%'>
       <div class='d-flex align-items-center'>
         <div class='avatar me-2'>
-          <UserAvatar :user='author' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(author.mid)' />
+          <UserAvatar v-if='headerAuthor' :user='headerAuthor' alt='User Avatar' class='rounded-circle'
+            @click.stop='openUserPage(headerAuthor.mid)' />
+          <img v-else :src='avatarSrc(undefined)' alt='User Avatar' class='rounded-circle placeholder-avatar'
+            @error='handleFallbackAvatarError' />
         </div>
         <div class='user-info flex-grow-1'>
-          <div v-if='isRetweet' class='label text-muted small'>
+          <div v-if='isRetweet && by' class='label text-muted small'>
             {{ by === tweetStore.loginUser?.username ? $t('tweet.forwardedByYou') : $t('tweet.forwardedBy', { name: by }) }}
           </div>
           <div class='username-alias-time'>
-            <span class='username fw-bold'>{{ author.name?.trim() ? author.name : (author.username || '') }}</span>
-            <span class='alias text-muted'>@{{ author.username }}</span>
+            <span class='username fw-bold' :class='{ "loading-text": !headerAuthor }'>{{ authorDisplayName }}</span>
+            <span class='alias text-muted' :class='{ "loading-text": !headerAuthor }'>@{{ headerAuthor?.username ||
+              $t('tweet.loadingUsername') }}</span>
           </div>
           <div class='mt-1'>
             <span v-if='props.timestamp' class='time text-muted'>{{ formatTimeDifference(props.timestamp as number) }}</span>
@@ -229,12 +295,12 @@ watch(
       </div>
     </div>
     <div
-      v-if='stripReady && carouselItems.length'
+      v-if='stripReady && carouselItems.length && authorMid'
       class='author-carousel-outer'
       role='button'
       tabindex='0'
-      @click.stop='openUserPageToTweet(author.mid, carouselItems[currentIdx].tweetId)'
-      @keydown.enter.prevent.stop='openUserPageToTweet(author.mid, carouselItems[currentIdx].tweetId)'
+      @click.stop='openUserPageToTweet(authorMid, carouselItems[currentIdx].tweetId)'
+      @keydown.enter.prevent.stop='openUserPageToTweet(authorMid, carouselItems[currentIdx].tweetId)'
     >
       <Transition name='carousel-spin' mode='out-in'>
         <div
@@ -268,6 +334,26 @@ watch(
   width: 50px;
   height: 50px;
   cursor: pointer;
+}
+/* Author could not be resolved (yet): grey pulsing stand-ins, same as ItemHeader. */
+.placeholder-avatar {
+  cursor: default;
+  background: #e9ecef;
+  animation: detail-header-pulse 1.5s ease-in-out infinite;
+}
+.loading-text {
+  background: #e9ecef;
+  color: transparent;
+  border-radius: 4px;
+  animation: detail-header-pulse 1.5s ease-in-out infinite;
+}
+@keyframes detail-header-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 .user-info {
   font-size: 0.9rem;

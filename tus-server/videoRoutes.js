@@ -537,6 +537,34 @@ function calculateAverageBitrateKFromFileSize(fileSizeBytes, durationSec) {
   return Math.floor((size * 8) / duration / 1000);
 }
 
+function selectSourceVideoBitrateK({
+  videoBitrateBps,
+  formatBitrateBps,
+  audioBitrateBps,
+  fileSizeBytes,
+  durationSec
+}) {
+  const candidates = [];
+  const videoBitrateK = Math.floor(Number(videoBitrateBps) / 1000);
+  const audioBitrateK = Math.max(0, Math.floor(Number(audioBitrateBps) / 1000) || 0);
+
+  if (Number.isFinite(videoBitrateK) && videoBitrateK > 0) {
+    candidates.push(videoBitrateK);
+  }
+
+  const formatBitrateK = Math.floor(Number(formatBitrateBps) / 1000);
+  if (Number.isFinite(formatBitrateK) && formatBitrateK > audioBitrateK) {
+    candidates.push(formatBitrateK - audioBitrateK);
+  }
+
+  const fileAverageBitrateK = calculateAverageBitrateKFromFileSize(fileSizeBytes, durationSec);
+  if (Number.isFinite(fileAverageBitrateK) && fileAverageBitrateK > audioBitrateK) {
+    candidates.push(fileAverageBitrateK - audioBitrateK);
+  }
+
+  return candidates.length > 0 ? Math.min(...candidates) : null;
+}
+
 // Helper function to get video resolution (p value)
 function getVideoResolution(displayWidth, displayHeight) {
   // For landscape videos (width ≥ height): resolution = HEIGHT (e.g., 1280×720 = 720p)
@@ -811,16 +839,15 @@ function createHLSConversionCommands(inputPath, tempDir, videoInfo, encoderConfi
   const dim480 = ensureEvenDimensions(targetWidth480, targetHeight480);
 
   const isDisplayPortrait = displayHeight > displayWidth;
-  // Use original bitrate if it's lower than our target bitrates
-  // For streaming, cap at reasonable limits to prevent buffer stalls
-  const maxStreamingBitrate720 = 3000; // Cap at 3Mbps for better streaming
-  const maxStreamingBitrate480 = 1500; // Cap at 1.5Mbps for better streaming
-  
-  const originalBitrate720 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate720, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate720;
-  const originalBitrate480 = videoInfo && videoInfo.bitrate ? Math.min(maxStreamingBitrate480, Math.floor(videoInfo.bitrate / 1000)) : maxStreamingBitrate480;
-  
-  const bitrate720 = calculateVideoBitrateK(720);
-  const bitrate480 = calculateVideoBitrateK(480);
+  const sourceBitrateK = selectSourceVideoBitrateK({
+    videoBitrateBps: videoInfo && (videoInfo.videoBitrate || videoInfo.bitrate),
+    formatBitrateBps: videoInfo && videoInfo.formatBitrate,
+    audioBitrateBps: videoInfo && videoInfo.audioBitrate,
+    fileSizeBytes: fileSize,
+    durationSec: videoInfo && videoInfo.duration
+  });
+  const bitrate720 = capBitrateToSourceK(calculateVideoBitrateK(720), sourceBitrateK, '[HLS-CONVERSION]');
+  const bitrate480 = capBitrateToSourceK(calculateVideoBitrateK(480), sourceBitrateK, '[HLS-CONVERSION]');
   
   // Calculate optimal segment durations for each quality
   const segmentDuration720 = calculateOptimalSegmentDuration(videoInfo, bitrate720);
@@ -1271,9 +1298,14 @@ async function processVideoUpload(req, res) {
                 console.log(`[${requestId}] [INFO] Detected video bit depth: ${bitDepth}-bit`);
                 
                 // Extract bitrate information
-                const bitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
+                const videoBitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
                 const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
-                const originalBitrate = bitrate || formatBitrate;
+                const audioBitrate = metadata.streams
+                  .filter(stream => stream.codec_type === 'audio' && stream.bit_rate)
+                  .reduce((total, stream) => total + parseInt(stream.bit_rate), 0);
+                const originalBitrate = videoBitrate || (formatBitrate && formatBitrate > audioBitrate
+                  ? formatBitrate - audioBitrate
+                  : formatBitrate);
                 
                 // Extract frame rate
                 let frameRate = 30; // Default to 30fps if not available
@@ -1304,6 +1336,9 @@ async function processVideoUpload(req, res) {
                   profile: videoStream.profile,
                   codec: videoStream.codec_name,
                   bitrate: originalBitrate,
+                  videoBitrate: videoBitrate,
+                  formatBitrate: formatBitrate,
+                  audioBitrate: audioBitrate,
                   frameRate: frameRate
                 });
               } catch (parseError) {
@@ -1336,8 +1371,13 @@ async function processVideoUpload(req, res) {
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
     console.log(`[${requestId}] [INFO] Video resolution: ${videoResolution}p`);
     
-    // Get source video bitrate (in bps, convert to kbps)
-    const sourceBitrateK = videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : null;
+    const sourceBitrateK = selectSourceVideoBitrateK({
+      videoBitrateBps: videoInfo && videoInfo.videoBitrate,
+      formatBitrateBps: videoInfo && videoInfo.formatBitrate,
+      audioBitrateBps: videoInfo && videoInfo.audioBitrate,
+      fileSizeBytes: uploadedFile.size,
+      durationSec: videoInfo && videoInfo.duration
+    });
     
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, calculatedBitrateK;
@@ -2004,9 +2044,14 @@ async function processVideoUploadInternal(req, jobId) {
                 console.log(`[${jobId}] [INFO] Detected video bit depth: ${bitDepth}-bit`);
                 
                 // Extract bitrate information
-                const bitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
+                const videoBitrate = videoStream.bit_rate ? parseInt(videoStream.bit_rate) : null;
                 const formatBitrate = metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : null;
-                const originalBitrate = bitrate || formatBitrate;
+                const audioBitrate = metadata.streams
+                  .filter(stream => stream.codec_type === 'audio' && stream.bit_rate)
+                  .reduce((total, stream) => total + parseInt(stream.bit_rate), 0);
+                const originalBitrate = videoBitrate || (formatBitrate && formatBitrate > audioBitrate
+                  ? formatBitrate - audioBitrate
+                  : formatBitrate);
                 const hasAudio = metadata.streams.some(stream => stream.codec_type === 'audio');
                 
                 console.log(`[${jobId}] [INFO] Original video bitrate: ${originalBitrate ? (originalBitrate / 1000).toFixed(0) + 'k' : 'unknown'}`);
@@ -2024,6 +2069,9 @@ async function processVideoUploadInternal(req, jobId) {
                   profile: videoStream.profile,
                   codec: videoStream.codec_name,
                   bitrate: originalBitrate,
+                  videoBitrate: videoBitrate,
+                  formatBitrate: formatBitrate,
+                  audioBitrate: audioBitrate,
                   hasAudio: hasAudio
                 });
               } catch (parseError) {
@@ -2060,16 +2108,16 @@ async function processVideoUploadInternal(req, jobId) {
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
     console.log(`[${jobId}] [INFO] Video resolution: ${videoResolution}p`);
     
-    // Get source bitrate conservatively. Some uploads report inflated metadata
-    // bitrates, so cap with the real average bitrate implied by file size.
-    const metadataSourceBitrateK = videoInfo && videoInfo.bitrate ? Math.floor(videoInfo.bitrate / 1000) : null;
-    const fileAverageBitrateK = calculateAverageBitrateKFromFileSize(uploadedFile.size, videoInfo && videoInfo.duration);
-    const sourceBitrateCandidates = [metadataSourceBitrateK, fileAverageBitrateK]
-      .filter(value => Number.isFinite(value) && value > 0);
-    const sourceBitrateKInternal = sourceBitrateCandidates.length > 0
-      ? Math.min(...sourceBitrateCandidates)
-      : null;
-    console.log(`[${jobId}] [BITRATE] Source bitrate candidates: metadata=${metadataSourceBitrateK || 'unknown'}k, fileAverage=${fileAverageBitrateK || 'unknown'}k, selected=${sourceBitrateKInternal || 'unknown'}k`);
+    // Prefer the video stream bitrate. Container/file fallbacks subtract known
+    // audio bitrate so an audio track cannot inflate the video target.
+    const sourceBitrateKInternal = selectSourceVideoBitrateK({
+      videoBitrateBps: videoInfo && videoInfo.videoBitrate,
+      formatBitrateBps: videoInfo && videoInfo.formatBitrate,
+      audioBitrateBps: videoInfo && videoInfo.audioBitrate,
+      fileSizeBytes: uploadedFile.size,
+      durationSec: videoInfo && videoInfo.duration
+    });
+    console.log(`[${jobId}] [BITRATE] Source video bitrate selected: ${sourceBitrateKInternal || 'unknown'}k`);
 
     // Determine normalization parameters based on resolution
     let targetWidth, targetHeight, bitrate;
@@ -3112,12 +3160,12 @@ async function processNormalizeVideoInternal(req, jobId) {
     });
     
     const getVideoInfo = () => {
-      return execAsync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height,duration,bit_rate -of json ${escapeShellArg(inputPath)}`);
+      return execAsync(`ffprobe -v error -show_entries stream=codec_type,codec_name,width,height,duration,bit_rate:stream_side_data=rotation:format=duration,bit_rate -of json ${escapeShellArg(inputPath)}`);
     };
     
     const videoInfoOutput = await getVideoInfo();
     const videoInfo = JSON.parse(videoInfoOutput.stdout);
-    streamInfo = videoInfo.streams && videoInfo.streams[0];
+    streamInfo = videoInfo.streams && videoInfo.streams.find(stream => stream.codec_type === 'video');
     originalWidth = streamInfo ? streamInfo.width : null;
     originalHeight = streamInfo ? streamInfo.height : null;
 
@@ -3152,8 +3200,21 @@ async function processNormalizeVideoInternal(req, jobId) {
 
     // Determine video resolution using the new algorithm
     const videoResolution = getVideoResolution(displayWidth, displayHeight);
-    const sourceBitrateK = streamInfo && streamInfo.bit_rate ? Math.floor(Number(streamInfo.bit_rate) / 1000) : null;
+    const audioBitrateBps = (videoInfo.streams || [])
+      .filter(stream => stream.codec_type === 'audio' && stream.bit_rate)
+      .reduce((total, stream) => total + Number(stream.bit_rate), 0);
+    const durationSec = videoInfo.format && videoInfo.format.duration
+      ? Number(videoInfo.format.duration)
+      : Number(streamInfo.duration);
+    const sourceBitrateK = selectSourceVideoBitrateK({
+      videoBitrateBps: streamInfo.bit_rate,
+      formatBitrateBps: videoInfo.format && videoInfo.format.bit_rate,
+      audioBitrateBps,
+      fileSizeBytes: uploadedFile.size,
+      durationSec
+    });
     console.log(`[${jobId}] [INFO] Video resolution: ${videoResolution}p`);
+    console.log(`[${jobId}] [BITRATE] Source video bitrate selected: ${sourceBitrateK || 'unknown'}k`);
 
     // Step 2: Apply normalization algorithm
     console.log(`[${jobId}] [STEP 2] Applying normalization algorithm...`);

@@ -975,12 +975,16 @@ function retryLoad() {
 
     <div v-if="tweet" class="card mb-1">
         <div class="card-header d-flex align-items-stretch">
-            <DetailHeader class="w-100" v-if="isRetweet && tweet.originalTweet?.author && tweet.author" :author="tweet.originalTweet.author" :timestamp="tweet.timestamp"
-                :is-retweet="isRetweet" :by="tweet.author.username"
+            <!-- The header renders even when the author never resolved (DetailHeader
+                 shows a placeholder), so the corner menu and timestamp stay reachable. -->
+            <DetailHeader class="w-100" v-if="isRetweet" :author="tweet.originalTweet?.author ?? null"
+                :author-id="tweet.originalAuthorId" :timestamp="tweet.timestamp"
+                :is-retweet="isRetweet" :by="tweet.author?.username"
                 :exclude-tweet-id="tweet.originalTweet?.mid"
                 :tweet="tweet" :edit-tweet="tweet.originalTweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
-            <DetailHeader class="w-100" v-else-if="!isRetweet && tweet.author" :author="tweet.author" :timestamp="tweet.timestamp"
+            <DetailHeader class="w-100" v-else :author="tweet.author ?? null"
+                :author-id="tweet.authorId" :timestamp="tweet.timestamp"
                 :exclude-tweet-id="tweet.mid"
                 :tweet="tweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>

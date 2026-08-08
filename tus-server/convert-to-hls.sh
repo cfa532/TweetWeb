@@ -241,16 +241,36 @@ if [ "$ROTATION" = "90" ] || [ "$ROTATION" = "-90" ]; then
     DISPLAY_HEIGHT=$WIDTH
 fi
 
-# Extract bitrate
-BITRATE=$(echo "$VIDEO_INFO" | grep -o '"bit_rate":"[^"]*"' | head -1 | cut -d'"' -f4)
-if [ -z "$BITRATE" ]; then
-    BITRATE=$(echo "$VIDEO_INFO" | grep -A 10 '"format"' | grep -o '"bit_rate":"[^"]*"' | head -1 | cut -d'"' -f4)
+# Read the video stream bitrate explicitly. The previous JSON grep could pick
+# the audio stream first, and its 3000k fallback could inflate low-bitrate video.
+VIDEO_BITRATE=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT_FILE" | head -1)
+FORMAT_BITRATE=$(ffprobe -v error -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT_FILE" | head -1)
+AUDIO_BITRATE=$(ffprobe -v error -select_streams a -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT_FILE" | awk '/^[0-9]+$/ { total += $1 } END { print total + 0 }')
+DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$INPUT_FILE" | head -1)
+
+SOURCE_BITRATE_BPS=""
+if [[ "$VIDEO_BITRATE" =~ ^[0-9]+$ ]] && [ "$VIDEO_BITRATE" -gt 0 ]; then
+    SOURCE_BITRATE_BPS=$VIDEO_BITRATE
+else
+    if [[ "$FORMAT_BITRATE" =~ ^[0-9]+$ ]] && [ "$FORMAT_BITRATE" -gt "$AUDIO_BITRATE" ]; then
+        SOURCE_BITRATE_BPS=$((FORMAT_BITRATE - AUDIO_BITRATE))
+    fi
+
+    if [[ "$DURATION" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk "BEGIN {exit !($DURATION > 0)}"; then
+        FILE_AVERAGE_BITRATE=$(awk "BEGIN {printf \"%.0f\", ($FILE_SIZE * 8) / $DURATION}")
+        if [ "$FILE_AVERAGE_BITRATE" -gt "$AUDIO_BITRATE" ]; then
+            FILE_VIDEO_BITRATE=$((FILE_AVERAGE_BITRATE - AUDIO_BITRATE))
+            if [ -z "$SOURCE_BITRATE_BPS" ] || [ "$FILE_VIDEO_BITRATE" -lt "$SOURCE_BITRATE_BPS" ]; then
+                SOURCE_BITRATE_BPS=$FILE_VIDEO_BITRATE
+            fi
+        fi
+    fi
 fi
 
-if [ -n "$BITRATE" ]; then
-    BITRATE_KBPS=$((BITRATE / 1000))
+if [ -n "$SOURCE_BITRATE_BPS" ] && [ "$SOURCE_BITRATE_BPS" -gt 0 ]; then
+    BITRATE_KBPS=$((SOURCE_BITRATE_BPS / 1000))
 else
-    BITRATE_KBPS=3000
+    BITRATE_KBPS=""
 fi
 
 echo -e "${GREEN}[INFO] Video dimensions: ${WIDTH}x${HEIGHT}${NC}"
@@ -258,7 +278,11 @@ echo -e "${GREEN}[INFO] Display dimensions: ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}${
 if [ "$ROTATION" != "0" ]; then
     echo -e "${GREEN}[INFO] Rotation: ${ROTATION}°${NC}"
 fi
-echo -e "${GREEN}[INFO] Bitrate: ${BITRATE_KBPS}k${NC}"
+if [ -n "$BITRATE_KBPS" ]; then
+    echo -e "${GREEN}[INFO] Source video bitrate: ${BITRATE_KBPS}k${NC}"
+else
+    echo -e "${YELLOW}[WARNING] Source video bitrate is unavailable; using the resolution-based target${NC}"
+fi
 
 # Normalization logic: all videos are normalized to a single quality
 # - Resolution >720p: normalize to 720p using shared bitrate curve
@@ -354,12 +378,7 @@ TARGET_WIDTH=$(echo $DIMS | cut -d' ' -f1)
 TARGET_HEIGHT=$(echo $DIMS | cut -d' ' -f2)
 
 # Match iOS HLS output cadence.
-TARGET_RESOLUTION=$((TARGET_WIDTH * TARGET_HEIGHT))
 SEGMENT_DURATION=$HLS_SEGMENT_DURATION
-BUFFER_SIZE=$(awk "BEGIN {printf \"%d\", ($TARGET_BITRATE / 2)}")
-if [ "$BUFFER_SIZE" -lt 1 ]; then
-    BUFFER_SIZE=1
-fi
 
 echo -e "${GREEN}[INFO] Original: ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT} (${ORIG_RESOLUTION} pixels)${NC}"
 echo -e "${GREEN}[INFO] Target: ${TARGET_WIDTH}x${TARGET_HEIGHT}, Bitrate: ${TARGET_BITRATE}k, Segment: ${SEGMENT_DURATION}s${NC}"
@@ -371,7 +390,7 @@ SEGMENT_PATH=$(escape_shell_arg "$TEMP_DIR/segment%03d.ts")
 ffmpeg -i "$INPUT_FILE" -c:v libx264 -c:a aac \
     -profile:v main -level 4.0 -pix_fmt yuv420p \
     -vf "scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:force_divisible_by=2" \
-    -g 48 -b:v ${TARGET_BITRATE}k -maxrate ${TARGET_BITRATE}k -bufsize ${BUFFER_SIZE}k \
+    -g 48 -b:v ${TARGET_BITRATE}k \
     -b:a 128k -preset fast -threads 2 \
     -f hls -hls_time ${SEGMENT_DURATION} -hls_list_size 0 -hls_playlist_type vod -start_number 0 \
     -hls_segment_filename "$TEMP_DIR/segment%03d.ts" \
