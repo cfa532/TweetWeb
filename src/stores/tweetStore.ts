@@ -2455,7 +2455,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return undefined
             }
 
-            const raceResult = await this.raceProviderIps(providerIps, async (_ip, client) => {
+            const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
                 const result = await client.RunMApp("get_user", {
                     aid: this.appId,
                     ver: "last",
@@ -2464,15 +2464,25 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
                 // Unwrap v2 response { success, data, message } so a server-side
                 // failure throws and the race continues with the other IP.
+                let user = result
                 if (result && typeof result === 'object' && 'success' in result) {
-                    if (result.success === true) return result.data
-                    throw new Error(result.message || 'get_user failed')
+                    if (result.success !== true) throw new Error(result.message || 'get_user failed')
+                    user = result.data
                 }
-                return result
+                // An empty or partial record means this node does not carry the
+                // user, not that the user does not exist — success:true with a
+                // null payload is a normal answer from a node that never hosted
+                // them. Judge it here so the race moves on to a node that does;
+                // deciding after the race let the first such answer win and fail
+                // the whole lookup, which stranded comment authors on "loading".
+                if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
+                    throw new Error(`get_user returned no usable record from ${ip}`)
+                }
+                return user
             }, `user ${userId}`)
 
             if (!raceResult) {
-                console.error(`[_fetchUser] All provider IPs failed for user ${userId}`)
+                console.error(`[_fetchUser] No provider served a record for user ${userId}`)
                 this._nullifyCachedIp(userId)
                 this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
@@ -2480,13 +2490,6 @@ export const useTweetStore = defineStore('tweetStore', {
 
             let user: any = raceResult.result
             const providerIp = raceResult.ip
-
-            if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
-                console.error(`[_fetchUser] Invalid user object for ${userId}:`, user)
-                this._nullifyCachedIp(userId)
-                this._recordFetchFailure(userId, `user:${userId}`)
-                return undefined
-            }
 
             // cache the user data
             user.providerIp = providerIp
@@ -3225,15 +3228,23 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
 
-                        // 3. User's own provider — one fallback attempt. Comment
-                        // text can render without repeatedly blocking on author
-                        // decoration when a node is slow.
-                        try {
-                            const author = await this._getUserForProviderRetryAttempt(authorId, 1)
-                            if (author) { setCommentAuthor(commentMid, author); return }
-                        } catch (error: any) {
-                            if (!error?.message?.includes('timeout'))
-                                console.warn("Error loading comment author:", authorId, error)
+                        // 3. User's own provider. Attempt 1 may answer from the
+                        // stored user/route; attempt 2 invalidates that and forces
+                        // fresh discovery — the same two-pass shape every other
+                        // caller of this helper uses. A single pass left the author
+                        // stuck on "loading" for the life of the page whenever a
+                        // cached negative answered it (a fetch cooldown, or a stored
+                        // user whose route no longer resolves), because nothing here
+                        // ever retries and the header has no recovery hook without
+                        // an avatar to fail.
+                        for (let attempt = 1; attempt <= 2; attempt++) {
+                            try {
+                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
+                                if (author) { setCommentAuthor(commentMid, author); return }
+                            } catch (error: any) {
+                                if (!error?.message?.includes('timeout'))
+                                    console.warn("Error loading comment author:", authorId, error)
+                            }
                         }
                     })()
                 }
@@ -3347,12 +3358,17 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
 
-                        try {
-                            const author = await this._getUserForProviderRetryAttempt(authorId, 1)
-                            if (author) { setCommentAuthor(commentMid, author); return }
-                        } catch (error: any) {
-                            if (!error?.message?.includes('timeout'))
-                                console.warn("[loadMoreComments] Error loading author:", authorId, error)
+                        // Two passes, matching loadComments: attempt 2 forces fresh
+                        // provider discovery so a cached negative cannot strand the
+                        // author on "loading" permanently.
+                        for (let attempt = 1; attempt <= 2; attempt++) {
+                            try {
+                                const author = await this._getUserForProviderRetryAttempt(authorId, attempt)
+                                if (author) { setCommentAuthor(commentMid, author); return }
+                            } catch (error: any) {
+                                if (!error?.message?.includes('timeout'))
+                                    console.warn("[loadMoreComments] Error loading author:", authorId, error)
+                            }
                         }
                     })()
                 }
