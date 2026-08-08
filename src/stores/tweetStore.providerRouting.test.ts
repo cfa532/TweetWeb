@@ -53,6 +53,57 @@ describe('tweetStore public provider routing', () => {
     expect(store.isServerHealthyWithTimeout).toHaveBeenCalledWith('220.184.34.132:8002', 6000, false)
   })
 
+  it('keeps one standby route behind the probe winner', async () => {
+    const store = useTweetStore()
+    const fastIp = '220.0.0.1:8002'
+    const standbyIp = '220.184.34.132:8002'
+    const thirdIp = '220.184.34.133:8002'
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue([standbyIp, fastIp, thirdIp])
+    store.isServerHealthyWithTimeout = vi.fn(async (ip: string) => ip === fastIp) as any
+
+    // Winner first, since getProviderIp() takes ips[0]. Exactly one alternate
+    // follows: answering a HEAD fastest is not the same as being able to serve
+    // this mid, but every extra entry becomes a real 15s RPC at racing callers.
+    await expect(store._resolveProviderIps('multi-route', true, false))
+      .resolves.toEqual([fastIp, standbyIp])
+  })
+
+  it('never offers a standby whose probe already failed', async () => {
+    const store = useTweetStore()
+    const fastIp = '220.0.0.1:8002'
+    const deadIp = '220.184.34.132:8002'
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue([deadIp, fastIp])
+    store.healthCheckCache.set(deadIp, { isHealthy: false, timestamp: Date.now() })
+    store.isServerHealthyWithTimeout = vi.fn(async (ip: string) => ip === fastIp) as any
+
+    await expect(store._resolveProviderIps('one-dead-route', true, false))
+      .resolves.toEqual([fastIp])
+  })
+
+  it('rejects a provider that answers null so the race can keep going', async () => {
+    const store = useTweetStore()
+    const tweetId = 'tweet-disclaimed'
+    const deadIp = '220.0.0.1:8002'
+    let tweetApiCall: ((ip: string, client: any) => Promise<unknown>) | undefined
+
+    store.getProviderIps = vi.fn(async () => [deadIp]) as any
+    store.raceProviderIps = vi.fn(async (ips: string[], apiCall: any, context: string) => {
+      if (context === `tweet ${tweetId}`) tweetApiCall = apiCall
+      return null
+    }) as any
+
+    await store.fetchTweet(tweetId, undefined, true)
+
+    expect(tweetApiCall).toBeDefined()
+    // "I am not a provider for this tweet" must reject rather than win with a
+    // null payload, or the first node to disclaim the tweet beats one that has
+    // it — and the truthy {result: null} would skip the author fallback too.
+    await expect(tweetApiCall!(deadIp, { RunMApp: vi.fn().mockResolvedValue(null) }))
+      .rejects.toThrow(/no data/)
+    await expect(tweetApiCall!(deadIp, { RunMApp: vi.fn().mockResolvedValue({ mid: tweetId }) }))
+      .resolves.toEqual({ mid: tweetId })
+  })
+
   it('rechecks a cached unhealthy provider during an explicit refresh', async () => {
     const store = useTweetStore()
     const providerIp = '220.184.34.132:8002'
@@ -105,13 +156,14 @@ describe('tweetStore public provider routing', () => {
     expect(store._resourceFetchFailures.get('cold-node')).toBeUndefined()
   })
 
-  it('reaches a tweet through its author when the tweet mid resolves no usable route', async () => {
+  it('reads through the author node and never touches the tweet mid', async () => {
     const store = useTweetStore()
-    const tweetId = 'tweet-without-routes'
+    const tweetId = 'tweet-with-known-author'
     const authorId = 'author-with-routes'
     const authorIp = '220.184.34.132:8002'
+    const tweetOwnIp = '220.0.0.9:8002'
 
-    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [authorIp] : [])) as any
+    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [authorIp] : [tweetOwnIp])) as any
     store.raceProviderIps = vi.fn(async (ips: string[]) => ({
       result: { mid: tweetId, authorId, timestamp: 1, content: 'hi' },
       ip: ips[0],
@@ -120,28 +172,48 @@ describe('tweetStore public provider routing', () => {
     const tweet = await store.fetchTweet(tweetId, authorId, true)
 
     expect(tweet?.mid).toBe(tweetId)
+    // The author's nodes serve the author's tweets, so a known author settles it:
+    // the tweet's own provider list is never resolved.
     expect(getTweetRaces(store, tweetId)).toEqual([[authorIp]])
+    expect(store.getProviderIps).not.toHaveBeenCalledWith(tweetId, expect.anything(), expect.anything())
   })
 
-  it('falls back to the author after the tweet route fails its RPC', async () => {
+  it("falls back to the tweet's own providers when the author nodes come up empty", async () => {
     const store = useTweetStore()
-    const tweetId = 'tweet-with-dead-route'
-    const authorId = 'author-alive'
-    const deadIp = '220.0.0.1:8002'
-    const authorIp = '220.184.34.132:8002'
+    const tweetId = 'tweet-not-on-author-node'
+    const authorId = 'author-stale'
+    const staleAuthorIp = '220.0.0.1:8002'
+    const tweetOwnIp = '220.184.34.132:8002'
 
-    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [authorIp] : [deadIp])) as any
+    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [staleAuthorIp] : [tweetOwnIp])) as any
     store.raceProviderIps = vi.fn(async (ips: string[]) =>
-      ips[0] === authorIp
-        ? { result: { mid: tweetId, authorId, timestamp: 1, content: 'hi' }, ip: authorIp }
+      ips[0] === tweetOwnIp
+        ? { result: { mid: tweetId, authorId, timestamp: 1, content: 'hi' }, ip: tweetOwnIp }
         : null,
     ) as any
 
     const tweet = await store.fetchTweet(tweetId, authorId, true)
 
     expect(tweet?.mid).toBe(tweetId)
-    // Dead tweet route first, then the author's — not a give-up in between.
-    expect(getTweetRaces(store, tweetId)).toEqual([[deadIp], [authorIp]])
+    // Author first, then the tweet's own providers — not a give-up in between.
+    expect(getTweetRaces(store, tweetId)).toEqual([[staleAuthorIp], [tweetOwnIp]])
+  })
+
+  it('resolves the tweet mid directly when the caller has no author', async () => {
+    const store = useTweetStore()
+    const tweetId = 'tweet-without-author'
+    const tweetOwnIp = '220.184.34.132:8002'
+
+    store.getProviderIps = vi.fn(async () => [tweetOwnIp]) as any
+    store.raceProviderIps = vi.fn(async (ips: string[]) => ({
+      result: { mid: tweetId, authorId: 'someone', timestamp: 1, content: 'hi' },
+      ip: ips[0],
+    })) as any
+
+    const tweet = await store.fetchTweet(tweetId, undefined, true)
+
+    expect(tweet?.mid).toBe(tweetId)
+    expect(getTweetRaces(store, tweetId)).toEqual([[tweetOwnIp]])
   })
 
   it('clears remembered failures so a user retry does not replay them', async () => {

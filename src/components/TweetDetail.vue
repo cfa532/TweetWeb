@@ -903,12 +903,26 @@ const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
 const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
 const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
+// Vue Router's record of the entry behind this one, or undefined when the route
+// was opened cold from a URL and there is nothing to pop.
+function recordedBackPath(): string | undefined {
+    const back = window.history.state?.back;
+    return typeof back === 'string' && back !== route.fullPath ? back : undefined;
+}
+
 function goBack() {
     if (parentTweetId.value && parentAuthorId.value) {
         router.push(`/tweet/${parentTweetId.value}/${parentAuthorId.value}`);
-    } else {
-        router.back();
+        return;
     }
+    // A detail route opened cold from a URL has no in-app history entry behind
+    // it, so router.back() pops nothing and the button reads as dead. Only pop
+    // when there is something to pop; otherwise send them to the feed.
+    if (recordedBackPath()) {
+        router.back();
+        return;
+    }
+    router.push(router.resolve({ name: 'main' }).fullPath);
 }
 
 async function leaveDeletedTweet() {
@@ -917,14 +931,8 @@ async function leaveDeletedTweet() {
         return;
     }
 
-    // A history pop can be a no-op for a reloaded/deep-linked detail route.
-    // Replace the deleted route with Vue Router's recorded origin so Back
-    // cannot reopen a tweet that no longer exists.
-    const recordedBackPath = window.history.state?.back;
-    const destination = typeof recordedBackPath === 'string' && recordedBackPath !== route.fullPath
-        ? recordedBackPath
-        : router.resolve({ name: 'main' }).fullPath;
-    await router.replace(destination);
+    // Replace, not pop: Back must not be able to reopen a tweet that is gone.
+    await router.replace(recordedBackPath() ?? router.resolve({ name: 'main' }).fullPath);
 }
 
 function retryLoad() {

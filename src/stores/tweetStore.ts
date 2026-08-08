@@ -1902,11 +1902,16 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Given tweet ID, get its content. There are 2 steps. First, find provider of
-         * this tweet with its ID. 2nd, retrieve the tweet from the provider. Assume
-         * author data is also available on the provider. Get author data too.
+         * Given tweet ID, get its content. There are 2 steps. First, find a node
+         * that serves this tweet. 2nd, retrieve the tweet from it. Assume author
+         * data is also available on that node. Get author data too.
+         *
+         * Step 1 prefers the AUTHOR's provider nodes, which serve that author's
+         * tweets by id. Only when the caller has no author does it resolve the
+         * tweet's own mid, whose provider list can name nodes that no longer
+         * hold it.
          * @param tweetId The ID of the tweet to fetch
-         * @param authorId Optional author ID to help locate the tweet
+         * @param authorId Author ID; when known it selects the node to read from
          * @param useRacing If true, race multiple provider IPs for faster loading (TweetDetail page only)
          * @param loadMissingOriginalTweet If false, return the outer tweet without separately fetching a missing embedded tweet
          * @param refreshProviderRoute If true, refresh provider discovery without synchronizing tweet data
@@ -2013,55 +2018,60 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
                 if (useRacing) {
                     const raceGetTweet = (ips: string[]) => this.raceProviderIps(ips, async (ip, client) => {
-                        return await client.RunMApp("get_tweet", {
+                        const result = await client.RunMApp("get_tweet", {
                             aid: this.lapi.appId,
                             ver: "last",
                             tweetid: tweetId,
                             appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                             fromdetailview: fromDetailView
                         })
+                        // A null answer means "this node is not a provider for the
+                        // tweet", not "the tweet does not exist". Throw so the race
+                        // keeps going instead of electing that node as the winner —
+                        // otherwise the first node to disclaim the tweet beats a
+                        // slower one that holds it, and the author fallback below is
+                        // skipped because raceResult is a truthy {result: null}.
+                        // Same guard the get_user race already applies.
+                        if (!result) throw new Error(`get_tweet returned no data from ${ip}`)
+                        return result
                     }, `tweet ${tweetId}`)
 
-                    // The author's node also serves this tweet by id, and a detail
-                    // URL always carries the author. Resolving the tweet's own mid
-                    // can come back with nothing the browser can reach — a cold
-                    // lookup returning only private/IPv6 routes ends the load before
-                    // a single request is made — so keep the author as a second way in.
-                    const authorFallbackIps = async (): Promise<string[]> => {
-                        if (!authorId) return []
-                        const ips = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
-                        if (ips.length === 0) {
-                            console.warn(`[fetchTweet] Author ${authorId} has no usable route either`)
-                        }
-                        return ips
-                    }
+                    let raceResult = null
 
-                    let providerIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
-                    let triedAuthorRoute = false
-                    if (providerIps.length === 0) {
-                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId}; falling back to author ${authorId}`)
-                        providerIps = await authorFallbackIps()
-                        triedAuthorRoute = true
-                    }
-                    if (providerIps.length === 0) {
-                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
-                        return null
-                    }
-
-                    let raceResult = await raceGetTweet(providerIps)
-
-                    if (!raceResult) {
-                        // The route just failed a real RPC — that is the verdict the
-                        // health probe only guessed at. Drop it so a retry resolves
-                        // afresh instead of racing the same dead route again.
-                        nodePool.invalidate(tweetId)
-
-                        if (!triedAuthorRoute) {
-                            const authorIps = await authorFallbackIps()
-                            if (authorIps.length > 0) {
-                                console.warn(`[fetchTweet] Tweet routes failed for ${tweetId}; retrying through author ${authorId}`)
-                                raceResult = await raceGetTweet(authorIps)
+                    // Author node first. A user's provider nodes serve that user's
+                    // tweets by id, so when the caller knows the author — a detail
+                    // URL always carries it — that is the authoritative way in.
+                    // Resolving the tweet's own mid is a provider lookup that can
+                    // name nodes which no longer hold it; they answer the health
+                    // probe and then return nothing.
+                    if (authorId) {
+                        const authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                        if (authorIps.length === 0) {
+                            console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
+                        } else {
+                            raceResult = await raceGetTweet(authorIps)
+                            if (!raceResult) {
+                                console.warn(`[fetchTweet] Author nodes did not serve ${tweetId}; trying the tweet's own providers`)
                             }
+                        }
+                    }
+
+                    // The tweet's own providers: the only way in when the caller has
+                    // no author, and the fallback when the author's nodes came up empty.
+                    if (!raceResult) {
+                        const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                        if (tweetIps.length > 0) {
+                            raceResult = await raceGetTweet(tweetIps)
+                            if (!raceResult) {
+                                // A real RPC just failed on this route — the verdict the
+                                // health probe only guessed at. Drop it so a retry
+                                // resolves afresh. The author's pool entry is left alone:
+                                // it is shared with profile and media loading, and one
+                                // tweet miss is not evidence that node is down.
+                                nodePool.invalidate(tweetId)
+                            }
+                        } else {
+                            console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
                         }
                     }
 
@@ -2074,7 +2084,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     // Use auto-releasing proxy so the pool slot is freed after each RPC.
                     providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
                 } else {
-                    providerIp = await this.getProviderIp(tweetId)
+                    // Same rule as the racing branch: the author's node serves the
+                    // author's tweets, so prefer it whenever the caller knows who
+                    // wrote this — embedded originals arrive here with their
+                    // originalAuthorId. Fall back to the tweet's own providers.
+                    providerIp = (authorId ? await this.getProviderIp(authorId, v4Only, refreshProviderRoute) : null)
+                        ?? await this.getProviderIp(tweetId)
                     if (!providerIp) {
                         console.warn(`[fetchTweet] No provider IP for tweet ${tweetId}`)
                         return null
@@ -3053,8 +3068,22 @@ export const useTweetStore = defineStore('tweetStore', {
                     return candidates;
                 }
 
-                console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner);
-                return [winner];
+                // Winner first — getProviderIp() takes ips[0], and it is the route
+                // most likely to answer. Keep ONE alternate behind it rather than
+                // discarding every other route: the probe elects the fastest
+                // responder, which is not the same as a node that can serve this
+                // mid, so a caller that races the list has somewhere to go without
+                // a second discovery round trip.
+                //
+                // Capped at one, and never a route whose probe already came back
+                // false. Every entry here becomes a real 15s RPC at every call site
+                // that races (get_tweet, get_user), so an uncapped list would turn
+                // each read into an N-way fan-out across the network.
+                const standby = candidates.find(ip =>
+                    ip !== winner && this.getFreshHealthStatus(ip) !== false
+                );
+                console.log(`[getProviderIps] First healthy IP for ${mid}:`, winner, standby ? `(standby ${standby})` : '');
+                return standby ? [winner, standby] : [winner];
 
             } catch (error) {
                 if (error instanceof Error && error.message.startsWith('[getProviderIps] All provider health checks failed')) {
