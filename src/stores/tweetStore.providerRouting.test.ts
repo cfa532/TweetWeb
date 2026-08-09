@@ -103,6 +103,34 @@ describe('tweetStore public provider routing', () => {
     }
   })
 
+  it('reads a cached tweet through the node that served it', async () => {
+    const store = useTweetStore()
+    const tweetId = 'cached-tweet'
+    const authorId = 'cached-author'
+    const deadEndIp = '220.0.0.1:8002'
+    const servedByIp = '220.184.34.132:8002'
+
+    // What a prior fetch wrote: the winning route travels with the tweet.
+    sessionStorage.setItem(tweetId, JSON.stringify({
+      mid: tweetId,
+      authorId,
+      provider: servedByIp,
+      author: { mid: authorId, username: 'Author', hostIds: ['host-1'], timestamp: 0 },
+    }))
+    // The author's list still leads with a node that answers HEAD and serves nothing.
+    store.getProviderIp = vi.fn(async () => deadEndIp) as any
+    store.isServerHealthyWithTimeout = vi.fn().mockResolvedValue(true)
+
+    const cached = await store.fetchTweet(tweetId, authorId)
+
+    // tweet.provider is what loadComments builds its client from. Re-deriving it
+    // from the author sent get_comments to a node that answered 0 comments on
+    // every reload, while the tweet's own attachments still pointed at the node
+    // that had it.
+    expect(cached?.provider).toBe(servedByIp)
+    expect(store.getProviderIp).not.toHaveBeenCalled()
+  })
+
   it('rejects a provider that answers null so the race can keep going', async () => {
     const store = useTweetStore()
     const tweetId = 'tweet-disclaimed'

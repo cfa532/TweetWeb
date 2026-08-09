@@ -289,13 +289,18 @@ function userForSessionStorage(user: any): any {
 function tweetForSessionStorage(tweet: any): any {
     if (!tweet || typeof tweet !== 'object') return tweet
     const cached = { ...tweet }
-    delete cached.provider
+    // `provider` is kept deliberately: it is the node that actually served this
+    // tweet, which is the only proven routing fact about it. Dropping it forced
+    // the read path to re-derive a route from the author's provider list, and
+    // ips[0] there is whichever node answered a HEAD probe first — a node can
+    // hold an author's record without holding their tweets, so that guess sent
+    // get_comments to a node that answered with nothing. Author routes stay
+    // stripped (see userForSessionStorage); those are re-derived from NodePool.
     if (cached.author) {
         cached.author = userForSessionStorage(cached.author)
     }
     if (cached.originalTweet && typeof cached.originalTweet === 'object') {
         cached.originalTweet = { ...cached.originalTweet }
-        delete cached.originalTweet.provider
         if (cached.originalTweet.author) {
             cached.originalTweet.author = userForSessionStorage(cached.originalTweet.author)
         }
@@ -1963,11 +1968,20 @@ export const useTweetStore = defineStore('tweetStore', {
                     // not discard an already-valid cached tweet; fall back to
                     // showing the cached content without a live route rather than
                     // failing the whole detail view.
+                    // The node recorded on the cached tweet served it for real, so
+                    // it is the route to use — provided it is still up. Only when
+                    // it is gone do we fall back to guessing from the author's
+                    // provider list, whose ips[0] merely won a HEAD probe.
                     let authorIp: string | null = null
-                    try {
-                        authorIp = await this.getProviderIp(cachedAuthorId, v4Only, false)
-                    } catch (error) {
-                        console.warn(`[fetchTweet] getProviderIp threw for cached tweet ${tweetId} author ${cachedAuthorId}; showing cached content without a live route`, error)
+                    const servedBy = typeof t.provider === 'string' ? t.provider : null
+                    if (servedBy && await this.isServerHealthyWithTimeout(servedBy, HEALTH_PROBE_TIMEOUT_MS)) {
+                        authorIp = servedBy
+                    } else {
+                        try {
+                            authorIp = await this.getProviderIp(cachedAuthorId, v4Only, false)
+                        } catch (error) {
+                            console.warn(`[fetchTweet] getProviderIp threw for cached tweet ${tweetId} author ${cachedAuthorId}; showing cached content without a live route`, error)
+                        }
                     }
                     if (authorIp) {
                         t.author.providerIp = authorIp
@@ -1979,11 +1993,21 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         const originalAuthorId = t.originalTweet?.author?.mid ?? t.originalTweet?.authorId
                         if (t.originalTweet?.author && originalAuthorId) {
+                            // Same rule as the outer tweet: prefer the node that
+                            // actually served the original over a probe winner
+                            // from its author's provider list.
                             let originalAuthorIp: string | null = null
-                            try {
-                                originalAuthorIp = await this.getProviderIp(originalAuthorId, v4Only, false)
-                            } catch (error) {
-                                console.warn(`[fetchTweet] getProviderIp threw for cached original tweet author ${originalAuthorId}; keeping cached content without a live route`, error)
+                            const originalServedBy = typeof t.originalTweet.provider === 'string'
+                                ? t.originalTweet.provider
+                                : null
+                            if (originalServedBy && await this.isServerHealthyWithTimeout(originalServedBy, HEALTH_PROBE_TIMEOUT_MS)) {
+                                originalAuthorIp = originalServedBy
+                            } else {
+                                try {
+                                    originalAuthorIp = await this.getProviderIp(originalAuthorId, v4Only, false)
+                                } catch (error) {
+                                    console.warn(`[fetchTweet] getProviderIp threw for cached original tweet author ${originalAuthorId}; keeping cached content without a live route`, error)
+                                }
                             }
                             if (originalAuthorIp) {
                                 t.originalTweet.author.providerIp = originalAuthorIp
