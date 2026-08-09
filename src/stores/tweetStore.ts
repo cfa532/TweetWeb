@@ -41,6 +41,21 @@ function savedListCacheKey(userId: string, type: SavedListType): string {
     return `saved_tweets_${type}_${userId}`
 }
 
+/**
+ * Render a boolean for an RPC parameter.
+ *
+ * The Leither transport carries strings only, so a boolean sent from a client
+ * reaches the backend already stringified — which is why handlers compare against
+ * "true", and why get_tweet's `fromdetailview` accepts nothing else. Passing the
+ * raw boolean happens to work through that coercion, but it leaves the wire format
+ * implicit at every call site and invisible to anyone reading the handler. Send the
+ * string the backend actually receives. Matches the existing `v4only` / `refresh` /
+ * `finished` params, which were always written this way.
+ */
+function rpcBool(value: boolean): string {
+    return value ? 'true' : 'false'
+}
+
 function unwrapNestedV2Map(response: any): Record<string, any> | null {
     let current = response
     for (let depth = 0; depth < 3; depth++) {
@@ -1787,7 +1802,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 accessClient.timeout = UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS
                 const response = await accessClient.RunMApp("update_following_tweets", {
                     ...params,
-                    homeupdated: true,
+                    homeupdated: rpcBool(true),
                 })
                 if (response?.success !== true) {
                     console.warn("Access-host following-tweets sync failed:", response?.message || response)
@@ -2056,15 +2071,34 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Step 2: ordinary read, or author-based recovery failed — resolve by tweet ID.
                 // Use get_tweet WITHOUT version:"v3" here, because v3 requires userid and returns null without it.
                 // Pre-v3 get_tweet returns a single object; we normalize it to an array below.
+
+                // Opening a detail view is what brings an access node's copy of a
+                // tweet up to date: with fromdetailview set, get_tweet syncs from the
+                // root node and starts providing the tweet when this node is not
+                // already a provider. User objects propagate on their own; tweet
+                // objects still need this nudge on access.
+                //
+                // authorhostid lets the node skip a get_user_core_data lookup that
+                // assumes the author's core data is already synced there — an
+                // assumption that fails on exactly the under-synced nodes this path
+                // exists to repair. Resolved from caches only, never awaited: the
+                // author is deliberately off this critical path, so a miss simply
+                // omits the hint and the node falls back to looking it up.
+                const getTweetParams: Record<string, unknown> = {
+                    aid: this.lapi.appId,
+                    ver: "last",
+                    tweetid: tweetId,
+                    appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
+                    fromdetailview: rpcBool(fromDetailView),
+                }
+                const knownAuthorHostId = authorId
+                    ? (this.users.get(authorId)?.hostIds?.[0] ?? getStoredUser(authorId)?.hostIds?.[0])
+                    : undefined
+                if (knownAuthorHostId) getTweetParams.authorhostid = knownAuthorHostId
+
                 if (useRacing) {
                     const raceGetTweet = (ips: string[]) => this.raceProviderIps(ips, async (ip, client) => {
-                        const result = await client.RunMApp("get_tweet", {
-                            aid: this.lapi.appId,
-                            ver: "last",
-                            tweetid: tweetId,
-                            appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                            fromdetailview: fromDetailView
-                        })
+                        const result = await client.RunMApp("get_tweet", getTweetParams)
                         // A null answer means "this node is not a provider for the
                         // tweet", not "the tweet does not exist". Throw so the race
                         // keeps going instead of electing that node as the winner —
@@ -2135,13 +2169,7 @@ export const useTweetStore = defineStore('tweetStore', {
                         return null
                     }
                     providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-                    tweetInDB = await providerClient.RunMApp("get_tweet", {
-                        aid: this.lapi.appId,
-                        ver: "last",
-                        tweetid: tweetId,
-                        appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
-                        fromdetailview: fromDetailView
-                    })
+                    tweetInDB = await providerClient.RunMApp("get_tweet", getTweetParams)
                 }
             }
             if (!tweetInDB) {
@@ -4560,7 +4588,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 authorid: storageAuthor.mid,
                 userhostid: userHostId,
-                isfavorite: isFavorite,
+                isfavorite: rpcBool(isFavorite),
             }
             const writableIp = await this.resolveWritableHostIp(storageAuthor)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
@@ -4586,7 +4614,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweetid: tweet.mid,
                 authorid: storageAuthor.mid,
                 userhostid: userHostId,
-                isbookmarked: isBookmarked,
+                isbookmarked: rpcBool(isBookmarked),
             }
             const writableIp = await this.resolveWritableHostIp(storageAuthor)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
