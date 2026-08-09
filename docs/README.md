@@ -8,6 +8,7 @@ Complete documentation for the TweetWeb decentralized social media platform.
 
 - **[Setup & Installation Guide](SETUP.md)** - Local development and service setup instructions
 - **[Publication & Deployment Guide](DEPLOYMENT.md)** - Canonical TweetWeb production release procedure
+- **[Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)** - Repeatable DNS, nginx, and Worker migration procedure
 - **[Quick Start](#quick-start)** - Get up and running in 5 minutes
 
 ### Core Documentation
@@ -93,7 +94,8 @@ open http://localhost:5173
 
 **Deployment:**
 1. [Publication & Deployment Guide](DEPLOYMENT.md)
-2. [Architecture - Deployment Architecture](ARCHITECTURE.md#deployment-architecture)
+2. [Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)
+3. [Architecture - Deployment Architecture](ARCHITECTURE.md#deployment-architecture)
 
 **Monitoring:**
 1. [Setup Guide - Troubleshooting](SETUP.md#troubleshooting)
@@ -334,7 +336,7 @@ MIT License - see LICENSE file for details
 
 - **Main README**: [/README.md](../README.md)
 - **Production**: https://dtweet.com/
-- **Browser fallback**: http://t1.www3.shop/
+- **Browser fallback**: http://t1.w3w3.store/
 - **GitHub Issues**: Report bugs and request features
 
 ## Version History

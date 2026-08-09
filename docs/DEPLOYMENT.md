@@ -9,6 +9,9 @@ complete only after the same `dist` build has been published to both targets:
 Publishing only one target leaves the other target serving the previous web
 application.
 
+For a browser-domain replacement, use the separate
+[Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md).
+
 ## Prerequisites
 
 - Run the commands from the `TweetWeb` repository unless a step says otherwise.
@@ -115,8 +118,8 @@ Confirm Wrangler reports a new version and all production routes:
 - `www.dtweet.com`
 - `dl.dtweet.com/*`
 
-The `dtweet.com` zone's legacy single Redirect Rule named
-`Browser fallback to dl.dtweet.com` must remain disabled. The Worker owns the
+The `dtweet.com` zone's single Redirect Rule named
+`Browser fallback to w3w3.store` must remain disabled. The Worker owns the
 browser redirect after serving the iOS and Android association files. An
 active zone redirect runs before the Worker and bypasses that routing logic.
 
@@ -134,7 +137,7 @@ Both SHA-256 values must match. If an edge temporarily serves an older
 asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
 
-Do not hash `http://t1.www3.shop/index_entry.js` directly. It is a legacy
+Do not hash `http://t1.w3w3.store/index_entry.js` directly. It is a legacy
 Leither domain whose loader generates the app entry response and resolves bare
 object names inside the published package; that URL is not a raw static-asset
 endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
@@ -145,7 +148,7 @@ Also confirm that both association files return JSON directly from
 `/tweet/<tweet-id>/<author-id>` and `/#tweet/<tweet-id>/<author-id>` URLs. With
 the app installed, the operating system should open the app. In a browser, the
 Worker must land both forms on
-`http://t1.www3.shop/#tweet/<tweet-id>/<author-id>`, and that page must load the
+`http://t1.w3w3.store/#tweet/<tweet-id>/<author-id>`, and that page must load the
 current bundle without mixed-content errors.
 
 ### av1 nginx domain-routing invariant
@@ -155,29 +158,34 @@ The active site is `/etc/nginx/sites-available/leither-fireshare` on `av1`
 
 | Host family | Required behavior |
 | --- | --- |
-| `fireshare.us`, `*.fireshare.us` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `www3.shop`. |
-| `fireshare.uk`, `*.fireshare.uk` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `www3.shop`. |
-| `www333.store`, `*.www333.store` | Redirect to the equivalent `www3.shop` host; preserve the route, query, and subdomain. Canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
-| `www3.shop`, `*.www3.shop` | Proxy to Leither; canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
+| `fireshare.us`, `*.fireshare.us` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `w3w3.store`. |
+| `fireshare.uk`, `*.fireshare.uk` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `w3w3.store`. |
+| `www333.store`, `www3.shop`, `www33.online`, and their subdomains | Redirect to the equivalent `w3w3.store` host; preserve the route, query, and subdomain. Canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
+| `w3w3.store`, `*.w3w3.store` | Proxy to Leither; canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
 
 The Fireshare domains are still used by native clients. Redirecting a host such
-as `tweet.fireshare.us` to `tweet.www3.shop` changes the app-link host and can
+as `tweet.fireshare.us` to `tweet.w3w3.store` changes the app-link host and can
 prevent the native app from opening. An ordinary TweetWeb release must not
 replace the Fireshare proxy block with a catch-all legacy-domain redirect.
 
-After any nginx edit, validate and reload on `av1`, then check both a Fireshare
-host and a retired `www333.store` host:
+After any nginx edit, validate and reload on `av1`, then check the canonical,
+Fireshare, and retired host families:
 
 ```bash
 ssh root@av1 'nginx -t'
 ssh root@av1 'systemctl reload nginx'
 curl -I http://tweet.fireshare.us/
 curl -I http://tweet.fireshare.uk/
+curl -I http://w3w3.store/
 curl -I http://t1.www333.store/tweet/example/author
+curl -I http://t1.www3.shop/tweet/example/author
+curl -I --resolve t1.www33.online:80:47.245.61.67 http://t1.www33.online/tweet/example/author
 ```
 
-The Fireshare roots must not return a `Location` under `www3.shop`; the
-`www333.store` request must redirect to the matching `www3.shop` host.
+The Fireshare roots must not return a `Location` under `w3w3.store`;
+`w3w3.store` must reach Leither, and each retired host must redirect to the
+matching `w3w3.store` host. `--resolve` is required for `www33.online` until
+that retired domain has public DNS pointing at av1.
 
 ## 7. Restore Local Testing Configuration
 
@@ -200,10 +208,11 @@ assets.
 - [ ] The seven generated assets were copied to gen8.
 - [ ] `tweet1.sh` published a new Leither app version.
 - [ ] Wrangler deployed a new Worker version with all three routes.
-- [ ] The legacy `Browser fallback to dl.dtweet.com` zone rule is disabled.
+- [ ] The `Browser fallback to w3w3.store` zone rule is disabled.
 - [ ] Public asset hashes match `dist/index_entry.js`.
 - [ ] Association files return JSON and a browser tweet link redirects to
-      `http://t1.www3.shop` and loads successfully.
+      `http://t1.w3w3.store` and loads successfully.
 - [ ] av1 preserves `fireshare.us` and `fireshare.uk` hosts while redirecting
-      only the retired `www333.store` family to `www3.shop`.
+      the retired `www333.store`, `www3.shop`, and `www33.online` families to
+      `w3w3.store`.
 - [ ] The developer's original local `.env` value was restored.

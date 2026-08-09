@@ -159,7 +159,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🔗 Links
 
 - Production: https://dtweet.com/
-- Browser fallback: http://t1.www3.shop/
+- Browser fallback: http://t1.w3w3.store/
+- Fallback-domain migration: [docs/BROWSER_FALLBACK_DOMAIN_MIGRATION.md](docs/BROWSER_FALLBACK_DOMAIN_MIGRATION.md)
 - Publication and deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - Documentation: [/docs](/docs)
 

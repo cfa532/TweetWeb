@@ -859,12 +859,12 @@ Response:
     │             │             │                 │
 dtweet.com  www.dtweet.com  dl.dtweet.com    Leither clients
     │             │
-    └──── app links / browser 302 ───▶ http://t1.www3.shop
+    └──── app links / browser 302 ───▶ http://t1.w3w3.store
 ```
 
 The Cloudflare Worker handles public app-link domains. Installed apps claim
 supported `dtweet.com` links; browser navigations are redirected to the HTTP
-TweetWeb host at `t1.www3.shop`. `dl.dtweet.com` remains a legacy Worker
+TweetWeb host at `t1.w3w3.store`. `dl.dtweet.com` remains a legacy Worker
 asset/origin route. The Leither package is published independently with
 `tweet1.sh`; both targets must receive the same build. See the
 [Publication & Deployment Guide](DEPLOYMENT.md) for the complete release and
@@ -874,11 +874,14 @@ service and is not the TweetWeb publication target.
 av1 nginx keeps the native-client Fireshare domain families separate from the
 retired web domain family. `fireshare.us`, `*.fireshare.us`, `fireshare.uk`,
 and `*.fireshare.uk` are proxied to Leither on `127.0.0.1:4801` with their
-original hostnames intact. Only `www333.store` and its subdomains redirect to
-the corresponding `www3.shop` hosts. This boundary is intentional: redirecting
+original hostnames intact. The retired `www333.store`, `www3.shop`, and
+`www33.online` families redirect to the corresponding `w3w3.store` hosts.
+This boundary is intentional: redirecting
 `tweet.fireshare.us` or `tweet.fireshare.uk` changes the app-link host and can
 prevent a native client from opening. The exact operational invariant and
 verification commands are in the [deployment guide](DEPLOYMENT.md#av1-nginx-domain-routing-invariant).
+The repeatable replacement procedure is in the
+[browser fallback domain migration memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md).
 
 ## Related Documentation
 
