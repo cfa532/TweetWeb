@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html id="LeitherHtml">
+<head id="LeitherHeader">
+<script type="text/javascript">
+!function(r){var n={};function i(e){if(n[e])return n[e].exports;var t=n[e]={i:e,l:!1,exports:{}};return r[e].call(t.exports,t,t.exports,i),t.l=!0,t.exports}i.m=r,i.c=n,i.d=function(e,t,r){i.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:r})},i.r=function(e){"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},i.t=function(t,e){if(1&e&&(t=i(t)),8&e)return t;if(4&e&&"object"==typeof t&&t&&t.__esModule)return t;var r=Object.create(null);if(i.r(r),Object.defineProperty(r,"default",{enumerable:!0,value:t}),2&e&&"string"!=typeof t)for(var n in t)i.d(r,n,function(e){return t[e]}.bind(null,n));return r},i.n=function(e){var t=e&&e.__esModule?function(){return e.default}:function(){return e};return i.d(t,"a",t),t},i.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},i.p="",i(i.s=0)}([function(e,t){function o(e){var t=e.split(":");if(t.length<3){t=t[0].split(".");return!(10==t[0]||192==t[0]&&168==t[1]||172==t[0]&&15<t[1]&&t[1]<32)}return!e.match(/^fe|^fc|^fd|::/i)}function n(i,e){var t=d.ips[i],o=(t="http://"+(t=t)+"/entry?",""!=d.aid&&(t+="aid="+d.aid+"&"),""!=d.mid&&(t+="mid="+d.mid+"&"),""!=d.ver&&(t+="ver="+d.ver+"&"),t+="rand="+Math.random()),t=new Promise((r,n)=>{setTimeout(()=>{var e,t;u||(e=new XMLHttpRequest,t=new Date,s[i].begin=t,e.onreadystatechange=()=>{4==e.readyState&&(200==e.status?u||(u=1,d.CurNode=i,function(e){var t=document.getElementById("LeitherHtml");e.replace(/<html\s*\S*>([\s|\S]*)<\/html>/gi,function(){t.innerHTML=arguments[1]});var r=/<script[^>]*>([\s|\S]*?)<\/script>/gim;for(;null!=(result=r.exec(e));){var n=document.createElement("script");n.textContent=result[1],document.getElementsByTagName("head")[0].appendChild(n)}}(e.responseText),r(i)):(s[i].tmFail=new Date-t,n(Error(e.statusText))))},e.open("GET",o,!0),e.send(null))},e)});return t.url=o,t}function a(){if(1!=u){var e;if(0==d.ips.length)e="<body><p>没有可用的节点,也可能是缓存没有及时更新，可刷新页面进行更新</p></body>";else{for(e="<body><table>",i=0;i<s.length;i++)e+=function(e){var t="<tr><td>",r=d.ips[e],n=0,i=!0;s[e].begin&&(s[e].tmFail?(n="请求失败",(i=s[e].tmFail<50&&!o(r))&&(n="无法访问，可能是浏览器设置问题")):n=parseInt((new Date-s[e].begin)/1e3));i&&(t=t+"<a href="+s[e].url+">");return t=t+r+"</td><td></td><td>"+n+"</td></tr>"}(i);e+=2==u?"</table><p>所有地址都不可访问</p></body>":2<u?"</table><p>有"+(u-2)+"个内网地址未检查，应该是浏览器关闭了局域网地址自动跳转。</p><p>可点击链接手工跳转，或修改相关设置</p><p>浏览器输入以下链接调整：chrome://flags/#block-insecure-private-network-requests</p></body>":"</table></body>"}document.getElementById("LeitherHtml").innerHTML=e,u||setTimeout(a,1e3)}}var u,d,s;s=[],window.getParam=()=>d,window.setParam=e=>{d=e},window.request=()=>{if(d.ips=(pubAddrs0=[],pubAddrs1=[],priAddrs=[],d.addrs.forEach(e=>{var t=e[0][0];for(o(t)&&pubAddrs0.push(t),j=1;j<e.length;j++)(o(t=e[j][0])?pubAddrs1:priAddrs).push(t)}),[...pubAddrs0,...pubAddrs1,...priAddrs]),0!=d.ips.length){var e=256,t=0;for(i=u=0;i<d.ips.length;i++){var r=n(i,t);s.push(r),t+=e,e/=2}0!=s.length?(setTimeout(a,2e3),Promise.any(s).then(e=>{},e=>{u=2,s.forEach((e,t)=>{t=d.ips[t];e.tmFail<50&&!o(t)&&u++})})):a()}else a()}}]);
+window.setParam({
+        CurNode:0,
+        log: true,
+        ver:"last",
+        addrs: {{.Addrs}},        
+        aid: "{{.AppID}}",
+        remote:"{{.RemoteIP}}",
+        mid:"{{.MID}}"
+})
+window.request()
+</script>
+</head>
+</html> 
