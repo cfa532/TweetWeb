@@ -2,73 +2,7 @@
 <html id="LeitherHtml">
 <head id="LeitherHeader">
 <script type="text/javascript">
-/**
- * Install the page fetched from a provider node into this document.
- *
- * Two things the plain innerHTML swap gets wrong, and both leave a blank page:
- *
- * 1. The page is served by a provider node but displayed under the domain, and
- *    the domain node does not hold the app's files. Every relative asset path
- *    in it therefore has to be resolved against the node that served it.
- * 2. Scripts inserted through innerHTML never execute, so they have to be
- *    re-created. Copying only their text drops "src" — an external script
- *    carries no text at all — so nothing runs. Copy the attributes as well and
- *    chain them, since dynamically inserted scripts otherwise race each other
- *    and a library can end up running after the code that needs it.
- */
-window.LeitherInject = function (html, providerAddr, mid, ver) {
-  var origin = "http://" + providerAddr + "/";
-  // Read the app's files straight out of its Mimei. The node's root serves them
-  // only where a route has been set for this app, which is per-node and easy to
-  // miss; the mm path answers on every node holding the app.
-  var assetBase = mid ? origin + "mm/" + mid + ":" + (ver || "last") + "/" : origin;
-  var root = document.getElementById("LeitherHtml");
-  var body = /<html\s*\S*>([\s|\S]*)<\/html>/i.exec(html);
-  root.innerHTML = body ? body[1] : html;
-
-  // Relative paths point at the domain, which has no copy of these files.
-  // Absolute ones (another host) are already resolved and stay put.
-  var toProvider = function (el, attr) {
-    var value = el.getAttribute(attr);
-    if (!value) return;
-    // A leading "/" would resolve to the node's root and lose the mm path, so
-    // treat those as relative to the app as well.
-    var path = value.charAt(0) === "/" && value.charAt(1) !== "/" ? value.slice(1) : value;
-    try {
-      el.setAttribute(attr, new URL(path, assetBase).href);
-    } catch (err) {
-      // Leave anything unparsable exactly as the page published it.
-    }
-  };
-  var links = root.querySelectorAll("link[href]");
-  for (var j = 0; j < links.length; j++) toProvider(links[j], "href");
-
-  var pending = [];
-  var found = root.querySelectorAll("script");
-  for (var k = 0; k < found.length; k++) pending.push(found[k]);
-
-  var head = document.getElementsByTagName("head")[0];
-  var run = function (index) {
-    if (index >= pending.length) return;
-    var source = pending[index];
-    var script = document.createElement("script");
-    for (var a = 0; a < source.attributes.length; a++) {
-      script.setAttribute(source.attributes[a].name, source.attributes[a].value);
-    }
-    toProvider(script, "src");
-    script.textContent = source.textContent;
-    if (script.src) {
-      // Keep document order: run the next one only once this has loaded.
-      script.async = false;
-      script.onload = script.onerror = function () { run(index + 1); };
-      head.appendChild(script);
-    } else {
-      head.appendChild(script);
-      run(index + 1);
-    }
-  };
-  run(0);
-};
+window.LeitherInject=function(h,L,d,w){var g="http://"+L+"/",E=d?g+"mm/"+d+":"+(w||"last")+"/":g,s=document.getElementById("LeitherHtml"),m=/<html\s*\S*>([\s|\S]*)<\/html>/i.exec(h);s.innerHTML=m?m[1]:h;for(var p=function(t){if(!t)return null;var e=t.charAt(0)==="/"&&t.charAt(1)!=="/"?t.slice(1):t;try{return new URL(e,E).href}catch(r){return null}},b=function(t,e){var r=p(t.getAttribute(e));r&&t.setAttribute(e,r)},A=s.querySelectorAll("link[href]"),c=0;c<A.length;c++)b(A[c],"href");for(var n=[],y=s.querySelectorAll("script"),l=0;l<y.length;l++)n.push(y[l]);for(var u=document.getElementsByTagName("head")[0],a=0;a<n.length;a++){var C=p(n[a].getAttribute("src"));if(C){var v=(n[a].getAttribute("type")||"").toLowerCase()==="module",o=document.createElement("link");o.rel=v?"modulepreload":"preload",v||(o.as="script"),(v||n[a].hasAttribute("crossorigin"))&&(o.crossOrigin=n[a].getAttribute("crossorigin")||"anonymous"),o.href=C,u.appendChild(o)}}var f=function(t){if(!(t>=n.length)){for(var e=n[t],r=document.createElement("script"),i=0;i<e.attributes.length;i++)r.setAttribute(e.attributes[i].name,e.attributes[i].value);b(r,"src"),r.textContent=e.textContent,r.src?(r.async=!1,r.onload=r.onerror=function(){f(t+1)},u.appendChild(r)):(u.appendChild(r),f(t+1))}};f(0)};
 </script>
 <script type="text/javascript">
 !function(r){var n={};function i(e){if(n[e])return n[e].exports;var t=n[e]={i:e,l:!1,exports:{}};return r[e].call(t.exports,t,t.exports,i),t.l=!0,t.exports}i.m=r,i.c=n,i.d=function(e,t,r){i.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:r})},i.r=function(e){"undefined"!=typeof Symbol&&Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},i.t=function(t,e){if(1&e&&(t=i(t)),8&e)return t;if(4&e&&"object"==typeof t&&t&&t.__esModule)return t;var r=Object.create(null);if(i.r(r),Object.defineProperty(r,"default",{enumerable:!0,value:t}),2&e&&"string"!=typeof t)for(var n in t)i.d(r,n,function(e){return t[e]}.bind(null,n));return r},i.n=function(e){var t=e&&e.__esModule?function(){return e.default}:function(){return e};return i.d(t,"a",t),t},i.o=function(e,t){return Object.prototype.hasOwnProperty.call(e,t)},i.p="",i(i.s=0)}([function(e,t){function o(e){var t=e.split(":");if(t.length<3){t=t[0].split(".");return!(10==t[0]||192==t[0]&&168==t[1]||172==t[0]&&15<t[1]&&t[1]<32)}return!e.match(/^fe|^fc|^fd|::/i)}function n(i,e){var t=d.ips[i],o=(t="http://"+(t=t)+"/entry?",""!=d.aid&&(t+="aid="+d.aid+"&"),""!=d.mid&&(t+="mid="+d.mid+"&"),""!=d.ver&&(t+="ver="+d.ver+"&"),t+="rand="+Math.random()),t=new Promise((r,n)=>{setTimeout(()=>{var e,t;u||(e=new XMLHttpRequest,t=new Date,s[i].begin=t,e.onreadystatechange=()=>{4==e.readyState&&(200==e.status?u||(u=1,d.CurNode=i,window.LeitherInject(e.responseText,d.ips[i],d.mid,d.ver),r(i)):(s[i].tmFail=new Date-t,n(Error(e.statusText))))},e.open("GET",o,!0),e.send(null))},e)});return t.url=o,t}function a(){if(1!=u){var e;if(0==d.ips.length)e="<body><p>没有可用的节点,也可能是缓存没有及时更新，可刷新页面进行更新</p></body>";else{for(e="<body><table>",i=0;i<s.length;i++)e+=function(e){var t="<tr><td>",r=d.ips[e],n=0,i=!0;s[e].begin&&(s[e].tmFail?(n="请求失败",(i=s[e].tmFail<50&&!o(r))&&(n="无法访问，可能是浏览器设置问题")):n=parseInt((new Date-s[e].begin)/1e3));i&&(t=t+"<a href="+s[e].url+">");return t=t+r+"</td><td></td><td>"+n+"</td></tr>"}(i);e+=2==u?"</table><p>所有地址都不可访问</p></body>":2<u?"</table><p>有"+(u-2)+"个内网地址未检查，应该是浏览器关闭了局域网地址自动跳转。</p><p>可点击链接手工跳转，或修改相关设置</p><p>浏览器输入以下链接调整：chrome://flags/#block-insecure-private-network-requests</p></body>":"</table></body>"}document.getElementById("LeitherHtml").innerHTML=e,u||setTimeout(a,1e3)}}var u,d,s;s=[],window.getParam=()=>d,window.setParam=e=>{d=e},window.request=()=>{if(d.ips=(pubAddrs0=[],pubAddrs1=[],priAddrs=[],d.addrs.forEach(e=>{var t=e[0][0];for(o(t)&&pubAddrs0.push(t),j=1;j<e.length;j++)(o(t=e[j][0])?pubAddrs1:priAddrs).push(t)}),[...pubAddrs0,...pubAddrs1,...priAddrs]),0!=d.ips.length){var e=256,t=0;for(i=u=0;i<d.ips.length;i++){var r=n(i,t);s.push(r),t+=e,e/=2}0!=s.length?(setTimeout(a,2e3),Promise.any(s).then(e=>{},e=>{u=2,s.forEach((e,t)=>{t=d.ips[t];e.tmFail<50&&!o(t)&&u++})})):a()}else a()}}]);
