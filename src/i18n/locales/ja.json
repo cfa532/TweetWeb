@@ -164,6 +164,8 @@
     "quoteTweet": "引用ツイート",
     "preserveQuality": "画質を保持",
     "preserveQualityTitle": "元の動画画質を保持（ファイルサイズが大きくなります）",
+    "progressiveVideo": "プログレッシブ動画",
+    "progressiveVideoTitle": "HLS ストリームではなく、単一のプログレッシブファイルとしてアップロード",
     "resubmit": "再送信",
     "loginToPost": "ツイートを投稿するにはログインしてください",
     "tweetUploaded": "ツイートのアップロードに成功しました！",
