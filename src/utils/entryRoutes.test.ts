@@ -90,8 +90,23 @@ describe('entry route ordering', () => {
             [['2.2.2.1:80', 200]],
         ]
         expect(orderEntryRoutes({ addrs: partial }, '192.168.5.10')).toEqual([
-            '1.1.1.1:80',
             '2.2.2.1:80',
+            '1.1.1.1:80',
+            '1.1.1.2:80',
+        ])
+    })
+
+    it('orders each round by metric, so the quickest of the nodes leads', () => {
+        const slowFirstNode = [
+            [['1.1.1.1:80', 900], ['1.1.1.2:80', 950]],
+            [['2.2.2.1:80', 100], ['2.2.2.2:80', 200]],
+        ]
+        expect(orderEntryRoutes({ addrs: slowFirstNode }, '192.168.5.10')).toEqual([
+            // round 0: both nodes' fastest, quickest first
+            '2.2.2.1:80',
+            '1.1.1.1:80',
+            // round 1: both nodes' second fastest, same rule
+            '2.2.2.2:80',
             '1.1.1.2:80',
         ])
     })

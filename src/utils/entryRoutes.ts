@@ -51,32 +51,45 @@ function metricOf(pair: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : Number.POSITIVE_INFINITY
 }
 
+interface RankedAddress {
+    address: string
+    metric: number
+}
+
 /** One node's addresses, fastest first. */
-function nodeAddresses(node: unknown): string[] {
+function nodeAddresses(node: unknown): RankedAddress[] {
     if (!Array.isArray(node)) return []
     return [...node]
         .filter(pair => Array.isArray(pair))
         .sort((a, b) => metricOf(a) - metricOf(b))
-        .map(pair => normalizeAddress((pair as unknown[])[0]))
-        .filter(address => address.length > 0)
+        .map(pair => ({ address: normalizeAddress((pair as unknown[])[0]), metric: metricOf(pair) }))
+        .filter(entry => entry.address.length > 0)
 }
 
 /**
  * Take one address from each node in turn: all the rank-0 addresses, then all
  * the rank-1 addresses, and so on until every node is exhausted. Nodes with
  * fewer addresses simply drop out of the later rounds.
+ *
+ * Rank decides who is in a round — that is what keeps consecutive candidates on
+ * different machines — and the published metric decides the order within it, so
+ * the fastest of the nodes' fastest addresses still leads.
  */
-function interleaveByRank(nodes: string[][]): string[] {
+function interleaveByRank(nodes: RankedAddress[][]): string[] {
     const ordered: string[] = []
     const seen = new Set<string>()
     const depth = nodes.reduce((max, node) => Math.max(max, node.length), 0)
 
     for (let rank = 0; rank < depth; rank++) {
-        for (const node of nodes) {
-            const address = node[rank]
+        const round = nodes
+            .map(node => node[rank])
+            .filter((entry): entry is RankedAddress => entry !== undefined)
+            .sort((a, b) => a.metric - b.metric)
+
+        for (const { address } of round) {
             // The same address can be published by two nodes behind one NAT;
             // it is one way in either way, and belongs at its first position.
-            if (!address || seen.has(address)) continue
+            if (seen.has(address)) continue
             seen.add(address)
             ordered.push(address)
         }
