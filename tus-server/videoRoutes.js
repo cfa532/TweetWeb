@@ -1930,6 +1930,12 @@ async function processVideoUploadInternal(req, jobId) {
     const noResample = req.body.noResample === 'true' || req.body.noResample === true;
     console.log(`[${jobId}] [INFO] noResample parameter: ${noResample}`);
 
+    // progressive=true keeps the normalized MP4 as a single file, skipping the
+    // size-based HLS routing below. Normalization itself still runs, so the
+    // stored file stays a faststart MP4 (noResample still controls quality).
+    const progressive = req.body.progressive === 'true' || req.body.progressive === true;
+    console.log(`[${jobId}] [INFO] progressive parameter: ${progressive}`);
+
     const allowedTypes = [
       'video/mp4', 'video/avi', 'video/mov', 'video/quicktime', 'video/mkv', 
       'video/wmv', 'video/flv', 'video/webm', 'video/x-msvideo', 
@@ -2231,6 +2237,7 @@ async function processVideoUploadInternal(req, jobId) {
     const directHlsEnabled = process.env.HLS_DIRECT_TO_HLS === 'true';
     const shouldAttemptDirectHLS =
       directHlsEnabled &&
+      !progressive &&
       finalEncoder !== 'copy' &&
       uploadedFileSizeMB > HLS_CONVERSION_CUTOFF_MB &&
       estimatedNormalizedSizeMB !== null &&
@@ -2440,17 +2447,23 @@ playlist.m3u8`;
     let mediaType;
     let outputSize;
 
-    if (normalizedFileSizeMB <= HLS_CONVERSION_CUTOFF_MB) {
-      console.log(`[${jobId}] [ROUTE] Normalized file size (${normalizedFileSizeMB.toFixed(2)}MB) <= ${HLS_CONVERSION_CUTOFF_MB}MB, uploading as progressive video`);
+    if (progressive || normalizedFileSizeMB <= HLS_CONVERSION_CUTOFF_MB) {
+      const progressiveReason = progressive
+        ? `progressive=true requested (${normalizedFileSizeMB.toFixed(2)}MB)`
+        : `Normalized file size (${normalizedFileSizeMB.toFixed(2)}MB) <= ${HLS_CONVERSION_CUTOFF_MB}MB`;
+      console.log(`[${jobId}] [ROUTE] ${progressiveReason}, uploading as progressive video`);
       updateProgressSafe(jobId, 80, 'Storing progressive video...');
 
+      // The 10 minute budget was sized for the ≤50MB automatic path; an
+      // explicitly requested progressive upload can be arbitrarily large, so it
+      // gets the same budget as the HLS path.
       const cidOutput = await executeLeitherOperationWithProgress(
         `ipfs add ${escapeShellArg(normalizedFilePath)}`,
         jobId,
         80,
         100,
         'Storing progressive video...',
-        600000
+        progressive ? 6 * 60 * 60 * 1000 : 600000
       );
       cid = extractCidFromLeitherOutput(cidOutput);
       if (!cid) {
@@ -2901,7 +2914,7 @@ router.post('/convert-video', async (req, res) => {
     const uploadedFile = req.files.videoFile;
     console.log(`[${jobId}] [UPLOAD-DEBUG] File received: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
     console.log(`[${jobId}] [UPLOAD-DEBUG] File path: ${uploadedFile.tempFilePath}`);
-    console.log(`[${jobId}] [SERVER-UPLOAD] File ready for background conversion: name="${uploadedFile.name}", sizeMB=${(uploadedFile.size / (1024 * 1024)).toFixed(2)}, mimetype="${uploadedFile.mimetype || 'unknown'}", noResample=${req.body ? req.body.noResample : 'unknown'}`);
+    console.log(`[${jobId}] [SERVER-UPLOAD] File ready for background conversion: name="${uploadedFile.name}", sizeMB=${(uploadedFile.size / (1024 * 1024)).toFixed(2)}, mimetype="${uploadedFile.mimetype || 'unknown'}", noResample=${req.body ? req.body.noResample : 'unknown'}, progressive=${req.body ? req.body.progressive : 'unknown'}`);
     
     // Send immediate response with job ID
     const responseSentTime = Date.now();

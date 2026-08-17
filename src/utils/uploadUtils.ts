@@ -229,15 +229,16 @@ export async function normalizeVideo(
  * @param cloudDrivePort The cloud drive port to use for the endpoint
  * @param onProgress Optional progress callback function
  * @param noResample Optional boolean to control whether to resample the video (default: false)
+ * @param progressive Optional boolean to store the video as a single progressive file instead of HLS (default: false)
  * @returns Promise<string> The CID of the uploaded video
  */
 export async function uploadVideo(
-  file: File, 
-  baseUrl: string, 
+  file: File,
+  baseUrl: string,
   cloudDrivePort: string,
   onProgress?: (progress: number) => void,
   noResample: boolean = false,
-  retryCount: number = 0
+  progressive: boolean = false
 ): Promise<VideoUploadResponse> {
   if (file.size === 0) {
     throw new Error(`File ${file.name} is empty and cannot be uploaded.`);
@@ -265,8 +266,8 @@ export async function uploadVideo(
   const videoUploadUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video`;
   const statusUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video/status`;
   
-  console.log(`[CLIENT-VIDEO-UPLOAD] route=/convert-video file="${file.name}" size=${formatFileSizeMB(file.size)} type="${file.type || 'unknown'}" noResample=${noResample} retry=${retryCount} baseUrl=${baseUrl} endpoint=${videoUploadUrl} statusEndpoint=${statusUrl}`);
-  
+  console.log(`[CLIENT-VIDEO-UPLOAD] route=/convert-video file="${file.name}" size=${formatFileSizeMB(file.size)} type="${file.type || 'unknown'}" noResample=${noResample} progressive=${progressive} baseUrl=${baseUrl} endpoint=${videoUploadUrl} statusEndpoint=${statusUrl}`);
+
   // Create multipart form data
   const formData = new FormData();
   formData.append('videoFile', file);
@@ -274,6 +275,7 @@ export async function uploadVideo(
   formData.append('filesize', file.size.toString());
   formData.append('contentType', file.type);
   formData.append('noResample', noResample.toString());
+  formData.append('progressive', progressive.toString());
   
   console.log(`[CLIENT-UPLOAD-TIMING] Starting upload at ${new Date().toISOString()}`);
   const uploadStartTime = Date.now();

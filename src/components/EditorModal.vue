@@ -36,6 +36,7 @@ const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
 const noResample = ref(false)   // whether to preserve original video quality
+const progressiveVideo = ref(false)  // whether to store video as one progressive file instead of HLS
 const isQuoting = ref(false)    // whether to also post as a quote tweet (comment mode only)
 const showEditorOptions = ref(false)
 const tweetStore = useTweetStore()
@@ -228,7 +229,7 @@ async function uploadAttachedFiles(
           const ipAddress = rawWritableHost.includes(':') ? rawWritableHost.split(':')[0] : rawWritableHost;
           const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
 
-          console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value}`);
+          console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value} progressive=${progressiveVideo.value}`);
 
           const serviceAvailable = await checkServiceAvailability(baseUrl);
           if (!serviceAvailable) {
@@ -243,7 +244,8 @@ async function uploadAttachedFiles(
               baseUrl,
               cloudDrivePort,
               (progress) => { uploadProgress[i] = progress; },
-              noResample.value
+              noResample.value,
+              progressiveVideo.value
             ),
             file.name
           );
@@ -754,6 +756,10 @@ function handleDragEnd() {
               <label class='toolbar-option' for='noresample-checkbox' :title="$t('editor.preserveQualityTitle')">
                 <input type='checkbox' v-model='noResample' id='noresample-checkbox'>
                 <span>{{ $t('editor.preserveQuality') }}</span>
+              </label>
+              <label class='toolbar-option' for='progressive-checkbox' :title="$t('editor.progressiveVideoTitle')">
+                <input type='checkbox' v-model='progressiveVideo' id='progressive-checkbox'>
+                <span>{{ $t('editor.progressiveVideo') }}</span>
               </label>
               <label v-if='!isEditing && tweetId' class='toolbar-option' for='quoting-checkbox'>
                 <input type='checkbox' v-model='isQuoting' id='quoting-checkbox'>

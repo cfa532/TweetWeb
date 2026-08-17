@@ -159,6 +159,8 @@
     "quoteTweet": "Quote Tweet",
     "preserveQuality": "Preserve Quality",
     "preserveQualityTitle": "Preserve original video quality without resampling (larger file size)",
+    "progressiveVideo": "Progressive Video",
+    "progressiveVideoTitle": "Upload video as a single progressive file instead of an HLS stream",
     "resubmit": "Re-submit",
     "loginToPost": "Please log in to post a tweet",
     "tweetUploaded": "Tweet uploaded successfully!",

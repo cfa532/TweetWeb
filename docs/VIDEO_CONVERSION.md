@@ -57,6 +57,10 @@ The system uses a streamlined normalization approach for all videos:
 ### Decision Tree
 
 ```
+0. Check progressive parameter
+   ├─ YES: Normalize to MP4 and store that single file (mediaType=video), no HLS
+   └─ NO: Continue (HLS is used once the normalized file exceeds 50MB)
+
 1. Check noResample parameter
    ├─ YES: Use copy mode (-c:v copy -c:a copy)
    └─ NO: Continue to normalization
