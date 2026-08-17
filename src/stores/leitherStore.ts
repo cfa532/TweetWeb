@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
+import { markRaw } from 'vue';
 import ConnectionPoolManager from '@/utils/connectionPool';
 import { isPublicWebGatewayHost } from '@/utils/browserNetwork';
+import { orderEntryRoutes } from '@/utils/entryRoutes';
+import { createEntryClient, DEFAULT_ENTRY_TIMEOUT_MS } from '@/utils/entryClient';
 
 const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGetAllKeys",
     "MFOpenByPath","DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs",
@@ -13,24 +16,52 @@ const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGe
     "MMGetRefs", "Hdel", "DhtFindPeer", "Logout", "MiMeiPublish", "MMSetRight",
 ];
 
-function getCurNodeIP() {
-    let ip = "127.0.0.1:4800"
+/**
+ * Ordered entry-node candidates, best first.
+ *
+ * The boot page publishes every address it knows, grouped by node;
+ * orderEntryRoutes turns that into a list whose consecutive entries are
+ * different nodes, so the client below can fail over to a machine that is not
+ * down for the same reason as the one that just failed. Only the single winner
+ * used to survive this step, which left nothing to fail over to.
+ */
+function getEntryRoutes(): string[] {
+    // A configured node is the entire list: it exists to pin every request to
+    // one machine, and failing over would defeat the point of setting it.
+    if (import.meta.env.VITE_LEITHER_NODE) return [import.meta.env.VITE_LEITHER_NODE]
+
     // getParam is a Leither function
-    if (window.getParam != null){
-        let p=window.getParam()
-        ip = p["ips"][p.CurNode]
+    if (window.getParam != null) {
+        const p = window.getParam()
         console.log(p)
-    } else if (window.location.host != ""){
-        ip = window.location.host
-        console.log("window.location", ip)
+        const routes = orderEntryRoutes(p, window.location.hostname)
+        if (routes.length > 0) return routes
     }
-    // replace IP with testing node if defined
-    return import.meta.env.VITE_LEITHER_NODE ? import.meta.env.VITE_LEITHER_NODE : ip
+
+    // Served by something that is not a Leither boot page — the public gateway,
+    // or a dev server. That origin is the only entry there is.
+    if (window.location.host != "") {
+        console.log("window.location", window.location.host)
+        return [window.location.host]
+    }
+    return ["127.0.0.1:4800"]
 };
-const curIP = getCurNodeIP();
+const entryRoutes = getEntryRoutes();
 
 // Create a singleton connection pool manager
 const connectionPool = new ConnectionPoolManager(ayApi);
+
+/**
+ * The gateway terminates TLS for the app and proxies to a node, so its own
+ * protocol is the one to keep. Every other origin talks to node addresses
+ * directly over plain HTTP.
+ */
+function createHproseClient(address: string) {
+    const protocol = isPublicWebGatewayHost(window.location.hostname) ? window.location.protocol : 'http:';
+    const client = window.hprose.Client.create(protocol + "//" + address + "/webapi/", ayApi);
+    client.timeout = DEFAULT_ENTRY_TIMEOUT_MS;
+    return client;
+}
 
 export const useLeitherStore = defineStore({
     id: 'LeitherApiHandler', 
@@ -38,18 +69,18 @@ export const useLeitherStore = defineStore({
         sid: "",
         appId: import.meta.env.VITE_MIMEI_APPID,
         returnUrl: "",
-        hostIP: curIP,    // IP address of node to write
-        baseUrl: window.location.protocol+'//'+curIP+'/',
-        client: (() => {
-            const protocol = isPublicWebGatewayHost(window.location.hostname) ? window.location.protocol : 'http:';
-            const c = window.hprose.Client.create(protocol + "//" + curIP + "/webapi/", ayApi);
-            c.timeout = 15000;
-            return c;
-        })(),
-        // client: window.hprose.Client.create("ws://" + curIP +"/ws/", ayApi),
+        entryRoutes,      // ordered entry-node candidates, one node after another
+        // markRaw: the client is a Proxy that answers every property with an RPC
+        // wrapper, so Vue must not walk it looking for reactive internals.
+        client: markRaw(createEntryClient({ routes: entryRoutes, createClient: createHproseClient })),
         logoUrl: import.meta.env.VITE_APP_LOGO,
         connectionPool: connectionPool as ConnectionPoolManager,
     }),
+    getters: {
+        /** Address of the entry node currently answering; rotates on failover. */
+        hostIP: (state): string => state.client.ip,
+        baseUrl: (state): string => window.location.protocol + '//' + state.client.ip + '/',
+    },
     actions: {
         /**
          * Get a client from the connection pool
