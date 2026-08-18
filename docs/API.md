@@ -177,7 +177,7 @@ Upload and convert a video file to HLS format.
 |-----------|------|----------|-------------|
 | `videoFile` | File | Yes | Video file to convert |
 | `noResample` | Boolean | No | Skip conversion, use copy mode (default: false) |
-| `progressive` | Boolean | No | Store the normalized MP4 as a single progressive file instead of converting to HLS, regardless of size (default: false) |
+| `progressive` | Boolean | No | Store the normalized MP4 as a single progressive file instead of converting to HLS, regardless of size (default: false). Caps the upload at 1GB instead of 4GB |
 
 **Supported Video Formats**:
 - MP4 (.mp4)
@@ -191,7 +191,7 @@ Upload and convert a video file to HLS format.
 - 3GP (.3gp)
 - OGV (.ogv)
 
-**File Size Limit**: 4GB
+**File Size Limit**: 4GB (1GB when `progressive=true`)
 
 #### Response (Immediate)
 

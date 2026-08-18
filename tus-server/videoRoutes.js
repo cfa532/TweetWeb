@@ -23,6 +23,11 @@ const REFERENCE_720P_BITRATE = 2500;
 const HLS_AUDIO_BITRATE = 128;
 const HLS_AUDIO_BITRATE_BPS = HLS_AUDIO_BITRATE * 1000;
 const HLS_CONVERSION_CUTOFF_MB = 50;
+// A progressive video is fetched and played back as one file rather than in
+// segments, so it is capped well below the 4GB HLS ceiling and its store step
+// gets a bounded budget instead of the multi-hour one the HLS path needs.
+const PROGRESSIVE_MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
+const PROGRESSIVE_STORE_TIMEOUT_MS = 20 * 60 * 1000;  // 20 minutes
 
 function calculateVideoBitrateK(referenceResolution) {
   const resolution = Math.max(1, Number(referenceResolution) || 0);
@@ -1921,12 +1926,6 @@ async function processVideoUploadInternal(req, jobId) {
     uploadedFile = req.files.videoFile;
     console.log(`[${jobId}] [INFO] Received video: name='${uploadedFile.name}', size=${uploadedFile.size}, type='${uploadedFile.mimetype}'`);
 
-    const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
-    if (uploadedFile.size > maxFileSize) {
-      console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
-      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 4GB.`);
-    }
-
     const noResample = req.body.noResample === 'true' || req.body.noResample === true;
     console.log(`[${jobId}] [INFO] noResample parameter: ${noResample}`);
 
@@ -1935,6 +1934,12 @@ async function processVideoUploadInternal(req, jobId) {
     // stored file stays a faststart MP4 (noResample still controls quality).
     const progressive = req.body.progressive === 'true' || req.body.progressive === true;
     console.log(`[${jobId}] [INFO] progressive parameter: ${progressive}`);
+
+    const maxFileSize = progressive ? PROGRESSIVE_MAX_FILE_SIZE : 4 * 1024 * 1024 * 1024;
+    if (uploadedFile.size > maxFileSize) {
+      console.error(`[${jobId}] [ERROR] File size ${uploadedFile.size} exceeds limit of ${maxFileSize}`);
+      throw new Error(`File size ${(uploadedFile.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of ${progressive ? '1GB for progressive video' : '4GB'}.`);
+    }
 
     const allowedTypes = [
       'video/mp4', 'video/avi', 'video/mov', 'video/quicktime', 'video/mkv', 
@@ -2455,15 +2460,15 @@ playlist.m3u8`;
       updateProgressSafe(jobId, 80, 'Storing progressive video...');
 
       // The 10 minute budget was sized for the ≤50MB automatic path; an
-      // explicitly requested progressive upload can be arbitrarily large, so it
-      // gets the same budget as the HLS path.
+      // explicitly requested progressive upload can be up to 1GB, so it gets the
+      // longer PROGRESSIVE_STORE_TIMEOUT_MS budget.
       const cidOutput = await executeLeitherOperationWithProgress(
         `ipfs add ${escapeShellArg(normalizedFilePath)}`,
         jobId,
         80,
         100,
         'Storing progressive video...',
-        progressive ? 6 * 60 * 60 * 1000 : 600000
+        progressive ? PROGRESSIVE_STORE_TIMEOUT_MS : 600000
       );
       cid = extractCidFromLeitherOutput(cidOutput);
       if (!cid) {

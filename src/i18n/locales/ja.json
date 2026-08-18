@@ -165,7 +165,7 @@
     "preserveQuality": "画質を保持",
     "preserveQualityTitle": "元の動画画質を保持（ファイルサイズが大きくなります）",
     "progressiveVideo": "プログレッシブ動画",
-    "progressiveVideoTitle": "HLS ストリームではなく、単一のプログレッシブファイルとしてアップロード",
+    "progressiveVideoTitle": "HLS ストリームではなく、単一のプログレッシブファイルとしてアップロード（最大 1GB）",
     "resubmit": "再送信",
     "loginToPost": "ツイートを投稿するにはログインしてください",
     "tweetUploaded": "ツイートのアップロードに成功しました！",

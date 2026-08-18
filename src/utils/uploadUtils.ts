@@ -244,10 +244,11 @@ export async function uploadVideo(
     throw new Error(`File ${file.name} is empty and cannot be uploaded.`);
   }
 
-  // Validate file size (4GB limit to match backend)
-  const maxFileSize = 4 * 1024 * 1024 * 1024; // 4GB
+  // Validate file size (limits match the backend: progressive files are fetched
+  // and played whole, so they are capped well below the 4GB HLS ceiling)
+  const maxFileSize = progressive ? 1024 * 1024 * 1024 : 4 * 1024 * 1024 * 1024;
   if (file.size > maxFileSize) {
-    throw new Error(`File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of 4GB.`);
+    throw new Error(`File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the maximum allowed size of ${progressive ? '1GB for progressive video' : '4GB'}.`);
   }
   
   // Validate baseUrl

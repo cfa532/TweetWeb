@@ -165,7 +165,7 @@
     "preserveQuality": "保留画质",
     "preserveQualityTitle": "保留原始视频画质（文件更大）",
     "progressiveVideo": "渐进式视频",
-    "progressiveVideoTitle": "以单个渐进式文件上传视频，而不是 HLS 流",
+    "progressiveVideoTitle": "以单个渐进式文件上传视频，而不是 HLS 流（最大 1GB）",
     "resubmit": "重新提交",
     "loginToPost": "请登录以发布推文",
     "tweetUploaded": "推文上传成功！",
