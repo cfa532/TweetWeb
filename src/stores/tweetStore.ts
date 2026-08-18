@@ -327,6 +327,14 @@ function tweetForSessionStorage(tweet: any): any {
             cached.originalTweet.author = userForSessionStorage(cached.originalTweet.author)
         }
     }
+    // Every comment carries the parent's author here, and resolveTweetStorageAuthor
+    // returns it first — ahead of all the re-derivation below it. Left raw, a comment
+    // restored from cache would route its mutations through whatever node was correct
+    // when it was written. Routes are re-derived from hostIds via NodePool, so
+    // stripping them costs nothing.
+    if (cached.interactionHostAuthor) {
+        cached.interactionHostAuthor = userForSessionStorage(cached.interactionHostAuthor)
+    }
     return cached
 }
 
