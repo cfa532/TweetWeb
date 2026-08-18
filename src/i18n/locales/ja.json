@@ -95,6 +95,7 @@
   "tweet": {
     "noMorePosts": "これ以上の投稿はありません",
     "noMoreComments": "これ以上のコメントはありません",
+    "noComments": "まだコメントはありません",
     "showNewTweets": "{count}件の新しいツイート",
     "showNewTweetCapped": "{count}件の新しいツイート",
     "showNewTweetsCapped": "{count}件の新しいツイート",

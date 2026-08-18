@@ -29,6 +29,14 @@ const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
 const isLoading = ref(false)
+// True while the initial comment fetch is in flight. Capped at
+// COMMENT_SPINNER_CAP_MS so a slow node cannot hold the spinner indefinitely.
+const isLoadingComments = ref(false)
+const COMMENT_SPINNER_CAP_MS = 6000
+// The tweet whose comments this screen shows: a pure retweet displays the
+// original's comments, everything else its own.
+const commentOwner = computed(() => (isRetweet.value ? originTweet.value : tweet.value))
+const displayedComments = computed(() => commentOwner.value?.comments ?? [])
 const loadError = ref(false)
 const tweetNotFound = ref(false)
 const hasLoadAttempted = ref(false)
@@ -353,7 +361,12 @@ async function showTweet(myGeneration: number) {
         document.title = formattedTitle.value
         isLoading.value = false
 
+        // Serve cached comments first, then fetch. loadComments mutates in place, so
+        // the hydrate needs its own triggerRef to reach the view.
+        if (tweetStore.hydrateCachedComments(tweet.value)) triggerRef(tweet)
+
         // Load comments and additional data in parallel (truly non-blocking)
+        isLoadingComments.value = true
         const loadPromises = []
 
         // Load original tweet if needed
@@ -368,6 +381,7 @@ async function showTweet(myGeneration: number) {
                     if (!tweetHasOwnBody(tweet.value) && originTweet.value) {
                         // Pure retweet (no added content): show the original's comments.
                         isRetweet.value = true
+                        if (tweetStore.hydrateCachedComments(originTweet.value)) triggerRef(originTweet)
                         await tweetStore.loadComments(originTweet.value)
                     } else {
                         // Quote-retweet: comments belong to the outer tweet.
@@ -387,8 +401,18 @@ async function showTweet(myGeneration: number) {
             })())
         }
 
-        // Await comments loading, then trigger Vue reactivity
-        await Promise.allSettled(loadPromises)
+        // Await comments loading, then trigger Vue reactivity.
+        // The spinner is dropped at the cap even when the fetch is still running —
+        // JS promises are not cancellable, so racing a timer is exactly the "stop
+        // waiting, don't stop working" behaviour we want; the comments still render
+        // when they land. The sequencing below still waits for the real result,
+        // because `isRetweet` is decided inside these promises.
+        const commentsSettled = Promise.allSettled(loadPromises)
+        void Promise.race([
+            commentsSettled,
+            new Promise(resolve => setTimeout(resolve, COMMENT_SPINNER_CAP_MS)),
+        ]).then(() => { isLoadingComments.value = false })
+        await commentsSettled
         // A retry may have started (and possibly already finished) while the
         // above awaits were pending; bail out so this stale call doesn't
         // duplicate observers/timers on top of the newer attempt's.
@@ -1088,25 +1112,33 @@ function retryLoad() {
     </div>
 
     <!-- Comment list — reuses the same TweetList component as the main feed -->
-    <div v-if="tweet" :class="['comment-list', 'mt-3', { 'has-comments': isRetweet ? originTweet?.comments?.length : tweet.comments?.length }]">
+    <div v-if="tweet" :class="['comment-list', 'mt-3', { 'has-comments': displayedComments.length }]">
+        <!--
+          Display order, shared with Android TweetDetailScreen and iOS CommentListView:
+          comments in hand win; otherwise commentCount decides whether an empty list is
+          worth waiting for. That counter is a convenience value and can disagree with
+          reality, so it only governs whether to *wait* — the page-0 fetch runs
+          regardless and fills the list if the count was wrong.
+        -->
         <TweetList
-            v-if="isRetweet && originTweet?.comments?.length"
-            :tweets="originTweet.comments"
+            v-if="displayedComments.length"
+            :tweets="displayedComments"
             :is-comment="true"
-            :parent-tweet="originTweet"
+            :parent-tweet="commentOwner"
         />
-        <TweetList
-            v-else-if="!isRetweet && tweet.comments?.length"
-            :tweets="tweet.comments"
-            :is-comment="true"
-            :parent-tweet="tweet"
-        />
+        <div v-else-if="isLoadingComments && (commentOwner?.commentCount ?? 0) > 0"
+             class="d-flex justify-content-center my-3">
+            <LoadingSpinner />
+        </div>
+        <div v-else class="text-center text-muted small py-4">
+            {{ $t('tweet.noComments') }}
+        </div>
         <!-- Infinite scroll sentinel — becoming visible triggers next page load -->
         <div ref="commentBottomSentinel" class="comment-sentinel"></div>
         <div v-if="isLoadingMoreComments" class="d-flex justify-content-center my-2">
             <LoadingSpinner />
         </div>
-        <div v-if="!hasMoreComments && (isRetweet ? originTweet?.comments?.length : tweet.comments?.length)"
+        <div v-if="!hasMoreComments && displayedComments.length"
              class="text-center text-muted small py-3">
             {{ $t('tweet.noMoreComments') }}
         </div>

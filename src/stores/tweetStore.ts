@@ -10,7 +10,7 @@ import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 const GUEST_ID = "000000000000000000000000000"
-const LOCAL_TWEET_CACHE_TTL = 72 * 60 * 60 * 1000
+const LOCAL_TWEET_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
 const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
 const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fast; see getFreshHealthStatus
@@ -33,6 +33,13 @@ const UPDATE_TWEET_TIMEOUT_MS = 30_000
 type ExpiringLocalCache<T> = {
     cachedAt: number
     value: T
+}
+
+// Comment lists are cached under their parent's mid, matching Android's
+// `saveCommentsByParent` and iOS's `TweetDetailCommentsCache`. Same store and same
+// TTL as every other cached tweet, so they expire with everything else.
+function commentsCacheKey(parentTweetId: string): string {
+    return `comments_${parentTweetId}`
 }
 
 type SavedListType = 'bookmark_list' | 'favorite_list'
@@ -3471,6 +3478,34 @@ export const useTweetStore = defineStore('tweetStore', {
                 this._decorateCommentAuthors(tweet, comments, tweetProvider)
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
+            this.cacheComments(tweet)
+        },
+
+        /** Persist a tweet's comment list so a reload paints before the network answers. */
+        cacheComments(tweet: Tweet) {
+            if (!tweet?.mid) return
+            try {
+                setLocalCache(
+                    commentsCacheKey(tweet.mid),
+                    (tweet.comments ?? []).map(c => tweetForSessionStorage(c))
+                )
+            } catch (e) {
+                console.warn("Failed to cache comments to localStorage:", e)
+            }
+        },
+
+        /**
+         * Serve the cached comment list for a tweet, if any, so the detail view paints
+         * from localStorage before the fetch returns. Mirrors the cache-first page-0
+         * path in Android's TweetDetailScreen and iOS's commentFetcher.
+         * @returns true when the list was filled from cache (caller should triggerRef)
+         */
+        hydrateCachedComments(tweet: Tweet | undefined): boolean {
+            if (!tweet?.mid || tweet.comments?.length) return false
+            const cached = getLocalCache<any[]>(commentsCacheKey(tweet.mid))
+            if (!cached?.length) return false
+            tweet.comments = cached
+            return true
         },
 
         /**
@@ -3541,6 +3576,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
             if (newComments.length > 0) {
                 tweet.comments = [...(tweet.comments ?? []), ...newComments]
+                this.cacheComments(tweet)
 
                 // Load authors asynchronously — same helper as loadComments
                 this._decorateCommentAuthors(tweet, rawComments, tweetProvider)

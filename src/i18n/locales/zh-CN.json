@@ -95,6 +95,7 @@
   "tweet": {
     "noMorePosts": "没有更多帖子了",
     "noMoreComments": "没有更多评论了",
+    "noComments": "还没有评论",
     "showNewTweets": "{count} 条新推文",
     "showNewTweetCapped": "{count} 条新推文",
     "showNewTweetsCapped": "{count} 条新推文",
