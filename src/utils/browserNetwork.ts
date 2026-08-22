@@ -43,6 +43,21 @@ export function isPublicWebGatewayHost(address: string): boolean {
   return host === 'dtweet.com' || host === 'www.dtweet.com' || host === 'dl.dtweet.com'
 }
 
+/**
+ * Whether a host is a Tailscale address: the CGNAT range 100.64.0.0/10 that
+ * tailnet nodes advertise, or a MagicDNS `*.ts.net` name.
+ */
+export function isTailscaleHost(address: string): boolean {
+  const host = hostFromAddress(address)
+  if (!host) return false
+  if (host.endsWith('.ts.net')) return true
+
+  const octets = ipv4Octets(host)
+  if (!octets) return false
+  const [a, b] = octets
+  return a === 100 && b >= 64 && b <= 127
+}
+
 /** Whether a browser treats this host as local/private rather than public. */
 export function isPrivateBrowserHost(address: string): boolean {
   const host = hostFromAddress(address)
@@ -74,6 +89,13 @@ export function isPrivateBrowserHost(address: string): boolean {
  */
 export function browserUsableProviderRoutes(addresses: string[], originHostname: string): string[] {
   const publicGateway = isPublicWebGatewayHost(originHostname)
+  // A page on the open internet cannot open a tailnet route at all — Chrome
+  // refuses the request as a more-private address space — so a node reachable
+  // only over Tailscale is not reachable from here, and keeping its address
+  // costs the caller a probe and a failover slot before the real error shows.
+  // Pages served from a private address keep tailnet routes: there both sides
+  // are in the same address space and those routes are the way in.
+  const originIsPublic = !isPrivateBrowserHost(originHostname)
   const seen = new Set<string>()
 
   return addresses
@@ -84,6 +106,7 @@ export function browserUsableProviderRoutes(addresses: string[], originHostname:
     // when the app is embedded or opened through a legacy Leither hostname.
     .filter(address => !isPublicWebGatewayHost(address))
     .filter(address => !publicGateway || !isPrivateBrowserHost(address))
+    .filter(address => !originIsPublic || !isTailscaleHost(address))
     .filter(address => {
       if (seen.has(address)) return false
       seen.add(address)

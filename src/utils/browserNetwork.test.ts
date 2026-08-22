@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { browserUsableProviderRoutes, isPrivateBrowserHost, isPublicWebGatewayHost } from './browserNetwork'
+import { browserUsableProviderRoutes, isPrivateBrowserHost, isPublicWebGatewayHost, isTailscaleHost } from './browserNetwork'
 
 describe('browser provider route eligibility', () => {
   it('keeps later public routes and rejects private routes from a public origin', () => {
@@ -22,11 +22,29 @@ describe('browser provider route eligibility', () => {
     ])
   })
 
-  it('retains node routes for legacy public Leither hosts', () => {
+  it('drops tailnet routes for legacy public Leither hosts', () => {
+    expect(browserUsableProviderRoutes([
+      '100.79.13.15:8002',
+      '100.89.71.56:8080',
+      '220.184.34.132:8002',
+    ], 't1.fireshare.us')).toEqual(['220.184.34.132:8002'])
+  })
+
+  it('keeps non-tailnet private routes for legacy public Leither hosts', () => {
+    expect(browserUsableProviderRoutes([
+      '192.168.5.4:8080',
+      '220.184.34.132:8002',
+    ], 't1.fireshare.us')).toEqual([
+      '192.168.5.4:8080',
+      '220.184.34.132:8002',
+    ])
+  })
+
+  it('keeps tailnet routes when the page is served from a LAN address', () => {
     expect(browserUsableProviderRoutes([
       '100.79.13.15:8002',
       '220.184.34.132:8002',
-    ], 't1.fireshare.us')).toEqual([
+    ], '192.168.5.4')).toEqual([
       '100.79.13.15:8002',
       '220.184.34.132:8002',
     ])
@@ -44,6 +62,16 @@ describe('browser provider route eligibility', () => {
     expect(isPublicWebGatewayHost('dl.dtweet.com')).toBe(true)
     expect(isPublicWebGatewayHost('t1.fireshare.us')).toBe(false)
     expect(isPublicWebGatewayHost('t1.www3.shop')).toBe(false)
+  })
+
+  it('recognizes Tailscale CGNAT addresses and MagicDNS names', () => {
+    expect(isTailscaleHost('100.89.71.56:8080')).toBe(true)
+    expect(isTailscaleHost('100.64.0.1')).toBe(true)
+    expect(isTailscaleHost('100.127.255.254')).toBe(true)
+    expect(isTailscaleHost('node.tail1234.ts.net:8080')).toBe(true)
+    expect(isTailscaleHost('100.128.0.1')).toBe(false)
+    expect(isTailscaleHost('192.168.5.4:8080')).toBe(false)
+    expect(isTailscaleHost('220.184.34.132:8002')).toBe(false)
   })
 
   it('recognizes private IPv4-with-port and bracketed IPv6 forms', () => {

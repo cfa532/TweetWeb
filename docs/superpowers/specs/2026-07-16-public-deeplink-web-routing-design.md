@@ -79,6 +79,17 @@ is loaded from a public Cloudflare gateway hostname, the helper classifies RFC
 IPv6 routes. The HTTP fallback `t1.www3.shop` remains a legacy Leither host,
 not a gateway host, and retains normal direct route discovery.
 
+RFC 6598/Tailscale routes are the exception to that legacy carve-out: any
+public origin rejects them, gateway host or not. A page on the open internet
+cannot open a tailnet address at all — Chrome refuses it as a more-private
+address space — so a node reachable only over Tailscale is unreachable from
+such a page, and keeping its address only spends the caller's failover budget
+before the real error surfaces. This matters most for writes, where
+`resolveWritableHostIp` resolves the tweet author's `hostIds[0]` fresh and has
+no pooled route to fall back on. Pages served from a private address (LAN,
+tailnet, localhost) still keep tailnet routes: there both sides share an
+address space.
+
 Provider and node resolution will filter browser-blocked candidates before
 applying any concurrency limit. It will evaluate all usable public candidates
 rather than truncating the raw response first. The first healthy public route
