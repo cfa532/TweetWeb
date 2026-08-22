@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { LoadingSpinner, PageLayout, TweetList } from "@/components";
-import { normalizeMediaType, isBrowserReload, isWeChatBrowser, shouldResyncUser } from '@/lib';
+import { normalizeMediaType, isBrowserReload, isWeChatBrowser } from '@/lib';
 import {
     APP_DOWNLOAD_FALLBACK_QUERY,
     APP_LINK_ORIGIN,
@@ -781,21 +781,20 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
     target.comments = existingComments
 }
 
-async function refreshDetailTarget(target: Tweet | undefined, targetTweetId: MimeiId, targetAuthorId: MimeiId) {
-    const targetAuthor = target?.author ?? await tweetStore.getUser(targetAuthorId)
-    if (!shouldResyncUser(targetAuthor)) {
-        console.log(`[TweetDetail] Skipping refresh_tweet for ${targetTweetId}: read/root nodes do not differ`)
-        return null
-    }
-
-    console.log(`[TweetDetail] Calling refresh_tweet for ${targetTweetId}`)
+// A forced read: the tweet comes from a node rather than from the cache, and
+// fetchTweet writes the answer back over the cached copy the reload just
+// painted. Which RPC serves it is the store's call — refresh_tweet only for an
+// author whose read node differs from root, get_tweet for everyone else.
+async function refreshDetailTarget(targetTweetId: MimeiId, targetAuthorId: MimeiId) {
+    console.log(`[TweetDetail] Refreshing ${targetTweetId} from its provider`)
     const refreshed = await tweetStore.getTweet(targetTweetId, targetAuthorId, false, true, true)
-    console.log(`[TweetDetail] Completed refresh_tweet for ${targetTweetId}`)
+    console.log(`[TweetDetail] Completed refresh for ${targetTweetId}`)
     return refreshed
 }
 
-// Refreshes only detail tweet(s) whose author read node differs from root.
-// Runs in the background after cached/initial content is already shown.
+// Reloading the page is the user asking for current data, so the detail
+// tweet(s) are re-read from the server and re-cached. Runs in the background
+// after the cached/initial content is already shown.
 async function resyncDetailTweets() {
     if (detailResyncInFlight) return
     const now = Date.now()
@@ -809,7 +808,6 @@ async function resyncDetailTweets() {
     if (tweet.value.originalTweetId && tweet.value.originalAuthorId) {
         if (isPureRetweet) {
             const refreshedOriginal = await refreshDetailTarget(
-                originTweet.value,
                 tweet.value.originalTweetId as MimeiId,
                 tweet.value.originalAuthorId as MimeiId
             )
@@ -822,9 +820,8 @@ async function resyncDetailTweets() {
         }
 
         const [refreshedTweet, refreshedOriginal] = await Promise.all([
-            refreshDetailTarget(tweet.value, tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId),
+            refreshDetailTarget(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId),
             refreshDetailTarget(
-                originTweet.value,
                 tweet.value.originalTweetId as MimeiId,
                 tweet.value.originalAuthorId as MimeiId
             ),
@@ -841,7 +838,7 @@ async function resyncDetailTweets() {
         return
     }
 
-    const refreshed = await refreshDetailTarget(tweet.value, tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId)
+    const refreshed = await refreshDetailTarget(tweet.value.mid as MimeiId, tweet.value.authorId as MimeiId)
     if (tweet.value?.mid !== recoveryTweetId) return
     if (refreshed && tweet.value) {
         applyRefreshedTweet(tweet.value, refreshed)

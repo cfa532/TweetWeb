@@ -143,6 +143,48 @@ describe('tweetStore.resyncUser', () => {
         expect(ordinaryRunMApp).toHaveBeenCalledWith('get_tweet', expect.any(Object))
         expect(refreshRunMApp).toHaveBeenCalledWith('refresh_tweet', expect.any(Object))
     })
+
+    it('reads a forced fetch from the node and rewrites the cache when read and root nodes match', async () => {
+        const ordinaryRunMApp = vi.fn().mockResolvedValue({
+            mid: 'tweet-7',
+            authorId: 'user-7',
+            content: 'Fresh read',
+            timestamp: 7,
+            attachments: [],
+        })
+        const rootRunMApp = vi.fn()
+        const user = {
+            mid: 'user-7',
+            username: 'Reader',
+            hostIds: ['root', 'root'],
+            providerIp: '127.0.0.1:1234',
+            client: { RunMApp: rootRunMApp },
+        } as unknown as User
+        const store = useTweetStore()
+        store.getProviderIp = vi.fn().mockResolvedValue('127.0.0.1:1234')
+        store.getUser = vi.fn().mockResolvedValue(user)
+        store.lapi.connectionPool.getConnection = vi.fn().mockResolvedValue({ RunMApp: ordinaryRunMApp })
+        store.lapi.connectionPool.releaseConnection = vi.fn()
+        sessionStorage.setItem('tweet-7', JSON.stringify({
+            mid: 'tweet-7',
+            authorId: 'user-7',
+            author: { mid: 'user-7', hostIds: ['root', 'root'] },
+            content: 'Stale cached read',
+            timestamp: 7,
+            attachments: [],
+        }))
+
+        const refreshed = await store.fetchTweet('tweet-7' as MimeiId, 'user-7' as MimeiId, false, true, true)
+
+        // An author already reading from its root node needs no refresh_tweet, but the
+        // forced fetch must still bypass the cached copy the reload painted.
+        expect(rootRunMApp).not.toHaveBeenCalled()
+        expect(ordinaryRunMApp).toHaveBeenCalledWith('get_tweet', expect.any(Object))
+        expect(refreshed?.content).toBe('Fresh read')
+        // The cache is rewritten once the author resolves, so the next reload paints fresh.
+        await vi.waitFor(() =>
+            expect(JSON.parse(sessionStorage.getItem('tweet-7')!).content).toBe('Fresh read'))
+    })
 })
 
 describe('tweetStore.loadTweetsByUser access node fallback', () => {

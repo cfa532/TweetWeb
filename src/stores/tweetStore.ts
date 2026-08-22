@@ -4,7 +4,7 @@ import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
-import { normalizeMediaType, publicIPv4BaseUrl, v4Only } from '@/lib';
+import { normalizeMediaType, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
 import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -2077,9 +2077,14 @@ export const useTweetStore = defineStore('tweetStore', {
             let author: any, providerClient: any, providerIp: any, tweetInDB: any
 
             if (authorId && forceRefresh) {
-                // Explicit recovery only: resolve the author and synchronize from root.
+                // A forced fetch means "read this from a node, not from the cache", and
+                // the ordinary read below satisfies that on its own. refresh_tweet is
+                // the heavier root-node synchronization, so it stays reserved for the
+                // one case that needs it: an author whose read node is not its root
+                // node. Everyone else falls through and is served by get_tweet, which
+                // the node syncs from root itself via fromdetailview.
                 author = await this.getUser(authorId)
-                if (author && author.providerIp) {
+                if (author && author.providerIp && shouldResyncUser(author)) {
                     providerIp = author.providerIp
                     providerClient = author.client
                     tweetInDB = await providerClient.RunMApp("refresh_tweet", {
