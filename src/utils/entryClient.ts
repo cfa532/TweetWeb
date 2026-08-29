@@ -16,6 +16,10 @@
  * Only a thrown error rotates the route. A null RPC result is an answer from a
  * healthy node ("no providers for this mid"), not a routing failure, and the
  * caller is the one that knows what to do with it.
+ *
+ * Walking on costs nothing when repeating the call is harmless, which every
+ * lookup here is. It is not harmless for a call that writes: see
+ * `callWithoutFailover`.
  */
 
 /** Nodes tried per call before the error is handed back to the caller. */
@@ -69,8 +73,8 @@ export function createEntryClient({
         return client
     }
 
-    const call = async (method: string, args: any[]) => {
-        const attempts = Math.min(candidates.length, Math.max(1, maxAttempts))
+    const call = async (method: string, args: any[], attemptLimit = maxAttempts) => {
+        const attempts = Math.min(candidates.length, Math.max(1, attemptLimit))
         // Walk from where the pointer stood when this call began. Reading the
         // live pointer each time skips nodes, because a failure below moves it
         // and the next offset is then measured from the node already tried.
@@ -116,6 +120,21 @@ export function createEntryClient({
 
             /** Address currently answering; rotates on failover. */
             if (prop === 'ip') return candidates[activeIndex]
+
+            /**
+             * One attempt on the route answering now, with no failover, for a call that
+             * must not run twice. Retrying a write is not a free retry: `register`
+             * creates the account, so a node that runs past the timeout still finishes
+             * it, and the next node then reports the username as taken — for the account
+             * the caller just made. iOS and Android make this call once against a single
+             * node; this keeps the web the same.
+             *
+             * Takes the RPC method first because every app entry goes out as `RunMApp`,
+             * so the entry name is an argument and cannot select this by itself.
+             */
+            if (prop === 'callWithoutFailover') {
+                return (method: string, ...args: any[]) => call(method, args, 1)
+            }
 
             return (...args: any[]) => call(prop, args)
         },

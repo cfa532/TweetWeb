@@ -102,9 +102,51 @@ describe('entry client failover', () => {
 
         client.timeout = 30000
         expect(client.timeout).toBe(30000)
-        await client.RunMApp('register', {})
+        await client.RunMApp('get_provider_ips', {})
 
         expect(timeouts).toEqual({ 'a:80': 30000, 'b:80': 30000 })
+    })
+
+    it('does not retry a no-failover call on another node', async () => {
+        const { createClient, calls } = fakeNodes({
+            'a:80': down,
+            'b:80': () => 'from b',
+        })
+        const client = createEntryClient({ routes: ['a:80', 'b:80'], createClient })
+
+        // register creates the account even when the caller times out, so the second
+        // node would answer "Username is taken" for the account this call just made.
+        await expect(client.callWithoutFailover('RunMApp', 'register', {}))
+            .rejects.toThrow('connection refused')
+        expect(calls).toEqual(['a:80:RunMApp'])
+    })
+
+    it('passes the entry name and args through a no-failover call', async () => {
+        const seen: any[] = []
+        const createClient = () => ({
+            timeout: 0,
+            RunMApp: async (...args: any[]) => { seen.push(args); return 'ok' },
+        })
+        const client = createEntryClient({ routes: ['a:80'], createClient })
+
+        await expect(client.callWithoutFailover('RunMApp', 'register', { aid: 'x' }))
+            .resolves.toBe('ok')
+        expect(seen).toEqual([['register', { aid: 'x' }]])
+    })
+
+    it('carries the caller-set timeout onto a no-failover call', async () => {
+        const timeouts: Record<string, number> = {}
+        const createClient = (address: string) => ({
+            set timeout(value: number) { timeouts[address] = value },
+            get timeout() { return timeouts[address] },
+            RunMApp: async () => 'ok',
+        })
+        const client = createEntryClient({ routes: ['a:80'], createClient })
+
+        client.timeout = 30000
+        await client.callWithoutFailover('RunMApp', 'register', {})
+
+        expect(timeouts).toEqual({ 'a:80': 30000 })
     })
 
     it('reuses one underlying client per address', async () => {

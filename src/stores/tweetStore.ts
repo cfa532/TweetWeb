@@ -29,6 +29,12 @@ const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
 const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
 const UPDATE_TWEET_TIMEOUT_MS = 30_000
+// `register` is the heaviest entry the app calls: creating an account costs two MMCreate
+// calls, a DHT get_provider_ip lookup for the username uniqueness check, an MMBackup, a
+// MiMeiPublish and a node_update_score. Measured end-to-end in the entry node's own log it
+// ranges from 4s to 25s, so the ordinary budget cuts it off while the server is still
+// working — and the server finishes anyway, leaving an account the user was told failed.
+const REGISTER_TIMEOUT_MS = 30_000
 
 type ExpiringLocalCache<T> = {
     cachedAt: number
@@ -5087,10 +5093,13 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             const originalTimeout = this.lapi.client.timeout
-            this.lapi.client.timeout = 15000
+            this.lapi.client.timeout = REGISTER_TIMEOUT_MS
             let ret
             try {
-                ret = await this.lapi.client.RunMApp("register", {
+                // No failover: a register that overruns the timeout is still completed by
+                // the node, so a second node would answer "Username is taken" for the
+                // account this call just created. One node, one attempt, as on iOS/Android.
+                ret = await this.lapi.client.callWithoutFailover("RunMApp", "register", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
