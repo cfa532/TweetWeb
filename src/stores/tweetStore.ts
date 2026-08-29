@@ -293,13 +293,65 @@ function firstNodePoolIp(mid: unknown): string | undefined {
 }
 
 /**
- * True when a user's read route is already its own write host — put there by a
- * successful write (adoptWriteRouteForReads). Every other route source knows only the
- * access node, which is exactly the copy that has not caught up yet, so they must leave
- * this route alone. It ends on its own: any health failure re-resolves the user.
+ * Where each user's requests currently go.
+ *
+ * A route is not a property of a user. It is where the app can reach that user's data
+ * right now, and it changes with node health, discovery and writes. Held on the user
+ * object it could be rewritten by anything that copies, caches or re-renders a user, so
+ * it lives here instead, keyed by user id. The object keeps `providerIp`/`client` as a
+ * mirror the rendering code reads; only `applyUserRoute` writes them.
+ *
+ * Three facts per user, and the precedence between them is the whole rule:
+ * - `access` — the ordinary read route (the access node), from discovery, the node pool,
+ *   cached tweets and route repair.
+ * - `writable` — the resolved root host, refreshed before every mutation. Used for write
+ *   clients; on its own it changes nothing about reads.
+ * - `readsFromWriteHost` — set when a write succeeds. While it holds, reads go to the
+ *   root host, because the access node has not copied that write yet. Any route failure
+ *   drops it, which puts the user back on the access route.
  */
-function holdsWriteRoute(user: any): boolean {
-    return !!user?.providerIp && user.providerIp === user.writableHostIp
+interface UserRoute {
+    access?: string
+    writable?: string
+    readsFromWriteHost?: boolean
+}
+
+const userRoutes = new Map<string, UserRoute>()
+
+function routeEntry(mid: string): UserRoute {
+    let entry = userRoutes.get(mid)
+    if (!entry) {
+        entry = {}
+        userRoutes.set(mid, entry)
+    }
+    return entry
+}
+
+/** The route reads should use. */
+function effectiveRoute(mid: string | undefined): string | undefined {
+    if (!mid) return undefined
+    const entry = userRoutes.get(mid)
+    if (!entry) return undefined
+    return entry.readsFromWriteHost ? (entry.writable ?? entry.access) : entry.access
+}
+
+/** True while a write is being read out of the root host. */
+function isReadingFromWriteHost(mid: string | undefined): boolean {
+    return !!mid && userRoutes.get(mid)?.readsFromWriteHost === true
+}
+
+/** Read from the node that just took a write, until that route stops answering. */
+function readFromWriteHost(mid: string | undefined) {
+    if (!mid) return
+    const entry = routeEntry(mid)
+    if (entry.writable) entry.readsFromWriteHost = true
+}
+
+/** Called when the current route fails, so recovery starts from the access node. */
+function stopReadingFromWriteHost(mid: string | undefined) {
+    if (!mid) return
+    const entry = userRoutes.get(mid)
+    if (entry) entry.readsFromWriteHost = false
 }
 
 function firstUserRouteFromNodePool(user: any): string | undefined {
@@ -424,22 +476,20 @@ function clearStoredUser(userId: string) {
 }
 
 /**
- * Point a user object at a node. This is the only place a read route is assigned, so
- * every rule about read routes lives here — above all that a route which is already the
- * user's own write host is never replaced by a source that only knows the access node.
+ * Record an access-node route for a user and mirror the route reads should take onto the
+ * user object. This is the only place `providerIp`/`client` are written, and it cannot
+ * undo a root host adopted after a write: the table ranks that above any access route.
  *
  * Returns true when the user ends up with a usable route and client.
  */
 function applyUserRoute(user: any, ip: string | undefined | null, connectionPool: any): boolean {
-    if (!user) return false
-    if (holdsWriteRoute(user)) {
-        if (!user.client) user.client = createPooledClient(user.providerIp, connectionPool)
-        return true
-    }
-    if (!ip) return false
-    if (user.providerIp !== ip || !user.client) {
-        user.providerIp = ip
-        user.client = createPooledClient(ip, connectionPool)
+    if (!user?.mid) return false
+    if (ip) routeEntry(user.mid).access = ip
+    const route = effectiveRoute(user.mid) ?? ip
+    if (!route) return false
+    if (user.providerIp !== route || !user.client) {
+        user.providerIp = route
+        user.client = createPooledClient(route, connectionPool)
     }
     if (user.writableHostIp === undefined) {
         user.writableHostIp = null
@@ -2444,9 +2494,9 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async _ensureUserRootHost(user: User): Promise<User> {
             if (!user.hostIds?.length) return user
-            // Keep the route the user already has when it is a post-write route, or when
-            // a probe recently found it healthy.
-            if (holdsWriteRoute(user) || (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true)) {
+            // Keep the route the user already has when a write is being read out of the
+            // root host, or when a probe recently found it healthy.
+            if (isReadingFromWriteHost(user.mid) || (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true)) {
                 applyUserRoute(user, user.providerIp, this.lapi.connectionPool)
                 return user
             }
@@ -2874,6 +2924,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * so the next fetch won't reuse a stale IP while preserving other cached data.
          */
         _nullifyCachedIp(userId: string) {
+            stopReadingFromWriteHost(userId)
             nodePool.invalidate(userId)
             const cached = getStoredUser(userId)
             if (cached) {
@@ -2904,6 +2955,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns the node id that was dropped, or null when there was none.
          */
         dropStaleAccessNode(userId: MimeiId): string | null {
+            stopReadingFromWriteHost(userId)
             const forget = (user: User | undefined | null): string | null => {
                 const rootHostId = user?.hostIds?.[0]
                 const accessNodeId = user?.hostIds?.[1]
@@ -2911,6 +2963,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 user.hostIds = [rootHostId]
                 // The route itself came from the dropped node; re-resolve it too.
                 user.providerIp = undefined
+                userRoutes.delete(user.mid)
                 user.client = undefined
                 return accessNodeId
             }
@@ -4907,6 +4960,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             user.writableHostIp = ip
+            routeEntry(user.mid).writable = ip
             return ip
         },
 
@@ -4924,10 +4978,12 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         adoptWriteRouteForReads(user: User | undefined | null, writableIp: string | undefined | null) {
             const writeHostId = user?.hostIds?.[0]
-            if (!user || !writeHostId || !writableIp) return
+            if (!user?.mid || !writeHostId || !writableIp) return
             // Filed under the write host's own MID — never under the access node, whose
             // entry other users share.
             nodePool.updateNode(writeHostId, [writableIp])
+            routeEntry(user.mid).writable = writableIp
+            readFromWriteHost(user.mid)
             if (user.providerIp === writableIp) return
             user.providerIp = writableIp
             user.client = createPooledClient(writableIp, this.lapi.connectionPool)
