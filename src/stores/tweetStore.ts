@@ -292,6 +292,16 @@ function firstNodePoolIp(mid: unknown): string | undefined {
     return nodePool.getIPForNode(mid) ?? undefined
 }
 
+/**
+ * True when a user's read route is already its own write host — put there by a
+ * successful write (adoptWriteRouteForReads). Every other route source knows only the
+ * access node, which is exactly the copy that has not caught up yet, so they must leave
+ * this route alone. It ends on its own: any health failure re-resolves the user.
+ */
+function holdsWriteRoute(user: any): boolean {
+    return !!user?.providerIp && user.providerIp === user.writableHostIp
+}
+
 function firstUserRouteFromNodePool(user: any): string | undefined {
     const accessNodeId = user?.hostIds?.[1] ?? user?.hostIds?.[0]
     return firstNodePoolIp(accessNodeId)
@@ -413,15 +423,32 @@ function clearStoredUser(userId: string) {
     sessionStorage.removeItem(userId)
 }
 
-function attachNodePoolRoute(user: any, connectionPool: any): boolean {
-    const providerIp = firstUserRouteFromNodePool(user)
-    if (!providerIp) return false
-    user.providerIp = providerIp
-    user.client = createPooledClient(providerIp, connectionPool)
+/**
+ * Point a user object at a node. This is the only place a read route is assigned, so
+ * every rule about read routes lives here — above all that a route which is already the
+ * user's own write host is never replaced by a source that only knows the access node.
+ *
+ * Returns true when the user ends up with a usable route and client.
+ */
+function applyUserRoute(user: any, ip: string | undefined | null, connectionPool: any): boolean {
+    if (!user) return false
+    if (holdsWriteRoute(user)) {
+        if (!user.client) user.client = createPooledClient(user.providerIp, connectionPool)
+        return true
+    }
+    if (!ip) return false
+    if (user.providerIp !== ip || !user.client) {
+        user.providerIp = ip
+        user.client = createPooledClient(ip, connectionPool)
+    }
     if (user.writableHostIp === undefined) {
         user.writableHostIp = null
     }
     return true
+}
+
+function attachNodePoolRoute(user: any, connectionPool: any): boolean {
+    return applyUserRoute(user, firstUserRouteFromNodePool(user), connectionPool)
 }
 
 /**
@@ -2027,12 +2054,10 @@ export const useTweetStore = defineStore('tweetStore', {
                             console.warn(`[fetchTweet] getProviderIp threw for cached tweet ${tweetId} author ${cachedAuthorId}; showing cached content without a live route`, error)
                         }
                     }
-                    if (authorIp) {
-                        t.author.providerIp = authorIp
-                        t.provider = authorIp
-                        t.author.client = createPooledClient(authorIp, this.lapi.connectionPool)
+                    if (applyUserRoute(t.author, authorIp, this.lapi.connectionPool)) {
+                        t.provider = t.author.providerIp
                         if (t.author.avatar) {
-                            t.author.avatar = this.normalizeAvatarUrl(t.author.avatar, `http://${authorIp}`)
+                            t.author.avatar = this.normalizeAvatarUrl(t.author.avatar, `http://${t.author.providerIp}`)
                         }
 
                         const originalAuthorId = t.originalTweet?.author?.mid ?? t.originalTweet?.authorId
@@ -2053,12 +2078,10 @@ export const useTweetStore = defineStore('tweetStore', {
                                     console.warn(`[fetchTweet] getProviderIp threw for cached original tweet author ${originalAuthorId}; keeping cached content without a live route`, error)
                                 }
                             }
-                            if (originalAuthorIp) {
-                                t.originalTweet.author.providerIp = originalAuthorIp
-                                t.originalTweet.provider = originalAuthorIp
-                                t.originalTweet.author.client = createPooledClient(originalAuthorIp, this.lapi.connectionPool)
+                            if (applyUserRoute(t.originalTweet.author, originalAuthorIp, this.lapi.connectionPool)) {
+                                t.originalTweet.provider = t.originalTweet.author.providerIp
                                 if (t.originalTweet.author.avatar) {
-                                    t.originalTweet.author.avatar = this.normalizeAvatarUrl(t.originalTweet.author.avatar, `http://${originalAuthorIp}`)
+                                    t.originalTweet.author.avatar = this.normalizeAvatarUrl(t.originalTweet.author.avatar, `http://${t.originalTweet.author.providerIp}`)
                                 }
                             }
                         }
@@ -2421,24 +2444,17 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async _ensureUserRootHost(user: User): Promise<User> {
             if (!user.hostIds?.length) return user
-            if (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true) {
-                if (!user.client) {
-                    user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
-                }
+            // Keep the route the user already has when it is a post-write route, or when
+            // a probe recently found it healthy.
+            if (holdsWriteRoute(user) || (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true)) {
+                applyUserRoute(user, user.providerIp, this.lapi.connectionPool)
                 return user
             }
             try {
                 const readIp = await this.getUserReadIp(user, false)
-                if (!readIp) return user
-                if (user.providerIp !== readIp) {
-                    user.providerIp = readIp
-                }
-                user.client = createPooledClient(readIp, this.lapi.connectionPool)
+                if (!readIp || !applyUserRoute(user, readIp, this.lapi.connectionPool)) return user
                 if (user.avatar) {
                     user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${readIp}`)
-                }
-                if (user.writableHostIp === undefined) {
-                    user.writableHostIp = null
                 }
 
                 this.users.set(user.mid, user)
@@ -2564,12 +2580,8 @@ export const useTweetStore = defineStore('tweetStore', {
                             if (!providerIp) {
                                 return undefined
                             }
-                            cachedUser.providerIp = providerIp
-                            cachedUser.client = createPooledClient(providerIp, this.lapi.connectionPool)
+                            applyUserRoute(cachedUser, providerIp, this.lapi.connectionPool)
                             cachedUser.avatar = this.normalizeAvatarUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
-                            if (cachedUser.writableHostIp === undefined) {
-                                cachedUser.writableHostIp = null
-                            }
                             this.users.set(userId, cachedUser)
                             // Re-point already-cached media at the route just
                             // resolved, as the race path below does. Previously
@@ -2639,19 +2651,14 @@ export const useTweetStore = defineStore('tweetStore', {
             const providerIp = raceResult.ip
 
             // cache the user data
-            user.providerIp = providerIp
+            applyUserRoute(user, providerIp, this.lapi.connectionPool)
             // Use server's cloudDrivePort if available
             // IMPORTANT: Use nullish coalescing (??) to allow 0 as a valid value (meaning no service)
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
             user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
             setStoredUser(userId, user)
             this._clearFetchFailure(userId)
-            user.client = createPooledClient(providerIp, this.lapi.connectionPool)
             user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
-            // Initialize writableHostIp if not already set
-            if (user.writableHostIp === undefined) {
-                user.writableHostIp = null
-            }
             if (this._user?.mid === userId) {
                 const previousWritableHostIp = this._user.writableHostIp
                 const previousClient = this._user.client
@@ -3351,10 +3358,8 @@ export const useTweetStore = defineStore('tweetStore', {
                         })
                         const ud = (result?.success === true) ? result.data : result
                         if (ud?.mid && ud?.hostIds) {
-                            ud.providerIp = tweetProvider
-                            ud.client = createPooledClient(tweetProvider, this.lapi.connectionPool)
-                            ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${tweetProvider}`)
-                            if (ud.writableHostIp === undefined) ud.writableHostIp = null
+                            applyUserRoute(ud, tweetProvider, this.lapi.connectionPool)
+                            ud.avatar = this.normalizeAvatarUrl(ud.avatar, `http://${ud.providerIp}`)
                             const rooted = await this._ensureUserRootHost(ud as User)
                             this.users.set(authorId, rooted)
                             setAuthor(authorId, rooted)
@@ -3877,6 +3882,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             const isFollowing = parseToggleFollowedV2Result(ret)
+            this.adoptWriteRouteForReads(loginUser, writableIp)
 
             const hadFollowingsCache = this._followings.length > 0
             const wasFollowing = this._followings.includes(followingId)
@@ -3985,6 +3991,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (typeof deletedTweetId !== "string" || !deletedTweetId) {
                     throw new Error("Delete tweet failed: server returned success but no tweetid")
                 }
+                this.adoptWriteRouteForReads(targetAuthor, writableIp)
                 try {
                     this.evictDeletedTweetFromCaches(tweetId)
                 } catch (cacheError) {
@@ -4243,6 +4250,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 commentid: commentId,            // ID of comment to delete
                 hostid: parentAuthor.hostIds[0]      // Node ID where the tweet is hosted
             })
+            this.adoptWriteRouteForReads(parentAuthor, writableIp)
 
             // After successful deletion, remove comment from local cache
             // Helper function to remove comment from a tweet object
@@ -4330,13 +4338,15 @@ export const useTweetStore = defineStore('tweetStore', {
                         const parentOriginalTimeout = parentClient.timeout
                         parentClient.timeout = effectiveTimeout
                         try {
-                            return await parentClient.RunMApp('add_comment', {
+                            const added = await parentClient.RunMApp('add_comment', {
                                 aid: this.appId, ver: 'last', version: 'v2',
                                 tweetid: tweetId,
                                 comment: JSON.stringify(commentPayload),
                                 tweetauthorid: parentAuthor.mid,
                                 hostid: parentAuthorHostId,
                             })
+                            this.adoptWriteRouteForReads(parentAuthor, parentWritableIp)
+                            return added
                         } finally {
                             parentClient.timeout = parentOriginalTimeout
                         }
@@ -4347,11 +4357,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     const writeOriginalTimeout = writeClient.timeout
                     writeClient.timeout = effectiveTimeout
                     try {
-                        return await writeClient.RunMApp('add_tweet', {
+                        const added = await writeClient.RunMApp('add_tweet', {
                             aid: this.appId, ver: 'last',
                             tweet: JSON.stringify(tweet),
                             hostid: loginUser.hostIds?.[0],
                         })
+                        // The tweet is stored on hostIds[0]; read it back from there
+                        // rather than from an access node that has not copied it yet.
+                        this.adoptWriteRouteForReads(loginUser, writableIp)
+                        return added
                     } finally {
                         writeClient.timeout = writeOriginalTimeout
                     }
@@ -4450,6 +4464,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.warn('[updateRetweetCount] Server returned invalid tweet data')
                     return null
                 }
+                this.adoptWriteRouteForReads(storageAuthor, writableIp)
                 // Use server count if available, otherwise fall back to the optimistic step
                 // (the upload/delete already succeeded) — never below zero.
                 const newCount = tweetDict?.retweetCount
@@ -4563,6 +4578,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!ret || !ret.success) {
                     throw new Error(ret?.message || 'Failed to update tweet')
                 }
+                this.adoptWriteRouteForReads(targetAuthor, writableIp)
                 // Update local tweet in store
                 const idx = this.tweets.findIndex(t => t.mid === tweetId)
                 if (idx !== -1) {
@@ -4720,6 +4736,10 @@ export const useTweetStore = defineStore('tweetStore', {
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
             client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
             const ret = await client.RunMApp("toggle_favorite", params)
+            // The tweet's counters live on the author's host; the login user's favorites
+            // list lives on its own (userhostid). Both sides were written.
+            this.adoptWriteRouteForReads(storageAuthor, writableIp)
+            this.adoptWriteRouteForReads(loginUser, loginUser.writableHostIp)
             return this._applyServerTweet(tweet, ret)
         },
         /**
@@ -4746,6 +4766,10 @@ export const useTweetStore = defineStore('tweetStore', {
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
             client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
             const ret = await client.RunMApp("toggle_bookmark", params)
+            // Same split as toggle_favorite: author's host for the tweet, login user's
+            // host for the bookmark list.
+            this.adoptWriteRouteForReads(storageAuthor, writableIp)
+            this.adoptWriteRouteForReads(loginUser, loginUser.writableHostIp)
             return this._applyServerTweet(tweet, ret)
         },
         _applyServerTweet(tweet: Tweet, ret: any): Tweet {
@@ -4837,162 +4861,12 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Checks if an IP address is a local network address
-         * @param ip is full IP address with port
-         * @returns true if the ip is of local network.
-         */
-        isLocalIP(ip: string) {
-            const localPatterns = [
-                /^127\./, // Loopback
-                /^10\./, // Class A private
-                /^192\.168\./, // Class C private
-                /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // Class B private
-            ];
-
-            // IPv6 local patterns
-            const localIPv6Patterns = [
-                /^::1$/, // IPv6 loopback
-                /^fe80:/, // IPv6 link-local
-                /^fc00:/, // IPv6 unique local
-                /^fd00:/, // IPv6 unique local
-            ];
-
-            // Check for IPv4 patterns
-            if (localPatterns.some(pattern => pattern.test(ip))) {
-                return true;
-            }
-
-            // Check for IPv6 patterns (remove port first if present)
-            const ipWithoutPort = ip.replace(/:\d+$/, '');
-            if (localIPv6Patterns.some(pattern => pattern.test(ipWithoutPort))) {
-                return true;
-            }
-
-            return false;
-        },
-
-        /**
          * Checks if a string is empty or null
          * @param str The string to check
          * @returns True if the string is empty, null, or undefined
          */
         isEmptyString(str?: String) {
             return str == null || str == undefined || str.trim() == '';
-        },
-
-        /**
-         * Finds the first accessible IP address from a list of IPs
-         * @param ipList Array of IP addresses to test
-         * @param mid The Mimei ID to test against
-         * @param filterIPv6 Whether to filter out IPv6 addresses
-         * @returns The first accessible IP address or null if none found
-         */
-        async findFirstAccessibleIP(
-            ipList: string[], 
-            mid: string, 
-            filterIPv6 = true,     // filter IPv6 address.
-        ): Promise<string | null> {
-            if (!ipList?.length) {
-                console.error('No IP addresses provided in findFirstAccessibleIP.');
-                return null;
-            }
-            
-            // Filter IPs if needed
-            let processedIpList = [...ipList];
-            if (filterIPv6) {
-                // IPv6 addresses have multiple colons
-                processedIpList = ipList.filter(ip => (ip.match(/:/g) || []).length <= 1);
-                
-                if (!processedIpList.length) {
-                    console.log('No IPv4 addresses found in the list');
-                    return null;
-                }
-            }
-            
-            const fetchWithTimeout = (url: string, timeout = 15000): Promise<any> => {
-                return new Promise((resolve, reject) => {
-                    const controller = new AbortController();
-                    const timer = setTimeout(() => {
-                        controller.abort();
-                        reject(new Error('Request timed out'));
-                    }, timeout);
-                    
-                    fetch(url, { signal: controller.signal })
-                        .then(response => {
-                            if (!response.ok) throw new Error('Network response was not OK');
-                            return response.json();
-                        })
-                        .then(data => {
-                            clearTimeout(timer);
-                            resolve(data);
-                        })
-                        .catch(error => {
-                            clearTimeout(timer);
-                            reject(error);
-                        });
-                });
-            };
-            
-            return new Promise<string | null>((resolve) => {
-                let resolved = false;
-                let pendingRequests = 0;
-                
-                // Function to check if we should resolve with null
-                const checkComplete = () => {
-                    if (!resolved && pendingRequests === 0) {
-                        resolved = true;
-                        resolve(null);
-                    }
-                };
-                
-                // Process each IP
-                processedIpList.forEach(ip => {
-                    if (this.isEmptyString(ip) || this.isLocalIP(ip)) {
-                        return;
-                    }
-                    
-                    pendingRequests++;
-                    const url = `http://${ip}/getvar?name=mmversions&arg0=${mid}`;
-                    
-                    fetchWithTimeout(url)
-                        .then(() => {
-                            if (!resolved) {
-                                resolved = true;
-                                resolve(ip);
-                            }
-                        })
-                        .catch(error => {
-                            console.log(`Error fetching from ${ip}:`, error.message);
-                        })
-                        .finally(() => {
-                            pendingRequests--;
-                            checkComplete();
-                        });
-                });
-                
-                // Set a timeout as a fallback
-                setTimeout(() => {
-                    if (!resolved) {
-                        resolved = true;
-                        resolve(null);
-                    }
-                }, 15000);
-                
-                // Handle the case where all IPs were filtered out
-                if (pendingRequests === 0) {
-                    checkComplete();
-                }
-            });
-        },
-        
-        /**
-         * Finds the first accessible IPv4 address from a list
-         * @param ipList Array of IP addresses to test
-         * @param mid The Mimei ID to test against
-         * @returns The first accessible IPv4 address or null if none found
-         */
-        async findFirstAccessibleIPv4(ipList: string[], mid: string): Promise<string | null> {
-            return await this.findFirstAccessibleIP(ipList, mid, true);
         },
 
         /**
@@ -5034,6 +4908,29 @@ export const useTweetStore = defineStore('tweetStore', {
 
             user.writableHostIp = ip
             return ip
+        },
+
+        /**
+         * Point a user's reads at the node that just took a write for them.
+         *
+         * Writes land on hostIds[0] (the root host) while reads are served by the
+         * access node hostIds[1], which copies from the root host on its own schedule.
+         * A read in that window returns the pre-write state, and the user cannot tell
+         * whether their like, comment or tweet went through. Writes are rare, so moving
+         * the read route costs little. This is a route hint and nothing more: any later
+         * resolution (NodePool, health repair, an access-node change) may replace it.
+         *
+         * Mirrors iOS HproseInstance.adoptWriteRouteForReads.
+         */
+        adoptWriteRouteForReads(user: User | undefined | null, writableIp: string | undefined | null) {
+            const writeHostId = user?.hostIds?.[0]
+            if (!user || !writeHostId || !writableIp) return
+            // Filed under the write host's own MID — never under the access node, whose
+            // entry other users share.
+            nodePool.updateNode(writeHostId, [writableIp])
+            if (user.providerIp === writableIp) return
+            user.providerIp = writableIp
+            user.client = createPooledClient(writableIp, this.lapi.connectionPool)
         },
 
         /**
@@ -5302,6 +5199,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (ret["success"] === false) {
                 throw new Error(ret["message"] || "Profile update failed")
             }
+            this.adoptWriteRouteForReads(user, writableIp)
 
             // Update local state
             if (updates.name !== undefined) user.name = updates.name
@@ -5359,6 +5257,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (ret["status"] && ret["status"] !== "success") {
                 throw new Error(ret["reason"] || "Failed to update agent public key")
             }
+            this.adoptWriteRouteForReads(user, writableIp)
 
             user.agentPublicKey = tokenResult.publicKey
             this._user = user
@@ -5400,6 +5299,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // Use writableIp for display: the CID was just uploaded there and is
             // guaranteed to exist. providerIp (read host) may not have replicated it yet,
             // which would cause a 404 and permanently break the avatar in AppHeader.
+            this.adoptWriteRouteForReads(user, writableIp)
             const avatar = this.getMediaUrl(confirmedAvatar, `http://${writableIp}`)
             this._mergeUserIntoCachedRefs(user.mid, { avatar })
 
