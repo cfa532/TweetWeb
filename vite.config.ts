@@ -1,11 +1,38 @@
 import { fileURLToPath, URL } from 'node:url'
+import { execSync } from 'node:child_process'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { viteSingleFile } from "vite-plugin-singlefile"
 
+/**
+ * Identifies the exact bundle a browser is running, for the version line in the
+ * account menu. The Leither app version cannot serve that purpose: it is
+ * assigned by tweet1.sh after the build, and each node reports its own view of
+ * it, so a node can serve this bundle while naming a different version.
+ * The commit is what the build came from; the timestamp separates rebuilds of
+ * the same commit, and "+" marks a build made from an uncommitted tree.
+ */
+function buildId(): string {
+  let commit = 'nogit'
+  try {
+    const git = (cmd: string) =>
+      execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+    commit = git('git rev-parse --short HEAD')
+    if (git('git status --porcelain')) commit += '+'
+  } catch {
+    // Built outside a git checkout; the timestamp alone still identifies it.
+  }
+  const t = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${commit} ${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}`
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId())
+  },
   plugins: [vue({
     template: {
       compilerOptions: {

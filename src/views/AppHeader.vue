@@ -134,7 +134,8 @@ async function onProfileToggleFollow(event: Event) {
 const showDownloadPrompt = ref(false)
 const showDownloadModal = ref(false)
 const isDownloading = ref(false)
-const appVersion = ref<number | null>(null)
+// Identifies the running bundle; injected by vite.config.ts at build time.
+const buildId = __BUILD_ID__
 
 const openDownloadModal = () => {
     showDownloadModal.value = true
@@ -306,7 +307,7 @@ const startDirectDownload = async () => {
     }
 }
 
-onMounted(async () => {
+onMounted(() => {
     setTimeout(() => {
         showDownloadPrompt.value = true
     }, 2000)
@@ -314,24 +315,6 @@ onMounted(async () => {
     setTimeout(() => {
         showDownloadPrompt.value = false
     }, 30000)
-
-    const cached = sessionStorage.getItem('appVersion')
-    if (cached) appVersion.value = Number(cached)
-
-    try {
-        const res = await tweetStore.lapi.client.RunMApp("check_upgrade", {
-            aid: tweetStore.appId,
-            ver: "last",
-            version: "v2",
-        })
-        const data = res?.success ? res.data : res
-        if (data?.version != null) {
-            appVersion.value = data.version
-            sessionStorage.setItem('appVersion', String(data.version))
-        }
-    } catch (e) {
-        console.warn('[AppHeader] check_upgrade failed', e)
-    }
 })
 watch(
     userId,
@@ -483,7 +466,7 @@ async function onAccountAvatarError() {
                         <a href="#" class="account-dropdown-item" @click.prevent="goToAccount">{{ $t('auth.account') }}</a>
                         <a href="#" class="account-dropdown-item" @click.prevent="logout">{{ $t('auth.logout') }}</a>
                     </template>
-                    <div v-if="appVersion !== null" class="account-dropdown-version">v{{ appVersion }}</div>
+                    <div class="account-dropdown-version">{{ buildId }}</div>
                 </div>
             </div>
         </div>
