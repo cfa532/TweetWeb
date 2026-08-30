@@ -151,7 +151,7 @@ onMounted(async () => {
     }
 
     if (sessionStorage["isBot"] != "No" && isWeChatBrowser()) {
-        if (confirm(t('botVerification'))) {
+        if (confirm(t('download.openInDefaultBrowser'))) {
             sessionStorage["isBot"] = "No"
             loadDetail()
         } else {
