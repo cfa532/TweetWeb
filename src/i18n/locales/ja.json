@@ -177,7 +177,7 @@
   "download": {
     "downloadApp": "アプリをダウンロードしてより良い体験を",
     "openInApp": "アプリで開く",
-    "openInDefaultBrowser": "右上の ... をタップして「ブラウザで開く」を選択し、もう一度「アプリで開く」をタップしてください。",
+    "openInDefaultBrowser": "右上の ... をタップしてデフォルトブラウザで開くと、より快適にご利用いただけます。",
     "downloading": "ダウンロード中...",
     "downloadApk": "ブラウザでAndroid APKをダウンロード",
     "page": {
