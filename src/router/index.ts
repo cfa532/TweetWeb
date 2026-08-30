@@ -67,10 +67,13 @@ function normalizeLegacyExternalShareUrl() {
 
 normalizeLegacyExternalShareUrl()
 
-// Leither serves TweetWeb through /entry and uses the fragment only for the
-// app route. Keep that loader path and query intact when Vue Router exposes
-// the current route in the address bar.
-const leitherEntryPrefix = typeof window !== 'undefined' && window.location.pathname === '/entry'
+// Leither serves TweetWeb through either /entry or a versioned /mm app
+// directory and uses the fragment only for the app route. Keep that loader
+// path intact when Vue Router exposes the current route in the address bar.
+const leitherEntryPrefix = typeof window !== 'undefined' && (
+  window.location.pathname === '/entry' ||
+  /^\/mm\/[^/]+:[^/]+\/$/.test(window.location.pathname)
+)
   ? `${window.location.pathname}${window.location.search}`
   : null
 const routerHistory = leitherEntryPrefix

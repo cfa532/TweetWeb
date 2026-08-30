@@ -189,7 +189,11 @@ export function tweetProviderShareUrl(
     return `${baseUrl}/entry?aid=${encodeURIComponent(appId)}&ver=last#/tweet/${tweet.mid}/${tweet.authorId}`;
 }
 
-/** Direct profile URL for inspecting the copy served by one provider IP. */
+/**
+ * Direct profile URL for inspecting the copy served by one provider IP.
+ * Keep the app id in the path so relative bundle requests stay scoped to the
+ * selected node's published app; some Leither nodes do not expose them at `/`.
+ */
 export function userProviderProfileUrl(
     userId: string,
     appId: string,
@@ -197,7 +201,7 @@ export function userProviderProfileUrl(
 ): string | undefined {
     const baseUrl = publicIpAddressBaseUrl(providerIp);
     if (!baseUrl) return undefined;
-    return `${baseUrl}/entry?aid=${encodeURIComponent(appId)}&ver=last#/author/${encodeURIComponent(userId)}`;
+    return `${baseUrl}/mm/${encodeURIComponent(appId)}:last/#/author/${encodeURIComponent(userId)}`;
 }
 
 /** Copy text in both secure Clipboard API contexts and legacy HTTP hosts. */
