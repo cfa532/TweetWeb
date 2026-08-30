@@ -77,7 +77,11 @@
     "agentTokenGenerated": "代理令牌已生成。",
     "agentTokenCopied": "代理令牌已复制到剪贴板。",
     "agentTokenGenerateFailed": "生成代理令牌失败。",
-    "agentTokenCopyFailed": "复制代理令牌失败。"
+    "agentTokenCopyFailed": "复制代理令牌失败。",
+    "providerProfiles": "服务节点资料",
+    "providerProfilesHint": "直接打开服务节点，查看该节点存储的个人资料数据。",
+    "loadingProviders": "正在查找服务节点...",
+    "noProvidersFound": "未找到服务节点。"
   },
   "profile": {
     "followers": "关注者",

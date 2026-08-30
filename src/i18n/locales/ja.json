@@ -77,7 +77,11 @@
     "agentTokenGenerated": "エージェントトークンを生成しました。",
     "agentTokenCopied": "エージェントトークンをクリップボードにコピーしました。",
     "agentTokenGenerateFailed": "エージェントトークンの生成に失敗しました。",
-    "agentTokenCopyFailed": "エージェントトークンのコピーに失敗しました。"
+    "agentTokenCopyFailed": "エージェントトークンのコピーに失敗しました。",
+    "providerProfiles": "プロバイダープロフィール",
+    "providerProfilesHint": "プロバイダーを直接開き、そのノードに保存されたプロフィールデータを確認します。",
+    "loadingProviders": "プロバイダーノードを検索中...",
+    "noProvidersFound": "プロバイダーノードが見つかりません。"
   },
   "profile": {
     "followers": "フォロワー",

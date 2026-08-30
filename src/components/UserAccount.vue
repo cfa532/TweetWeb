@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore, useAlertStore } from '@/stores';
 import { useRouter, useRoute } from 'vue-router';
-import { formatTimeDifference } from '@/lib';
+import { formatTimeDifference, userProviderProfileUrl } from '@/lib';
 import { requireLoginForWritableAction } from '@/lib/authNavigation';
 import AvatarCropper from '@/views/AvatarCropper.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
@@ -28,6 +28,8 @@ const showAvatarCropper = ref(false);
 const isUploadingAvatar = ref(false);
 const isGeneratingAgentToken = ref(false);
 const agentToken = ref('');
+const providerIps = ref<string[]>([]);
+const isLoadingProviders = ref(false);
 
 // --- Login fields ---
 const loginUsername = ref('');
@@ -53,6 +55,14 @@ const backendDomain = ref('');
 const user = computed(() => tweetStore.loginUser);
 const isLoggedIn = computed(() => !!user.value);
 const hasAgentToken = computed(() => !!user.value?.agentPublicKey);
+const providerProfileLinks = computed(() => {
+    const userId = user.value?.mid;
+    if (!userId) return [];
+    return providerIps.value.flatMap((ip) => {
+        const url = userProviderProfileUrl(userId, tweetStore.appId, ip);
+        return url ? [{ ip, url }] : [];
+    });
+});
 
 onMounted(() => {
     const requestedView = route.query.view;
@@ -72,6 +82,24 @@ watch(
             activeView.value = requestedView;
         }
     }
+);
+
+watch(
+    () => user.value?.mid,
+    async (userId) => {
+        providerIps.value = [];
+        isLoadingProviders.value = false;
+        if (!userId) return;
+        const requestedUserId = userId;
+        isLoadingProviders.value = true;
+        try {
+            const ips = await tweetStore.getProviderNodeAddresses(requestedUserId);
+            if (user.value?.mid === requestedUserId) providerIps.value = ips;
+        } finally {
+            if (user.value?.mid === requestedUserId) isLoadingProviders.value = false;
+        }
+    },
+    { immediate: true },
 );
 
 function populateEditFields() {
@@ -530,6 +558,22 @@ function goBack() {
                     </div>
                 </div>
 
+                <div class="provider-section mb-3">
+                    <div class="provider-section-title">{{ $t('auth.providerProfiles') }}</div>
+                    <div class="provider-section-description text-muted">{{ $t('auth.providerProfilesHint') }}</div>
+                    <div v-if="isLoadingProviders" class="provider-status text-muted">
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                        {{ $t('auth.loadingProviders') }}
+                    </div>
+                    <div v-else-if="providerProfileLinks.length" class="provider-links">
+                        <a v-for="link in providerProfileLinks" :key="link.ip" :href="link.url"
+                            class="btn btn-outline-primary btn-sm provider-link" target="_blank" rel="noopener noreferrer">
+                            {{ link.ip }}
+                        </a>
+                    </div>
+                    <div v-else class="provider-status text-muted">{{ $t('auth.noProvidersFound') }}</div>
+                </div>
+
                 <div v-if="errorMessage" class="alert alert-danger py-2">{{ errorMessage }}</div>
 
                 <!-- Actions -->
@@ -821,6 +865,34 @@ function goBack() {
     text-align: right;
     word-break: break-all;
     max-width: 60%;
+}
+
+.provider-section {
+    padding: 12px;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+}
+
+.provider-section-title {
+    font-weight: 600;
+}
+
+.provider-section-description,
+.provider-status {
+    margin-top: 3px;
+    font-size: 0.85rem;
+}
+
+.provider-links {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.provider-link {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .agent-token-card {

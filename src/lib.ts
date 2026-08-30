@@ -117,6 +117,47 @@ export function publicIPv4BaseUrl(value: string | undefined | null): string | un
     return `${parsed.protocol}//${parsed.hostname}${port}`;
 }
 
+/** Normalize a URL only when its host is a literal IPv4 or IPv6 address. */
+export function ipAddressBaseUrl(value: string | undefined | null): string | undefined {
+    const raw = String(value ?? '').trim();
+    if (!raw) return undefined;
+
+    const unbracketedIPv6 = !raw.includes('://') && !raw.startsWith('[') && (raw.match(/:/g) || []).length > 1;
+    const normalized = /^https?:\/\//i.test(raw)
+        ? raw
+        : unbracketedIPv6 ? `http://[${raw}]` : `http://${raw}`;
+
+    let parsed: URL;
+    try {
+        parsed = new URL(normalized);
+    } catch {
+        return undefined;
+    }
+
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+    const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    const isIPv4 = !!ipv4 && ipv4.slice(1).every(part => Number(part) <= 255);
+    const isIPv6 = hostname.includes(':');
+    if (!isIPv4 && !isIPv6) return undefined;
+
+    return `${parsed.protocol}//${parsed.host}`;
+}
+
+/** Normalize a URL only when its host is a public IPv4 or IPv6 literal. */
+export function publicIpAddressBaseUrl(value: string | undefined | null): string | undefined {
+    const baseUrl = ipAddressBaseUrl(value);
+    if (!baseUrl) return undefined;
+
+    const hostname = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (!hostname.includes(':')) return publicIPv4BaseUrl(value);
+
+    const nonPublicIPv6 =
+        hostname === '::' || hostname === '::1' ||
+        hostname.startsWith('fc') || hostname.startsWith('fd') ||
+        /^fe[89ab]/.test(hostname) || hostname.startsWith('ff');
+    return nonPublicIPv6 ? undefined : baseUrl;
+}
+
 /**
  * Public-provider IPv4 entry URL. No share surface selects it today — both the
  * feed and the detail corner menu use `tweetShareUrl` — but it is kept for a link
@@ -146,6 +187,17 @@ export function tweetProviderShareUrl(
         .find((candidate): candidate is string => candidate !== undefined);
     if (!baseUrl) return undefined;
     return `${baseUrl}/entry?aid=${encodeURIComponent(appId)}&ver=last#/tweet/${tweet.mid}/${tweet.authorId}`;
+}
+
+/** Direct profile URL for inspecting the copy served by one provider IP. */
+export function userProviderProfileUrl(
+    userId: string,
+    appId: string,
+    providerIp: string,
+): string | undefined {
+    const baseUrl = publicIpAddressBaseUrl(providerIp);
+    if (!baseUrl) return undefined;
+    return `${baseUrl}/entry?aid=${encodeURIComponent(appId)}&ver=last#/author/${encodeURIComponent(userId)}`;
 }
 
 /** Copy text in both secure Clipboard API contexts and legacy HTTP hosts. */

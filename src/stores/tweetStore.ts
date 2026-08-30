@@ -4,7 +4,7 @@ import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
-import { normalizeMediaType, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
+import { normalizeMediaType, publicIpAddressBaseUrl, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
 import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -320,6 +320,49 @@ interface UserRoute {
     access?: string
     writable?: string
     readsFromWriteHost?: boolean
+}
+
+interface RankedProviderAddress {
+    address: string
+    score: number
+}
+
+/**
+ * Decode Leither's raw `mmprovsips` value without flattening its outer node
+ * groups. The value may be JSON-encoded twice.
+ */
+function groupedProviderAddresses(rawValue: unknown): RankedProviderAddress[][] {
+    let decoded = rawValue
+    for (let depth = 0; depth < 2 && typeof decoded === 'string'; depth++) {
+        const text = decoded.trim()
+        if (!text) return []
+        try {
+            decoded = JSON.parse(text)
+        } catch {
+            return []
+        }
+    }
+    if (!Array.isArray(decoded)) return []
+
+    return decoded.map(node => {
+        if (!Array.isArray(node)) return []
+        const addresses = new Map<string, number>()
+        for (const entry of node) {
+            if (!Array.isArray(entry) || entry.length < 2) continue
+            const baseUrl = publicIpAddressBaseUrl(typeof entry[0] === 'string' ? entry[0] : undefined)
+            if (!baseUrl) continue
+            const address = new URL(baseUrl).host
+            const score = Number(entry[1])
+            const normalizedScore = Number.isFinite(score) ? score : Number.POSITIVE_INFINITY
+            const previousScore = addresses.get(address)
+            if (previousScore === undefined || normalizedScore < previousScore) {
+                addresses.set(address, normalizedScore)
+            }
+        }
+        return [...addresses]
+            .map(([address, score]) => ({ address, score }))
+            .sort((a, b) => a.score - b.score)
+    }).filter(node => node.length > 0)
 }
 
 const userRoutes = new Map<string, UserRoute>()
@@ -2923,6 +2966,30 @@ export const useTweetStore = defineStore('tweetStore', {
         async getPublicProviderIPv4(mid: string): Promise<string | null> {
             const ips = await this._resolveProviderIps(mid, true, true, true);
             return ips[0] ?? null;
+        },
+
+        /** Return one reachable public address for each node providing an object. */
+        async getProviderNodeAddresses(mid: string): Promise<string[]> {
+            try {
+                // get_provider_ips flattens this structure and loses node identity.
+                // Read the underlying value so each outer array remains one node,
+                // matching iOS/Android entry-node route selection.
+                const raw = await this.lapi.client.Getvar("", "mmprovsips", mid)
+                const groups = groupedProviderAddresses(raw)
+
+                const selected = await Promise.all(groups.map(async group => {
+                    for (const candidate of group) {
+                        if (await this.isServerHealthyWithTimeout(candidate.address, HEALTH_PROBE_STRICT_TIMEOUT_MS, true)) {
+                            return candidate.address
+                        }
+                    }
+                    return null
+                }))
+                return selected.filter((address): address is string => address !== null)
+            } catch (error) {
+                console.error(`[getProviderNodeAddresses] Error getting provider nodes for ${mid}:`, error);
+                return [];
+            }
         },
 
         /**

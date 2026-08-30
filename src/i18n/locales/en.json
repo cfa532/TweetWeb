@@ -77,7 +77,11 @@
     "agentTokenGenerated": "Agent token generated.",
     "agentTokenCopied": "Agent token copied to clipboard.",
     "agentTokenGenerateFailed": "Failed to generate agent token.",
-    "agentTokenCopyFailed": "Failed to copy agent token."
+    "agentTokenCopyFailed": "Failed to copy agent token.",
+    "providerProfiles": "Provider profiles",
+    "providerProfilesHint": "Open a provider directly to inspect the profile data stored on that node.",
+    "loadingProviders": "Finding provider nodes...",
+    "noProvidersFound": "No provider nodes found."
   },
   "profile": {
     "followers": "Followers",
