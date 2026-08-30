@@ -104,13 +104,47 @@ backup/version number.
 
 ## 5. Deploy the Cloudflare Worker and Assets
 
-The Worker configuration reads `TweetWeb/dist` directly. From its directory,
-deploy the Worker and the same build assets:
+### Why the Worker is required
+
+The `dtweet-deeplink` Worker is both the public deeplink gateway and one of the
+two production copies of TweetWeb:
+
+- It serves the Apple and Android association files from `dtweet.com`, allowing
+  an installed native app to claim `/tweet/*`, `/author/*`, `#tweet/*`, and
+  `#author/*` links before the browser opens them.
+- If no installed app claims a normal browser navigation, it redirects the
+  route to the HTTP fallback host and converts path routes to hash routes. For
+  example, `/author/<id>` becomes
+  `http://t1.w3w3.store/#author/<id>`. TweetWeb uses HTTP there because the
+  Leither service it contacts does not accept HTTPS.
+- It terminates HTTPS for `dl.dtweet.com`. Static TweetWeb files and HTML
+  navigations are served from the Worker's asset binding, while other requests
+  are proxied to the HTTP Leither origin. Do not redirect HTTPS
+  `dl.dtweet.com` requests back to HTTP: browsers such as Chrome can upgrade
+  the URL to HTTPS again and create a redirect loop.
+
+The Worker's asset binding is independent of the Leither `tweet1` package on
+gen8. Running `tweet1.sh` updates only gen8; it does not update Cloudflare.
+Likewise, deploying the Worker updates only Cloudflare; it does not publish the
+Leither package. Every TweetWeb release must therefore publish the exact same
+`dist` build to both targets.
+
+### How to deploy it
+
+`../Tweet-iOS/cloudflare/dtweet-worker/wrangler.toml` points its `ASSETS`
+binding directly at `TweetWeb/dist`. Build once, copy that build to gen8, run
+`tweet1.sh`, and then deploy the Worker without rebuilding in between:
 
 ```bash
 cd ../Tweet-iOS/cloudflare/dtweet-worker
 npx wrangler deploy
 ```
+
+Wrangler compares the current `dist` files with the deployed asset set, uploads
+the changed assets, publishes the Worker code, and reports a new Worker version
+ID. A successful deployment must list all three production triggers below.
+Return to the TweetWeb repository afterward and perform the hash and routing
+checks in step 6.
 
 Confirm Wrangler reports a new version and all production routes:
 
