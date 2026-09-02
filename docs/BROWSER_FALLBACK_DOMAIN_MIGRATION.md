@@ -3,10 +3,10 @@
 Use this memo when replacing the HTTP Leither domain used by browsers that
 open a `dtweet.com` deep link without the native app.
 
-The completed example was:
+The current completed migration is:
 
 ```text
-http://t1.www3.shop  ->  http://t1.w3w3.store
+http://t1.w3w3.store  ->  http://t1.w333w.site
 ```
 
 The same procedure applies to another retired family such as `www33.shop`.
@@ -31,6 +31,8 @@ https://dtweet.com/author/<author-id>
 ```
 
 - The new root domain and all its subdomains reach Leither on av1.
+- HTTPS requests for the canonical browser hosts use a valid certificate,
+  clear any cached HSTS policy, and redirect back to the same HTTP URL.
 - Retired domains redirect to the equivalent new host, preserving the
   subdomain, route, and query string.
 - `fireshare.us`, `fireshare.uk`, and their subdomains remain unchanged.
@@ -84,6 +86,31 @@ The configuration has three separate responsibilities:
 3. Proxy the new root domain and wildcard subdomains to Leither while
    preserving the original `Host` header.
 
+Chrome can upgrade an explicitly entered HTTP URL before making the request.
+If the canonical host falls through to another TLS virtual host, that site can
+return an unrelated page or install an HSTS policy for the Leither domain. Add
+a dedicated HTTPS server for the canonical browser hosts. It must use a
+publicly trusted certificate, clear HSTS, and return to HTTP without changing
+the host, route, or query:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name <new-domain> www.<new-domain> t1.<new-domain> tweet.<new-domain>;
+
+    ssl_certificate /etc/letsencrypt/live/<new-domain>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<new-domain>/privkey.pem;
+
+    add_header Strict-Transport-Security "max-age=0" always;
+    return 302 http://$host$request_uri;
+}
+```
+
+Serve `/.well-known/acme-challenge/` from a local webroot in the canonical
+port-80 block so certificate renewal does not depend on Leither. Do not proxy
+the HTTPS request to Leither: TweetWeb still needs an HTTP page in order to use
+the HTTP and `ws://` provider endpoints without mixed-content blocking.
+
 For the new canonical family, the essential server block is:
 
 ```nginx
@@ -118,7 +145,9 @@ destination. For other routes, preserve `$request_uri` unchanged.
 
 Never replace these blocks with a broad catch-all server. A catch-all can send
 native-client hosts such as `tweet.fireshare.us` to the browser domain and
-break app routing.
+break app routing. It can also capture unrelated exact services. In the
+current av1 configuration, `registry.inoku.uk` has its own exact server block
+and must remain available even though generic `inoku.uk` Leither hosts retire.
 
 Validate before reloading:
 
@@ -206,11 +235,14 @@ Verify the new and retired Leither hosts:
 curl -I http://t1.<new-domain>/
 curl -I http://t1.<old-domain>/tweet/example-tweet/example-author
 curl -I http://<old-domain>/author/example-author
+curl -I https://<new-domain>/
+curl -I https://t1.<new-domain>/
 ```
 
 The retired `t1` host must redirect to the new `t1` host. The retired root
 must redirect to the new root. Tweet and author redirects must contain the
-hash marker.
+hash marker. Each HTTPS response must use a valid certificate, return
+`Strict-Transport-Security: max-age=0`, and redirect to the same HTTP host.
 
 Finally, confirm that Fireshare was not captured by the migration:
 
@@ -235,14 +267,59 @@ the first case; the browser should land on the HTTP `t1` host for the second.
    cause. Removing DNS first makes the failure harder to inspect.
 4. Keep the Cloudflare zone Redirect Rule disabled throughout rollback.
 
-## Completed `w3w3.store` Example
+## Completed `w333w.site` Migration
 
-The current production state is:
+Applied on September 2, 2026. The current production state is:
 
-- Worker fallback: `http://t1.w3w3.store`
-- Canonical Leither family: `w3w3.store`, `*.w3w3.store`
-- Retired families on av1: `www333.store`, `www3.shop`, `www33.online`, and
-  their subdomains
+- Worker fallback: `http://t1.w333w.site`
+- Canonical Leither family: `w333w.site`, `*.w333w.site`
+- Retired families on av1: `w3w3.store`, `www333.store`, `www3.shop`,
+  `www33.online`, generic `inoku.uk`, and their subdomains
+- Dedicated exception: `registry.inoku.uk` remains on its exact service block
 - Deep-link routes: `/tweet/*` and `/author/*`
 - Browser routes: `/#tweet/*` and `/#author/*`
 - Fireshare families: preserved and proxied without domain replacement
+
+The live av1 configuration is
+`/etc/nginx/sites-available/leither-fireshare`, enabled through
+`/etc/nginx/sites-enabled/leither-fireshare`. The pre-migration backup is:
+
+```text
+/etc/nginx/sites-available/leither-fireshare.pre-w333w-20260902-0842
+```
+
+The HTTPS/HSTS correction has its own pre-change backup:
+
+```text
+/etc/nginx/sites-available/leither-fireshare.pre-w333w-https-20260902-0925
+```
+
+Let's Encrypt covers `w333w.site`, `www.w333w.site`, `t1.w333w.site`, and
+`tweet.w333w.site`. Certbot's systemd timer is enabled for automatic renewal.
+If another canonical application subdomain is introduced, add it to both the
+certificate and the dedicated port-443 `server_name` list before publishing
+links that use it.
+
+`nginx -t` passed before nginx was reloaded. Production verification confirmed:
+
+| Request | Verified result |
+| --- | --- |
+| `http://w333w.site/` and `http://t1.w333w.site/` | `200 OK` from Leither |
+| `https://w333w.site/` and `https://t1.w333w.site/` | Valid TLS, HSTS reset, then `302` to the same HTTP host |
+| Retired root and subdomain requests | `302` to the equivalent `w333w.site` host |
+| Retired `/tweet/*` and `/author/*` requests | `302` with the required `/#` route marker |
+| `http://tweet.fireshare.us/` and `http://tweet.fireshare.uk/` | `200 OK`, without domain replacement |
+| `http://registry.inoku.uk/health` | Registry health JSON from its dedicated service |
+| Browser navigation to a `dtweet.com/tweet/*` link | `302` to `http://t1.w333w.site/#tweet/*` |
+| Apple and Android association endpoints | `200 OK` with JSON, without redirect |
+
+The deployed Cloudflare Worker version for this migration is
+`72880739-2a7a-43ab-8837-f3a601260711`.
+
+The backend share-domain defaults have also been changed to `t1.w333w.site`
+in `TweetBackendApp/check_upgrade.js` and `TweetBackendApp/go/file_entries.go`.
+Those backend changes still require publication to their respective gen8 app
+directories: `check_upgrade.js` through `/home/pi/demo/tweet1.sh`, and the Go
+MApp through `/home/pi/demo/twbe.sh`. Resolve gen8 through
+`gen8.leither.uk`; never pin its volatile IP. The nginx and Worker migration
+does not publish either backend package.

@@ -8,7 +8,7 @@ Complete documentation for the TweetWeb decentralized social media platform.
 
 - **[Setup & Installation Guide](SETUP.md)** - Local development and service setup instructions
 - **[Publication & Deployment Guide](DEPLOYMENT.md)** - Canonical TweetWeb production release procedure
-- **[Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)** - Repeatable DNS, nginx, and Worker migration procedure
+- **[Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)** - Repeatable DNS, av1 nginx, and Worker procedure plus the current `w333w.site` production record
 - **[Quick Start](#quick-start)** - Get up and running in 5 minutes
 
 ### Core Documentation
@@ -149,10 +149,12 @@ ffmpeg -encoders | grep h264
 
 See: [Publication & Deployment Guide](DEPLOYMENT.md)
 
-The release guide contains the complete commands for disabling local test
-overrides, building once, copying the generated assets, publishing with
-`tweet1.sh`, deploying the Worker, verifying public hashes, and restoring the
-local environment.
+The guide defines the mutually exclusive release/debug `.env` states, requires
+all `VITE_LEITHER_NODE` overrides to be commented for publication, maps
+TweetWeb and TweetBackendApp files to their respective gen8 app directories,
+and uses `gen8.leither.uk` instead of pinning gen8's volatile IP. It also covers
+building once, publishing with the existing gen8 scripts, deploying the Worker,
+verifying public hashes, and restoring the local environment.
 
 ### Troubleshoot Video Conversion
 
@@ -336,7 +338,7 @@ MIT License - see LICENSE file for details
 
 - **Main README**: [/README.md](../README.md)
 - **Production**: https://dtweet.com/
-- **Browser fallback**: http://t1.w3w3.store/
+- **Browser fallback**: http://t1.w333w.site/
 - **GitHub Issues**: Report bugs and request features
 
 ## Version History
