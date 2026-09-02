@@ -4,7 +4,7 @@ import type { PropType } from 'vue'
 import Hls from 'hls.js';
 import { useRouter } from 'vue-router';
 import { useTweetStore } from '@/stores';
-import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, setPrimaryVideoHealthy, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
+import { registerVideo, unregisterVideo, requestPlay, isCoordinatorPrimary, setPrimaryVideoHealthy, markVideoFinished, type PrimaryChangeCallback } from '@/composables/useVideoPlaybackCoordinator';
 import { TWEET_MEDIA_PRELOAD_STALE_EVENT, type MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator';
 import { useFeedVideoMuteSession } from '@/composables/useFeedVideoMuteSession';
 
@@ -717,10 +717,24 @@ onMounted(() => {
             }
           }
           
-          // Keep video at the end, don't reset to beginning
-          // This maintains the video container space (detail only; feed uses cover + outer aspect box)
+          // Pin the rendered height before rewinding so the container can't
+          // collapse (detail only; feed uses cover + outer aspect box).
           if (video.value && !isInTweetList.value) {
             video.value.style.minHeight = video.value.offsetHeight + 'px';
+          }
+          if (video.value) {
+            // Rewinding clears el.ended, which the coordinator read as "already
+            // played" — tell it explicitly, before and regardless of the seek.
+            markVideoFinished(video.value);
+            // Rewind to the first frame: a video that fades out otherwise
+            // leaves a black tile behind. Only seek while the start is still
+            // buffered (HLS drops it past backBufferLength) — seeking outside
+            // the buffer just stalls the element behind the spinner instead of
+            // painting a frame.
+            const buffered = video.value.buffered;
+            if (buffered.length > 0 && buffered.start(0) <= 0.5) {
+              video.value.currentTime = buffered.start(0);
+            }
           }
           // Don't show overlay if autoplay is enabled (use native controls)
           if (!props.autoplay) {

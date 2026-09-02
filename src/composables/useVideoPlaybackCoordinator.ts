@@ -53,6 +53,11 @@ const registry = new Map<HTMLVideoElement, VideoEntry>()
 // be re-promoted while still in the [play, keep) band (50–70%), which is what
 // makes "stop below 70%" hold instead of flapping; cleared once back ≥ 70%.
 const yieldedVideos = new Set<HTMLVideoElement>()
+// Videos that played to their end. The player rewinds a finished video to its
+// first frame (so a tile doesn't sit on a black last frame), which clears the
+// element's `ended` flag — this set, not `el.ended`, is what "already played"
+// means here. Cleared when the video is unregistered or explicitly promoted.
+const finishedVideos = new Set<HTMLVideoElement>()
 let primaryVideo: HTMLVideoElement | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -99,6 +104,7 @@ export function unregisterVideo(el: HTMLVideoElement) {
     }
     registry.delete(el)
     yieldedVideos.delete(el)
+    finishedVideos.delete(el)
     if (primaryVideo === el) {
       el.removeEventListener('ended', handlePrimaryEnded)
       primaryVideo = null
@@ -107,6 +113,13 @@ export function unregisterVideo(el: HTMLVideoElement) {
       scheduleSelection()
     }
   }
+}
+
+/** Mark a video as played to its end, so it is no longer an autoplay candidate.
+ *  Called by the player from its own 'ended' handler, which rewinds the element
+ *  and therefore clears `el.ended` before the coordinator could read it. */
+export function markVideoFinished(el: HTMLVideoElement) {
+  if (registry.has(el)) finishedVideos.add(el)
 }
 
 /** Call when a user explicitly taps play on a specific video. */
@@ -183,7 +196,7 @@ function isBeforeInDocumentOrder(a: VideoEntry, b: VideoEntry): boolean {
 function selectPrimary() {
   if (primaryVideo) {
     const current = registry.get(primaryVideo)
-    if (current && !current.el.ended) {
+    if (current && !finishedVideos.has(current.el)) {
       const tweetRatio = tweetVisibility(current)?.ratio ?? 0
       if (tweetRatio >= MIN_KEEP_VISIBLE_RATIO) {
         return // still mostly visible — keep playing
@@ -208,7 +221,7 @@ function selectPrimary() {
   let bestTop = 0
   let bestRatio = 0
   for (const entry of registry.values()) {
-    if (entry.el.ended) continue
+    if (finishedVideos.has(entry.el)) continue
     // Hard guard: the video's own wrapper must still intersect the viewport,
     // otherwise a tall tweet that is in view but whose media grid scrolled past
     // could be promoted.
@@ -321,7 +334,7 @@ function handlePrimaryEnded() {
     setPrimary(tweetVideos[currentIndex + 1].el)
   } else {
     // No more videos in this tweet — pick the next visible video in the feed.
-    // selectPrimary skips ended videos, so it will find the next candidate.
+    // selectPrimary skips finished videos, so it will find the next candidate.
     selectPrimary()
   }
 }
@@ -336,6 +349,9 @@ function setPrimary(el: HTMLVideoElement) {
 
   primaryVideo = el
   yieldedVideos.delete(el)
+  // Promotion is either a fresh candidate or an explicit user tap on a video
+  // that already played — either way it is allowed to play again.
+  finishedVideos.delete(el)
   hasPrimaryVideo.value = true
   // A newly promoted primary must earn healthy status before preloads resume.
   primaryVideoHealthy.value = false
