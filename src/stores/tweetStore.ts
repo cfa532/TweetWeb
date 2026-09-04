@@ -4101,10 +4101,27 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 console.log('[deleteTweet] Calling delete_tweet', { ...payload, writableIp })
-                let response: any = await deleteClient.RunMApp("delete_tweet", payload)
-                console.log('[deleteTweet] delete_tweet response', { tweetId, response })
-                for (let depth = 0; depth < 3 && response && typeof response === "object"; depth++) {
+                // A tweet the server no longer holds is already in the state the
+                // caller asked for, so "Tweet not found" counts as a successful
+                // delete and the local copy still has to go.
+                const isTweetNotFound = (message: unknown) =>
+                    typeof message === "string" && /tweet not found/i.test(message)
+
+                let alreadyGone = false
+                let response: any
+                try {
+                    response = await deleteClient.RunMApp("delete_tweet", payload)
+                } catch (callError) {
+                    if (!isTweetNotFound((callError as any)?.message)) throw callError
+                    alreadyGone = true
+                }
+                console.log('[deleteTweet] delete_tweet response', { tweetId, response, alreadyGone })
+                for (let depth = 0; depth < 3 && !alreadyGone && response && typeof response === "object"; depth++) {
                     if (response.success === false) {
+                        if (isTweetNotFound(response.message)) {
+                            alreadyGone = true
+                            break
+                        }
                         throw new Error(typeof response.message === "string" ? response.message : "Delete tweet failed")
                     }
                     if (response.success === true && "data" in response && response.data !== undefined) {
@@ -4113,7 +4130,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     break
                 }
-                const deletedTweetId = response?.tweetid
+                const deletedTweetId = alreadyGone ? tweetId : response?.tweetid
                 if (typeof deletedTweetId !== "string" || !deletedTweetId) {
                     throw new Error("Delete tweet failed: server returned success but no tweetid")
                 }
