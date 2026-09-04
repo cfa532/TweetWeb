@@ -35,6 +35,16 @@ const UPDATE_TWEET_TIMEOUT_MS = 30_000
 // ranges from 4s to 25s, so the ordinary budget cuts it off while the server is still
 // working — and the server finishes anyway, leaving an account the user was told failed.
 const REGISTER_TIMEOUT_MS = 30_000
+// Both delete entries outrun the ordinary 15s budget. `delete_tweet` carries the same
+// MiMeiPublish and node_update_score tail as a toggle and destroys the tweet on top of
+// it: unreferencing every attachment, an MMBackup, a MiMeiUnpublish, a version purge and
+// five list removals. `delete_comment` is lighter — no publish — but still opens two
+// Mimeis, purges versions, drops a ref and makes a nested node_update_score call. Those
+// distributed operations, not the browser's link, are what a delete waits on: a root node
+// answering reads in ~1s was still working when 15s cut it off, and finished the delete
+// anyway. 30s matches update_tweet and register rather than the 60s toggles — long enough
+// for the publish, short enough not to hang the UI on a node that is genuinely gone.
+const DELETE_MUTATION_TIMEOUT_MS = 30_000
 
 type ExpiringLocalCache<T> = {
     cachedAt: number
@@ -4088,6 +4098,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 const hostId = targetAuthor.hostIds?.[0]
                 const writableIp = await this.resolveWritableHostIp(targetAuthor)
                 const deleteClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                const originalTimeout = deleteClient.timeout
+                deleteClient.timeout = DELETE_MUTATION_TIMEOUT_MS
 
                 const payload: Record<string, any> = {
                     aid: this.appId,
@@ -4114,6 +4126,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 } catch (callError) {
                     if (!isTweetNotFound((callError as any)?.message)) throw callError
                     alreadyGone = true
+                } finally {
+                    deleteClient.timeout = originalTimeout
                 }
                 console.log('[deleteTweet] delete_tweet response', { tweetId, response, alreadyGone })
                 for (let depth = 0; depth < 3 && !alreadyGone && response && typeof response === "object"; depth++) {
@@ -4383,16 +4397,22 @@ export const useTweetStore = defineStore('tweetStore', {
             // be pinned to a stale/unhealthy IP from a previous race.
             const writableIp = await this.resolveWritableHostIp(parentAuthor)
             const deleteClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            const originalTimeout = deleteClient.timeout
+            deleteClient.timeout = DELETE_MUTATION_TIMEOUT_MS
 
             // Call delete_comment API with proper parameters matching server expectations
-            await deleteClient.RunMApp("delete_comment", {
-                aid: this.appId,
-                ver: "last",
-                appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
-                tweetid: parentTweetId,         // ID of tweet containing the comment
-                commentid: commentId,            // ID of comment to delete
-                hostid: parentAuthor.hostIds[0]      // Node ID where the tweet is hosted
-            })
+            try {
+                await deleteClient.RunMApp("delete_comment", {
+                    aid: this.appId,
+                    ver: "last",
+                    appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
+                    tweetid: parentTweetId,         // ID of tweet containing the comment
+                    commentid: commentId,            // ID of comment to delete
+                    hostid: parentAuthor.hostIds[0]      // Node ID where the tweet is hosted
+                })
+            } finally {
+                deleteClient.timeout = originalTimeout
+            }
             this.adoptWriteRouteForReads(parentAuthor, writableIp)
 
             // After successful deletion, remove comment from local cache
