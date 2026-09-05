@@ -47,6 +47,10 @@ Leither service and its WebSocket providers do not support HTTPS consistently.
 | --- | --- |
 | Cloudflare Worker | `../Tweet-iOS/cloudflare/dtweet-worker/src/index.js` |
 | Worker routes and assets | `../Tweet-iOS/cloudflare/dtweet-worker/wrangler.toml` |
+| JavaScript backend share-domain default | `../TweetBackendApp/check_upgrade.js` |
+| Go backend share-domain default | `../TweetBackendApp/go/file_entries.go` |
+| Go backend publication details | `../TweetBackendApp/go/README.md` |
+| iOS deep-link behavior | `../Tweet-iOS/DEEPLINKING.md` |
 | av1 nginx site | `/etc/nginx/sites-available/leither-fireshare` |
 | Full web publication procedure | `TweetWeb/docs/DEPLOYMENT.md` |
 
@@ -159,7 +163,9 @@ ssh root@av1 'systemctl reload nginx'
 If validation fails, do not reload. Correct the file or restore the dated
 backup first.
 
-## 3. Change the Worker Fallback
+## 3. Change the Worker and Backend Domain Values
+
+### Worker browser fallback
 
 In `../Tweet-iOS/cloudflare/dtweet-worker/src/index.js`, change only the
 browser fallback constant:
@@ -173,17 +179,63 @@ non-navigation requests. Do not replace the app-link routes: the canonical
 profile route is `/author/*`, not `/user/*` or `/profile/*`.
 
 The Worker already converts browser routes to the required hash form. Keep the
-route match restricted to `tweet` and `author`.
+route match restricted to `tweet` and `author`. Browser HTML navigation on
+`dl.dtweet.com` must use the same fallback redirect. Serving the TweetWeb shell
+there under HTTPS makes its `ws://` Leither connections fail as mixed content.
+Static assets, association files, and non-navigation proxy requests must remain
+on their existing Worker branches.
 
 In the Cloudflare `dtweet.com` zone, the old single Redirect Rule must remain
 disabled. It may be renamed to describe the new fallback, but enabling it would
 run before the Worker and bypass the association-file handling.
 
+### Backend share-domain defaults
+
+The backend returns a domain to clients through `check_upgrade`; clients use it
+when constructing share and deep-link URLs. Update both implementations to the
+same new host, without a URL scheme:
+
+```javascript
+// ../TweetBackendApp/check_upgrade.js
+domain: "t1.<new-domain>"
+```
+
+```go
+// ../TweetBackendApp/go/file_entries.go
+upgradeDomain = "t1.<new-domain>"
+```
+
+These values and the Worker's `BROWSER_FALLBACK_ORIGIN` are one operational
+setting with three source locations. Never update only one implementation.
+The Worker constant includes `http://`; the backend values do not.
+
 ## 4. Deploy in the Correct Order
 
-For a domain-only change, do not rebuild TweetWeb or republish `tweet1` on
-gen8. Deploying the Worker is sufficient because the contents of `dist` did
-not change:
+A domain-only migration does not require rebuilding TweetWeb, but it does
+require publishing both backend defaults and the Worker. First copy and
+hash-check `check_upgrade.js`, then publish the existing `tweet1` package:
+
+```bash
+scp ../TweetBackendApp/check_upgrade.js gen8:/home/pi/demo/tweet1/
+ssh gen8 'cd /home/pi/demo/tweet1 && shasum -a 256 check_upgrade.js'
+ssh gen8 'cd /home/pi/demo && ./tweet1.sh'
+```
+
+Next copy the Go MApp sources and publish `twbe` using the canonical commands
+in `../TweetBackendApp/go/README.md`. At minimum, compare the changed
+`file_entries.go` hash before running the publisher:
+
+```bash
+rsync -av -e 'ssh -p 220' \
+  --exclude='*_test.go' --include='*.go' --exclude='*' \
+  ../TweetBackendApp/go/ pi@gen8.leither.uk:/home/pi/demo/twbe/
+ssh -p 220 pi@gen8.leither.uk \
+  'shasum -a 256 /home/pi/demo/twbe/file_entries.go'
+ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./twbe.sh'
+```
+
+Finally deploy the Worker. Because `dist` did not change, Wrangler should not
+upload assets:
 
 ```bash
 cd ../Tweet-iOS/cloudflare/dtweet-worker
@@ -197,10 +249,10 @@ new Worker version with these routes:
 - `www.dtweet.com`
 - `dl.dtweet.com/*`
 
-If TweetWeb or `TweetBackendApp` also changed, this is no longer a domain-only
-operation. Follow the full [publication and deployment procedure](DEPLOYMENT.md):
-publish backend changes to gen8 when applicable, build TweetWeb, copy `dist` to
-gen8, run `tweet1.sh`, and deploy the Worker last.
+If TweetWeb has code changes beyond the domain migration, follow the full
+[publication and deployment procedure](DEPLOYMENT.md): publish backend changes
+first, build TweetWeb, copy `dist` to gen8, run `tweet1.sh`, and deploy the
+Worker last. Do not rebuild between the gen8 and Worker publication targets.
 
 ## 5. Verify the Migration
 
@@ -213,6 +265,12 @@ curl -sS -D - -o /dev/null -H 'Accept: text/html' \
 
 curl -sS -D - -o /dev/null -H 'Accept: text/html' \
   https://dtweet.com/author/example-author
+
+curl -sS -D - -o /dev/null -H 'Accept: text/html' \
+  https://dl.dtweet.com/author/example-author
+
+curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' \
+  https://dl.dtweet.com/index_entry.js
 ```
 
 Expected `Location` values:
@@ -228,6 +286,11 @@ Verify that app associations still return JSON directly:
 curl -i https://dtweet.com/.well-known/apple-app-site-association
 curl -i https://dtweet.com/.well-known/assetlinks.json
 ```
+
+Confirm that both published `check_upgrade` implementations return
+`t1.<new-domain>`. A successful Worker redirect alone is insufficient: a
+client receiving the old backend value can continue producing links for the
+retired domain.
 
 Verify the new and retired Leither hosts:
 

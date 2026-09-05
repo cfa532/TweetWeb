@@ -144,6 +144,14 @@ backup/version number.
 The `dtweet-deeplink` Worker is both the public deeplink gateway and one of the
 two production copies of TweetWeb:
 
+`BROWSER_FALLBACK_ORIGIN` in the Worker source is the source of truth for the
+browser application domain. It currently equals `http://t1.w333w.site`, but
+that is replaceable operational configuration, not a permanent domain
+contract. Treat concrete `w333w.site` URLs in this guide as the current
+deployment snapshot. Use the
+[Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)
+whenever the value changes.
+
 - It serves the Apple and Android association files from `dtweet.com`, allowing
   an installed native app to claim `/tweet/*`, `/author/*`, `#tweet/*`, and
   `#author/*` links before the browser opens them.
@@ -152,11 +160,12 @@ two production copies of TweetWeb:
   example, `/author/<id>` becomes
   `http://t1.w333w.site/#author/<id>`. TweetWeb uses HTTP there because the
   Leither service it contacts does not accept HTTPS.
-- It terminates HTTPS for `dl.dtweet.com`. Static TweetWeb files and HTML
-  navigations are served from the Worker's asset binding, while other requests
-  are proxied to the HTTP Leither origin. Do not redirect HTTPS
-  `dl.dtweet.com` requests back to HTTP: browsers such as Chrome can upgrade
-  the URL to HTTPS again and create a redirect loop.
+- It terminates HTTPS for `dl.dtweet.com`. Static TweetWeb files are served
+  from the Worker's asset binding, browser navigations are redirected to the
+  separate HTTP fallback host, and other requests are proxied to the HTTP
+  Leither origin. Do not redirect `dl.dtweet.com` back to HTTP on the same
+  hostname: browsers such as Chrome can upgrade the URL to HTTPS again and
+  create a redirect loop.
 
 The Worker's asset binding is independent of the Leither `tweet1` package on
 gen8. Running `tweet1.sh` updates only gen8; it does not update Cloudflare.
@@ -207,7 +216,7 @@ asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
 
 Do not hash `http://t1.w333w.site/index_entry.js` directly. It is a Leither
-Leither domain whose loader generates the app entry response and resolves bare
+domain whose loader generates the app entry response and resolves bare
 object names inside the published package; that URL is not a raw static-asset
 endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
 Leither package input.
@@ -219,6 +228,44 @@ the app installed, the operating system should open the app. In a browser, the
 Worker must land both forms on
 `http://t1.w333w.site/#tweet/<tweet-id>/<author-id>`, and that page must load the
 current bundle without mixed-content errors.
+
+### Troubleshooting: `dl.dtweet.com` opens but no data loads
+
+If `https://dl.dtweet.com` returns the TweetWeb shell but profiles and tweets do
+not load, inspect the browser console. This incident occurred on September 5,
+2026 when the Worker served HTML navigation from its HTTPS asset binding. The
+page then tried to open Leither's `ws://` provider endpoints, and the browser
+rejected every attempt with `SecurityError: An insecure WebSocket connection
+may not be initiated from a page loaded over HTTPS`.
+
+The correct fix is request-class routing in the Worker, not an HTTPS-to-HTTP
+redirect on the same `dl.dtweet.com` hostname:
+
+| Request to `dl.dtweet.com` | Required result |
+| --- | --- |
+| Browser `GET` accepting `text/html` | `302` to the current `BROWSER_FALLBACK_ORIGIN`; `/tweet/*` and `/author/*` become hash routes |
+| Listed static asset such as `/index_entry.js` | `200` from the Worker `ASSETS` binding |
+| Apple or Android association file | `200` JSON from the Worker |
+| Other request | Proxy through Cloudflare to the HTTP Leither origin |
+
+Do not redirect to `http://dl.dtweet.com`: Chrome can upgrade that URL back to
+HTTPS and create a loop. Redirect browser navigation to the separate fallback
+host. Use real `GET` requests because `HEAD` does not enter the navigation
+branch:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  -H 'Accept: text/html' https://dl.dtweet.com/
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  -H 'Accept: text/html' https://dl.dtweet.com/author/example-author
+curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' \
+  https://dl.dtweet.com/index_entry.js
+```
+
+Finally, open a fragment-form link in a real browser, such as
+`https://dl.dtweet.com/#author/<id>`. Confirm that the final URL retains the
+fragment under the configured HTTP fallback and that profile and tweet data
+load.
 
 ### av1 nginx domain-routing invariant
 

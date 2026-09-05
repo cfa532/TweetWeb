@@ -1,6 +1,6 @@
 # Public Deep-Link Web Routing Design
 
-Updated: 2026-09-02
+Updated: 2026-09-05
 
 ## Goal
 
@@ -17,8 +17,10 @@ requiring Tailscale membership.
   original path and query. `/user/*` and `/profile/*` are rewritten to
   TweetWeb's `/author/*` route.
 - `dl.dtweet.com/*` is a route on the same `dtweet-deeplink` Worker. Its
-  `ASSETS` binding packages `TweetWeb/dist`, so HTML navigations and the listed
-  static assets remain available for legacy direct links.
+  `ASSETS` binding packages `TweetWeb/dist`, so the listed static assets remain
+  available for legacy direct links. HTML navigations redirect to the HTTP
+  browser fallback because an HTTPS page cannot open `ws://` Leither provider
+  connections.
 - Non-navigation requests that must reach Leither are proxied to the existing
   HTTP origin.
 - av1 nginx proxies `fireshare.us`, `*.fireshare.us`, `fireshare.uk`, and
@@ -34,6 +36,12 @@ The Worker source and route configuration live at
 `../Tweet-iOS/cloudflare/dtweet-worker`. Its `wrangler.toml` reads assets
 directly from `../../../TweetWeb/dist`.
 
+The hostname in `BROWSER_FALLBACK_ORIGIN` is mutable operational
+configuration. `http://t1.w333w.site` is the value deployed when this document
+was updated, not a permanent application-domain contract. Domain replacement
+must update the Worker, DNS/nginx, backend share-domain defaults, and current
+documentation together by following the browser fallback migration memo.
+
 The proxied `dl.dtweet.com` DNS record is an entry/origin address. It is not a
 provider-node address and must not be changed to gen8's current public IP.
 Provider and node IPs are volatile and are resolved at runtime through
@@ -41,8 +49,8 @@ Provider and node IPs are volatile and are resolved at runtime through
 
 ## Failure Modes Addressed
 
-Two independent stale-routing failures can make a deep link appear to run old
-code or load no tweet:
+Three routing failures can make a deep link appear to run old code or load no
+tweet:
 
 1. The Cloudflare Worker deployment can contain an older `TweetWeb/dist`.
    Publishing the Leither app on gen8 does not update the Worker's `ASSETS`
@@ -51,6 +59,10 @@ code or load no tweet:
    metadata or the persisted `NodePool`. Treating that gateway as a provider
    short-circuits volatile-IP resolution and repeatedly sends tweet RPCs back
    to the web entry host.
+3. The Worker can serve a browser navigation directly from the HTTPS `ASSETS`
+   binding. The app shell loads, but every `ws://` provider connection fails
+   with a browser mixed-content `SecurityError`. Browser navigations on both
+   `dtweet.com` and `dl.dtweet.com` must use the separate HTTP fallback.
 
 Public pages must also reject RFC 1918 and RFC 6598/Tailscale candidates before
 health checks. Otherwise Chrome can block those requests through Private
@@ -67,8 +79,8 @@ Keep the existing domain boundary:
   endpoints without mixed-content blocking.
 - The redirect is owned by the Worker after the association-file checks. Do
   not add a higher-priority Cloudflare Redirect Rule that bypasses the Worker.
-- `dl.dtweet.com` remains a legacy Worker route and is not the primary browser
-  fallback.
+- `dl.dtweet.com` remains a legacy Worker route and sends browser navigations
+  to the same HTTP fallback instead of running TweetWeb under HTTPS.
 - Cloudflare DNS remains independent of volatile provider-node addresses.
 - The av1 legacy-domain rule excludes both Fireshare domain families. A broad
   regex covering `fireshare.us` or `fireshare.uk` breaks native app startup by
@@ -153,6 +165,9 @@ provider IP, and do not add a fixed Cloudflare origin-port rule for that node.
 - Confirm `dtweet.com/tweet/<tweet-id>/<author-id>` redirects to
   `http://t1.w333w.site/#tweet/<tweet-id>/<author-id>`, while association-file requests remain on
   `dtweet.com` and return JSON.
+- Confirm an HTML `GET` to `dl.dtweet.com/author/<author-id>` redirects to
+  `http://t1.w333w.site/#author/<author-id>` while
+  `dl.dtweet.com/index_entry.js` still returns the Worker asset directly.
 - Compare the SHA-256 of public `dl.dtweet.com/index_entry.js` with
   `TweetWeb/dist/index_entry.js`; query-string cache busting alone is not proof
   when an edge cache ignores the query.

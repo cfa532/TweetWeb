@@ -865,11 +865,31 @@ dtweet.com  www.dtweet.com  dl.dtweet.com    Leither clients
 The Cloudflare Worker handles public app-link domains. Installed apps claim
 supported `dtweet.com` links; browser navigations are redirected to the HTTP
 TweetWeb host at `t1.w333w.site`. `dl.dtweet.com` remains a legacy Worker
-asset/origin route. The Leither package is published independently with
-`tweet1.sh`; both targets must receive the same build. See the
+asset/origin route, but its browser navigations use that same HTTP fallback so
+TweetWeb can connect to `ws://` Leither providers without mixed-content
+blocking. The Leither package is published independently with `tweet1.sh`;
+both targets must receive the same build. See the
 [Publication & Deployment Guide](DEPLOYMENT.md) for the complete release and
 verification procedure. The TUS upload/video server is an optional separate
 service and is not the TweetWeb publication target.
+
+The Worker classifies requests before choosing a destination:
+
+| Request class | Destination |
+| --- | --- |
+| `dtweet.com` or `dl.dtweet.com` browser navigation | `302` to the HTTP `BROWSER_FALLBACK_ORIGIN` configured in the Worker, with tweet and author paths converted to hash routes |
+| Worker static asset | Cloudflare `ASSETS` binding built from `TweetWeb/dist` |
+| App association file | Worker-generated JSON response |
+| Non-navigation Leither request | HTTP `dl.dtweet.com` origin behind the Worker |
+
+The fallback currently resolves to `http://t1.w333w.site`, but the hostname is
+replaceable and must not be treated as an architectural constant. The Worker
+configuration is authoritative; DNS, nginx, and documentation move with it by
+following the browser fallback domain migration procedure.
+
+TweetWeb must not execute under the HTTPS gateway origin while it still uses
+HTTP and `ws://` provider endpoints. Doing so loads the shell successfully but
+causes browsers to block every provider WebSocket as mixed content.
 
 av1 nginx keeps the native-client Fireshare domain families separate from the
 retired web domain family. `fireshare.us`, `*.fireshare.us`, `fireshare.uk`,
