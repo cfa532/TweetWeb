@@ -120,7 +120,7 @@ function startCarouselTicker() {
     const n = carouselItems.value.length;
     if (n <= 1) return;
     currentIdx.value = (currentIdx.value + 1) % n;
-  }, 5000);
+  }, 10000);
 }
 
 function scheduleStripReveal(delayMs: number) {
@@ -410,6 +410,10 @@ watch(
 .carousel-spin-enter-from {
   opacity: 0;
   transform: rotateX(90deg);
+}
+.carousel-spin-enter-active {
+  /* Leave a blank pause after the outgoing title finishes its transition. */
+  transition-delay: 1s;
 }
 .carousel-spin-leave-to {
   opacity: 0;
