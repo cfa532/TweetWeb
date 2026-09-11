@@ -206,18 +206,13 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
         const freshPinned = await Promise.race([pinnedPromise, pinnedTimeout]);
         if (route.params.authorId !== authorId) return;
         if (freshPinned?.length) {
-            freshPinned.sort((a: any, b: any) => (b.timestamp as number) - (a.timestamp as number));
-
             // Merge fresh data into existing cached entries so Vue keeps the same
             // component instances (and running videos) instead of re-creating them.
             const existingMap = new Map(pinnedTweets.value.map(t => [t.mid, t]));
-            const freshIds = new Set(freshPinned.map((t: Tweet) => t.mid));
 
-            // Remove pinned tweets that are no longer pinned
-            pinnedTweets.value = pinnedTweets.value.filter(t => freshIds.has(t.mid));
-
-            // Update existing tweets in-place with scalar changes; append truly new ones
-            for (const ft of freshPinned) {
+            // The store orders by pin time, newest first. Preserve that order while
+            // reusing cached objects, including when a tweet is newly pinned or re-pinned.
+            pinnedTweets.value = freshPinned.map(ft => {
                 const existing = existingMap.get(ft.mid);
                 if (existing) {
                     // Update scalar fields only — preserve media/author refs to avoid video restart
@@ -264,10 +259,10 @@ async function loadPinnedTweetsForUser(authorId: MimeiId) {
                             if (ft.author.avatar) existing.author.avatar = ft.author.avatar;
                         }
                     }
-                } else {
-                    pinnedTweets.value.push(ft);
+                    return existing;
                 }
-            }
+                return ft;
+            });
 
             tweetStore.cachePinnedTweets(authorId, pinnedTweets.value);
         }
