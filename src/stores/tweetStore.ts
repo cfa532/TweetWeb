@@ -45,6 +45,18 @@ const REGISTER_TIMEOUT_MS = 30_000
 // anyway. 30s matches update_tweet and register rather than the 60s toggles — long enough
 // for the publish, short enough not to hang the UI on a node that is genuinely gone.
 const DELETE_MUTATION_TIMEOUT_MS = 30_000
+const STORAGE_CAPABILITY_TTL_MS = 60_000
+const STORAGE_CAPABILITY_TIMEOUT_MS = 5_000
+const DATABASE_STORAGE_FORMAT = 'database'
+const FILE_STORAGE_FORMAT = 'tweet-file-v1'
+
+type BackendStorageCapabilities = {
+    formats: Set<string>
+    checkedAt: number
+}
+
+const storageCapabilitiesCache = new Map<string, BackendStorageCapabilities>()
+const storageCapabilitiesInProgress = new Map<string, Promise<BackendStorageCapabilities>>()
 
 type ExpiringLocalCache<T> = {
     cachedAt: number
@@ -654,6 +666,121 @@ export const useTweetStore = defineStore('tweetStore', {
         }
     },
     actions: {
+        /** Query the app itself; an HTTP HEAD only proves that the node is alive. */
+        async storageCapabilities(
+            ip: string,
+            params: Record<string, any> = {}
+        ): Promise<BackendStorageCapabilities> {
+            const aid = String(params.aid ?? this.appId)
+            const version = String(params.ver ?? 'last')
+            const key = `${ip}|${aid}|${version}`
+            const cached = storageCapabilitiesCache.get(key)
+            if (cached && Date.now() - cached.checkedAt < STORAGE_CAPABILITY_TTL_MS) {
+                return cached
+            }
+            const pending = storageCapabilitiesInProgress.get(key)
+            if (pending) return await pending
+
+            const request = (async () => {
+                const probe = createPooledClient(ip, this.lapi.connectionPool)
+                probe.timeout = STORAGE_CAPABILITY_TIMEOUT_MS
+                const raw = await probe.RunMApp('health', { aid, ver: version })
+                const reply = raw?.success === true && raw?.data?.success === true
+                    ? raw.data
+                    : raw
+                if (!reply || reply.success !== true) {
+                    throw new Error("Unable to check this server's storage support")
+                }
+                let formats: Set<string>
+                if ('storageFormats' in reply) {
+                    if (!Array.isArray(reply.storageFormats)
+                        || reply.storageFormats.some((value: unknown) => typeof value !== 'string')
+                        || reply.storageFormats.length === 0
+                    ) {
+                        throw new Error('Invalid server storage capabilities')
+                    }
+                    formats = new Set(reply.storageFormats)
+                } else {
+                    formats = new Set([DATABASE_STORAGE_FORMAT])
+                }
+                const result = { formats, checkedAt: Date.now() }
+                storageCapabilitiesCache.set(key, result)
+                return result
+            })()
+            storageCapabilitiesInProgress.set(key, request)
+            try {
+                return await request
+            } finally {
+                storageCapabilitiesInProgress.delete(key)
+            }
+        },
+
+        /**
+         * Select a server that can decode this object graph. A Database user can
+         * own File tweets, so prefer a dual-format server whenever one is known.
+         */
+        async storageCompatibleReadRoute(
+            ip: string,
+            owner?: User | null,
+            requiredFormat?: string | null,
+            params: Record<string, any> = {}
+        ): Promise<{ ip: string, client: any }> {
+            const required = requiredFormat ?? owner?.storageFormat ?? DATABASE_STORAGE_FORMAT
+            const candidateCapabilities = await this.storageCapabilities(ip, params)
+            if (candidateCapabilities.formats.has(FILE_STORAGE_FORMAT)
+                && candidateCapabilities.formats.has(required)
+            ) {
+                return {
+                    ip,
+                    client: createPooledClient(ip, this.lapi.connectionPool),
+                }
+            }
+
+            const rootHostId = owner?.hostIds?.[0]
+            if (rootHostId) {
+                let rootIp: string | null = null
+                try {
+                    rootIp = await this.resolveWritableHostIp(owner)
+                } catch (error) {
+                    console.warn(`[storage] Could not resolve root for ${owner.mid}`, error)
+                }
+                if (rootIp && rootIp !== ip) {
+                    const rootCapabilities = await this.storageCapabilities(rootIp, params)
+                    if (rootCapabilities.formats.has(FILE_STORAGE_FORMAT)
+                        && rootCapabilities.formats.has(required)
+                    ) {
+                        return {
+                            ip: rootIp,
+                            client: createPooledClient(rootIp, this.lapi.connectionPool),
+                        }
+                    }
+                }
+            }
+
+            if (!candidateCapabilities.formats.has(required)) {
+                throw new Error('This server needs an update to access this account or tweet')
+            }
+            return {
+                ip,
+                client: createPooledClient(ip, this.lapi.connectionPool),
+            }
+        },
+
+        /** Validate a fixed mutation/recovery route without redirecting it. */
+        async storageCompatibleRequestedClient(
+            ip: string,
+            owner: User,
+            requiredFormat?: string | null,
+            params: Record<string, any> = {}
+        ): Promise<any> {
+            const required = requiredFormat ?? owner.storageFormat ?? DATABASE_STORAGE_FORMAT
+            const capabilities = await this.storageCapabilities(ip, params)
+            if (!capabilities.formats.has(required)) {
+                throw new Error('This server needs an update to access this account or tweet')
+            }
+            return createPooledClient(ip, this.lapi.connectionPool)
+        },
+
         resolvedInteractionFlags(tweet: Tweet): boolean[] {
             const flags = Array.isArray(tweet.favorites)
                 ? [...tweet.favorites]
@@ -780,11 +907,21 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!user) return []
 
                 try {
-                    const list = await user.client.RunMApp(rpcName, {
+                    const currentIp = user.providerIp ?? user.client?.ip
+                    if (!currentIp) throw new Error(`Route unavailable for ${userId}`)
+                    const params = {
                         aid: this.appId,
                         ver: "last",
                         userid: userId
-                    })
+                    }
+                    const route = await this.storageCompatibleReadRoute(
+                        currentIp,
+                        user,
+                        user.storageFormat,
+                        params,
+                    )
+                    applyUserRoute(user, route.ip, this.lapi.connectionPool)
+                    const list = await route.client.RunMApp(rpcName, params)
                     return list
                         .sort((a: any, b: any) => b["value"] - a["value"])
                         .slice(0, 200)
@@ -970,6 +1107,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (fresh.content !== undefined) cached.content = fresh.content
             if (fresh.isPrivate !== undefined) cached.isPrivate = fresh.isPrivate
             if (fresh.downloadable !== undefined) cached.downloadable = fresh.downloadable
+            if (fresh.storageFormat !== undefined) cached.storageFormat = fresh.storageFormat
             if (fresh.timestamp !== undefined) cached.timestamp = fresh.timestamp
             if (fresh.favorites !== undefined) cached.favorites = fresh.favorites
         },
@@ -1014,7 +1152,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (!readIp) {
                         throw new Error(`Tweets by user unavailable: could not resolve a read host for ${user.mid}`)
                     }
-                    const profileClient = createPooledClient(readIp, this.lapi.connectionPool)
+                    const route = await this.storageCompatibleReadRoute(
+                        readIp,
+                        user,
+                        user.storageFormat,
+                        params,
+                    )
+                    applyUserRoute(user, route.ip, this.lapi.connectionPool)
+                    const profileClient = route.client
                     const response = await profileClient.RunMApp("get_tweets_by_user", params)
 
                     // Check success status first
@@ -1547,7 +1692,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (!readIp) {
                         throw new Error(`Pinned tweets unavailable: could not resolve a read host for ${user.mid}`)
                     }
-                    const profileClient = createPooledClient(readIp, this.lapi.connectionPool)
+                    const route = await this.storageCompatibleReadRoute(
+                        readIp,
+                        user,
+                        user.storageFormat,
+                        params,
+                    )
+                    applyUserRoute(user, route.ip, this.lapi.connectionPool)
+                    const profileClient = route.client
                     const raw = await profileClient.RunMApp("get_pinned_tweets", params)
 
                     // v2 wraps payloads as { success, data, message }. Unwrap.
@@ -1706,7 +1858,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!readIp) {
                     throw new Error(`User meta unavailable: could not resolve a read host for ${user.mid}`)
                 }
-                const profileClient = createPooledClient(readIp, this.lapi.connectionPool)
+                const route = await this.storageCompatibleReadRoute(
+                    readIp,
+                    user,
+                    user.storageFormat,
+                    params,
+                )
+                applyUserRoute(user, route.ip, this.lapi.connectionPool)
+                const profileClient = route.client
                 raw = await profileClient.RunMApp("get_user_meta", params)
             } catch (e) {
                 console.warn(`[loadUserTweetsByType] ${type} RPC failed for ${userId}:`, e)
@@ -1804,7 +1963,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!readIp) {
                     throw new Error(`Tweet feed unavailable: could not resolve a read host for ${user.mid}`)
                 }
-                const feedClient = createPooledClient(readIp, this.lapi.connectionPool)
                 const params = {
                     aid: this.appId,
                     ver: "last",
@@ -1813,6 +1971,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     userid: user.mid,
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                 }
+                const route = await this.storageCompatibleReadRoute(
+                    readIp,
+                    user,
+                    user.storageFormat,
+                    params,
+                )
+                applyUserRoute(user, route.ip, this.lapi.connectionPool)
+                const feedClient = route.client
                 const response = await feedClient.RunMApp("get_tweet_feed", params)
 
                 // Check success status first
@@ -1963,12 +2129,20 @@ export const useTweetStore = defineStore('tweetStore', {
                     return
                 }
 
-                const accessClient = createPooledClient(accessHostIp, this.lapi.connectionPool)
-                accessClient.timeout = UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS
-                const response = await accessClient.RunMApp("update_following_tweets", {
+                const accessParams = {
                     ...params,
                     homeupdated: rpcBool(true),
-                })
+                }
+                const currentUser = this.loginUser
+                if (!currentUser) return
+                const accessClient = await this.storageCompatibleRequestedClient(
+                    accessHostIp,
+                    currentUser,
+                    currentUser.storageFormat,
+                    accessParams,
+                )
+                accessClient.timeout = UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS
+                const response = await accessClient.RunMApp("update_following_tweets", accessParams)
                 if (response?.success !== true) {
                     console.warn("Access-host following-tweets sync failed:", response?.message || response)
                 }
@@ -2218,15 +2392,21 @@ export const useTweetStore = defineStore('tweetStore', {
                 author = await this.getUser(authorId)
                 if (author && author.providerIp && shouldResyncUser(author)) {
                     providerIp = author.providerIp
-                    providerClient = author.client
-                    tweetInDB = await providerClient.RunMApp("refresh_tweet", {
+                    const refreshParams = {
                         aid: this.lapi.appId,
                         ver: "last",
                         tweetid: tweetId,
                         appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                         userid: authorId,
                         hostid: author?.hostIds?.[0],
-                    })
+                    }
+                    providerClient = await this.storageCompatibleRequestedClient(
+                        providerIp,
+                        author,
+                        cachedTweet?.storageFormat,
+                        refreshParams,
+                    )
+                    tweetInDB = await providerClient.RunMApp("refresh_tweet", refreshParams)
                     if (!tweetInDB) {
                         console.log('[fetchTweet] Author node returned null for tweet:', tweetId)
                     }
@@ -2261,10 +2441,28 @@ export const useTweetStore = defineStore('tweetStore', {
                     ? (this.users.get(authorId)?.hostIds?.[0] ?? getStoredUser(authorId)?.hostIds?.[0])
                     : undefined
                 if (knownAuthorHostId) getTweetParams.authorhostid = knownAuthorHostId
+                const storageOwner = authorId
+                    ? ((this.loginUser?.mid === authorId ? this.loginUser : undefined)
+                        ?? this.users.get(authorId)
+                        ?? getStoredUser(authorId))
+                    : undefined
+                const requiredFormat = cachedTweet?.storageFormat
 
                 if (useRacing) {
-                    const raceGetTweet = (ips: string[]) => this.raceProviderIps(ips, async (ip, client) => {
-                        const result = await client.RunMApp("get_tweet", getTweetParams)
+                    const raceGetTweet = async (ips: string[]) => {
+                        const compatibleResults = await Promise.allSettled(ips.map(ip =>
+                            this.storageCompatibleReadRoute(
+                                ip,
+                                storageOwner,
+                                requiredFormat,
+                                getTweetParams,
+                            )
+                        ))
+                        const compatibleIps = [...new Set(compatibleResults.flatMap(result =>
+                            result.status === 'fulfilled' ? [result.value.ip] : []
+                        ))]
+                        return this.raceProviderIps(compatibleIps, async (ip, client) => {
+                            const result = await client.RunMApp("get_tweet", getTweetParams)
                         // A null answer means "this node is not a provider for the
                         // tweet", not "the tweet does not exist". Throw so the race
                         // keeps going instead of electing that node as the winner —
@@ -2272,9 +2470,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         // slower one that holds it, and the author fallback below is
                         // skipped because raceResult is a truthy {result: null}.
                         // Same guard the get_user race already applies.
-                        if (!result) throw new Error(`get_tweet returned no data from ${ip}`)
-                        return result
-                    }, `tweet ${tweetId}`)
+                            if (!result) throw new Error(`get_tweet returned no data from ${ip}`)
+                            return result
+                        }, `tweet ${tweetId}`)
+                    }
 
                     let raceResult = null
 
@@ -2334,7 +2533,14 @@ export const useTweetStore = defineStore('tweetStore', {
                         console.warn(`[fetchTweet] No provider IP for tweet ${tweetId}`)
                         return null
                     }
-                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
+                    const route = await this.storageCompatibleReadRoute(
+                        providerIp,
+                        storageOwner,
+                        requiredFormat,
+                        getTweetParams,
+                    )
+                    providerIp = route.ip
+                    providerClient = route.client
                     tweetInDB = await providerClient.RunMApp("get_tweet", getTweetParams)
                 }
             }
@@ -2555,19 +2761,26 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!user.hostIds?.length) return user
             // Keep the route the user already has when a write is being read out of the
             // root host, or when a probe recently found it healthy.
-            if (isReadingFromWriteHost(user.mid) || (user.providerIp && this.getFreshHealthStatus(user.providerIp) === true)) {
+            if (isReadingFromWriteHost(user.mid)) {
                 applyUserRoute(user, user.providerIp, this.lapi.connectionPool)
                 return user
             }
             try {
                 const readIp = await this.getUserReadIp(user, false)
-                if (!readIp || !applyUserRoute(user, readIp, this.lapi.connectionPool)) return user
+                if (!readIp) return user
+                const route = await this.storageCompatibleReadRoute(
+                    readIp,
+                    user,
+                    user.storageFormat,
+                    { aid: this.appId, ver: 'last' },
+                )
+                if (!applyUserRoute(user, route.ip, this.lapi.connectionPool)) return user
                 if (user.avatar) {
-                    user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${readIp}`)
+                    user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${route.ip}`)
                 }
 
                 this.users.set(user.mid, user)
-                this._rewriteUserMediaHosts(user.mid, readIp)
+                this._rewriteUserMediaHosts(user.mid, route.ip)
                 setStoredUser(user.mid, user)
                 if (this._user?.mid === user.mid) {
                     setStoredLoginUser(user)
@@ -2597,13 +2810,21 @@ export const useTweetStore = defineStore('tweetStore', {
                 throw new Error(`Route unavailable for resync user ${userId}`)
             }
 
-            let rawResponse = await currentUser.client.RunMApp("resync_user", {
+            const resyncParams = {
                 aid: this.appId,
                 ver: "last",
                 version: "v3",
                 userid: userId,
                 appuserid: this.loginUser?.mid ?? GUEST_ID,
-            })
+            }
+            const currentIp = currentUser.providerIp ?? currentUser.client.ip
+            const resyncClient = await this.storageCompatibleRequestedClient(
+                currentIp,
+                currentUser,
+                currentUser.storageFormat,
+                resyncParams,
+            )
+            let rawResponse = await resyncClient.RunMApp("resync_user", resyncParams)
 
             // A node that answers "user not found" is not carrying this author at
             // all — it cannot synchronize them, and every later read sent there
@@ -2617,13 +2838,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (!currentUser?.client) {
                         throw new Error(`Route unavailable for resync user ${userId}`)
                     }
-                    rawResponse = await currentUser.client.RunMApp("resync_user", {
-                        aid: this.appId,
-                        ver: "last",
-                        version: "v3",
-                        userid: userId,
-                        appuserid: this.loginUser?.mid ?? GUEST_ID,
-                    })
+                    const retryIp = currentUser.providerIp ?? currentUser.client.ip
+                    const retryClient = await this.storageCompatibleRequestedClient(
+                        retryIp,
+                        currentUser,
+                        currentUser.storageFormat,
+                        resyncParams,
+                    )
+                    rawResponse = await retryClient.RunMApp("resync_user", resyncParams)
                 }
             }
 
@@ -2685,10 +2907,17 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (cachedUser) {
                     try {
                         if (cachedUser && cachedUser.mid && cachedUser.hostIds) {
-                            const providerIp = await this.getUserReadIp(cachedUser, false)
-                            if (!providerIp) {
+                            const candidateIp = await this.getUserReadIp(cachedUser, false)
+                            if (!candidateIp) {
                                 return undefined
                             }
+                            const route = await this.storageCompatibleReadRoute(
+                                candidateIp,
+                                cachedUser,
+                                cachedUser.storageFormat,
+                                { aid: this.appId, ver: 'last' },
+                            )
+                            const providerIp = route.ip
                             applyUserRoute(cachedUser, providerIp, this.lapi.connectionPool)
                             cachedUser.avatar = this.normalizeAvatarUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
                             this.users.set(userId, cachedUser)
@@ -2719,6 +2948,24 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             if (providerIps.length === 0) {
                 console.warn(`[_fetchUser] No provider IPs for user ${userId}`)
+                this._recordFetchFailure(userId, `user:${userId}`)
+                return undefined
+            }
+
+            const knownUser = this.users.get(userId) ?? getStoredUser(userId)
+            const compatibleResults = await Promise.allSettled(providerIps.map(ip =>
+                this.storageCompatibleReadRoute(
+                    ip,
+                    knownUser,
+                    knownUser?.storageFormat,
+                    { aid: this.appId, ver: 'last' },
+                )
+            ))
+            providerIps = [...new Set(compatibleResults.flatMap(result =>
+                result.status === 'fulfilled' ? [result.value.ip] : []
+            ))]
+            if (providerIps.length === 0) {
+                console.error(`[_fetchUser] No storage-compatible provider for user ${userId}`)
                 this._recordFetchFailure(userId, `user:${userId}`)
                 return undefined
             }
@@ -3548,9 +3795,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 return
             }
             console.log('[loadComments] Loading comments for tweet:', tweet.mid, 'provider:', tweet.provider)
-            // Use auto-releasing proxy so the pool slot is freed after the RPC.
-            let client = createPooledClient(tweet.provider, this.lapi.connectionPool)
-            const raw = await client.RunMApp("get_comments", {
+            const params = {
                 aid: this.lapi.appId,
                 ver: "last",
                 version: "v2",
@@ -3558,7 +3803,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                 pn: 0,
                 ps: 20
-            }) as any
+            }
+            const route = await this.storageCompatibleReadRoute(
+                tweet.provider,
+                tweet.interactionHostAuthor ?? tweet.author,
+                tweet.storageFormat,
+                params,
+            )
+            tweet.provider = route.ip
+            const raw = await route.client.RunMApp("get_comments", params) as any
 
             // Unwrap v2 envelope {success, data} or accept bare array (older server).
             let comments: any[]
@@ -3670,19 +3923,26 @@ export const useTweetStore = defineStore('tweetStore', {
         async loadMoreComments(tweet: Tweet, pageNumber: number, pageSize: number = 20): Promise<boolean> {
             if (!tweet || !tweet.provider) return false
 
-            const tweetProvider = tweet.provider
-            const client = createPooledClient(tweetProvider, this.lapi.connectionPool)
+            const params = {
+                aid: this.lapi.appId,
+                ver: "last",
+                tweetid: tweet.mid,
+                appuserid: this.loginUser?.mid ?? GUEST_ID,
+                pn: pageNumber,
+                ps: pageSize,
+            }
+            const route = await this.storageCompatibleReadRoute(
+                tweet.provider,
+                tweet.interactionHostAuthor ?? tweet.author,
+                tweet.storageFormat,
+                params,
+            )
+            const tweetProvider = route.ip
+            tweet.provider = tweetProvider
 
             let rawComments: any[]
             try {
-                rawComments = await client.RunMApp("get_comments", {
-                    aid: this.lapi.appId,
-                    ver: "last",
-                    tweetid: tweet.mid,
-                    appuserid: this.loginUser?.mid ?? GUEST_ID,
-                    pn: pageNumber,
-                    ps: pageSize,
-                }) as any[]
+                rawComments = await route.client.RunMApp("get_comments", params) as any[]
             } catch (e) {
                 console.warn('[loadMoreComments] Failed to fetch page', pageNumber, e)
                 return false

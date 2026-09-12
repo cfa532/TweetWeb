@@ -20,8 +20,9 @@ interface User {
     name?: string;
     profile?: string;
     agentPublicKey?: string;
-    hostIds?: MimeiId[];  // Array of host IDs, where hostIds[0] may be read host and hostIds[1] may be write host
-    providerIp?: string;  // Provider's IP that has write permission
+    hostIds?: MimeiId[];  // hostIds[0] is the writable root; hostIds[1] is the ordinary access node
+    storageFormat?: string;
+    providerIp?: string;  // Current server used for ordinary reads
     baseUrl?: string;
     writableUrl?: string;
     writableHostIp?: string | null;  // Cached writable host IP, fetched lazily when needed
@@ -75,6 +76,7 @@ interface Tweet {
     provider?: string;       // Hprose client handler
     downloadable?: boolean;
     isPrivate?: boolean;
+    storageFormat?: string;
 };
 
 interface ScorePair {
