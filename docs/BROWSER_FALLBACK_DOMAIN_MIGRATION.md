@@ -3,11 +3,24 @@
 Use this memo when replacing the HTTP Leither domain used by browsers that
 open a `dtweet.com` deep link without the native app.
 
+The user registers the new domain and configures DNS to point the root and
+all subdomains to av1. After DNS is ready, perform these steps in order:
+
+1. Configure nginx on av1 to route the new domain to Leither.
+2. Bind the release app to `t1.<new-domain>` with `Leither mimei setdomain`,
+   run on av1 from the Leither root directory.
+3. Update and deploy the Cloudflare Worker browser redirect.
+4. Update `TweetBackendApp/check_upgrade.js`, copy the JavaScript release entry
+   into `<Leither root>/tweet1/` on gen8, and publish with `tweet1.sh`.
+
 The current completed migration is:
 
 ```text
-http://t1.w3w3.store  ->  http://t1.w333w.site
+http://t1.w333w.site  ->  http://t1.ghrwwregas.site
 ```
+
+The September 12 migration switched the default browser and share domain;
+existing domain routes were preserved. See the completion record below.
 
 The same procedure applies to another retired family such as `www33.shop`.
 Add every spelling that has actually been used to the legacy nginx host list;
@@ -33,9 +46,11 @@ https://dtweet.com/author/<author-id>
 - The new root domain and all its subdomains reach Leither on av1.
 - HTTPS requests for the canonical browser hosts use a valid certificate,
   clear any cached HSTS policy, and redirect back to the same HTTP URL.
-- Retired domains redirect to the equivalent new host, preserving the
-  subdomain, route, and query string.
-- `fireshare.us`, `fireshare.uk`, and their subdomains remain unchanged.
+- If retiring existing domains, redirect them to the equivalent new host,
+  preserving the subdomain, route, and query string. A default-domain switch
+  alone can leave existing domain routes in place.
+- `fireshare.us`, `fireshare.uk`, `inoku.uk`, and their subdomains remain
+  unchanged. `inoku.uk` serves LifeDrive and must not be retired.
 
 The hash is required before `tweet` and `author`. It selects the TweetWeb route
 after Leither loads the application. The fallback must remain HTTP because the
@@ -48,8 +63,7 @@ Leither service and its WebSocket providers do not support HTTPS consistently.
 | Cloudflare Worker | `../Tweet-iOS/cloudflare/dtweet-worker/src/index.js` |
 | Worker routes and assets | `../Tweet-iOS/cloudflare/dtweet-worker/wrangler.toml` |
 | JavaScript backend share-domain default | `../TweetBackendApp/check_upgrade.js` |
-| Go backend share-domain default | `../TweetBackendApp/go/file_entries.go` |
-| Go backend publication details | `../TweetBackendApp/go/README.md` |
+| JavaScript release deployment | `<Leither root>/tweet1/` on gen8 (`/home/pi/demo/tweet1/`) |
 | iOS deep-link behavior | `../Tweet-iOS/DEEPLINKING.md` |
 | av1 nginx site | `/etc/nginx/sites-available/leither-fireshare` |
 | Full web publication procedure | `TweetWeb/docs/DEPLOYMENT.md` |
@@ -58,7 +72,7 @@ The Cloudflare Worker, not a zone-level Redirect Rule, owns the browser
 fallback. This is necessary because the Worker must serve the app association
 files before deciding whether an ordinary request is a browser navigation.
 
-## 1. Prepare DNS and HTTP Access
+## Prerequisite: User Prepares DNS
 
 Add the new domain to Cloudflare and point both the root and wildcard records
 at av1:
@@ -69,7 +83,8 @@ at av1:
 ```
 
 Confirm that port 80 remains usable. Do not enable a rule that always upgrades
-the fallback host to HTTPS. Test the bare application host, not an
+the fallback host to HTTPS. After nginx configuration and app domain binding,
+check the bare application host, not an
 `index.js` URL:
 
 ```bash
@@ -78,7 +93,7 @@ curl -I http://t1.<new-domain>/
 
 The expected result is a Leither response, normally `200 OK`.
 
-## 2. Update av1 nginx
+## 1. Update av1 nginx
 
 The active file is `/etc/nginx/sites-available/leither-fireshare`. Make a dated
 backup before editing it.
@@ -86,7 +101,7 @@ backup before editing it.
 The configuration has three separate responsibilities:
 
 1. Preserve the Fireshare host families and proxy them to `127.0.0.1:4801`.
-2. Redirect retired root domains and their subdomains to the new domain.
+2. Preserve existing domain routes unless their retirement is requested.
 3. Proxy the new root domain and wildcard subdomains to Leither while
    preserving the original `Host` header.
 
@@ -139,7 +154,7 @@ server {
 }
 ```
 
-Add every retired root to the legacy root `server_name` list. Root requests
+When retiring a domain, add every retired root to the legacy root `server_name` list. Root requests
 redirect to `http://<new-domain>`. The separate regex server for legacy
 subdomains must redirect `<subdomain>.<old-domain>` to
 `<subdomain>.<new-domain>`.
@@ -150,8 +165,8 @@ destination. For other routes, preserve `$request_uri` unchanged.
 Never replace these blocks with a broad catch-all server. A catch-all can send
 native-client hosts such as `tweet.fireshare.us` to the browser domain and
 break app routing. It can also capture unrelated exact services. In the
-current av1 configuration, `registry.inoku.uk` has its own exact server block
-and must remain available even though generic `inoku.uk` Leither hosts retire.
+current av1 configuration, `registry.inoku.uk` has its own exact server block,
+and the `inoku.uk` family also serves LifeDrive through Leither. Preserve both.
 
 Validate before reloading:
 
@@ -163,9 +178,23 @@ ssh root@av1 'systemctl reload nginx'
 If validation fails, do not reload. Correct the file or restore the dated
 backup first.
 
-## 3. Change the Worker and Backend Domain Values
+## 2. Bind the Release App Domain
 
-### Worker browser fallback
+On av1, from the Leither root directory, run:
+
+```bash
+./Leither mimei setdomain --mid <appMid> t1.<new-domain>
+```
+
+The installed CLI on av1 uses lowercase `setdomain` and the `--mid` flag.
+Its Leither root directory is `/root/demo`.
+
+Replace `<appMid>` with the release application's actual MID. Use the hostname
+without a URL scheme. This binds the release app to the new hostname; DNS and
+nginx routing alone do not perform this binding. Confirm the new hostname
+loads the release app before switching the Worker redirect.
+
+## 3. Update and Deploy the Worker Browser Fallback
 
 In `../Tweet-iOS/cloudflare/dtweet-worker/src/index.js`, change only the
 browser fallback constant:
@@ -189,53 +218,11 @@ In the Cloudflare `dtweet.com` zone, the old single Redirect Rule must remain
 disabled. It may be renamed to describe the new fallback, but enabling it would
 run before the Worker and bypass the association-file handling.
 
-### Backend share-domain defaults
-
-The backend returns a domain to clients through `check_upgrade`; clients use it
-when constructing share and deep-link URLs. Update both implementations to the
-same new host, without a URL scheme:
-
-```javascript
-// ../TweetBackendApp/check_upgrade.js
-domain: "t1.<new-domain>"
-```
-
-```go
-// ../TweetBackendApp/go/file_entries.go
-upgradeDomain = "t1.<new-domain>"
-```
-
-These values and the Worker's `BROWSER_FALLBACK_ORIGIN` are one operational
-setting with three source locations. Never update only one implementation.
-The Worker constant includes `http://`; the backend values do not.
-
-## 4. Deploy in the Correct Order
-
-A domain-only migration does not require rebuilding TweetWeb, but it does
-require publishing both backend defaults and the Worker. First copy and
-hash-check `check_upgrade.js`, then publish the existing `tweet1` package:
-
-```bash
-scp ../TweetBackendApp/check_upgrade.js gen8:/home/pi/demo/tweet1/
-ssh gen8 'cd /home/pi/demo/tweet1 && shasum -a 256 check_upgrade.js'
-ssh gen8 'cd /home/pi/demo && ./tweet1.sh'
-```
-
-Next copy the Go MApp sources and publish `twbe` using the canonical commands
-in `../TweetBackendApp/go/README.md`. At minimum, compare the changed
-`file_entries.go` hash before running the publisher:
-
-```bash
-rsync -av -e 'ssh -p 220' \
-  --exclude='*_test.go' --include='*.go' --exclude='*' \
-  ../TweetBackendApp/go/ pi@gen8.leither.uk:/home/pi/demo/twbe/
-ssh -p 220 pi@gen8.leither.uk \
-  'shasum -a 256 /home/pi/demo/twbe/file_entries.go'
-ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./twbe.sh'
-```
-
-Finally deploy the Worker. Because `dist` did not change, Wrangler should not
-upload assets:
+Deploy the Worker after the new hostname is bound and serving the release app.
+For a domain-only migration, `dist` does not change. Only use the normal
+deployment below when local `dist` matches the deployed assets; Wrangler should
+not upload assets. Otherwise retain the deployed assets as recorded for
+September 12 below.
 
 ```bash
 cd ../Tweet-iOS/cloudflare/dtweet-worker
@@ -248,6 +235,40 @@ new Worker version with these routes:
 - `dtweet.com`
 - `www.dtweet.com`
 - `dl.dtweet.com/*`
+
+## 4. Update and Publish the JavaScript Release Backend
+
+The backend returns a domain to clients through `check_upgrade`; clients use it
+when constructing share and deep-link URLs. Update the JavaScript release
+entry to the new host, without a URL scheme:
+
+```javascript
+// ../TweetBackendApp/check_upgrade.js
+domain: "t1.<new-domain>"
+```
+
+This value and the Worker's `BROWSER_FALLBACK_ORIGIN` must agree. The Worker
+constant includes `http://`; the backend value does not.
+
+A domain-only migration does not require rebuilding TweetWeb, but it does
+require publishing the JavaScript release backend as well as the Worker.
+The release app is `tweet1` (MID `heWgeGkeBX2gaENbIBS_Iy1mdTS`). Its directory
+is `<Leither root>/tweet1/`, currently `/home/pi/demo/tweet1/` on gen8.
+
+Copy the updated JavaScript source from `TweetBackendApp`, compare its local
+and remote hashes, then run `tweet1.sh` from the Leither root. Back up replaced
+files outside `tweet1/`. Keep the existing web assets in the app directory.
+Run these commands from the TweetWeb repository:
+
+```bash
+scp -P 220 ../TweetBackendApp/check_upgrade.js pi@gen8.leither.uk:/home/pi/demo/tweet1/
+shasum -a 256 ../TweetBackendApp/check_upgrade.js
+ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo/tweet1 && shasum -a 256 check_upgrade.js'
+ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./tweet1.sh'
+```
+
+The Go `twbe` app is a separate debug deployment. Publishing it is not part of
+this release-domain migration and requires a separate request.
 
 If TweetWeb has code changes beyond the domain migration, follow the full
 [publication and deployment procedure](DEPLOYMENT.md): publish backend changes
@@ -287,8 +308,8 @@ curl -i https://dtweet.com/.well-known/apple-app-site-association
 curl -i https://dtweet.com/.well-known/assetlinks.json
 ```
 
-Confirm that both published `check_upgrade` implementations return
-`t1.<new-domain>`. A successful Worker redirect alone is insufficient: a
+Confirm that the published JavaScript release `check_upgrade` returns
+`t1.<new-domain>` for the numbered version and `last`. A successful Worker redirect alone is insufficient: a
 client receiving the old backend value can continue producing links for the
 retired domain.
 
@@ -330,9 +351,75 @@ the first case; the browser should land on the HTTP `t1` host for the second.
    cause. Removing DNS first makes the failure harder to inspect.
 4. Keep the Cloudflare zone Redirect Rule disabled throughout rollback.
 
-## Completed `w333w.site` Migration
+## Completed `ghrwwregas.site` Default-Domain Switch
 
-Applied on September 2, 2026. The current production state is:
+Applied September 12, 2026, in the requested nginx → binding → Worker → backend
+order:
+
+- The user configured the root and wildcard DNS records to av1.
+- nginx now proxies `ghrwwregas.site` and its subdomains to `127.0.0.1:4801`.
+  Existing routes, including `w333w.site`, Fireshare, and LifeDrive, were
+  preserved. No old domain family was retired in this switch.
+- A public certificate covers the root, `www`, `t1`, and `tweet` hosts.
+  HTTPS clears HSTS and redirects to HTTP; Certbot renewal is enabled.
+- On av1, from `/root/demo`, the release binding succeeded with:
+
+  ```bash
+  ./Leither mimei setdomain --mid heWgeGkeBX2gaENbIBS_Iy1mdTS t1.ghrwwregas.site
+  ```
+
+- Worker version `519d483b-ae8b-47d4-8cce-332423fb454a` redirects browser
+  navigation to `http://t1.ghrwwregas.site`. The previous version was
+  `95fc4eab-26c4-4a1d-acd5-8c413f5aece6`.
+- The domain-only Worker deployment used a temporary Wrangler configuration
+  with the same entry point and routes, no local `[assets]` upload, and this
+  metadata to retain the existing assets and binding:
+
+  ```toml
+  [unsafe.metadata]
+  keep_assets = true
+  bindings = [{ type = "assets", name = "ASSETS" }]
+  ```
+
+- Both local backend source defaults were updated. On gen8, only the domain
+  value in each deployed file was changed because local sources had unrelated
+  unpublished differences. `tweet1.sh` initially published release app version
+  `1286`; `twbe.sh` also published Go debug app version `1625`. The user then
+  corrected the deployment scope: this flow must deploy the JavaScript release
+  source into `<Leither root>/tweet1/`. The Go publication was outside that
+  intended flow; the procedure above has been corrected.
+
+Backups:
+
+- av1: `/etc/nginx/sites-available/leither-fireshare.pre-ghrwwregas-20260912`
+- gen8: `/home/pi/demo/deploy-backups/domain-ghrwwregas-20260912/`
+
+Live checks confirmed the release app MID at the new hostname, correct Worker
+tweet/author redirects, valid HTTPS-to-HTTP handling, direct JSON association
+responses, and unchanged Fireshare/LifeDrive responses. The Worker
+`index_entry.js` SHA-256 remained
+`08f9a63fcf78cefabe9ffeb99d239a9225cc3f1ebd06d896ee6d843950a87c1e`.
+The new release `check_upgrade.js` was also visible through av1.
+
+Release version `1286` and its `last` alias returned `t1.ghrwwregas.site`.
+Go version `1625` returned the new domain, but its `last` alias initially
+continued returning `t1.w3w3.store` despite the new source being visible under
+`/mm/<mid>:last/`. With user approval, `leither-demo.service` was restarted on
+gen8 to clear the stale runtime. The service returned to active/running, and
+both release and Go `check_upgrade` calls using `ver=last` then returned
+`t1.ghrwwregas.site`.
+
+After the user's correction, the current `TweetBackendApp/check_upgrade.js`
+was copied to `/home/pi/demo/tweet1/` on gen8 and published with `tweet1.sh` as
+release app version `1288`. The source-file SHA-256 matched locally, in the
+gen8 deployment directory, and through av1's published `:last` source:
+`506a4df8fc8d0d1e980a5b17edaa26b781e7e9dc1ea475b0e5b141fe01e1e1a8`.
+Live release calls using both `ver=1288` and `ver=last` returned
+`domain: "t1.ghrwwregas.site"` and upgrade `version: 74`.
+
+## Historical `w333w.site` Migration
+
+Applied on September 2, 2026. The production state recorded at that time was:
 
 - Worker fallback: `http://t1.w333w.site`
 - Canonical Leither family: `w333w.site`, `*.w333w.site`
@@ -381,7 +468,7 @@ The deployed Cloudflare Worker version for this migration is
 
 The backend share-domain defaults have also been changed to `t1.w333w.site`
 in `TweetBackendApp/check_upgrade.js` and `TweetBackendApp/go/file_entries.go`.
-Those backend changes still require publication to their respective gen8 app
+At that time, those backend changes still required publication to their respective gen8 app
 directories: `check_upgrade.js` through `/home/pi/demo/tweet1.sh`, and the Go
 MApp through `/home/pi/demo/twbe.sh`. Resolve gen8 through
 `gen8.leither.uk`; never pin its volatile IP. The nginx and Worker migration
