@@ -31,7 +31,7 @@ const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 const loading = ref(false)
-const submitFailed = ref(false)
+const submitError = ref('')
 const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
@@ -325,6 +325,7 @@ async function onSubmit() {
   if (!loginUser) return
 
   loading.value = true
+  submitError.value = ''
   let attachments = <MimeiFileType[]>[]
   try {
     if (props.editTweet
@@ -345,6 +346,15 @@ async function onSubmit() {
     const finalAttachments = isEditing.value
       ? mmFiles.value.concat(attachments)
       : attachments.concat(mmFiles.value)
+
+    // Pin the imported CIDs in this submission before either create or edit.
+    // Existing attachments are not part of this draft's CID import.
+    const existingIds = new Set((props.editTweet?.attachments || [])
+      .map(file => attachmentReferenceId(file.mid)))
+    const attachedCids = mmFiles.value
+      .filter(file => !existingIds.has(attachmentReferenceId(file.mid)))
+      .map(file => file.mid.trim())
+    await tweetStore.pinIpfsAttachments(uploadAuthor, attachedCids)
 
     if (props.editTweet) {
       const content = txtConent.value || ''
@@ -369,7 +379,6 @@ async function onSubmit() {
       props.editTweet.downloadable = downloadable.value
       props.editTweet.isPrivate = isPrivate.value
       useAlertStore().success(t('tweet.updateSuccess'))
-      submitFailed.value = false
       emit('uploaded', result)
       emit('hide')
       return
@@ -392,7 +401,6 @@ async function onSubmit() {
     }
 
     useAlertStore().success(t('editor.tweetUploaded'))
-    submitFailed.value = false
 
     // Clear form only on success
     txtConent.value = null
@@ -441,9 +449,12 @@ async function onSubmit() {
     }
   } catch (err) {
     console.error('onSubmit err:', err)
+    // Keep submission failures with the draft instead of a toast that expires
+    // while the editor is recovering or the user is reading the attachment.
+    submitError.value = (err as any)?.isTimeout
+      ? t('common.connectionTimeout')
+      : err instanceof Error ? err.message : String(err)
     if ((err as any)?.isTimeout) return
-    useAlertStore().error(err instanceof Error ? err.message : String(err))
-    submitFailed.value = true
 
     // Refresh loginUser: clear per-user cache and re-fetch, overwriting
     // _user and persisted login cache in place (never null them first).
@@ -599,6 +610,7 @@ function openUserPage() {
 }
 
 const handleCids = (ids: MimeiFileType[]) => {
+  ids = ids.map(file => ({ ...file, mid: file.mid.trim() }))
   if (isEditing.value) {
     const merged = [...mmFiles.value]
     const existingIds = new Set(merged.map(file => file.mid))
@@ -742,7 +754,7 @@ function handleDragEnd() {
               </button>
             </div>
             <div class='toolbar-actions'>
-              <button class='btn submit-button' type='submit' :disabled='loading || !hasDraftContent'>{{ submitFailed ? $t('editor.resubmit') : (isEditing ? $t('common.save') : $t('common.submit')) }}</button>
+              <button class='btn submit-button' type='submit' :disabled='loading || !hasDraftContent'>{{ submitError ? $t('editor.resubmit') : (isEditing ? $t('common.save') : $t('common.submit')) }}</button>
             </div>
             <div v-if='showEditorOptions' class='toolbar-options-panel'>
               <label class='toolbar-option' for='downloadable-checkbox'>
@@ -767,6 +779,7 @@ function handleDragEnd() {
               </label>
             </div>
           </div>
+          <p v-if='submitError' class='alert alert-danger submit-error' role='alert'>{{ submitError }}</p>
           <Loading :visible='loading' />
         </form>
       </div>
@@ -893,6 +906,11 @@ function handleDragEnd() {
   display: flex;
   flex-direction: column;
   flex: 1;
+}
+
+.submit-error {
+  margin: 0 10px 10px;
+  overflow-wrap: anywhere;
 }
 
 .editor-toolbar {
