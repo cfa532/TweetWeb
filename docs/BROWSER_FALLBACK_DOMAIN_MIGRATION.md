@@ -10,8 +10,8 @@ all subdomains to av1. After DNS is ready, perform these steps in order:
 2. Bind the release app to `t1.<new-domain>` with `Leither mimei setdomain`,
    run on av1 from the Leither root directory.
 3. Update and deploy the Cloudflare Worker browser redirect.
-4. Update `TweetBackendApp/check_upgrade.js`, copy the JavaScript release entry
-   into `<Leither root>/tweet1/` on gen8, and publish with `tweet1.sh`.
+4. Update `upgradeDomain` in `TweetBackendApp/go/file_entries.go` and publish
+   the File-capable Go backend to both `tweet1` and `twbe` on gen8.
 
 The current completed migration is:
 
@@ -62,8 +62,8 @@ Leither service and its WebSocket providers do not support HTTPS consistently.
 | --- | --- |
 | Cloudflare Worker | `../Tweet-iOS/cloudflare/dtweet-worker/src/index.js` |
 | Worker routes and assets | `../Tweet-iOS/cloudflare/dtweet-worker/wrangler.toml` |
-| JavaScript backend share-domain default | `../TweetBackendApp/check_upgrade.js` |
-| JavaScript release deployment | `<Leither root>/tweet1/` on gen8 (`/home/pi/demo/tweet1/`) |
+| Go backend share-domain default (release and debug) | `../TweetBackendApp/go/file_entries.go` |
+| Go release/debug deployment | `/home/pi/demo/tweet1/` and `/home/pi/demo/twbe/` on gen8 |
 | iOS deep-link behavior | `../Tweet-iOS/DEEPLINKING.md` |
 | av1 nginx site | `/etc/nginx/sites-available/leither-fireshare` |
 | Full web publication procedure | `TweetWeb/docs/DEPLOYMENT.md` |
@@ -236,39 +236,28 @@ new Worker version with these routes:
 - `www.dtweet.com`
 - `dl.dtweet.com/*`
 
-## 4. Update and Publish the JavaScript Release Backend
+## 4. Update and Publish Both Go Backends
 
-The backend returns a domain to clients through `check_upgrade`; clients use it
-when constructing share and deep-link URLs. Update the JavaScript release
-entry to the new host, without a URL scheme:
+Both release and debug now use the File-capable Go backend. Historical migration
+records below describe the deployments at those dates; their JavaScript release
+instructions are superseded by this procedure as of September 13, 2026.
 
-```javascript
-// ../TweetBackendApp/check_upgrade.js
-domain: "t1.<new-domain>"
+The backend returns the share domain through `check_upgrade`. Update
+`upgradeDomain` in `../TweetBackendApp/go/file_entries.go`, without a scheme:
+
+```go
+const upgradeDomain = "t1.<new-domain>"
 ```
 
-This value and the Worker's `BROWSER_FALLBACK_ORIGIN` must agree. The Worker
-constant includes `http://`; the backend value does not.
+This value must agree with the Worker's `BROWSER_FALLBACK_ORIGIN`, which includes
+`http://`. Follow [the backend publication procedure](DEPLOYMENT.md#2-publish-backend-changes-first-when-applicable)
+to copy the same production Go source into both existing gen8 packages and run
+`tweet1.sh` and `twbe.sh`. Preserve public web and download assets. Do not copy
+legacy `check_upgrade.js` into either package.
 
-A domain-only migration does not require rebuilding TweetWeb, but it does
-require publishing the JavaScript release backend as well as the Worker.
-The release app is `tweet1` (MID `heWgeGkeBX2gaENbIBS_Iy1mdTS`). Its directory
-is `<Leither root>/tweet1/`, currently `/home/pi/demo/tweet1/` on gen8.
-
-Copy the updated JavaScript source from `TweetBackendApp`, compare its local
-and remote hashes, then run `tweet1.sh` from the Leither root. Back up replaced
-files outside `tweet1/`. Keep the existing web assets in the app directory.
-Run these commands from the TweetWeb repository:
-
-```bash
-scp -P 220 ../TweetBackendApp/check_upgrade.js pi@gen8.leither.uk:/home/pi/demo/tweet1/
-shasum -a 256 ../TweetBackendApp/check_upgrade.js
-ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo/tweet1 && shasum -a 256 check_upgrade.js'
-ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./tweet1.sh'
-```
-
-The Go `twbe` app is a separate debug deployment. Publishing it is not part of
-this release-domain migration and requires a separate request.
+A domain-only migration does not require rebuilding TweetWeb. Verify both
+numbered and `last` versions return the new domain and retain dual-format
+`health` support before considering the backend publication complete.
 
 If TweetWeb has code changes beyond the domain migration, follow the full
 [publication and deployment procedure](DEPLOYMENT.md): publish backend changes
@@ -308,7 +297,7 @@ curl -i https://dtweet.com/.well-known/apple-app-site-association
 curl -i https://dtweet.com/.well-known/assetlinks.json
 ```
 
-Confirm that the published JavaScript release `check_upgrade` returns
+Confirm that both published Go backends' `check_upgrade` return
 `t1.<new-domain>` for the numbered version and `last`. A successful Worker redirect alone is insufficient: a
 client receiving the old backend value can continue producing links for the
 retired domain.

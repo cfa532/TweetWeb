@@ -27,6 +27,10 @@ For a browser-domain replacement, use the separate
   at `../Tweet-iOS/cloudflare/dtweet-worker` and reads this repository's `dist`
   directory.
 
+Both release (`tweet1`) and debug (`twbe`) must run the File-capable Go backend
+from `TweetBackendApp/go/`. Do not publish the legacy JavaScript backend into
+either package: it cannot read `tweet-file-v1` objects.
+
 ## 1. Select the Publication Environment
 
 The repository `.env` contains mutually exclusive `RELEASE` and `DEBUG`
@@ -59,47 +63,52 @@ replace one whole directory with another project's files:
 
 | Source | gen8 target | Publisher |
 | --- | --- | --- |
-| TweetWeb `dist` assets | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
-| TweetBackendApp JavaScript entries used by the release app | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
-| TweetBackendApp Go debug MApp sources | `/home/pi/demo/twbe/` | `/home/pi/demo/twbe.sh` |
+| TweetWeb release `dist` assets | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
+| TweetBackendApp production Go sources (release) | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
+| TweetBackendApp production Go sources (debug) | `/home/pi/demo/twbe/` | `/home/pi/demo/twbe.sh` |
 
 ## 2. Publish Backend Changes First (When Applicable)
 
-Pushing or committing `TweetBackendApp` does not update the Leither app. If the
-release includes changed backend MApp JavaScript, copy the committed versions
-of those files into the existing `tweet1` package before building or deploying
-TweetWeb. Copy only the changed backend files; do not replace the whole
-`tweet1` directory because it also contains production web assets and release
-artifacts.
+Pushing or committing `TweetBackendApp` does not update either Leither app.
+Both packages use the same production `.go` sources from `TweetBackendApp/go/`.
+Keep the existing app names and directories: they determine the AppIDs.
 
-For example, repeat the source-file argument for every changed backend entry:
+| Environment | Package | AppID | Publisher |
+| --- | --- | --- | --- |
+| Release | `/home/pi/demo/tweet1/` | `heWgeGkeBX2gaENbIBS_Iy1mdTS` | `tweet1.sh` |
+| Debug | `/home/pi/demo/twbe/` | `d4lRyhABgqOnqY4bURSm_T-4FZ4` | `twbe.sh` |
+
+Back up packages outside their application directories. Copy production Go
+sources to the selected package, preserving existing public web/download assets.
+Exclude `*_test.go`, `go.mod`, `go.sum`, documentation, local tooling and signing
+keys. Remove superseded backend source files from the package after backing them
+up; retain browser JavaScript assets such as `hprose.js` and `index_entry.js`.
+
+For example, from TweetWeb, publish the debug backend (use `tweet1` and
+`tweet1.sh` for release):
 
 ```bash
-scp -P 220 \
-  ../TweetBackendApp/changed-entry-1.js \
-  ../TweetBackendApp/changed-entry-2.js \
-  pi@gen8.leither.uk:/home/pi/demo/tweet1/
-```
-
-Compare the local and remote file hashes, then publish the backend changes:
-
-```bash
-shasum -a 256 ../TweetBackendApp/changed-entry-1.js
+rsync -av -e 'ssh -p 220' \
+  --exclude='*_test.go' --include='*.go' --exclude='*' \
+  ../TweetBackendApp/go/ pi@gen8.leither.uk:/home/pi/demo/twbe/
+shasum -a 256 ../TweetBackendApp/go/file_store.go
 ssh -p 220 pi@gen8.leither.uk \
-  'shasum -a 256 /home/pi/demo/tweet1/changed-entry-1.js'
-ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./tweet1.sh'
+  'shasum -a 256 /home/pi/demo/twbe/file_store.go'
+ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && bash -e ./twbe.sh'
 ```
 
-The command must finish with `APP published successfully`. Complete this
-backend publication before continuing with the TweetWeb build. When the same
-release changes both projects, `tweet1.sh` is therefore run twice: once after
-copying backend scripts and again after copying the web `dist` files.
+Check upload, backup and publication results; the script's final success message
+alone is insufficient. Verify `health` by the new numbered version, then `last`:
+`storageFormats` must contain both `database` and `tweet-file-v1`, and
+`creationFormat` must equal `tweet-file-v1`. Check the same on serving/root nodes;
+synchronize the application MID from gen8 if a node still serves an old package.
+Do not republish from those nodes, or synchronize/migrate user data as part of an
+application deployment. Never roll back to a database-only reader once File
+objects exist.
 
-For a debug Go-backend publication, copy the production `.go` source files
-from `TweetBackendApp/go/` into `/home/pi/demo/twbe/`, preserving the directory
-name `twbe`, then run `/home/pi/demo/twbe.sh`. Do not copy `*_test.go`, `go.mod`,
-`go.sum`, or `README.md` into the MApp package. The complete TWBE procedure is
-maintained in `TweetBackendApp/go/README.md`.
+Complete backend publication before building TweetWeb. When both backend and
+web assets change, publish again after copying the generated web files. The Go
+runtime details are maintained in `TweetBackendApp/go/README.md`.
 
 ## 3. Build Once
 
@@ -107,14 +116,19 @@ maintained in `TweetBackendApp/go/README.md`.
 npm run build
 ```
 
-This runs the TypeScript check and creates the production package in `dist`.
+This runs the TypeScript check and creates the selected environment's package in `dist`.
+When publishing both environments, build each with its own AppID and default
+followings, and save their outputs separately. Environment overrides can select
+the build without editing `.env`. Keep the release output in `dist` for Wrangler.
 Do not rebuild between the two publication targets; both must receive the same
 output.
 
 ## 4. Publish the Leither App
 
-Copy the generated entry files and static dependencies into the `tweet1`
-package on gen8:
+Copy the generated entry files and static dependencies into the matching
+package on gen8: `tweet1` for release, `twbe` for debug. The example below is
+release; for debug use its saved output, `/home/pi/demo/twbe/` and `twbe.sh`.
+Never overwrite one environment with the other environment's web bundle:
 
 ```bash
 scp -P 220 \
@@ -137,7 +151,7 @@ ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./tweet1.sh'
 The command must finish with `APP published successfully` and report a new
 backup/version number.
 
-## 5. Deploy the Cloudflare Worker and Assets
+## 5. Deploy the Cloudflare Worker and Assets (Release Only)
 
 ### Why the Worker is required
 
@@ -344,11 +358,12 @@ Restoring `.env` does not alter already-built or deployed assets.
       `DEBUG` for a debug build.
 - [ ] Every `VITE_LEITHER_NODE` assignment is commented for both build types.
 - [ ] gen8 was addressed through `gen8.leither.uk`, not a pinned IP.
-- [ ] If `TweetBackendApp` changed, its committed JavaScript files were copied,
-      hash-checked, and published from `/home/pi/demo/tweet1/` on gen8 before
-      the TweetWeb build.
-- [ ] If the Go debug backend changed, its production `.go` files were copied
-      to `/home/pi/demo/twbe/` and published with `twbe.sh` on gen8.
+- [ ] Both backend packages use the same File-capable production Go source;
+      no legacy JavaScript backend was introduced.
+- [ ] Changed Go files were hash-checked and published from the correct gen8
+      package with its existing publisher script.
+- [ ] Numbered and `last` health responses advertise both storage formats on
+      gen8 and serving/root nodes; File tweet and comment reads succeed.
 - [ ] `npm run build` completed successfully.
 - [ ] The seven generated assets were copied to gen8.
 - [ ] `tweet1.sh` published a new Leither app version.
