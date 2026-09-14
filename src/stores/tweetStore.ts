@@ -2450,29 +2450,24 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 if (useRacing) {
                     const raceGetTweet = async (ips: string[]) => {
-                        const compatibleResults = await Promise.allSettled(ips.map(ip =>
-                            this.storageCompatibleReadRoute(
+                        // Race each complete read, including its compatibility check.
+                        // Waiting for every check first lets an unreachable standby
+                        // hold up a healthy provider on a cold detail-page load.
+                        const winner = await this.raceProviderIps(ips, async (ip) => {
+                            const route = await this.storageCompatibleReadRoute(
                                 ip,
                                 storageOwner,
                                 requiredFormat,
                                 getTweetParams,
                             )
-                        ))
-                        const compatibleIps = [...new Set(compatibleResults.flatMap(result =>
-                            result.status === 'fulfilled' ? [result.value.ip] : []
-                        ))]
-                        return this.raceProviderIps(compatibleIps, async (ip, client) => {
-                            const result = await client.RunMApp("get_tweet", getTweetParams)
-                        // A null answer means "this node is not a provider for the
-                        // tweet", not "the tweet does not exist". Throw so the race
-                        // keeps going instead of electing that node as the winner —
-                        // otherwise the first node to disclaim the tweet beats a
-                        // slower one that holds it, and the author fallback below is
-                        // skipped because raceResult is a truthy {result: null}.
-                        // Same guard the get_user race already applies.
-                            if (!result) throw new Error(`get_tweet returned no data from ${ip}`)
-                            return result
+                            const result = await route.client.RunMApp("get_tweet", getTweetParams)
+                            // A node without this tweet must not win over one that has it.
+                            if (!result) throw new Error(`get_tweet returned no data from ${route.ip}`)
+                            return { result, ip: route.ip }
                         }, `tweet ${tweetId}`)
+                        // Compatibility routing can redirect a read to the root node.
+                        // Media and comments must use the node that actually served it.
+                        return winner?.result ?? null
                     }
 
                     let raceResult = null

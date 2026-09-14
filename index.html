@@ -9,13 +9,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tweet</title>
   <!-- Google tag (gtag.js) -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-2MSRSGBLC6"></script>
   <script>
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     window.gtag = gtag;
     gtag('js', new Date());
     gtag('config', 'G-2MSRSGBLC6');
+
+    // Leither loads HTML script tags sequentially, even when marked async.
+    // Insert analytics separately so a slow request cannot block app startup.
+    const analyticsScript = document.createElement('script');
+    analyticsScript.async = true;
+    analyticsScript.src = 'https://www.googletagmanager.com/gtag/js?id=G-2MSRSGBLC6';
+    document.head.appendChild(analyticsScript);
   </script>
   <script type="text/javascript" src="/hprose.js" crossorigin="anonymous"></script>
   <script type="text/javascript" src="/popper.min.js" crossorigin="anonymous"></script>
