@@ -2427,66 +2427,87 @@ export const useTweetStore = defineStore('tweetStore', {
                     : undefined
                 const requiredFormat = cachedTweet?.storageFormat
 
+                // Discovery can name the entry node again. Share each complete
+                // read within this fetch so racing paths do not duplicate RPCs.
+                const reads = new Map<string, Promise<{ result: any, ip: string }>>()
                 const raceGetTweet = async (ips: string[]) => {
                     // Race each complete read, including its compatibility check.
                     // Waiting for every check first lets an unreachable standby
                     // hold up a healthy provider on a cold detail-page load.
                     const winner = await this.raceProviderIps(ips, async (ip) => {
-                        const route = await this.storageCompatibleReadRoute(
-                            ip,
-                            storageOwner,
-                            requiredFormat,
-                            getTweetParams,
-                        )
-                        const result = await route.client.RunMApp("get_tweet", getTweetParams)
-                        // A node without this tweet must not win over one that has it.
-                        const record = Array.isArray(result) ? result[0] : result
-                        if (!record || record.mid !== tweetId || !record.authorId) {
-                            throw new Error(`get_tweet returned no usable record from ${route.ip}`)
+                        if (!reads.has(ip)) {
+                            reads.set(ip, (async () => {
+                                const route = await this.storageCompatibleReadRoute(
+                                    ip,
+                                    storageOwner,
+                                    requiredFormat,
+                                    getTweetParams,
+                                )
+                                const result = await route.client.RunMApp("get_tweet", getTweetParams)
+                                // A node without this tweet must not win over one that has it.
+                                const record = Array.isArray(result) ? result[0] : result
+                                if (!record || record.mid !== tweetId || !record.authorId) {
+                                    throw new Error(`get_tweet returned no usable record from ${route.ip}`)
+                                }
+                                return { result, ip: route.ip }
+                            })())
                         }
-                        return { result, ip: route.ip }
+                        return reads.get(ip)!
                     }, `tweet ${tweetId}`)
                     // Compatibility routing can redirect a read to the root node.
                     // Media and comments must use the node that actually served it.
                     return winner?.result ?? null
                 }
 
-                let raceResult = null
+                // The node already serving the app may hold this tweet locally.
+                // Ask it immediately: discovery must not delay that read. Gateway
+                // domains are excluded because they are not storage-node routes.
+                const entryIps = browserUsableProviderRoutes([this.lapi.hostIP], window.location.hostname)
+                const entryRead = raceGetTweet(entryIps)
+                const discoveredRead = (async () => {
+                    let raceResult = null
 
-                // Author node first. A user's provider nodes serve that user's
-                // tweets by id, so when the caller knows the author — a detail
-                // URL always carries it — that is the authoritative way in.
-                // Resolving the tweet's own mid is a provider lookup that can
-                // name nodes which no longer hold it and return no tweet data.
-                if (authorId) {
-                    const authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
-                    if (authorIps.length === 0) {
-                        console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
-                    } else {
-                        raceResult = await raceGetTweet(authorIps)
-                        if (!raceResult) {
-                            console.warn(`[fetchTweet] Author nodes did not serve ${tweetId}; trying the tweet's own providers`)
+                    // Discover other serving nodes while the entry-node read runs.
+                    // Preserve author-provider discovery and the tweet-provider fallback.
+                    if (authorId) {
+                        const authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                        if (authorIps.length === 0) {
+                            console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
+                        } else {
+                            raceResult = await raceGetTweet(authorIps)
+                            if (!raceResult) {
+                                console.warn(`[fetchTweet] Author nodes did not serve ${tweetId}; trying the tweet's own providers`)
+                            }
                         }
                     }
-                }
 
-                // The tweet's own providers: the only way in when the caller has
-                // no author, and the fallback when the author's nodes came up empty.
-                if (!raceResult) {
-                    const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
-                    if (tweetIps.length > 0) {
-                        raceResult = await raceGetTweet(tweetIps)
-                        if (!raceResult) {
-                            // Real reads failed on these routes. Drop them so a
-                            // retry resolves afresh. Keep the author's pool entry:
-                            // it is shared with profile and media loading, and one
-                            // tweet miss is not evidence that node is down.
-                            nodePool.invalidate(tweetId)
+                    // Discover the tweet's providers when there is no author route
+                    // or the author's nodes did not serve it.
+                    if (!raceResult) {
+                        const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                        if (tweetIps.length > 0) {
+                            raceResult = await raceGetTweet(tweetIps)
+                            if (!raceResult) {
+                                // Real reads failed on these routes. Drop them so a
+                                // retry resolves afresh. Keep the author's pool entry:
+                                // it is shared with profile and media loading, and one
+                                // tweet miss is not evidence that node is down.
+                                nodePool.invalidate(tweetId)
+                            }
+                        } else {
+                            console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
                         }
-                    } else {
-                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
                     }
-                }
+                    return raceResult
+                })()
+
+                // A fast miss is not a winner; either route must return the
+                // requested record; discovery does not repeat the entry-node read.
+                const raceResult = await Promise.any([entryRead, discoveredRead].map(async read => {
+                    const result = await read
+                    if (!result) throw new Error(`No tweet ${tweetId} on this read path`)
+                    return result
+                })).catch(() => null)
 
                 if (!raceResult) {
                     console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
