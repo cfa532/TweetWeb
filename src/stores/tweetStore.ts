@@ -14,13 +14,8 @@ const LOCAL_TWEET_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
 const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
 const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fast; see getFreshHealthStatus
-// The read-path probe is advisory: _resolveProviderIps hands its candidates back
-// even when none of them answers (requireHealthy=false), so the probe's only job
-// is to put the fastest responder first. A long budget therefore buys no
-// reliability on those paths — it is dead time in front of an RPC that gets its
-// own 15s, and a cold start pays it once per discovery. Strict callers (share-URL
-// resolution) do reject on a silent probe and keep the longer budget, which
-// embedded browsers — WeChat above all — need for a first connection.
+// HEAD checks are reserved for node-address and share-URL reachability.
+// Tweet/user provider races judge routes by their actual data responses.
 const HEALTH_PROBE_TIMEOUT_MS = 2500
 const HEALTH_PROBE_STRICT_TIMEOUT_MS = 6000
 const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
@@ -406,11 +401,6 @@ function effectiveRoute(mid: string | undefined): string | undefined {
     return entry.readsFromWriteHost ? (entry.writable ?? entry.access) : entry.access
 }
 
-/** True while a write is being read out of the root host. */
-function isReadingFromWriteHost(mid: string | undefined): boolean {
-    return !!mid && userRoutes.get(mid)?.readsFromWriteHost === true
-}
-
 /** Read from the node that just took a write, until that route stops answering. */
 function readFromWriteHost(mid: string | undefined) {
     if (!mid) return
@@ -447,8 +437,8 @@ function tweetForSessionStorage(tweet: any): any {
     // `provider` is kept deliberately: it is the node that actually served this
     // tweet, which is the only proven routing fact about it. Dropping it forced
     // the read path to re-derive a route from the author's provider list, and
-    // ips[0] there is whichever node answered a HEAD probe first — a node can
-    // hold an author's record without holding their tweets, so that guess sent
+    // provider discovery alone does not prove possession — a node can hold an
+    // author's record without holding their tweets, so that guess sent
     // get_comments to a node that answered with nothing. Author routes stay
     // stripped (see userForSessionStorage); those are re-derived from NodePool.
     if (cached.author) {
@@ -2287,7 +2277,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * hold it.
          * @param tweetId The ID of the tweet to fetch
          * @param authorId Author ID; when known it selects the node to read from
-         * @param useRacing If true, race multiple provider IPs for faster loading (TweetDetail page only)
+         * @param useRacing Retained for caller compatibility; uncached reads race provider data requests
          * @param loadMissingOriginalTweet If false, return the outer tweet without separately fetching a missing embedded tweet
          * @param refreshProviderRoute If true, refresh provider discovery without synchronizing tweet data
          * @returns The tweet object or undefined if not found
@@ -2315,26 +2305,17 @@ export const useTweetStore = defineStore('tweetStore', {
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
                 const cachedAuthorId = t.author?.mid ?? t.authorId
                 if (t.author && cachedAuthorId) {
-                    // getProviderIp can throw (not just return null) when every
-                    // resolved candidate IP fails its health check — e.g. after a
-                    // page reload wipes the in-memory NodePool and a fresh RPC
-                    // resolve returns only unreachable/private addresses. That must
-                    // not discard an already-valid cached tweet; fall back to
-                    // showing the cached content without a live route rather than
-                    // failing the whole detail view.
-                    // The node recorded on the cached tweet served it for real, so
-                    // it is the route to use — provided it is still up. Only when
-                    // it is gone do we fall back to guessing from the author's
-                    // provider list, whose ips[0] merely won a HEAD probe.
+                    // Keep the route that served this cached tweet. Cached content
+                    // needs no reachability probe; a real read selects any new route.
                     let authorIp: string | null = null
                     const servedBy = typeof t.provider === 'string' ? t.provider : null
-                    if (servedBy && await this.isServerHealthyWithTimeout(servedBy, HEALTH_PROBE_TIMEOUT_MS)) {
+                    if (servedBy) {
                         authorIp = servedBy
                     } else {
                         try {
-                            authorIp = await this.getProviderIp(cachedAuthorId, v4Only, false)
+                            authorIp = (await this.getUser(cachedAuthorId))?.providerIp ?? null
                         } catch (error) {
-                            console.warn(`[fetchTweet] getProviderIp threw for cached tweet ${tweetId} author ${cachedAuthorId}; showing cached content without a live route`, error)
+                            console.warn(`[fetchTweet] User lookup failed for cached tweet ${tweetId} author ${cachedAuthorId}; showing cached content without a live route`, error)
                         }
                     }
                     if (applyUserRoute(t.author, authorIp, this.lapi.connectionPool)) {
@@ -2345,20 +2326,18 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         const originalAuthorId = t.originalTweet?.author?.mid ?? t.originalTweet?.authorId
                         if (t.originalTweet?.author && originalAuthorId) {
-                            // Same rule as the outer tweet: prefer the node that
-                            // actually served the original over a probe winner
-                            // from its author's provider list.
+                            // Keep the original's recorded serving route as well.
                             let originalAuthorIp: string | null = null
                             const originalServedBy = typeof t.originalTweet.provider === 'string'
                                 ? t.originalTweet.provider
                                 : null
-                            if (originalServedBy && await this.isServerHealthyWithTimeout(originalServedBy, HEALTH_PROBE_TIMEOUT_MS)) {
+                            if (originalServedBy) {
                                 originalAuthorIp = originalServedBy
                             } else {
                                 try {
-                                    originalAuthorIp = await this.getProviderIp(originalAuthorId, v4Only, false)
+                                    originalAuthorIp = (await this.getUser(originalAuthorId))?.providerIp ?? null
                                 } catch (error) {
-                                    console.warn(`[fetchTweet] getProviderIp threw for cached original tweet author ${originalAuthorId}; keeping cached content without a live route`, error)
+                                    console.warn(`[fetchTweet] User lookup failed for cached original tweet author ${originalAuthorId}; keeping cached content without a live route`, error)
                                 }
                             }
                             if (applyUserRoute(t.originalTweet.author, originalAuthorIp, this.lapi.connectionPool)) {
@@ -2448,96 +2427,75 @@ export const useTweetStore = defineStore('tweetStore', {
                     : undefined
                 const requiredFormat = cachedTweet?.storageFormat
 
-                if (useRacing) {
-                    const raceGetTweet = async (ips: string[]) => {
-                        // Race each complete read, including its compatibility check.
-                        // Waiting for every check first lets an unreachable standby
-                        // hold up a healthy provider on a cold detail-page load.
-                        const winner = await this.raceProviderIps(ips, async (ip) => {
-                            const route = await this.storageCompatibleReadRoute(
-                                ip,
-                                storageOwner,
-                                requiredFormat,
-                                getTweetParams,
-                            )
-                            const result = await route.client.RunMApp("get_tweet", getTweetParams)
-                            // A node without this tweet must not win over one that has it.
-                            if (!result) throw new Error(`get_tweet returned no data from ${route.ip}`)
-                            return { result, ip: route.ip }
-                        }, `tweet ${tweetId}`)
-                        // Compatibility routing can redirect a read to the root node.
-                        // Media and comments must use the node that actually served it.
-                        return winner?.result ?? null
-                    }
-
-                    let raceResult = null
-
-                    // Author node first. A user's provider nodes serve that user's
-                    // tweets by id, so when the caller knows the author — a detail
-                    // URL always carries it — that is the authoritative way in.
-                    // Resolving the tweet's own mid is a provider lookup that can
-                    // name nodes which no longer hold it; they answer the health
-                    // probe and then return nothing.
-                    if (authorId) {
-                        const authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
-                        if (authorIps.length === 0) {
-                            console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
-                        } else {
-                            raceResult = await raceGetTweet(authorIps)
-                            if (!raceResult) {
-                                console.warn(`[fetchTweet] Author nodes did not serve ${tweetId}; trying the tweet's own providers`)
-                            }
+                const raceGetTweet = async (ips: string[]) => {
+                    // Race each complete read, including its compatibility check.
+                    // Waiting for every check first lets an unreachable standby
+                    // hold up a healthy provider on a cold detail-page load.
+                    const winner = await this.raceProviderIps(ips, async (ip) => {
+                        const route = await this.storageCompatibleReadRoute(
+                            ip,
+                            storageOwner,
+                            requiredFormat,
+                            getTweetParams,
+                        )
+                        const result = await route.client.RunMApp("get_tweet", getTweetParams)
+                        // A node without this tweet must not win over one that has it.
+                        const record = Array.isArray(result) ? result[0] : result
+                        if (!record || record.mid !== tweetId || !record.authorId) {
+                            throw new Error(`get_tweet returned no usable record from ${route.ip}`)
                         }
-                    }
-
-                    // The tweet's own providers: the only way in when the caller has
-                    // no author, and the fallback when the author's nodes came up empty.
-                    if (!raceResult) {
-                        const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
-                        if (tweetIps.length > 0) {
-                            raceResult = await raceGetTweet(tweetIps)
-                            if (!raceResult) {
-                                // A real RPC just failed on this route — the verdict the
-                                // health probe only guessed at. Drop it so a retry
-                                // resolves afresh. The author's pool entry is left alone:
-                                // it is shared with profile and media loading, and one
-                                // tweet miss is not evidence that node is down.
-                                nodePool.invalidate(tweetId)
-                            }
-                        } else {
-                            console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
-                        }
-                    }
-
-                    if (!raceResult) {
-                        console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
-                        return null
-                    }
-                    tweetInDB = raceResult.result
-                    providerIp = raceResult.ip
-                    // Use auto-releasing proxy so the pool slot is freed after each RPC.
-                    providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
-                } else {
-                    // Same rule as the racing branch: the author's node serves the
-                    // author's tweets, so prefer it whenever the caller knows who
-                    // wrote this — embedded originals arrive here with their
-                    // originalAuthorId. Fall back to the tweet's own providers.
-                    providerIp = (authorId ? await this.getProviderIp(authorId, v4Only, refreshProviderRoute) : null)
-                        ?? await this.getProviderIp(tweetId)
-                    if (!providerIp) {
-                        console.warn(`[fetchTweet] No provider IP for tweet ${tweetId}`)
-                        return null
-                    }
-                    const route = await this.storageCompatibleReadRoute(
-                        providerIp,
-                        storageOwner,
-                        requiredFormat,
-                        getTweetParams,
-                    )
-                    providerIp = route.ip
-                    providerClient = route.client
-                    tweetInDB = await providerClient.RunMApp("get_tweet", getTweetParams)
+                        return { result, ip: route.ip }
+                    }, `tweet ${tweetId}`)
+                    // Compatibility routing can redirect a read to the root node.
+                    // Media and comments must use the node that actually served it.
+                    return winner?.result ?? null
                 }
+
+                let raceResult = null
+
+                // Author node first. A user's provider nodes serve that user's
+                // tweets by id, so when the caller knows the author — a detail
+                // URL always carries it — that is the authoritative way in.
+                // Resolving the tweet's own mid is a provider lookup that can
+                // name nodes which no longer hold it and return no tweet data.
+                if (authorId) {
+                    const authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                    if (authorIps.length === 0) {
+                        console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
+                    } else {
+                        raceResult = await raceGetTweet(authorIps)
+                        if (!raceResult) {
+                            console.warn(`[fetchTweet] Author nodes did not serve ${tweetId}; trying the tweet's own providers`)
+                        }
+                    }
+                }
+
+                // The tweet's own providers: the only way in when the caller has
+                // no author, and the fallback when the author's nodes came up empty.
+                if (!raceResult) {
+                    const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                    if (tweetIps.length > 0) {
+                        raceResult = await raceGetTweet(tweetIps)
+                        if (!raceResult) {
+                            // Real reads failed on these routes. Drop them so a
+                            // retry resolves afresh. Keep the author's pool entry:
+                            // it is shared with profile and media loading, and one
+                            // tweet miss is not evidence that node is down.
+                            nodePool.invalidate(tweetId)
+                        }
+                    } else {
+                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
+                    }
+                }
+
+                if (!raceResult) {
+                    console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
+                    return null
+                }
+                tweetInDB = raceResult.result
+                providerIp = raceResult.ip
+                // Use auto-releasing proxy so the pool slot is freed after each RPC.
+                providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
             }
             if (!tweetInDB) {
                 console.warn(`[fetchTweet] Provider returned no tweet data for ${tweetId}`)
@@ -2716,11 +2674,8 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns The user object or undefined if not found
          */
         async getUser(userId: MimeiId, forceRefresh: boolean = false): Promise<User | undefined> {
-            // check if the user has been cached (unless forcing refresh)
-            if (!forceRefresh && this.loginUser && this.loginUser.mid == userId)
-                return await this._ensureUserRootHost(this.loginUser)
-            if (!forceRefresh && this.users.get(userId))
-                return await this._ensureUserRootHost(this.users.get(userId) as User)
+            const cachedUser = this.loginUser?.mid === userId ? this.loginUser : this.users.get(userId)
+            if (!forceRefresh && cachedUser?.providerIp && cachedUser.client) return cachedUser
 
             // Deduplicate concurrent fetches for the same user.
             // Use separate keys for forced vs normal fetches so a cached (fast)
@@ -2729,15 +2684,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const pending = this._pendingUserFetches.get(pendingKey)
             if (pending) return pending
 
-            // No _ensureUserRootHost on this branch: _fetchUser resolves a read
-            // route and attaches a client on every path it returns from, so this
-            // could only re-derive what was just derived. It routinely did: the
-            // helper trusts an existing providerIp only when a *healthy* probe
-            // verdict is cached, and since 802e422 made the probe advisory a
-            // freshly resolved route commonly carries no verdict at all — sending
-            // the cold path through a second get_node_ips lookup and probe per
-            // author. The cached branches above still call it; there the route on
-            // the user object may be arbitrarily old.
+            // A user without a live-session route needs a real get_user read.
             const fetchPromise = this._fetchUser(userId, forceRefresh)
             this._pendingUserFetches.set(pendingKey, fetchPromise)
             try {
@@ -2747,44 +2694,10 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
 
-        /**
-         * Ensures a user object's providerIp/client point at the read/access node.
-         * Mirrors iOS: baseUrl/providerIp is for reads; writableHostIp is resolved
-         * separately from hostIds[0] only for mutations.
-         */
+        /** Reuse the current read route, or establish it with a real user read. */
         async _ensureUserRootHost(user: User): Promise<User> {
-            if (!user.hostIds?.length) return user
-            // Keep the route the user already has when a write is being read out of the
-            // root host, or when a probe recently found it healthy.
-            if (isReadingFromWriteHost(user.mid)) {
-                applyUserRoute(user, user.providerIp, this.lapi.connectionPool)
-                return user
-            }
-            try {
-                const readIp = await this.getUserReadIp(user, false)
-                if (!readIp) return user
-                const route = await this.storageCompatibleReadRoute(
-                    readIp,
-                    user,
-                    user.storageFormat,
-                    { aid: this.appId, ver: 'last' },
-                )
-                if (!applyUserRoute(user, route.ip, this.lapi.connectionPool)) return user
-                if (user.avatar) {
-                    user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${route.ip}`)
-                }
-
-                this.users.set(user.mid, user)
-                this._rewriteUserMediaHosts(user.mid, route.ip)
-                setStoredUser(user.mid, user)
-                if (this._user?.mid === user.mid) {
-                    setStoredLoginUser(user)
-                }
-                return user
-            } catch (error) {
-                console.warn(`[ensureUserReadHost] Failed for ${user.mid}:`, error)
-                return user
-            }
+            if (user.providerIp && user.client) return user
+            return await this.getUser(user.mid) ?? user
         },
 
         /**
@@ -2895,44 +2808,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            // Try the persistent user cache for faster initial display. Route state
-            // is restored from NodePool, whose map is session-scoped like iOS.
-            if (!forceRefresh) {
-                const cachedUser = getStoredUser(userId)
-                if (cachedUser) {
-                    try {
-                        if (cachedUser && cachedUser.mid && cachedUser.hostIds) {
-                            const candidateIp = await this.getUserReadIp(cachedUser, false)
-                            if (!candidateIp) {
-                                return undefined
-                            }
-                            const route = await this.storageCompatibleReadRoute(
-                                candidateIp,
-                                cachedUser,
-                                cachedUser.storageFormat,
-                                { aid: this.appId, ver: 'last' },
-                            )
-                            const providerIp = route.ip
-                            applyUserRoute(cachedUser, providerIp, this.lapi.connectionPool)
-                            cachedUser.avatar = this.normalizeAvatarUrl(cachedUser.avatar, `http://${cachedUser.providerIp}`)
-                            this.users.set(userId, cachedUser)
-                            // Re-point already-cached media at the route just
-                            // resolved, as the race path below does. Previously
-                            // this only happened if getUser's follow-up
-                            // _ensureUserRootHost call took its slow branch.
-                            this._rewriteUserMediaHosts(userId, providerIp)
-                            return cachedUser
-                        }
-                    } catch (e) {
-                        console.warn(`[_fetchUser] Failed to parse cached user ${userId}:`, e)
-                        this._nullifyCachedIp(userId)
-                    }
-                }
-            }
-
-            // Resolve all provider IPs (up to 2) and race them in parallel.
-            // Whichever node responds first with valid user data wins; dead nodes
-            // simply lose the race instead of blocking sequentially on a 15s timeout.
+            // Persistent records supply identity/format hints below. Select a route
+            // by fetching the user, rather than attaching a HEAD-selected host to
+            // cached data and treating it as a successful read.
             let providerIps: string[]
             try {
                 providerIps = await this.getProviderIps(userId, v4Only, forceRefresh)
@@ -2948,25 +2826,14 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             const knownUser = this.users.get(userId) ?? getStoredUser(userId)
-            const compatibleResults = await Promise.allSettled(providerIps.map(ip =>
-                this.storageCompatibleReadRoute(
+            const raceResult = await this.raceProviderIps(providerIps, async (ip) => {
+                const route = await this.storageCompatibleReadRoute(
                     ip,
                     knownUser,
                     knownUser?.storageFormat,
                     { aid: this.appId, ver: 'last' },
                 )
-            ))
-            providerIps = [...new Set(compatibleResults.flatMap(result =>
-                result.status === 'fulfilled' ? [result.value.ip] : []
-            ))]
-            if (providerIps.length === 0) {
-                console.error(`[_fetchUser] No storage-compatible provider for user ${userId}`)
-                this._recordFetchFailure(userId, `user:${userId}`)
-                return undefined
-            }
-
-            const raceResult = await this.raceProviderIps(providerIps, async (ip, client) => {
-                const result = await client.RunMApp("get_user", {
+                const result = await route.client.RunMApp("get_user", {
                     aid: this.appId,
                     ver: "last",
                     version: "v3",
@@ -2985,10 +2852,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 // them. Judge it here so the race moves on to a node that does;
                 // deciding after the race let the first such answer win and fail
                 // the whole lookup, which stranded comment authors on "loading".
-                if (!user || typeof user !== 'object' || !user.mid || !user.hostIds) {
+                if (!user || typeof user !== 'object' || user.mid !== userId || !user.hostIds) {
                     throw new Error(`get_user returned no usable record from ${ip}`)
                 }
-                return user
+                return { user, ip: route.ip }
             }, `user ${userId}`)
 
             if (!raceResult) {
@@ -2998,8 +2865,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 return undefined
             }
 
-            let user: any = raceResult.result
-            const providerIp = raceResult.ip
+            let user: any = raceResult.result.user
+            const providerIp = raceResult.result.ip
 
             // cache the user data
             applyUserRoute(user, providerIp, this.lapi.connectionPool)
@@ -3137,13 +3004,6 @@ export const useTweetStore = defineStore('tweetStore', {
             return this.isServerHealthy(ip, timeout, refresh);
         },
 
-        /**
-         * Get provider IP for a user with health checking
-         * Calls get_provider_ips API and tests IPs in pairs with 10-second timeout
-         * @param mid User's member ID
-         * @param v4only If true, filter out IPv6 addresses. Default is v4Only.
-         * @returns A healthy provider IP address, or null if none found
-         */
         /**
          * Race multiple API calls with different provider IPs, return result from first successful call
          * @param ips Array of IP addresses to try
@@ -3347,10 +3207,10 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Get the first pair of provider IPs for a given mid without testing them
+         * Get provider candidates without probing or ranking their HTTP reachability
          * @param mid The mid to get provider IPs for
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
-         * @returns Array of IP addresses (up to 2), or empty array if none found
+         * @returns All browser-usable provider IPs, or an empty array if none found
          */
         async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
             // A cold-start retry must not join the original in-flight lookup.
@@ -3366,41 +3226,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 return refreshedIps
             }
 
-            // Hand back EVERY usable pooled route, not just the preferred one.
-            // _resolveProviderIps keeps one alternate behind the probe winner
-            // precisely so a caller that races has somewhere to go without a second
-            // discovery round — and reading the pool through getIPForNode threw that
-            // alternate away. A winner that answers the health probe but does not
-            // serve this object (a node that once provided the mid, or serves the
-            // author's profile but not their tweets) then cost a failed RPC plus a
-            // full re-discovery to reach the standby already sitting in the pool.
             const pooledIps = nodePool.getIPs(mid) ?? []
-            const usable = new Set(browserUsableProviderRoutes(pooledIps, window.location.hostname))
-            for (const unusable of pooledIps) {
-                if (!usable.has(unusable)) nodePool.removeIP(mid, unusable)
-            }
-
-            const candidates = pooledIps.filter(ip => usable.has(ip))
-            if (candidates.length > 0) {
-                const known = candidates.filter(ip => this.getFreshHealthStatus(ip) !== false)
-                // Probe only when nothing in the pool is already known good. If one
-                // route is healthy the others ride along unverified: the probe is
-                // advisory, and the caller's race judges them for real.
-                if (known.length > 0 && !known.some(ip => this.getFreshHealthStatus(ip) === true)) {
-                    console.log(`[getProviderIps] Testing ${known.length} pooled route(s) for ${mid}`)
-                    await Promise.all(known.map(ip =>
-                        this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS).catch(() => false)
-                    ))
-                }
-
-                const alive = candidates.filter(ip => {
-                    if (this.getFreshHealthStatus(ip) !== false) return true
-                    console.warn(`[getProviderIps] Pooled IP ${ip} for ${mid} is unhealthy; removing from NodePool`)
-                    nodePool.removeIP(mid, ip)
-                    return false
-                })
-                if (alive.length > 0) return alive
-            }
+            const candidates = browserUsableProviderRoutes(pooledIps, window.location.hostname)
+            if (candidates.length > 0) return candidates
             return nodePool.resolveIPs(mid, () => this._resolveProviderIps(mid, v4only, false, false, false), true);
         },
 
@@ -3627,13 +3455,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     return [];
                 }
 
-                // Race every browser-usable route. Filtering must happen before
-                // limiting candidates, otherwise early Tailscale routes hide a
-                // later public route and public deep links cannot load.
-                // Strict callers reject on a silent probe, so they get the longer
-                // budget; advisory callers race the candidates regardless and only
-                // need the probe to order them.
-                const probeTimeoutMs = requireHealthy ? HEALTH_PROBE_STRICT_TIMEOUT_MS : HEALTH_PROBE_TIMEOUT_MS;
+                // Reads race the actual object requests across all candidates.
+                // Only explicit public share-address selection needs a HEAD probe.
+                if (!requireHealthy) return [...new Set(candidates)];
+                const probeTimeoutMs = HEALTH_PROBE_STRICT_TIMEOUT_MS;
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
@@ -3647,29 +3472,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    if (requireHealthy) {
-                        throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
-                    }
-                    // The probe picks the fastest route; it is not the authority on
-                    // reachability. A cold node (asleep, cold DNS/TCP, mobile radio
-                    // waking) routinely needs longer than the probe budget while the
-                    // real RPC — which gets 15s of its own — would have succeeded.
-                    // Hand the candidates back and let that call be the judge.
-                    console.warn(`[getProviderIps] No candidate answered the health probe for ${mid}; racing all ${candidates.length} route(s) unverified`);
-                    return candidates;
+                    throw new Error(`[getProviderIps] All provider health checks failed for ${mid}`);
                 }
 
-                // Winner first — getProviderIp() takes ips[0], and it is the route
-                // most likely to answer. Keep ONE alternate behind it rather than
-                // discarding every other route: the probe elects the fastest
-                // responder, which is not the same as a node that can serve this
-                // mid, so a caller that races the list has somewhere to go without
-                // a second discovery round trip.
-                //
-                // Capped at one, and never a route whose probe already came back
-                // false. Every entry here becomes a real 15s RPC at every call site
-                // that races (get_tweet, get_user), so an uncapped list would turn
-                // each read into an N-way fan-out across the network.
+                // Share-link callers need one reachable public address.
                 const standby = candidates.find(ip =>
                     ip !== winner && this.getFreshHealthStatus(ip) !== false
                 );
