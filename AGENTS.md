@@ -1,5 +1,7 @@
 # Repository Instructions
 
+- Before connecting to gen8, run `nslookup gen8.leither.uk` and use the freshly resolved IP for the connection. Do not try SSH first or reuse an IP from an earlier session. For SSH/SCP on port 220, preserve host-key verification with `HostKeyAlias=[gen8.leither.uk]:220` when connecting by IP.
+
 - Before changing code, consider multiple plausible fixes and choose the one with the smallest coherent scope.
 - Prefer removing or simplifying conflicting logic before adding new state, variables, flags, or branches. Minus first, addition second.
 - When a fix needs new code, keep it directly tied to the observed bug and avoid broad refactors unless they are required for correctness.

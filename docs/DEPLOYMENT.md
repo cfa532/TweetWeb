@@ -159,10 +159,10 @@ The `dtweet-deeplink` Worker is both the public deeplink gateway and one of the
 two production copies of TweetWeb:
 
 `BROWSER_FALLBACK_ORIGIN` in the Worker source is the source of truth for the
-browser application domain. It currently equals `http://t1.w333w.site`, but
+browser application domain. It currently equals `http://t1.w333.space`, but
 that is replaceable operational configuration, not a permanent domain
-contract. Treat concrete `w333w.site` URLs in this guide as the current
-deployment snapshot. Use the
+contract. The av1 section below records the historical `w333w.site` setup; see the
+migration memo for the current deployment. Use the
 [Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)
 whenever the value changes.
 
@@ -172,7 +172,7 @@ whenever the value changes.
 - If no installed app claims a normal browser navigation, it redirects the
   route to the HTTP fallback host and converts path routes to hash routes. For
   example, `/author/<id>` becomes
-  `http://t1.w333w.site/#author/<id>`. TweetWeb uses HTTP there because the
+  `http://t1.w333.space/#author/<id>`. TweetWeb uses HTTP there because the
   Leither service it contacts does not accept HTTPS.
 - It terminates HTTPS for `dl.dtweet.com`. Static TweetWeb files are served
   from the Worker's asset binding, browser navigations are redirected to the
@@ -229,7 +229,7 @@ Both SHA-256 values must match. If an edge temporarily serves an older
 asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
 
-Do not hash `http://t1.w333w.site/index_entry.js` directly. It is a Leither
+Do not hash `http://t1.w333.space/index_entry.js` directly. It is a Leither
 domain whose loader generates the app entry response and resolves bare
 object names inside the published package; that URL is not a raw static-asset
 endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
@@ -240,7 +240,7 @@ Also confirm that both association files return JSON directly from
 `/tweet/<tweet-id>/<author-id>` and `/#tweet/<tweet-id>/<author-id>` URLs. With
 the app installed, the operating system should open the app. In a browser, the
 Worker must land both forms on
-`http://t1.w333w.site/#tweet/<tweet-id>/<author-id>`, and that page must load the
+`http://t1.w333.space/#tweet/<tweet-id>/<author-id>`, and that page must load the
 current bundle without mixed-content errors.
 
 ### Troubleshooting: `dl.dtweet.com` opens but no data loads
@@ -371,7 +371,7 @@ Restoring `.env` does not alter already-built or deployed assets.
 - [ ] The legacy browser-fallback zone rule is disabled.
 - [ ] Public asset hashes match `dist/index_entry.js`.
 - [ ] Association files return JSON and a browser tweet link redirects to
-      `http://t1.w333w.site` and loads successfully.
+      `http://t1.w333.space` and loads successfully.
 - [ ] av1 preserves `fireshare.us` and `fireshare.uk` hosts while redirecting
       the retired `w3w3.store`, `www333.store`, `www3.shop`, `www33.online`,
       and generic `inoku.uk` families to `w333w.site`, while preserving the

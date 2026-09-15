@@ -16,10 +16,10 @@ all subdomains to av1. After DNS is ready, perform these steps in order:
 The current completed migration is:
 
 ```text
-http://t1.w333w.site  ->  http://t1.ghrwwregas.site
+http://t1.ghrwwregas.site  ->  http://t1.w333.space
 ```
 
-The September 12 migration switched the default browser and share domain;
+The September 15 migration switched the default browser and share domain;
 existing domain routes were preserved. See the completion record below.
 
 The same procedure applies to another retired family such as `www33.shop`.
@@ -339,6 +339,58 @@ the first case; the browser should land on the HTTP `t1` host for the second.
 3. Keep the new DNS records during diagnosis unless they are themselves the
    cause. Removing DNS first makes the failure harder to inspect.
 4. Keep the Cloudflare zone Redirect Rule disabled throughout rollback.
+
+## Completed `w333.space` Default-Domain Switch
+
+Applied September 15, 2026, in nginx → binding → Worker → Go backend order:
+
+- Root and wildcard DNS resolve to av1. nginx now proxies `w333.space` and
+  its subdomains to Leither, preserving the original Host header and converting
+  external tweet/author paths to hash routes.
+- Existing domain routes, including `ghrwwregas.site`, Fireshare, LifeDrive,
+  and the registry, were preserved. No old domain family was retired.
+- A publicly trusted certificate covers `w333.space`, `www.w333.space`,
+  `t1.w333.space`, and `tweet.w333.space`. HTTPS returns to the same HTTP host
+  with `Strict-Transport-Security: max-age=0`; automatic renewal is enabled.
+- av1 bound release app `heWgeGkeBX2gaENbIBS_Iy1mdTS` to `t1.w333.space`.
+- Worker version `c15bfcce-0608-4251-a754-bdfb47b61139` sets
+  `BROWSER_FALLBACK_ORIGIN` to `http://t1.w333.space`. The domain-only deployment
+  retained the deployed `ASSETS` binding using the September 12 metadata method.
+  All three existing triggers remain active.
+- `upgradeDomain` in `TweetBackendApp/go/file_entries.go` now equals
+  `t1.w333.space`. Both gen8 packages received the same current production Go
+  sources, preserving their existing web/download assets. Release published as
+  version `1330`; debug published as `1649`.
+- Both numbered and `last` backend calls return the new domain and upgrade
+  version `75`. Health reports `storageFormats: ["database", "tweet-file-v1"]`
+  and `creationFormat: "database"`, matching the current canonical sync contract.
+  The earlier File-creation expectation in deployment documentation is historical.
+- av1 initially served the previous debug package, so only that application MID
+  was synchronized from gen8. Both numbered versions then returned the new
+  domain, but the `last` runtime aliases still executed cached code. Restarting
+  `leither.service` cleared that cache; both `last` aliases now return the new
+  domain and current health response. Leither returned active and the new host,
+  Fireshare, and LifeDrive returned HTTP 200 afterward.
+
+Backups:
+
+- av1: `/etc/nginx/sites-available/leither-fireshare.pre-w333-space-20260915`
+- gen8: `/home/pi/demo/deploy-backups/domain-w333-space-20260915/`
+
+Live checks confirmed the release MID at the new hostname, correct Worker
+hash routes, valid HTTPS-to-HTTP handling, JSON app-association responses,
+and unchanged Fireshare/LifeDrive/registry routing. The Worker's
+`index_entry.js` SHA-256 remained unchanged:
+`a1a43df4f71c689f10fff6dc782911aaaa86a94011aaf28e9f7b63a913566eb2`.
+No TweetWeb build or automated test suite was run. Physical-device app-link
+behavior was not exercised during this migration.
+
+The separate `ww33.uk` Cloudflare wildcard rule is a `301` from
+`*://*.ww33.uk/*` to `http://${2}.w333.space/${3}`, preserving queries;
+it does not include bare `ww33.uk`. The initial HTTPS-only pattern was expanded
+to include HTTP after an HTTP tweet link failed to redirect. Both schemes now
+redirect, and opening the reported HTTP tweet link in Chrome confirmed that
+the complete `#tweet/<tweet-id>/<author-id>` fragment survives the redirect.
 
 ## Completed `ghrwwregas.site` Default-Domain Switch
 
