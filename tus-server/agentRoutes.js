@@ -101,8 +101,7 @@ module.exports = function() {
         aid: APP_ID,
         ver: 'last',
         version: 'v2',
-        nodeid: hostId,
-        v4only: 'true'
+        nodeid: hostId
       });
       
       const ips = Array.isArray(nodeResult) ? nodeResult : 

@@ -1,7 +1,9 @@
 import i18n from './i18n'
 
 // Global Constants
-export const v4Only = true;
+// false keeps IPv6 provider/node addresses in play; IPv4 is still preferred
+// where both exist (nodePool.getPreferredIP, backend score ordering).
+export const v4Only = false;
 
 type NavigationPerformance = Pick<Performance, 'getEntriesByType'>
 

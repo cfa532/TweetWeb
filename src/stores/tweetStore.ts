@@ -3450,9 +3450,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     .filter(ip => {
                         if (ip.length === 0) return false;
 
-                        // If v4only is true, filter out IPv6 addresses
-                        if (ip.includes('[') || ip.includes(']')) return false;
-                        // Count colons - IPv6 has multiple colons, IPv4 with port has only one
+                        // If v4only is true, filter out IPv6 addresses: they carry
+                        // multiple colons whether bracketed or bare, while IPv4
+                        // with a port has exactly one.
                         const colonCount = (ip.match(/:/g) || []).length;
                         if (v4only && colonCount > 1) return false;
 
