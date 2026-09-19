@@ -377,3 +377,69 @@ Restoring `.env` does not alter already-built or deployed assets.
       and generic `inoku.uk` families to `w333w.site`, while preserving the
       exact `registry.inoku.uk` service.
 - [ ] The developer's original local `.env` value was restored.
+
+## Operational Incident: av1 Memory Exhaustion (2026-09-19)
+
+All times below are UTC+8. `http://t1.fireshare.us/` stopped responding;
+av1 was unreachable over HTTP, public SSH, and its Tailscale address. The
+Leither backend on gen8 still returned HTTP 200 when queried locally with
+`Host: t1.fireshare.us`. The user rebooted av1 at approximately 20:52, restoring
+SSH and public HTTP service.
+
+### Evidence and cause
+
+Previous-boot records in `/var/log/kern.log`, `/var/log/syslog`, the systemd
+journal, and `/var/log/sysstat/sa19` showed severe memory pressure:
+
+- At 16:19, Linux killed `fwupd` for memory exhaustion.
+- At 17:21, the scheduled `fwupd-refresh.service` started the firmware updater
+  again. Memory-pressure warnings followed at 17:22.
+- At 19:20, the one-minute load average reached 122.65 on two CPUs. Linux
+  killed the root user-session systemd process and `fwupd`; journald and
+  snapd hit watchdog timeouts. The previous boot's logs ended at 19:20:43.
+- Earlier out-of-memory events had killed Leither on September 14–18, so this
+  was a recurring capacity problem rather than an isolated web release failure.
+
+av1 had 894 MiB of usable RAM and an active 4 GiB swap file. Kernel dumps and
+historical metrics showed that all swap remained unused during the failures.
+`/etc/sysctl.conf` explicitly set `vm.swappiness = 0`; the active TuneD
+`virtual-guest` profile specified 30, but TuneD's `reapply_sysctl = 1` reapplied
+the conflicting system override afterward. `/etc/sysctl.d/99-sysctl.conf`
+was a symlink to `/etc/sysctl.conf`. The inspected service cgroups did not
+restrict swap.
+
+Memory exhaustion is confirmed; the firmware refresh appears to have triggered
+the final episode. Zero swappiness strongly delays swapping rather than
+disabling it outright; see the
+[kernel swappiness documentation](https://kernel.org/doc/html/latest/admin-guide/sysctl/vm.html#swappiness).
+The logs do not establish an application memory leak.
+
+### Resolution and verification
+
+At 21:31, the following correction was applied on av1:
+
+1. Backed up `/etc/sysctl.conf` to
+   `/root/sysctl.conf.before-swappiness.GgnUhq`.
+2. Removed only the `vm.swappiness = 0` line from `/etc/sysctl.conf`.
+3. Applied `sysctl -w vm.swappiness=30` for the running system. The enabled
+   TuneD service and its existing `virtual-guest` profile provide the persistent
+   setting; no additional override was added.
+
+At 21:32, the live value was still 30, `tuned`, `nginx`, and `leither` were
+active, and both the local nginx route and the public URL returned HTTP 200.
+No additional reboot, application deployment, or firmware-service change was
+needed. These checks confirm the configuration and immediate availability;
+long-term recurrence prevention and persistence across a later reboot have
+not yet been observed.
+
+For a subsequent read-only check:
+
+```bash
+ssh root@av1 'sysctl vm.swappiness; cat /etc/tuned/active_profile; systemctl is-enabled tuned; systemctl is-active tuned nginx leither; free -h'
+curl -I --max-time 20 http://t1.fireshare.us/
+```
+
+Expected: swappiness 30, profile `virtual-guest`, TuneD enabled, all three
+services active, and HTTP 200. Swap need not be used while memory is available.
+If memory exhaustion recurs, inspect new kernel events and per-process memory
+before choosing further changes; the host still has less than 1 GiB of RAM.
