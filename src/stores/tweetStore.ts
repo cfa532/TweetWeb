@@ -18,8 +18,7 @@ const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fas
 // Tweet/user provider races judge routes by their actual data responses.
 const HEALTH_PROBE_TIMEOUT_MS = 2500
 const HEALTH_PROBE_STRICT_TIMEOUT_MS = 6000
-const USER_FETCH_COOLDOWN_BASE_MS = 30 * 1000   // 30s base; doubles each consecutive failure
-const USER_FETCH_COOLDOWN_MAX_MS  = 10 * 60 * 1000  // cap at 10 min
+const FETCH_FAILURE_COOLDOWN_MS = 10 * 1000
 const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
 const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
@@ -3194,10 +3193,10 @@ export const useTweetStore = defineStore('tweetStore', {
         _recordFetchFailure(resourceId: string, label: string = resourceId) {
             const prev = this._resourceFetchFailures.get(resourceId)
             const count = (prev?.count ?? 0) + 1
+            // Allow an immediate retry after the first failure; repeated failures wait 10s.
             if (count >= 2) {
-                const backoff = Math.min(USER_FETCH_COOLDOWN_BASE_MS * Math.pow(2, count - 2), USER_FETCH_COOLDOWN_MAX_MS)
-                this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: Date.now() + backoff })
-                console.warn(`[fetchFailure] ${label} failed ${count}x; cooling down for ${backoff / 1000}s`)
+                this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: Date.now() + FETCH_FAILURE_COOLDOWN_MS })
+                console.warn(`[fetchFailure] ${label} failed ${count}x; cooling down for ${FETCH_FAILURE_COOLDOWN_MS / 1000}s`)
             } else {
                 this._resourceFetchFailures.set(resourceId, { count, cooldownUntil: 0 })
             }
