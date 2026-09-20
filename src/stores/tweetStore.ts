@@ -2577,8 +2577,8 @@ export const useTweetStore = defineStore('tweetStore', {
             // Build the originalTweet shell WITHOUT touching attachments yet.
             // Recursive fetchTweet may have already prepended a host onto each
             // attachment URL; calling getMediaUrl on top of that produces a
-            // double-wrapped, broken URL. Defer URL building until we know
-            // the original author's provider.
+            // double-wrapped, broken URL. Preserve its serving node when known;
+            // only a bundled original needs its author's node resolved.
             if (originalTweetData) {
                 tweet.originalTweet = {
                     mid: originalTweetData.mid,
@@ -2587,11 +2587,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     author: null, // Will be loaded below
                     title: originalTweetData.title,
                     content: originalTweetData.content,
-                    attachments: originalTweetData.attachments?.map((e: MimeiFileType) => {
-                        // Carry the raw entry through; URL is set after author resolves.
-                        e.downloadable = originalTweetData.downloadable
-                        return e
-                    }),
+                    // Keep URL construction from mutating a separately cached original.
+                    attachments: originalTweetData.attachments?.map((e: MimeiFileType) => ({
+                        ...e,
+                        downloadable: originalTweetData.downloadable,
+                    })),
                     comments: [],
                     originalTweetId: originalTweetData.originalTweetId,
                     originalAuthorId: originalTweetData.originalAuthorId,
@@ -2657,12 +2657,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     return undefined
                 })
 
-                // If the original author didn't resolve, fall back to the
-                // recursive fetch's `provider` field (which fetchTweet itself
-                // resolved), then to this response's host as a last resort.
+                // A separately fetched original already records its serving node.
+                // A bundled original has no route of its own, so use its author's node.
                 const originalHost =
-                    resolvedOriginalAuthor?.providerIp ||
                     (originalTweetData?.provider as string | undefined) ||
+                    resolvedOriginalAuthor?.providerIp ||
                     providerIp
                 if (resolvedOriginalAuthor) {
                     tweet.originalTweet.author = resolvedOriginalAuthor
@@ -3632,7 +3631,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.storageFormat,
                 params,
             )
-            tweet.provider = route.ip
+            // Compatibility routing belongs to this comments read, not the parent.
             const raw = await route.client.RunMApp("get_comments", params) as any
 
             // Unwrap v2 envelope {success, data} or accept bare array (older server).
@@ -3655,7 +3654,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 // reactive proxy that Vue creates when an object is placed into
                 // store state. (Mutating the raw closure reference would not
                 // trigger re-render once the proxy exists.)
-                const tweetProvider = tweet.provider
+                // Use the actual response node even if an author refresh ran meanwhile.
+                const tweetProvider = route.ip
                 const validComments: any[] = []
                 for (const e of comments) {
                     if (!e) continue  // null entry — comment not yet synced to read node, no ID available
@@ -3759,8 +3759,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.storageFormat,
                 params,
             )
+            // Keep pagination on its selected node without rewriting the parent route.
             const tweetProvider = route.ip
-            tweet.provider = tweetProvider
 
             let rawComments: any[]
             try {
