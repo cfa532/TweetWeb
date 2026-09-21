@@ -3609,10 +3609,9 @@ export const useTweetStore = defineStore('tweetStore', {
          * Comments are on the same node with the tweet.
          * @param tweet The tweet to load comments for
          */
-        async loadComments(tweet: Tweet): Promise<void> {
+        async loadComments(tweet: Tweet): Promise<number> {
             if (!tweet || !tweet.provider) {
-                console.warn('[loadComments] Skipping: no tweet or provider', tweet?.mid, tweet?.provider)
-                return
+                throw new Error('No comments read route')
             }
             console.log('[loadComments] Loading comments for tweet:', tweet.mid, 'provider:', tweet.provider)
             const params = {
@@ -3638,9 +3637,10 @@ export const useTweetStore = defineStore('tweetStore', {
             if (Array.isArray(raw)) {
                 comments = raw
             } else if (raw && typeof raw === 'object' && 'success' in raw) {
-                comments = raw.success ? (raw.data ?? []) : []
+                if (!raw.success || !Array.isArray(raw.data)) throw new Error('Invalid comments response')
+                comments = raw.data
             } else {
-                comments = []
+                throw new Error('Invalid comments response')
             }
 
             console.log('[loadComments] API returned:', comments?.length ?? 0, 'comments', comments)
@@ -3707,6 +3707,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             tweet.comments?.sort((a, b) => (b.timestamp as number) - (a.timestamp as number))
             this.cacheComments(tweet)
+            return comments.length
         },
 
         /** Persist a tweet's comment list so a reload paints before the network answers. */
@@ -3742,7 +3743,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns true if there may be more comments (fetched count >= pageSize)
          */
         async loadMoreComments(tweet: Tweet, pageNumber: number, pageSize: number = 20): Promise<boolean> {
-            if (!tweet || !tweet.provider) return false
+            if (!tweet || !tweet.provider) throw new Error('No comments read route')
 
             const params = {
                 aid: this.lapi.appId,
@@ -3761,15 +3762,9 @@ export const useTweetStore = defineStore('tweetStore', {
             // Keep pagination on its selected node without rewriting the parent route.
             const tweetProvider = route.ip
 
-            let rawComments: any[]
-            try {
-                rawComments = await route.client.RunMApp("get_comments", params) as any[]
-            } catch (e) {
-                console.warn('[loadMoreComments] Failed to fetch page', pageNumber, e)
-                return false
-            }
-
-            if (!rawComments || rawComments.length === 0) return false
+            // A failed request is not an exhausted page. Let the caller retain its cursor.
+            const rawComments = await route.client.RunMApp("get_comments", params) as any[]
+            if (!Array.isArray(rawComments)) throw new Error('Invalid comments response')
 
             const existingMids = new Set((tweet.comments ?? []).map(c => c.mid))
             const newComments: any[] = []

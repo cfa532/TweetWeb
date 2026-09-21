@@ -355,90 +355,61 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
         }
     }
 }
-async function showTweet(myGeneration: number) {
-    try {
-        // Tweet content is ready to display - set loading to false early
-        document.title = formattedTitle.value
-        isLoading.value = false
-
-        // Serve cached comments first, then fetch. loadComments mutates in place, so
-        // the hydrate needs its own triggerRef to reach the view.
-        if (tweetStore.hydrateCachedComments(tweet.value)) triggerRef(tweet)
-
-        // Load comments and additional data in parallel (truly non-blocking)
-        isLoadingComments.value = true
-        const loadPromises = []
-
-        // Load original tweet if needed
-        if (tweet.value.originalTweetId) {
-            loadPromises.push((async () => {
-                try {
-                    // If the parent tweet came from cache it already carries
-                    // its originalTweet; reuse it instead of refetching.
-                    const loadedOriginal = await loadOriginalTweet(tweet.value, myGeneration)
-                    if (myGeneration !== loadGeneration) return
-                    originTweet.value = loadedOriginal
-                    if (!tweetHasOwnBody(tweet.value) && originTweet.value) {
-                        // Pure retweet (no added content): show the original's comments.
-                        isRetweet.value = true
-                        if (tweetStore.hydrateCachedComments(originTweet.value)) triggerRef(originTweet)
-                        await tweetStore.loadComments(originTweet.value)
-                    } else {
-                        // Quote-retweet: comments belong to the outer tweet.
-                        await tweetStore.loadComments(tweet.value)
-                    }
-                } catch (error) {
-                    console.warn('[TweetDetail] Failed to load original tweet:', error)
-                }
-            })())
-        } else {
-            loadPromises.push((async () => {
-                try {
-                    await tweetStore.loadComments(tweet.value)
-                } catch (error) {
-                    console.warn('[TweetDetail] Failed to load comments:', error)
-                }
-            })())
-        }
-
-        // Await comments loading, then trigger Vue reactivity.
-        // The spinner is dropped at the cap even when the fetch is still running —
-        // JS promises are not cancellable, so racing a timer is exactly the "stop
-        // waiting, don't stop working" behaviour we want; the comments still render
-        // when they land. The sequencing below still waits for the real result,
-        // because `isRetweet` is decided inside these promises.
-        const commentsSettled = Promise.allSettled(loadPromises)
-        void Promise.race([
-            commentsSettled,
-            new Promise(resolve => setTimeout(resolve, COMMENT_SPINNER_CAP_MS)),
-        ]).then(() => { isLoadingComments.value = false })
-        await commentsSettled
-        // A retry may have started (and possibly already finished) while the
-        // above awaits were pending; bail out so this stale call doesn't
-        // duplicate observers/timers on top of the newer attempt's.
-        if (myGeneration !== loadGeneration) return
-        // Use triggerRef to notify Vue that the ref's inner value has changed
+async function loadDetailComments(owner: Tweet, myGeneration: number) {
+    if (tweetStore.hydrateCachedComments(owner)) {
         triggerRef(tweet)
         triggerRef(originTweet)
-
-        // Reset pagination and attach IntersectionObserver for infinite-scroll comments
-        commentPage.value = 0
-        hasMoreComments.value = true
-        setupCommentObserver()
-
-        // Browser reload is Web's explicit recovery trigger. Start only after
-        // content renders and never await it, so synchronization cannot block UI.
-        if (reloadRecoveryTweetId === tweetId.value) void resyncDetailTweets()
-
-        // Independent of the tweet-content resync above: poll for new comments
-        // on a slower cadence, starting a short while after the initial load.
-        const commentOwner = isRetweet.value ? originTweet.value : tweet.value
-        if (commentOwner) startCommentRefreshLoop(commentOwner)
-    } catch (error) {
-        console.error('Error in showTweet:', error)
-        isLoading.value = false
     }
-};
+    isLoadingComments.value = true
+    commentPage.value = -1
+    const spinnerTimer = setTimeout(() => {
+        if (myGeneration === loadGeneration) isLoadingComments.value = false
+    }, COMMENT_SPINNER_CAP_MS)
+    try {
+        const count = await tweetStore.loadComments(owner)
+        if (myGeneration !== loadGeneration) return
+        hasMoreComments.value = count >= 20
+        commentPage.value = 0
+    } catch (error) {
+        console.warn('[TweetDetail] Failed to load comments:', error)
+    } finally {
+        clearTimeout(spinnerTimer)
+        if (myGeneration === loadGeneration) {
+            isLoadingComments.value = false
+            triggerRef(tweet)
+            triggerRef(originTweet)
+            setupCommentObserver()
+            startCommentRefreshLoop(owner)
+        }
+    }
+}
+
+async function showTweet(myGeneration: number) {
+    const parent = tweet.value as Tweet
+    document.title = formattedTitle.value
+    isLoading.value = false
+    const isPureRetweet = !!parent.originalTweetId && !tweetHasOwnBody(parent)
+
+    // Start the comments read as soon as its owner is known. A quote's original
+    // tweet and the explicit reload recovery must not hold up the outer comments.
+    if (!isPureRetweet) void loadDetailComments(parent, myGeneration)
+
+    if (parent.originalTweetId) {
+        try {
+            const original = await loadOriginalTweet(parent, myGeneration)
+            if (myGeneration !== loadGeneration) return
+            originTweet.value = original
+            if (isPureRetweet && original) {
+                isRetweet.value = true
+                void loadDetailComments(original, myGeneration)
+            }
+        } catch (error) {
+            console.warn('[TweetDetail] Failed to load original tweet:', error)
+        }
+    }
+    if (myGeneration !== loadGeneration) return
+    if (reloadRecoveryTweetId === tweetId.value) void resyncDetailTweets()
+}
 
 const MAX_TITLE_LENGTH = 40
 const formattedTitle = computed(() => {
@@ -476,6 +447,7 @@ watch(tweetId, async (newValue, oldValue)=>{
         isRetweet.value = false
         commentPage.value = 0
         hasMoreComments.value = true
+        isLoadingMoreComments.value = false
         stopCommentRefreshLoop()
         await loadDetail()
     }
@@ -709,9 +681,18 @@ const COMMENT_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 // loadComments mutates owner.comments in place; triggerRef is required to
 // notify Vue since nothing else re-reads tweet/originTweet after this fires.
 async function refreshCommentsAndNotify(owner: Tweet) {
-    await tweetStore.loadComments(owner)
-    triggerRef(tweet)
-    triggerRef(originTweet)
+    try {
+        const count = await tweetStore.loadComments(owner)
+        if (commentOwner.value?.mid !== owner.mid) return
+        if (commentPage.value < 0) {
+            commentPage.value = 0
+            hasMoreComments.value = count >= 20
+        }
+        triggerRef(tweet)
+        triggerRef(originTweet)
+    } catch (error) {
+        console.warn('[TweetDetail] Comments refresh failed:', error)
+    }
 }
 
 function startCommentRefreshLoop(owner: Tweet) {
@@ -751,17 +732,30 @@ function setupCommentObserver() {
 }
 
 async function loadMoreComments() {
-    if (isLoadingMoreComments.value || !hasMoreComments.value) return
-    const targetTweet = isRetweet.value ? originTweet.value : tweet.value
+    if (isLoadingComments.value || isLoadingMoreComments.value || !hasMoreComments.value) return
+    const targetTweet = commentOwner.value
     if (!targetTweet) return
+    const myGeneration = loadGeneration
     isLoadingMoreComments.value = true
-    const nextPage = commentPage.value + 1
     try {
-        const hasMore = await tweetStore.loadMoreComments(targetTweet, nextPage)
-        hasMoreComments.value = hasMore
-        commentPage.value = nextPage
+        // A full unresolved/duplicate page may add no rows and never move the
+        // observer sentinel. Continue until a short page or new visible rows.
+        let addedRows: boolean
+        do {
+            const previousCount = targetTweet.comments?.length ?? 0
+            const nextPage = commentPage.value + 1
+            const hasMore = await tweetStore.loadMoreComments(targetTweet, nextPage)
+            if (myGeneration !== loadGeneration) return
+            hasMoreComments.value = hasMore
+            commentPage.value = nextPage
+            addedRows = (targetTweet.comments?.length ?? 0) > previousCount
+            triggerRef(tweet)
+            triggerRef(originTweet)
+        } while (hasMoreComments.value && !addedRows)
+    } catch (error) {
+        console.warn('[TweetDetail] Comments page failed:', error)
     } finally {
-        isLoadingMoreComments.value = false
+        if (myGeneration === loadGeneration) isLoadingMoreComments.value = false
     }
 }
 
@@ -850,6 +844,7 @@ async function resyncDetailTweets() {
 }
 
 onUnmounted(() => {
+    loadGeneration++
     if (viewportInsetRefreshTimer) {
         clearTimeout(viewportInsetRefreshTimer)
         viewportInsetRefreshTimer = null
