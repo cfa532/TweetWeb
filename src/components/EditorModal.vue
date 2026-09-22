@@ -226,8 +226,10 @@ async function uploadAttachedFiles(
         } else {
           const cloudDrivePort = String(uploadAuthor.cloudDrivePort);
           const rawWritableHost = await tweetStore.resolveWritableHostIp(uploadAuthor);
-          const ipAddress = rawWritableHost.includes(':') ? rawWritableHost.split(':')[0] : rawWritableHost;
-          const baseUrl = `http://${ipAddress}:${cloudDrivePort}`;
+          // Replace only the service port, preserving bracketed IPv6 hosts.
+          const uploadUrl = new URL(`http://${rawWritableHost}`);
+          uploadUrl.port = cloudDrivePort;
+          const baseUrl = uploadUrl.origin;
 
           console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value} progressive=${progressiveVideo.value}`);
 
