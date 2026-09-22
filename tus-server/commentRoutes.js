@@ -20,6 +20,23 @@ const COMMENT_PRIVATE_KEY_PATH =
   path.join(__dirname, 'comment_private_key.pem');
 const ENCRYPTED_COMMENT_ALG = 'RSA-OAEP-256+A256GCM';
 
+// Free-text triggers that attach an image file instead of posting the literal
+// text. Files live alongside this script and must be uploaded there manually.
+const MEDIA_TRIGGERS = {
+  pic1: 'pic1.png',
+};
+
+/**
+ * If the comment text matches a media trigger and the backing file exists
+ * next to this script, return its absolute path. Otherwise null.
+ */
+function resolveMediaAttachment(text) {
+  const filename = MEDIA_TRIGGERS[text.toLowerCase()];
+  if (!filename) return null;
+  const filePath = path.join(__dirname, filename);
+  return fs.existsSync(filePath) ? filePath : null;
+}
+
 /**
  * Load cookies from cookies.json and convert them to Playwright's format.
  * Filters to only x.com / twitter.com cookies.
@@ -147,7 +164,7 @@ function validateCommentRequest(payload) {
 /**
  * Use Playwright to navigate to the tweet and post a reply.
  */
-async function postCommentWithPlaywright({ tweet_id, text }) {
+async function postCommentWithPlaywright({ tweet_id, text, mediaPath }) {
   let cookies;
   try {
     cookies = loadCookies();
@@ -215,8 +232,20 @@ async function postCommentWithPlaywright({ tweet_id, text }) {
     // Click to focus the reply box
     await replyBox.click();
 
-    // Type the comment text
-    await page.keyboard.type(text, { delay: 30 });
+    if (mediaPath) {
+      // Media trigger: attach the image instead of typing the trigger text.
+      const fileInput = page.locator('input[data-testid="fileInput"]');
+      await fileInput.setInputFiles(mediaPath);
+      // Wait for X to finish processing the upload (remove-media control
+      // appears once the attachment preview is ready).
+      await page
+        .locator('[aria-label="Remove media"], [data-testid="removeMedia"]')
+        .first()
+        .waitFor({ state: 'visible', timeout: 30000 });
+    } else {
+      // Type the comment text
+      await page.keyboard.type(text, { delay: 30 });
+    }
 
     // Small pause to let X process the input
     await page.waitForTimeout(500);
@@ -282,13 +311,14 @@ router.post('/comment', (req, res) => {
   }
 
   const { tweet_id, text } = comment;
+  const mediaPath = resolveMediaAttachment(text);
   const reqId = crypto.randomBytes(4).toString('hex');
   console.log(
-    `[COMMENT] ${reqId} accepted (tweet_id=${tweet_id})`
+    `[COMMENT] ${reqId} accepted (tweet_id=${tweet_id}${mediaPath ? ', media=' + path.basename(mediaPath) : ''})`
   );
 
   // Fire-and-forget
-  postCommentWithPlaywright({ tweet_id, text })
+  postCommentWithPlaywright({ tweet_id, text, mediaPath })
     .then((result) => {
       if (result.ok) {
         console.log(
