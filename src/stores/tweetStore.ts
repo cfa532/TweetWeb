@@ -5175,33 +5175,6 @@ export const useTweetStore = defineStore('tweetStore', {
             user.client = createPooledClient(writableIp, this.lapi.connectionPool)
         },
 
-        /** Directly pin imported CIDs on the attachment owner's root node. */
-        async pinIpfsAttachments(user: User, cids: string[]): Promise<void> {
-            if (cids.length === 0) return
-            if (!this.loginUser) throw new Error('Not logged in')
-
-            const writableIp = await this.resolveWritableHostIp(user)
-            const client = createPooledClient(writableIp, this.lapi.connectionPool)
-            client.timeout = 10 * 60 * 1000 // Allow time for the node to fetch and pin the CID.
-            for (const cid of new Set(cids)) {
-                try {
-                    const result = await client.RunMApp('pin_ipfs', {
-                        aid: this.appId, ver: 'last', version: 'v2',
-                        userid: user.mid, cid,
-                    })
-                    if (result?.success !== true || result?.data?.pinned !== true) {
-                        throw new Error(result?.message || 'The server did not confirm the pin')
-                    }
-                } catch (error) {
-                    // Surface pin timeouts too: submission must remain retryable.
-                    const reason = (error as any)?.isTimeout
-                        ? 'Pinning timed out. Please try again.'
-                        : error instanceof Error ? error.message : String(error)
-                    throw new Error(`Could not pin attachment ${cid}: ${reason}`)
-                }
-            }
-        },
-
         /**
          * Uploads binary data via chunked upload_ipfs to the user's writable host.
          * Matches iOS MediaProcessor.uploadRegularFile: chunked PUT loop followed

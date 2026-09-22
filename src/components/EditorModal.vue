@@ -349,14 +349,8 @@ async function onSubmit() {
       ? mmFiles.value.concat(attachments)
       : attachments.concat(mmFiles.value)
 
-    // Pin the imported CIDs in this submission before either create or edit.
-    // Existing attachments are not part of this draft's CID import.
-    const existingIds = new Set((props.editTweet?.attachments || [])
-      .map(file => attachmentReferenceId(file.mid)))
-    const attachedCids = mmFiles.value
-      .filter(file => !existingIds.has(attachmentReferenceId(file.mid)))
-      .map(file => file.mid.trim())
-    await tweetStore.pinIpfsAttachments(uploadAuthor, attachedCids)
+    // The save APIs manage attachment retention with MMAddRef/MMDelRef.
+    // MMAddRef pins each CID, so imported attachments need no separate pin call.
 
     if (props.editTweet) {
       const content = txtConent.value || ''
