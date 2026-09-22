@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'dtweet-installer-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable installer tag to publish or verify
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,16 +20,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Use current npm CLI for trusted publishing
-        run: npm install --global npm@latest
+      # npm 12 changed pack --json from an array to an object. Keep packaging
+      # on the same npm version used to build and verify this release locally.
+      - name: Use npm 11.19.1 for reproducible packaging and trusted publishing
+        run: npm install --global npm@11.19.1
       - name: Validate tagged package and syntax
         working-directory: packages/dtweet-installer
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
