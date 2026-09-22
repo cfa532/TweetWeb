@@ -52,12 +52,36 @@ jobs:
           npm pack --json > "$RUNNER_TEMP/dtweet-pack.json"
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
           import { spawnSync } from 'node:child_process';
           const [pack] = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/dtweet-pack.json`, 'utf8'));
           const published = spawnSync('npm', ['view', pack.id, 'dist.integrity', '--json'], { encoding: 'utf8' });
           let publish = true;
           if (published.status === 0) {
-            if (JSON.parse(published.stdout) !== pack.integrity) {
+            // Compare files and executable modes, not gzip bytes produced by
+            // different Node/zlib builds on the developer machine and runner.
+            const temporary = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, 'dtweet-compare-'));
+            function run(command, args) {
+              const result = spawnSync(command, args, { encoding: 'utf8' });
+              if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr);
+              return result.stdout;
+            }
+            const [remote] = JSON.parse(run('npm', ['pack', pack.id, '--ignore-scripts', '--json', '--pack-destination', temporary]));
+            if (remote.integrity !== JSON.parse(published.stdout)) throw new Error('Registry archive integrity mismatch.');
+            for (const name of ['local', 'remote']) fs.mkdirSync(path.join(temporary, name));
+            run('tar', ['-xzf', pack.filename, '-C', path.join(temporary, 'local')]);
+            run('tar', ['-xzf', path.join(temporary, remote.filename), '-C', path.join(temporary, 'remote')]);
+            function manifest(directory, prefix = '') {
+              return fs.readdirSync(directory).sort().flatMap(name => {
+                const filename = path.join(directory, name);
+                const stat = fs.lstatSync(filename);
+                if (stat.isDirectory()) return manifest(filename, `${prefix}${name}/`);
+                if (!stat.isFile()) throw new Error(`Unexpected package entry: ${prefix}${name}`);
+                return [[`${prefix}${name}`, stat.mode & 0o777, createHash('sha256').update(fs.readFileSync(filename)).digest('hex')]];
+              });
+            }
+            if (JSON.stringify(manifest(path.join(temporary, 'local'))) !== JSON.stringify(manifest(path.join(temporary, 'remote')))) {
               throw new Error(`${pack.id} already exists with different contents. Use a new version.`);
             }
             console.log(`${pack.id} is already published with the exact package contents.`);
