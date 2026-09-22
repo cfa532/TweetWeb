@@ -1,0 +1,63 @@
+name: Publish dTweet npm installer
+
+on:
+  push:
+    tags:
+      - 'dtweet-installer-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Use current npm CLI for trusted publishing
+        run: npm install --global npm@latest
+      - name: Validate tagged package and syntax
+        working-directory: packages/dtweet-installer
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (!/^\d+\.\d+\.\d+$/.test(pkg.version) ||
+              process.env.RELEASE_TAG !== `dtweet-installer-v${pkg.version}`) {
+            throw new Error('Release tag must match the package version.');
+          }
+          NODE
+          node --check bin/dtweet.js
+          node --check lib/install.js
+      - name: Build package and check immutable version
+        id: package
+        working-directory: packages/dtweet-installer
+        run: |
+          npm pack --json > "$RUNNER_TEMP/dtweet-pack.json"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+          const [pack] = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/dtweet-pack.json`, 'utf8'));
+          const published = spawnSync('npm', ['view', pack.id, 'dist.integrity', '--json'], { encoding: 'utf8' });
+          let publish = true;
+          if (published.status === 0) {
+            if (JSON.parse(published.stdout) !== pack.integrity) {
+              throw new Error(`${pack.id} already exists with different contents. Use a new version.`);
+            }
+            console.log(`${pack.id} is already published with the exact package contents.`);
+            publish = false;
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `publish=${publish}\nfilename=${pack.filename}\n`);
+          NODE
+      - name: Publish tagged installer
+        if: steps.package.outputs.publish == 'true'
+        working-directory: packages/dtweet-installer
+        env:
+          PACKAGE_FILE: ${{ steps.package.outputs.filename }}
+        run: npm publish "$PACKAGE_FILE" --access public --provenance

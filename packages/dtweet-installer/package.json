@@ -1,0 +1,27 @@
+{
+  "name": "@inoku/dtweet",
+  "version": "0.1.0",
+  "description": "Install Leither and sync and provide the dTweet release application",
+  "type": "module",
+  "bin": {
+    "dtweet": "bin/dtweet.js"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": ["linux", "darwin"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cfa532/TweetWeb.git",
+    "directory": "packages/dtweet-installer"
+  },
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -21,6 +21,12 @@ A privacy-focused, decentralized social media platform built with Vue.js and IPF
 
 ### Installation
 
+To install a serving node with Leither and synchronize/provide the release app,
+see the [dTweet npm installer](packages/dtweet-installer/README.md). The commands
+below set up the web development environment. **HLS video support requires both
+tus-server and FFmpeg**, configured separately from the npm node installer;
+see the [server setup guide](docs/SETUP.md).
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/TweetWeb.git
