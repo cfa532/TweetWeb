@@ -4,39 +4,11 @@
       <div class="download-card">
         <div class="app-info">
           <img src="/src/ic_splash.png" alt="App Icon" class="app-icon" />
-          <h1 class="app-name">DTweet</h1>
+          <h1 class="app-name">dTweet</h1>
         </div>
         
-        <div class="download-section">
-          <div class="browser-notice">
-            <div class="notice-icon">🌐</div>
-            <p class="notice-text">{{ $t('download.page.browserNotice') }}</p>
-          </div>
-          
-          <div class="download-button-container">
-            <button 
-              @click="startDownload" 
-              :disabled="isDownloading"
-              class="download-button"
-            >
-              <span v-if="isDownloading" class="spinner"></span>
-              {{ isDownloading ? $t('download.page.downloading') : $t('download.page.downloadAndroidApk') }}
-            </button>
-          </div>
-          
-          <div v-if="showInstructions" class="instructions">
-            <h3>{{ $t('download.page.instructionsTitle') }}</h3>
-            <ol class="instruction-steps">
-              <li v-for="stepKey in instructionStepKeys" :key="stepKey">
-                {{ $t(stepKey) }}
-              </li>
-            </ol>
-          </div>
-        </div>
-        
-        <div class="alternative-options">
-          <h3>{{ $t('download.page.alternativeOptions') }}</h3>
-          <div class="store-buttons">
+        <div class="download-options">
+          <div class="download-buttons">
             <a 
               href="https://apps.apple.com/app/dtweet/id6751131431" 
               target="_blank" 
@@ -61,13 +33,31 @@
             </a>
           </div>
         </div>
+        <div class="instructions">
+          <h3>{{ $t('download.page.instructionsTitle') }}</h3>
+          <p>{{ $t('download.page.openDownloadInDefaultBrowser') }}</p>
+          <button
+            type="button"
+            class="download-button"
+            :disabled="isDownloading"
+            @click="startDownload"
+          >
+            <span v-if="isDownloading" class="spinner"></span>
+            {{ isDownloading ? $t('download.page.downloading') : $t('download.page.downloadAndroidApk') }}
+          </button>
+          <ol class="instruction-steps">
+            <li v-for="stepKey in instructionStepKeys" :key="stepKey">
+              {{ $t(stepKey) }}
+            </li>
+          </ol>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTweetStore } from '@/stores'
 
@@ -75,23 +65,17 @@ const tweetStore = useTweetStore()
 const { t } = useI18n()
 const isDownloading = ref(false)
 
-const showInstructions = computed(() => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-})
-
 const instructionStepKeys = [
-  'download.page.instructionStepRename',
-  'download.page.instructionStepUnknownSources',
   'download.page.instructionStepInstall',
-  'download.page.instructionStepComplete',
+  'download.page.instructionStepZip',
 ] as const
 
-const startDownload = async () => {
+async function startDownload() {
   if (!tweetStore.installApk) {
     alert(t('download.page.linkUnavailable'))
     return
   }
-  
+
   isDownloading.value = true
   try {
     await tweetStore.downloadBlob(tweetStore.installApk)
@@ -102,16 +86,6 @@ const startDownload = async () => {
     isDownloading.value = false
   }
 }
-
-onMounted(() => {
-  // Auto-start download if coming from QR code
-  const urlParams = new URLSearchParams(window.location.search)
-  if (urlParams.get('auto') === 'true') {
-    setTimeout(() => {
-      startDownload()
-    }, 1000)
-  }
-})
 </script>
 
 <style scoped>
@@ -165,40 +139,6 @@ onMounted(() => {
   margin: 0;
 }
 
-.download-section {
-  margin-bottom: 20px;
-}
-
-.browser-notice {
-  background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
-  border: 1px solid #bbdefb;
-  border-radius: 10px;
-  padding: 12px 15px;
-  margin-bottom: 15px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.notice-icon {
-  font-size: 20px;
-  flex-shrink: 0;
-}
-
-.notice-text {
-  color: #1976d2;
-  font-size: 13px;
-  font-weight: 500;
-  margin: 0;
-  line-height: 1.4;
-}
-
-.download-section h2 {
-  font-size: 20px;
-  color: #333;
-  margin: 0 0 8px 0;
-}
-
 .download-description {
   color: #666;
   font-size: 13px;
@@ -206,26 +146,28 @@ onMounted(() => {
   line-height: 1.4;
 }
 
-.download-button-container {
-  margin-bottom: 18px;
+.download-button,
+.store-button {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
 }
 
 .download-button {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 12px 30px;
   border: none;
   border-radius: 25px;
-  padding: 12px 30px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
   font-size: 16px;
   font-weight: bold;
   cursor: pointer;
   transition: transform 0.2s, box-shadow 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 0 auto;
-  min-width: 180px;
 }
 
 .download-button:hover:not(:disabled) {
@@ -242,14 +184,13 @@ onMounted(() => {
   width: 20px;
   height: 20px;
   border: 2px solid transparent;
-  border-top: 2px solid white;
+  border-top-color: white;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  to { transform: rotate(360deg); }
 }
 
 .instructions {
@@ -267,6 +208,13 @@ onMounted(() => {
   text-align: center;
 }
 
+.instructions p {
+  color: #666;
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0 0 10px;
+}
+
 .instruction-steps {
   margin: 0;
   padding-left: 18px;
@@ -279,22 +227,12 @@ onMounted(() => {
   margin-bottom: 6px;
 }
 
-.alternative-options {
-  border-top: 1px solid #eee;
-  padding-top: 18px;
-}
-
-.alternative-options h3 {
-  font-size: 16px;
-  color: #333;
-  margin: 0 0 15px 0;
-}
-
-.store-buttons {
+.download-buttons {
   display: flex;
+  flex-direction: column;
   gap: 15px;
-  justify-content: center;
-  flex-wrap: wrap;
+  max-width: 360px;
+  margin: 0 auto;
 }
 
 .store-button {
@@ -340,20 +278,5 @@ onMounted(() => {
     font-size: 22px;
   }
   
-  .download-button {
-    padding: 10px 25px;
-    font-size: 15px;
-    min-width: 160px;
-  }
-  
-  .store-buttons {
-    flex-direction: column;
-    align-items: center;
-  }
-  
-  .store-button {
-    width: 180px;
-    justify-content: center;
-  }
 }
 </style>

@@ -371,6 +371,9 @@ watch(
   position: relative;
   z-index: 2;
 }
+.corner-menu-container :deep(.dot) {
+  transform: rotate(90deg);
+}
 .author-carousel-outer {
   width: calc(100% + 16px);
   max-width: none;

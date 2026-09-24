@@ -466,7 +466,7 @@ function linkify(text: string) {
 
 function openInApp() {
     if (isWeChatBrowser()) {
-        window.alert(t('download.openInDefaultBrowser'))
+        void router.push({ name: 'apk' })
         return
     }
 
