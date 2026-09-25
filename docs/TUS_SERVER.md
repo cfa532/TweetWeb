@@ -263,6 +263,33 @@ fetch('/extract-tar', {
 });
 ```
 
+### Posting Comments to X (`POST /comment`)
+
+Implemented in `tus-server/commentRoutes.js`. The body is an RSA/AES-GCM
+encrypted `{"tweet_id", "text"}` payload (keys: `comment_private_key.pem` /
+`comment_public_key.pem`). The route drives headless Chromium (Playwright) with
+the logged-in X session in `tus-server/cookies.json` and submits the reply
+through the tweet page's inline composer.
+
+- **Fire-and-forget:** the route returns `202 {"status":"accepted"}` as soon as
+  the payload decrypts. A `202` does **not** mean the reply was posted; the
+  outcome is only in the server log (`[COMMENT] <id> completed` / `failed`).
+  Check it with `journalctl -u tus-server | grep COMMENT`. A posting takes
+  roughly 20-40 s.
+- **Cookies:** export the X cookies as a JSON array (browser cookie-export
+  extension) into `tus-server/cookies.json`. It is re-read on every request, so
+  replacing it needs no restart. It holds a live login (`auth_token`, `ct0`), so
+  keep it out of commits and shares. The file's expiry dates only show when the
+  browser would drop a cookie, not whether X still accepts the session.
+- **`--disable-http2`:** Chromium launches with HTTP/2 disabled. On the minipc,
+  Chromium's HTTP/2 connections to `x.com` / `abs.twimg.com` stall, X's JS
+  bundles never finish loading, and the page sits on the splash screen, which
+  surfaces as "Tweet article did not load — possible login wall or deleted
+  tweet". `curl` from the same host is unaffected.
+- **Failure diagnosis:** on a failed load the route saves
+  `/tmp/comment-fail-<tweet_id>.png`. A bare X logo or spinner means the page
+  did not hydrate (network); a login form means the cookies were rejected.
+
 ## Security Notes
 
 - **Video Conversion**: File size limited to 4GB, 6-hour processing timeout

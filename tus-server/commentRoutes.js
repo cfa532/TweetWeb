@@ -182,7 +182,13 @@ async function postCommentWithPlaywright({ tweet_id, text, mediaPath }) {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    // Chromium's HTTP/2 connections to x.com / abs.twimg.com stall on the
+    // minipc, so the app's JS bundles never finish loading and the page hangs
+    // on the splash screen. Falling back to HTTP/1.1 loads it in ~5s.
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--disable-http2'],
+    });
     const context = await browser.newContext({
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -197,8 +203,9 @@ async function postCommentWithPlaywright({ tweet_id, text, mediaPath }) {
     await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     // Wait for the tweet article to confirm the page rendered (not a login wall)
+    // Over HTTP/1.1 (see --disable-http2 above) the tweet takes 12-26s to render.
     try {
-      await page.locator('article[data-testid="tweet"]').first().waitFor({ state: 'visible', timeout: 20000 });
+      await page.locator('article[data-testid="tweet"]').first().waitFor({ state: 'visible', timeout: 45000 });
     } catch (articleErr) {
       // Capture a screenshot to help diagnose what rendered instead
       const screenshotPath = `/tmp/comment-fail-${tweet_id}.png`;
@@ -213,8 +220,16 @@ async function postCommentWithPlaywright({ tweet_id, text, mediaPath }) {
     // The reply composer may not be visible until the user clicks the reply action.
     // Try scrolling to the textarea first; if it's still not visible, click the
     // reply button on the tweet to activate the inline composer.
+    // The inline composer renders a variable time after the tweet article, so
+    // wait for it rather than sampling once: a single isVisible() check that
+    // misses it falls into the reply-icon branch below, which opens a modal
+    // whose full-screen mask then blocks the click on the textarea.
     let replyBox = page.locator('[data-testid="tweetTextarea_0"]');
-    const isVisible = await replyBox.isVisible().catch(() => false);
+    const isVisible = await replyBox
+      .first()
+      .waitFor({ state: 'visible', timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
 
     if (!isVisible) {
       // Try clicking the reply icon on the tweet to open the composer
