@@ -34,3 +34,4 @@ coverage
 .kluster
 .claude/settings.json
 /.claude
+tus-server/cookies.json
