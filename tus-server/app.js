@@ -434,7 +434,7 @@ function checkAuthorizedUser(req, res, next) {
   }
   
   // Skip authorization for the video conversion endpoint and status checks
-  if (req.path === '/convert-video' || req.path.startsWith('/convert-video/status/')) {
+  if (req.path === '/convert-video' || req.path === '/convert-video/resumable' || req.path.startsWith('/convert-video/status/')) {
     return next();
   }
   

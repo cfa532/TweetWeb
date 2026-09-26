@@ -1,4 +1,5 @@
 import { useAlertStore } from '@/stores/alert.store';
+import * as tus from 'tus-js-client';
 
 export interface VideoUploadResponse {
   success: boolean;
@@ -222,23 +223,15 @@ export async function normalizeVideo(
   }
 }
 
-/**
- * Uploads a video file to the convert-video endpoint using multipart form data
- * @param file The video file to upload
- * @param baseUrl The base URL (with port) to construct the endpoint URL
- * @param cloudDrivePort The cloud drive port to use for the endpoint
- * @param onProgress Optional progress callback function
- * @param noResample Optional boolean to control whether to resample the video (default: false)
- * @param progressive Optional boolean to store the video as a single progressive file instead of HLS (default: false)
- * @returns Promise<string> The CID of the uploaded video
- */
+/** Upload a video in resumable chunks, then ask the service to convert it. */
 export async function uploadVideo(
   file: File,
   baseUrl: string,
   cloudDrivePort: string,
   onProgress?: (progress: number) => void,
   noResample: boolean = false,
-  progressive: boolean = false
+  progressive: boolean = false,
+  username: string = ''
 ): Promise<VideoUploadResponse> {
   if (file.size === 0) {
     throw new Error(`File ${file.name} is empty and cannot be uploaded.`);
@@ -263,74 +256,103 @@ export async function uploadVideo(
   } catch (error) {
     throw new Error(`Failed to parse baseUrl: ${baseUrl}. Error: ${error}`);
   }
-  
-  const videoUploadUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video`;
-  const statusUrl = `http://${url.hostname}:${cloudDrivePort}/convert-video/status`;
-  
-  console.log(`[CLIENT-VIDEO-UPLOAD] route=/convert-video file="${file.name}" size=${formatFileSizeMB(file.size)} type="${file.type || 'unknown'}" noResample=${noResample} progressive=${progressive} baseUrl=${baseUrl} endpoint=${videoUploadUrl} statusEndpoint=${statusUrl}`);
 
-  // Create multipart form data
-  const formData = new FormData();
-  formData.append('videoFile', file);
-  formData.append('filename', file.name);
-  formData.append('filesize', file.size.toString());
-  formData.append('contentType', file.type);
-  formData.append('noResample', noResample.toString());
-  formData.append('progressive', progressive.toString());
+  const serviceUrl = `http://${url.hostname}:${cloudDrivePort}`;
+  const tusUploadUrl = `${serviceUrl}/upload`;
+  const videoUploadUrl = `${serviceUrl}/convert-video/resumable`;
+  const statusUrl = `${serviceUrl}/convert-video/status`;
+
+  console.log(`[CLIENT-VIDEO-UPLOAD] route=/convert-video/resumable file="${file.name}" size=${formatFileSizeMB(file.size)} type="${file.type || 'unknown'}" noResample=${noResample} progressive=${progressive} baseUrl=${baseUrl} endpoint=${videoUploadUrl} statusEndpoint=${statusUrl}`);
   
   console.log(`[CLIENT-UPLOAD-TIMING] Starting upload at ${new Date().toISOString()}`);
   const uploadStartTime = Date.now();
   
   // Step 1: Start the upload and get job ID with progress tracking
   try {
-    console.log(`[CLIENT-UPLOAD-TIMING] Sending upload request with progress tracking...`);
+    console.log(`[CLIENT-UPLOAD-TIMING] Sending resumable upload with progress tracking...`);
     console.log(`[CLIENT-VIDEO-UPLOAD] Sending upload request at ${new Date().toISOString()}`);
-    
-    // Use XMLHttpRequest for upload progress tracking
-    const uploadResult = await new Promise<any>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      
-      // Track upload progress (0-40% of total progress bar)
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable && onProgress) {
-          const rawPct = event.loaded / event.total;
-          const uploadProgress = rawPct > 0 ? Math.max(1, Math.round(rawPct * 40)) : 0;
-          console.log(`[UPLOAD-PROGRESS] ${uploadProgress}% (${(event.loaded / 1024 / 1024).toFixed(2)}MB / ${(event.total / 1024 / 1024).toFixed(2)}MB)`);
-          onProgress(uploadProgress);
-        }
-      });
-      
-      xhr.addEventListener('load', () => {
-        console.log(`[CLIENT-VIDEO-UPLOAD] uploadResponse status=${xhr.status} ${xhr.statusText} body="${xhr.responseText.slice(0, 500)}"`);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const result = JSON.parse(xhr.responseText);
-            resolve(result);
-          } catch (parseError) {
-            reject(new Error('Invalid response format'));
+
+    const completedUpload = await new Promise<{ url: string; upload: tus.Upload }>((resolve, reject) => {
+      const upload = new tus.Upload(file, {
+        endpoint: tusUploadUrl,
+        retryDelays: [0, 1000, 3000, 5000, 10000, 20000, 30000],
+        chunkSize: 2 * 1024 * 1024,
+        // Keep the completed URL until the conversion handoff succeeds. If that
+        // small request loses its response, the outer retry reuses this upload.
+        removeFingerprintOnSuccess: false,
+        metadata: {
+          filename: file.name,
+          filetype: file.type || 'application/octet-stream',
+          username,
+          uploadType: 'tweet-video'
+        },
+        onError: (error) => reject(new Error(`Network error during resumable upload: ${error.message}`)),
+        onProgress: (bytesUploaded, bytesTotal) => {
+          if (!onProgress) return;
+          const rawPct = bytesTotal > 0 ? bytesUploaded / bytesTotal : 0;
+          const progress = rawPct > 0 ? Math.max(1, Math.round(rawPct * 40)) : 0;
+          console.log(`[UPLOAD-PROGRESS] ${progress}% (${formatFileSizeMB(bytesUploaded)} / ${formatFileSizeMB(bytesTotal)})`);
+          onProgress(progress);
+        },
+        onSuccess: () => {
+          if (!upload.url) {
+            reject(new Error('Resumable upload completed without an upload URL'));
+            return;
           }
-        } else {
-          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+          resolve({ url: upload.url, upload });
         }
       });
-      
-      xhr.addEventListener('error', () => {
-        console.error(`[CLIENT-VIDEO-UPLOAD] upload network error for endpoint=${videoUploadUrl}`);
-        reject(new Error('Network error during upload'));
-      });
-      
-      xhr.addEventListener('timeout', () => {
-        console.error(`[CLIENT-VIDEO-UPLOAD] upload timeout after ${xhr.timeout}ms for endpoint=${videoUploadUrl}`);
-        reject(new Error('Upload timeout'));
-      });
-      
-      xhr.open('POST', videoUploadUrl);
-      xhr.timeout = 30 * 60 * 1000; // 30 minute timeout for large files
-      // Note: Browsers automatically manage the 'Connection' header - we cannot set it
-      xhr.setRequestHeader('Cache-Control', 'no-cache');
-      xhr.send(formData);
+
+      upload.findPreviousUploads()
+        .then((previousUploads) => {
+          if (previousUploads.length > 0) upload.resumeFromPreviousUpload(previousUploads[0]);
+          upload.start();
+        })
+        .catch((error) => {
+          console.warn('[CLIENT-VIDEO-UPLOAD] Could not inspect previous uploads; starting a new upload:', error);
+          upload.start();
+        });
     });
-    
+    const completedUploadUrl = completedUpload.url;
+
+    // This handoff is idempotent on the server, so a lost response can be
+    // retried without starting the same conversion twice.
+    let uploadResult: any = null;
+    let handoffError: unknown;
+    for (const delay of [0, 1000, 3000, 5000]) {
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+      try {
+        const response = await fetch(videoUploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadUrl: completedUploadUrl, noResample, progressive })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || `Upload handoff failed: ${response.status}`);
+        uploadResult = result;
+        handoffError = undefined;
+        break;
+      } catch (error) {
+        handoffError = error;
+      }
+    }
+    if (handoffError) throw handoffError;
+    if (!uploadResult) throw new Error('Upload handoff returned no result');
+
+    // The server now owns the completed file. Remove only this upload's resume
+    // record so selecting the same local file for a later tweet starts fresh.
+    if (completedUpload.upload.options.urlStorage) {
+      try {
+        const storedUploads = await completedUpload.upload.findPreviousUploads();
+        const acceptedUpload = storedUploads.find(upload => upload.uploadUrl === completedUploadUrl);
+        if (acceptedUpload) {
+          await completedUpload.upload.options.urlStorage.removeUpload(acceptedUpload.urlStorageKey);
+        }
+      } catch (error) {
+        console.warn('[CLIENT-VIDEO-UPLOAD] Could not remove the completed upload resume record:', error);
+      }
+    }
+
     const uploadCompleteTime = Date.now();
     const uploadDuration = uploadCompleteTime - uploadStartTime;
     console.log(`[CLIENT-UPLOAD-TIMING] Upload completed at ${new Date().toISOString()} (${uploadDuration}ms total)`);
@@ -348,17 +370,30 @@ export async function uploadVideo(
       onProgress(40); // Show 40% for upload completion
     }
     
-    // Step 2: Poll for completion
+    // Step 2: Poll for completion. Status failures back off independently so
+    // a temporary connection loss never restarts the completed file upload.
     return new Promise<VideoUploadResponse>((resolve, reject) => {
       let pollCount = 0;
-      const pollInterval = setInterval(async () => {
+      let consecutiveErrors = 0;
+      const deadline = Date.now() + (6 * 60 * 60 * 1000);
+
+      const poll = async () => {
+        if (Date.now() >= deadline) {
+          reject(new Error('Video processing exceeded 6 hours'));
+          return;
+        }
+
         try {
           pollCount += 1;
           const statusResponse = await fetch(`${statusUrl}/${jobId}`);
           if (!statusResponse.ok) {
+            if (statusResponse.status === 404) {
+              throw new Error('Video processing job was not found');
+            }
             throw new Error(`Status check failed: ${statusResponse.status}`);
           }
-          
+
+          consecutiveErrors = 0;
           const statusResult = await statusResponse.json();
           console.log(`[CLIENT-VIDEO-UPLOAD] poll=${pollCount} jobId=${jobId} status=${statusResult.status} progress=${statusResult.progress}% message="${statusResult.message || ''}" mediaType=${statusResult.mediaType || 'unknown'} size=${statusResult.size || 'unknown'} aspectRatio=${statusResult.aspectRatio || 'unknown'}`);
           
@@ -375,7 +410,6 @@ export async function uploadVideo(
           }
           
           if (statusResult.status === 'completed') {
-            clearInterval(pollInterval);
             if (onProgress) {
               onProgress(95); // Show 95% for processing completion
             }
@@ -394,24 +428,28 @@ export async function uploadVideo(
               aspectRatio: typeof statusResult.aspectRatio === 'number' ? statusResult.aspectRatio : undefined,
               message: statusResult.message
             });
+            return;
           } else if (statusResult.status === 'failed') {
-            clearInterval(pollInterval);
             console.error(`[CLIENT-VIDEO-UPLOAD] failed jobId=${jobId} message="${statusResult.message || 'Video processing failed'}"`);
             reject(new Error(statusResult.message || 'Video processing failed'));
+            return;
           }
         } catch (error) {
-          clearInterval(pollInterval);
           console.error(`[CLIENT-VIDEO-UPLOAD] polling error jobId=${jobId}:`, error);
-          reject(error);
+          if (error instanceof Error && error.message === 'Video processing job was not found') {
+            reject(error);
+            return;
+          }
+          consecutiveErrors += 1;
         }
-      }, 5000); // Poll every 5 seconds for better responsiveness
-      
-      // Set a maximum timeout of 4 hours for large files
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        console.error(`[CLIENT-VIDEO-UPLOAD] timeout jobId=${jobId} after 4 hours`);
-        reject(new Error('Video processing timeout after 4 hours'));
-      }, 4 * 60 * 60 * 1000);
+
+        const nextDelay = consecutiveErrors > 0
+          ? Math.min(2000 * Math.pow(2, consecutiveErrors), 30000)
+          : 5000;
+        setTimeout(poll, nextDelay);
+      };
+
+      void poll();
     });
   } catch (error: any) {
     // Log connection errors for debugging

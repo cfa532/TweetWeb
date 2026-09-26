@@ -5204,15 +5204,19 @@ export const useTweetStore = defineStore('tweetStore', {
             // hostIds[0] fresh every call, so the retry naturally re-probes the route.
             const maxAttempts = 2
             let lastError: any
+            // Keep the server-side temporary file and acknowledged offset across
+            // connection retries. Re-sending an unacknowledged chunk at the same
+            // offset is safe because MFSetData overwrites those identical bytes.
+            let offset = 0
+            let fsid: string | null = null
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 const uploadIp = await this.resolveWritableHostIp(user)
                 console.log(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} using IP:`, uploadIp)
                 const client = await this.lapi.connectionPool.getConnection(uploadIp)
                 const originalTimeout = client.timeout
                 client.timeout = uploadTimeout
+                let finalizing = false
                 try {
-                    let offset = 0
-                    let fsid: string | null = null
                     while (offset < bytes.length) {
                         const end = Math.min(offset + chunkSize, bytes.length)
                         const chunk = bytes.slice(offset, end)
@@ -5224,6 +5228,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     if (!fsid) throw new Error('upload_ipfs returned no fsid')
 
+                    finalizing = true
                     const finalResponse = await client.RunMApp('upload_ipfs', {
                         aid: this.appId, ver: 'last', version: 'v2',
                         offset, fsid, finished: 'true',
@@ -5236,6 +5241,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     lastError = error
                     console.error(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} failed:`, error)
                     if (attempt < maxAttempts) {
+                        // MFTemp2Ipfs may have consumed the temporary file before
+                        // its response was lost, so only that ambiguous final call
+                        // restarts from a new temporary file.
+                        if (finalizing) {
+                            offset = 0
+                            fsid = null
+                        }
                         user.writableHostIp = null
                         this.lapi.connectionPool.clearAll()
                         await new Promise(resolve => setTimeout(resolve, 1000))

@@ -238,7 +238,7 @@ async function uploadAttachedFiles(
             throw new Error(`Backend service at ${baseUrl} is not available (health check failed)`);
           }
 
-          console.log(`[CLIENT-VIDEO-UPLOAD] backend service available at ${baseUrl}; starting /convert-video upload`);
+          console.log(`[CLIENT-VIDEO-UPLOAD] backend service available at ${baseUrl}; starting resumable video upload`);
 
           const videoResult = await retryUpload(
             () => uploadVideo(
@@ -247,7 +247,8 @@ async function uploadAttachedFiles(
               cloudDrivePort,
               (progress) => { uploadProgress[i] = progress; },
               noResample.value,
-              progressiveVideo.value
+              progressiveVideo.value,
+              uploadAuthor.username
             ),
             file.name
           );

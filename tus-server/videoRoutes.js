@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
+const { extractUploadId, getCompletedUpload, removeUpload } = require('./uploadRoutes');
 // Leither is now called directly via command line, not through API
 
 // Promisify exec for async/await usage
@@ -2832,7 +2833,14 @@ playlist.m3u8`;
     console.error(`[${jobId}] [FATAL] An unexpected error occurred in /convert-video route:`, error);
     throw error;
   } finally {
-    if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
+    if (uploadedFile && typeof uploadedFile.cleanup === 'function') {
+      try {
+        await uploadedFile.cleanup();
+        console.log(`[${jobId}] [CLEANUP] Removed resumable upload: ${uploadedFile.tempFilePath}`);
+      } catch (cleanupError) {
+        console.error(`[${jobId}] [ERROR] Failed to cleanup uploaded file:`, cleanupError);
+      }
+    } else if (uploadedFile && uploadedFile.tempFilePath && fs.existsSync(uploadedFile.tempFilePath)) {
       try {
         fs.unlinkSync(uploadedFile.tempFilePath);
         console.log(`[${jobId}] [CLEANUP] Removed temporary uploaded file: ${uploadedFile.tempFilePath}`);
@@ -2854,6 +2862,10 @@ playlist.m3u8`;
 
 // Store for tracking video processing status
 const processingJobs = new Map();
+
+// Store the in-flight handoff promise as well as completed handoffs. Concurrent
+// retries therefore share one conversion job even before the file lookup ends.
+const resumableVideoJobs = new Map();
 
 // Store for tracking video normalization status
 const normalizeJobs = new Map();
@@ -2942,6 +2954,78 @@ router.post('/convert-video', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to process video upload: ' + error.message
+    });
+  }
+});
+
+// Start conversion from a file already received by the TUS endpoint. The large
+// transfer is therefore resumable in small chunks; this request only hands the
+// completed local file to the existing conversion pipeline.
+router.post('/convert-video/resumable', async (req, res) => {
+  const { uploadUrl, noResample = false, progressive = false } = req.body || {};
+  let uploadId;
+
+  try {
+    uploadId = extractUploadId(uploadUrl);
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+
+  let handoff = resumableVideoJobs.get(uploadId);
+  const isRepeatedHandoff = Boolean(handoff);
+
+  if (!handoff) {
+    handoff = (async () => {
+      const jobId = Math.random().toString(36).substr(2, 9);
+      const upload = await getCompletedUpload(uploadUrl);
+      if (upload.metadata.uploadType !== 'tweet-video') {
+        throw Object.assign(new Error('Upload is not a tweet video'), { statusCode: 400 });
+      }
+
+      const uploadedFile = {
+        name: upload.metadata.filename || 'video',
+        size: upload.size,
+        mimetype: upload.metadata.filetype || 'application/octet-stream',
+        tempFilePath: upload.path,
+        cleanup: () => removeUpload(upload.id)
+      };
+      const request = {
+        files: { videoFile: uploadedFile },
+        body: {
+          noResample: noResample === true || noResample === 'true',
+          progressive: progressive === true || progressive === 'true'
+        }
+      };
+
+      processingJobs.set(jobId, {
+        status: 'processing',
+        progress: 20,
+        message: 'Starting video processing...',
+        startTime: Date.now()
+      });
+
+      void processVideoUploadAsync(request, jobId);
+      return jobId;
+    })();
+    resumableVideoJobs.set(uploadId, handoff);
+  }
+
+  try {
+    const jobId = await handoff;
+    return res.status(202).json({
+      success: true,
+      message: isRepeatedHandoff ? 'Video upload already accepted' : 'Video upload accepted',
+      jobId
+    });
+  } catch (error) {
+    if (resumableVideoJobs.get(uploadId) === handoff) {
+      resumableVideoJobs.delete(uploadId);
+    }
+    const statusCode = error.statusCode || 500;
+    console.error(`[RESUMABLE-VIDEO] Failed to accept upload ${uploadId}:`, error);
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message || 'Failed to accept resumable video upload'
     });
   }
 });

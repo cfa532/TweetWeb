@@ -30,6 +30,7 @@ const fileStore = new FileStore({ directory: uploadPath });
 const tusServer = new Server({
   path: '/upload',
   datastore: fileStore,
+  maxSize: 4 * 1024 * 1024 * 1024,
   respectForwardedHeaders: true
 });
 
@@ -61,6 +62,28 @@ function extractUploadId(uploadUrl) {
     throw new Error('uploadUrl does not contain an upload id');
   }
   return uploadId;
+}
+
+async function getCompletedUpload(uploadUrl) {
+  const uploadId = extractUploadId(uploadUrl);
+  const upload = await fileStore.getUpload(uploadId);
+
+  if (!Number.isFinite(upload.size) || upload.offset !== upload.size) {
+    const error = new Error('Resumable upload is not complete');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    id: uploadId,
+    path: path.join(uploadPath, uploadId),
+    size: upload.size,
+    metadata: upload.metadata || {}
+  };
+}
+
+async function removeUpload(uploadId) {
+  await fileStore.remove(uploadId);
 }
 
 function enqueueIpfsConversion(fileId) {
@@ -324,3 +347,6 @@ module.exports.uploadPath = uploadPath;
 module.exports.registries = registries;
 module.exports.startIpfsConversion = startIpfsConversion;
 module.exports.resumePendingIpfsConversions = resumePendingIpfsConversions;
+module.exports.extractUploadId = extractUploadId;
+module.exports.getCompletedUpload = getCompletedUpload;
+module.exports.removeUpload = removeUpload;

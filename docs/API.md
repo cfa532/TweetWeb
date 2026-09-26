@@ -732,11 +732,13 @@ import * as tus from 'tus-js-client';
 const file = document.querySelector('#file-input').files[0];
 
 const upload = new tus.Upload(file, {
-  endpoint: 'http://localhost:3000/files/',
+  endpoint: 'http://localhost:3000/upload',
   retryDelays: [0, 3000, 5000, 10000, 20000],
+  chunkSize: 2 * 1024 * 1024,
   metadata: {
     filename: file.name,
-    filetype: file.type
+    filetype: file.type,
+    username: currentUsername
   },
   onError: (error) => {
     console.error('Upload failed:', error);
@@ -773,6 +775,27 @@ upload.start();
 // Resume upload
 // upload.start();
 ```
+
+For tweet videos, set `uploadType: 'tweet-video'` in the TUS metadata. After
+TUS completes, start the existing conversion pipeline without retransmitting
+the file:
+
+```javascript
+const response = await fetch('http://localhost:3000/convert-video/resumable', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    uploadUrl: upload.url,
+    noResample: false,
+    progressive: false
+  })
+});
+const { jobId } = await response.json();
+```
+
+The handoff is idempotent for a given TUS upload URL. Poll
+`/convert-video/status/:jobId` as before. The completed TUS file is removed after
+conversion finishes or fails.
 
 ### Error Handling Example
 
@@ -859,4 +882,3 @@ Official client libraries:
 - Go: Coming soon
 
 Community-contributed libraries welcome!
-

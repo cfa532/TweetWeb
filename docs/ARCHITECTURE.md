@@ -457,16 +457,17 @@ processingJobs.set(jobId, {
 ┌─────────┐
 │ Client  │
 └────┬────┘
-     │ 1. POST /convert-video (videoFile)
+     │ 1. TUS /upload (2 MB resumable chunks)
      ▼
 ┌─────────────┐
 │   Backend   │
 └─────┬───────┘
-      │ 2. Return jobId immediately
+      │ 2. POST /convert-video/resumable (uploadUrl)
+      │ 3. Return jobId immediately
       ▼
 ┌─────────────┐
-│   Client    │ 3. Poll /convert-video/status/:jobId
-└─────┬───────┘    every 2 seconds
+│   Client    │ 4. Poll /convert-video/status/:jobId
+└─────┬───────┘    every 5 seconds
       │
       ▼
 ┌─────────────────────────────────┐
@@ -481,7 +482,7 @@ processingJobs.set(jobId, {
 │   │ IPFS Upload          │      │
 │   └──────────────────────┘      │
 └─────────────┬───────────────────┘
-              │ 4. Update job status
+              │ 5. Update job status
               ▼
        ┌──────────────┐
        │ Client Poll  │ 5. Receive CID when complete
