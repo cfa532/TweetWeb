@@ -230,7 +230,6 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
         (refreshProviderRoute) => tweetStore.fetchTweet(
             originalTweetId,
             originalAuthorId,
-            true,
             false,
             true,
             false,
@@ -286,7 +285,6 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
                 const fetched = await tweetStore.fetchTweet(
                     tweetId.value,
                     authorId.value,
-                    true,
                     false,
                     true,
                     false,
@@ -760,7 +758,7 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
 // author whose read node differs from root, get_tweet for everyone else.
 async function refreshDetailTarget(targetTweetId: MimeiId, targetAuthorId: MimeiId) {
     console.log(`[TweetDetail] Refreshing ${targetTweetId} from its provider`)
-    const refreshed = await tweetStore.getTweet(targetTweetId, targetAuthorId, false, true, true)
+    const refreshed = await tweetStore.getTweet(targetTweetId, targetAuthorId, true, true)
     console.log(`[TweetDetail] Completed refresh for ${targetTweetId}`)
     return refreshed
 }

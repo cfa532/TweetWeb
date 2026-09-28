@@ -143,7 +143,7 @@ describe('tweetStore public provider routing', () => {
       return null
     }) as any
 
-    await store.fetchTweet(tweetId, undefined, true)
+    await store.fetchTweet(tweetId, undefined)
 
     expect(tweetApiCall).toBeDefined()
     // "I am not a provider for this tweet" must reject rather than win with a
@@ -220,7 +220,7 @@ describe('tweetStore public provider routing', () => {
       ip: ips[0],
     })) as any
 
-    const tweet = await store.fetchTweet(tweetId, authorId, true)
+    const tweet = await store.fetchTweet(tweetId, authorId)
 
     expect(tweet?.mid).toBe(tweetId)
     // The author's nodes serve the author's tweets, so a known author settles it:
@@ -243,7 +243,7 @@ describe('tweetStore public provider routing', () => {
         : null,
     ) as any
 
-    const tweet = await store.fetchTweet(tweetId, authorId, true)
+    const tweet = await store.fetchTweet(tweetId, authorId)
 
     expect(tweet?.mid).toBe(tweetId)
     // Author first, then the tweet's own providers — not a give-up in between.
@@ -261,7 +261,7 @@ describe('tweetStore public provider routing', () => {
       ip: ips[0],
     })) as any
 
-    const tweet = await store.fetchTweet(tweetId, undefined, true)
+    const tweet = await store.fetchTweet(tweetId, undefined)
 
     expect(tweet?.mid).toBe(tweetId)
     expect(getTweetRaces(store, tweetId)).toEqual([[tweetOwnIp]])

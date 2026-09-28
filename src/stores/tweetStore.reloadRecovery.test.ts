@@ -137,8 +137,8 @@ describe('tweetStore.resyncUser', () => {
         store.lapi.connectionPool.getConnection = vi.fn().mockResolvedValue({ RunMApp: ordinaryRunMApp })
         store.lapi.connectionPool.releaseConnection = vi.fn()
 
-        await store.fetchTweet('tweet-2' as MimeiId, 'user-2' as MimeiId, false, false, true)
-        await store.fetchTweet('tweet-2' as MimeiId, 'user-2' as MimeiId, false, true, true)
+        await store.fetchTweet('tweet-2' as MimeiId, 'user-2' as MimeiId, false, true)
+        await store.fetchTweet('tweet-2' as MimeiId, 'user-2' as MimeiId, true, true)
 
         expect(ordinaryRunMApp).toHaveBeenCalledWith('get_tweet', expect.any(Object))
         expect(refreshRunMApp).toHaveBeenCalledWith('refresh_tweet', expect.any(Object))
@@ -174,7 +174,7 @@ describe('tweetStore.resyncUser', () => {
             attachments: [],
         }))
 
-        const refreshed = await store.fetchTweet('tweet-7' as MimeiId, 'user-7' as MimeiId, false, true, true)
+        const refreshed = await store.fetchTweet('tweet-7' as MimeiId, 'user-7' as MimeiId, true, true)
 
         // An author already reading from its root node needs no refresh_tweet, but the
         // forced fetch must still bypass the cached copy the reload painted.

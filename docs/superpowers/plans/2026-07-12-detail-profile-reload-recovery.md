@@ -44,7 +44,7 @@
 
 **Interfaces:**
 - Consumes: `isBrowserReload()` from Task 1.
-- Preserves: `getTweet(tweetId, authorId, useRacing, forceRefresh, fromDetailView)`.
+- Current signature: `getTweet(tweetId, authorId, forceRefresh, fromDetailView)`.
 
 - [ ] Write a store regression test showing `forceRefresh: false` uses `get_tweet` with an author ID while `forceRefresh: true` uses `refresh_tweet`.
 - [ ] Run the focused test and confirm the ordinary-read assertion fails.

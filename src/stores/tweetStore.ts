@@ -2276,14 +2276,13 @@ export const useTweetStore = defineStore('tweetStore', {
         async getTweet(
             tweetId: MimeiId,
             authorId: MimeiId | undefined = undefined,
-            useRacing: boolean = false,
             forceRefresh: boolean = false,
             fromDetailView: boolean = false
         ): Promise<Tweet | null> {
-            let tweet = await this.fetchTweet(tweetId, authorId, useRacing, forceRefresh, fromDetailView)
-            if (!tweet ) {
+            let tweet = await this.fetchTweet(tweetId, authorId, forceRefresh, fromDetailView)
+            if (!tweet && !fromDetailView) {
                 // Author node has not data, try to load the tweet by id alone from some other provider.
-                tweet = await this.fetchTweet(tweetId, undefined, useRacing, forceRefresh, fromDetailView)
+                tweet = await this.fetchTweet(tweetId, undefined, forceRefresh, fromDetailView)
                 if (!tweet) return null
             }
 
@@ -2296,13 +2295,12 @@ export const useTweetStore = defineStore('tweetStore', {
          * that serves this tweet. 2nd, retrieve the tweet from it. Assume author
          * data is also available on that node. Get author data too.
          *
-         * Step 1 prefers the AUTHOR's provider nodes, which serve that author's
-         * tweets by id. Only when the caller has no author does it resolve the
-         * tweet's own mid, whose provider list can name nodes that no longer
-         * hold it.
+         * Detail reads resolve the AUTHOR first because a user normally has many
+         * providers and that discovery is faster. If the selected author node has
+         * not received a new tweet yet, the one fallback resolves the tweet's own
+         * smaller provider set and races get_tweet there.
          * @param tweetId The ID of the tweet to fetch
          * @param authorId Author ID; when known it selects the node to read from
-         * @param useRacing Retained for caller compatibility; uncached reads race provider data requests
          * @param loadMissingOriginalTweet If false, return the outer tweet without separately fetching a missing embedded tweet
          * @param refreshProviderRoute If true, refresh provider discovery without synchronizing tweet data
          * @returns The tweet object or undefined if not found
@@ -2310,7 +2308,6 @@ export const useTweetStore = defineStore('tweetStore', {
         async fetchTweet(
             tweetId: MimeiId,
             authorId: MimeiId | undefined = undefined,
-            useRacing: boolean = false,
             forceRefresh: boolean = false,
             fromDetailView: boolean = false,
             loadMissingOriginalTweet: boolean = true,
@@ -2386,7 +2383,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
             }
 
-            console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (authorId: ${authorId}, useRacing: ${useRacing})`)
+            console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (authorId: ${authorId})`)
             let author: any, providerClient: any, providerIp: any, tweetInDB: any
 
             if (authorId && forceRefresh) {
@@ -2494,35 +2491,32 @@ export const useTweetStore = defineStore('tweetStore', {
                     ? await raceGetTweet([storageOwner.providerIp])
                     : null
 
-                if (!raceResult) {
-                    // Keep the total concurrency bounded at three. The entry route
-                    // and advertised author routes share one ordered candidate list;
-                    // only after those batches fail do tweet-owned providers run.
+                if (!raceResult && !fromDetailView) {
+                    // Non-detail callers may not have resolved the author first. Give
+                    // their entry/author routes the same bounded ordinary-read path.
                     const entryIps = browserUsableProviderRoutes([this.lapi.hostIP], window.location.hostname)
-                    let authorIps: string[] = []
-                    if (authorId) {
-                        authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
-                        if (authorIps.length === 0) {
-                            console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
-                        }
-                    }
+                    const authorIps = authorId
+                        ? await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                        : []
                     raceResult = await raceGetTweet([...new Set([...entryIps, ...authorIps])])
+                }
 
-                    if (!raceResult) {
-                        console.warn(`[fetchTweet] Author/entry nodes did not serve ${tweetId}; trying the tweet's own providers`)
-                        const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
-                        if (tweetIps.length > 0) {
-                            raceResult = await raceGetTweet(tweetIps)
-                            if (!raceResult) {
-                                // Real reads failed on these routes. Drop them so a
-                                // retry resolves afresh. Keep the author's pool entry:
-                                // it is shared with profile and media loading, and one
-                                // tweet miss is not evidence that node is down.
-                                nodePool.invalidate(tweetId)
-                            }
-                        } else {
-                            console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
+                if (!raceResult) {
+                    // A new tweet may not have propagated from the author's root to
+                    // the access node that already serves the user. Do not spend a
+                    // second lookup on more user providers: discover the much smaller
+                    // provider set for the tweet itself and try those nodes once.
+                    console.warn(`[fetchTweet] Author route did not serve ${tweetId}; trying tweet providers`)
+                    const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                    if (tweetIps.length > 0) {
+                        raceResult = await raceGetTweet(tweetIps)
+                        if (!raceResult) {
+                            // Real reads failed on these routes. Drop them so an
+                            // explicit page retry performs fresh discovery.
+                            nodePool.invalidate(tweetId)
                         }
+                    } else {
+                        console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
                     }
                 }
 
@@ -2558,7 +2552,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     originalTweetData = tweetInDB[1]
                 } else if (loadMissingOriginalTweet) {
                     // Fallback: fetch original tweet separately
-                    originalTweetData = await this.fetchTweet(tweetData.originalTweetId, tweetData.originalAuthorId, false, false, fromDetailView)
+                    originalTweetData = await this.fetchTweet(tweetData.originalTweetId, tweetData.originalAuthorId, false, fromDetailView)
                     if (!originalTweetData) {
                         console.warn('[fetchTweet] Failed to fetch original tweet as fallback')
                     }
