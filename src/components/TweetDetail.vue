@@ -29,6 +29,8 @@ const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
 const isLoading = ref(false)
+const isShowingTweetPlaceholder = ref(false)
+const isOriginalTweetLoading = ref(false)
 // True while the initial comment fetch is in flight. Capped at
 // COMMENT_SPINNER_CAP_MS so a slow node cannot hold the spinner indefinitely.
 const isLoadingComments = ref(false)
@@ -49,6 +51,18 @@ function tweetHasOwnBody(tweetValue: Tweet | null | undefined): boolean {
     if (typeof tweetValue.title === 'string' && tweetValue.title.trim()) return true
     if (typeof tweetValue.content === 'string' && tweetValue.content.trim()) return true
     return Array.isArray(tweetValue.attachments) && tweetValue.attachments.length > 0
+}
+
+// A cold detail route needs something to render before the cache/provider read
+// finishes. This shell is view-local: it must never enter TweetStore's caches.
+function makeTweetPlaceholder(): Tweet {
+    return {
+        mid: tweetId.value,
+        authorId: authorId.value ?? '',
+        author: null as unknown as User,
+        timestamp: 0,
+        comments: [],
+    }
 }
 
 // Open-in-app prompt variables
@@ -177,111 +191,33 @@ onMounted(async () => {
 // Bumped on every loadDetail() call so a stale in-flight attempt can recognize
 // that it has been superseded by a user-triggered retry or route change.
 let loadGeneration = 0
-const DETAIL_FETCH_RETRY_DELAY_MS = 8000
-// A request that fails outright (rather than hanging) is retried well before the
-// timer above, but not instantly: back-to-back attempts against a node that is
-// still waking both fail, and the error UI appears within a second of opening
-// the page. One short pause is enough to let a cold route come up.
 const DETAIL_FETCH_FAILURE_RETRY_DELAY_MS = 1200
 
-type DetailFetchOutcome = {
-    tweet: Tweet | null
-    error?: unknown
-}
-
-// Start exactly one retry if the initial request has not produced a tweet
-// within eight seconds. The first successful request wins; failures are only
-// surfaced after both requests have finished.
-function fetchTweetWithSingleRetry(
+// Provider reads already race up to three actual object requests at a time and
+// advance only after that batch fails. Keep the page-level retry sequential so
+// a slow first lookup cannot start a second three-request batch in parallel.
+async function fetchTweetWithSingleRetry(
     request: (refreshProviderRoute: boolean) => Promise<Tweet | null>,
     myGeneration: number,
     label: string
 ): Promise<Tweet | null> {
-    return new Promise((resolve, reject) => {
-        let settled = false
-        let retryStarted = false
-        let retryTimer: number | undefined
-        const outcomes: [DetailFetchOutcome | undefined, DetailFetchOutcome | undefined] = [undefined, undefined]
-
-        const startRetry = (reason: string, delayMs: number = 0) => {
-            if (settled || retryStarted) return
-            if (myGeneration !== loadGeneration) {
-                settled = true
-                resolve(null)
-                return
-            }
-
-            retryStarted = true
-            if (retryTimer !== undefined) clearTimeout(retryTimer)
-            console.warn(`[TweetDetail] ${label} ${reason}; retrying with fresh provider discovery${delayMs > 0 ? ` in ${delayMs}ms` : ''}`)
-
-            const begin = () => {
-                if (settled) return
-                if (myGeneration !== loadGeneration) {
-                    settled = true
-                    resolve(null)
-                    return
-                }
-                void runAttempt(1)
-            }
-
-            if (delayMs > 0) {
-                retryTimer = window.setTimeout(begin, delayMs)
-            } else {
-                begin()
-            }
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+        if (myGeneration !== loadGeneration) return null
+        try {
+            const result = await request(attempt === 1)
+            if (result) return result
+        } catch (error) {
+            lastError = error
         }
 
-        const finishAttempt = (attempt: number, outcome: DetailFetchOutcome) => {
-            if (settled) return
-            if (myGeneration !== loadGeneration) {
-                settled = true
-                if (retryTimer !== undefined) clearTimeout(retryTimer)
-                resolve(null)
-                return
-            }
-
-            outcomes[attempt] = outcome
-            if (outcome.tweet) {
-                settled = true
-                if (retryTimer !== undefined) clearTimeout(retryTimer)
-                resolve(outcome.tweet)
-                return
-            }
-
-            // A fast null/error retries well before the slow-request timer, but
-            // after a short pause — see DETAIL_FETCH_FAILURE_RETRY_DELAY_MS.
-            if (attempt === 0 && !retryStarted) {
-                startRetry('initial request failed', DETAIL_FETCH_FAILURE_RETRY_DELAY_MS)
-            }
-
-            const initialOutcome = outcomes[0]
-            const retryOutcome = outcomes[1]
-            if (initialOutcome && retryOutcome) {
-                settled = true
-                if (retryTimer !== undefined) clearTimeout(retryTimer)
-                if ('error' in retryOutcome) {
-                    reject(retryOutcome.error)
-                } else {
-                    resolve(null)
-                }
-            }
+        if (attempt === 0) {
+            console.warn(`[TweetDetail] ${label} initial request failed; retrying with fresh provider discovery`)
+            await new Promise(resolve => window.setTimeout(resolve, DETAIL_FETCH_FAILURE_RETRY_DELAY_MS))
         }
-
-        const runAttempt = async (attempt: number) => {
-            try {
-                finishAttempt(attempt, { tweet: await request(attempt === 1) })
-            } catch (error) {
-                finishAttempt(attempt, { tweet: null, error })
-            }
-        }
-
-        retryTimer = window.setTimeout(() => {
-            startRetry(`did not load within ${DETAIL_FETCH_RETRY_DELAY_MS}ms`)
-        }, DETAIL_FETCH_RETRY_DELAY_MS)
-
-        void runAttempt(0)
-    })
+    }
+    if (lastError) throw lastError
+    return null
 }
 
 async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Promise<Tweet | null> {
@@ -308,6 +244,18 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
 async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
     const myGeneration = ++loadGeneration
 
+    const cachedTweet = tweetStore.getCachedTweetForDisplay(tweetId.value)
+    const cachedAuthor = authorId.value
+        ? tweetStore.getCachedUserForDisplay(authorId.value)
+        : undefined
+    if (cachedTweet && !cachedTweet.author && cachedAuthor) cachedTweet.author = cachedAuthor
+    const initialTweet = cachedTweet ?? makeTweetPlaceholder()
+    if (!cachedTweet && cachedAuthor) initialTweet.author = cachedAuthor
+    tweet.value = initialTweet
+    originTweet.value = null
+    isRetweet.value = false
+    isShowingTweetPlaceholder.value = cachedTweet == null
+    isOriginalTweetLoading.value = false
     isLoading.value = true
     loadError.value = false
     tweetNotFound.value = false
@@ -319,15 +267,36 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
         // The request layer owns its network timeouts; a separate UI timeout
         // used to expose an error while this retry was still in progress.
         const fetchedTweet = await fetchTweetWithSingleRetry(
-            (refreshProviderRoute) => tweetStore.fetchTweet(
-                tweetId.value,
-                authorId.value,
-                true,
-                false,
-                true,
-                false,
-                refreshProviderRoute || options.forceRouteRefresh === true
-            ),
+            async (refreshProviderRoute) => {
+                const shouldRefreshRoute = refreshProviderRoute || options.forceRouteRefresh === true
+                let resolvedAuthor: User | undefined
+
+                // A detail URL carries the author id, so establish that user's
+                // proven read route first. fetchTweet then uses the same node for
+                // the tweet, author profile and avatar instead of letting a faster
+                // entry-node tweet response strand the header on a second lookup.
+                if (authorId.value) {
+                    // A cached author paints immediately above, but it never proves
+                    // the route for this detail load. Always race real get_user calls
+                    // so the tweet and avatar share the node that served the author.
+                    resolvedAuthor = await tweetStore.getUser(authorId.value, true)
+                    if (!resolvedAuthor) return null
+                }
+
+                const fetched = await tweetStore.fetchTweet(
+                    tweetId.value,
+                    authorId.value,
+                    true,
+                    false,
+                    true,
+                    false,
+                    shouldRefreshRoute
+                )
+                if (fetched && resolvedAuthor && fetched.authorId === resolvedAuthor.mid) {
+                    fetched.author = resolvedAuthor
+                }
+                return fetched
+            },
             myGeneration,
             'Tweet'
         )
@@ -338,6 +307,7 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
             throw new Error('Tweet not found (null response)')
         }
 
+        isShowingTweetPlaceholder.value = false
         tweet.value = fetchedTweet
         loadError.value = false
         await showTweet(myGeneration)
@@ -348,6 +318,10 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
         const isTweetNotFound = error && typeof error === 'object' && 'message' in error &&
                                (error as Error).message === 'Tweet not found (null response)'
         isLoading.value = false
+        if (isShowingTweetPlaceholder.value) {
+            tweet.value = null
+            isShowingTweetPlaceholder.value = false
+        }
         if (isTweetNotFound) {
             tweetNotFound.value = true
         } else {
@@ -395,6 +369,7 @@ async function showTweet(myGeneration: number) {
     if (!isPureRetweet) void loadDetailComments(parent, myGeneration)
 
     if (parent.originalTweetId) {
+        isOriginalTweetLoading.value = true
         try {
             const original = await loadOriginalTweet(parent, myGeneration)
             if (myGeneration !== loadGeneration) return
@@ -405,6 +380,8 @@ async function showTweet(myGeneration: number) {
             }
         } catch (error) {
             console.warn('[TweetDetail] Failed to load original tweet:', error)
+        } finally {
+            if (myGeneration === loadGeneration) isOriginalTweetLoading.value = false
         }
     }
     if (myGeneration !== loadGeneration) return
@@ -445,6 +422,8 @@ watch(tweetId, async (newValue, oldValue)=>{
         tweet.value = null
         originTweet.value = null
         isRetweet.value = false
+        isShowingTweetPlaceholder.value = false
+        isOriginalTweetLoading.value = false
         commentPage.value = 0
         hasMoreComments.value = true
         isLoadingMoreComments.value = false
@@ -1010,7 +989,7 @@ function retryLoad() {
             <DetailHeader class="w-100" v-else :author="tweet.author ?? null"
                 :author-id="tweet.authorId" :timestamp="tweet.timestamp"
                 :exclude-tweet-id="tweet.mid"
-                :tweet="tweet" :after-delete="leaveDeletedTweet">
+                :tweet="isShowingTweetPlaceholder ? undefined : tweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
         </div>
         
@@ -1053,58 +1032,66 @@ function retryLoad() {
             <TweetActionBar :tweet="originTweet" @updated="(t) => originTweet = t" />
         </div>
         <div v-else class="card-body">
-            <p
-                v-if="tweet.content"
-                class="card-text"
-                v-html="linkify(tweet.content)"
-            ></p>
-
-            <AudioPlaylistPlayer
-                v-if="audioAttachments.length > 0"
-                class="detail-audio-player"
-                :media-list="audioAttachments"
-            />
-            <div v-if="mediaAttachments.length > 0"
-                :class="['media-attachments', {
-                    'media-attachments--multi': mediaAttachments.length > 1,
-                    'media-attachments--landscape': landscapeVideoRatio,
-                    'media-attachments--video-only': isSingleVideo,
-                }]"
-                :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
-                <MediaView v-for="(media, index) in mediaAttachments" :key="media.mid" :media=media
-                    v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
-                </MediaView>
+            <div v-if="isShowingTweetPlaceholder" class="d-flex justify-content-center py-5">
+                <LoadingSpinner />
             </div>
-            <div v-if='documentAttachments.length > 0' class='document-attachments'>
-                <div 
-                    v-for='doc in documentAttachments'
-                    :key='doc.mid'
-                    class='document-row'
-                    @click='handleDocumentClick($event, doc)'
-                >
-                    <span class='document-icon'>📄</span>
-                    <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
-                    <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
-                </div>
-            </div>
+            <template v-else>
+                <p
+                    v-if="tweet.content"
+                    class="card-text"
+                    v-html="linkify(tweet.content)"
+                ></p>
 
-            <!-- quoted tweet -->
-            <blockquote v-if="!isRetweet && tweet.originalTweetId" class="quoted-tweet">
-                <TweetView
-                    v-if="originTweet"
-                    :tweet="originTweet"
-                    :is-quoted="true"
-                    :max-content-lines="TWEET_LIST_CONTENT_MAX_LINES"
+                <AudioPlaylistPlayer
+                    v-if="audioAttachments.length > 0"
+                    class="detail-audio-player"
+                    :media-list="audioAttachments"
                 />
-                <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
-            </blockquote>
+                <div v-if="mediaAttachments.length > 0"
+                    :class="['media-attachments', {
+                        'media-attachments--multi': mediaAttachments.length > 1,
+                        'media-attachments--landscape': landscapeVideoRatio,
+                        'media-attachments--video-only': isSingleVideo,
+                    }]"
+                    :style="landscapeVideoRatio ? { aspectRatio: String(landscapeVideoRatio) } : undefined">
+                    <MediaView v-for="(media, index) in mediaAttachments" :key="media.mid" :media=media
+                        v-bind:tweet="tweet" :autoplay="shouldAutoplay(media, mediaAttachments)" :media-list="mediaAttachments" :media-index="Number(index)" class="img-fluid">
+                    </MediaView>
+                </div>
+                <div v-if='documentAttachments.length > 0' class='document-attachments'>
+                    <div
+                        v-for='doc in documentAttachments'
+                        :key='doc.mid'
+                        class='document-row'
+                        @click='handleDocumentClick($event, doc)'
+                    >
+                        <span class='document-icon'>📄</span>
+                        <span class='document-filename'>{{ doc.fileName || $t('tweet.unknownFile') }}</span>
+                        <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
+                    </div>
+                </div>
 
-            <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
+                <!-- quoted tweet -->
+                <blockquote v-if="!isRetweet && tweet.originalTweetId" class="quoted-tweet">
+                    <TweetView
+                        v-if="originTweet"
+                        :tweet="originTweet"
+                        :is-quoted="true"
+                        :max-content-lines="TWEET_LIST_CONTENT_MAX_LINES"
+                    />
+                    <div v-else-if="isOriginalTweetLoading" class="d-flex justify-content-center py-4">
+                        <LoadingSpinner />
+                    </div>
+                    <p v-else class="quoted-tweet-placeholder">{{ t('tweet.tweetNotFound') }}</p>
+                </blockquote>
+
+                <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
+            </template>
         </div>
     </div>
 
     <!-- Comment list — reuses the same TweetList component as the main feed -->
-    <div v-if="tweet" :class="['comment-list', 'mt-3', { 'has-comments': displayedComments.length }]">
+    <div v-if="tweet && !isShowingTweetPlaceholder" :class="['comment-list', 'mt-3', { 'has-comments': displayedComments.length }]">
         <!--
           Display order, shared with Android TweetDetailScreen and iOS CommentListView:
           comments in hand win; otherwise commentCount decides whether an empty list is
@@ -1136,7 +1123,7 @@ function retryLoad() {
         </div>
     </div>
 
-    <div v-if="isLoading" class="d-flex justify-content-center my-3">
+    <div v-if="isLoading && !isShowingTweetPlaceholder" class="d-flex justify-content-center my-3">
         <LoadingSpinner />
     </div>
 

@@ -2247,6 +2247,32 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param authorId must be used to find the right node for the tweet.
          * @returns a Tweet object short of comments.
          */
+        getCachedUserForDisplay(userId: MimeiId): User | undefined {
+            return (this.loginUser?.mid === userId ? this.loginUser : undefined)
+                ?? this.users.get(userId)
+                ?? getStoredUser(userId)
+                ?? undefined
+        },
+
+        getCachedTweetForDisplay(tweetId: MimeiId): Tweet | null {
+            const inMemory = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
+            if (inMemory) return inMemory
+
+            const stored = sessionStorage.getItem(tweetId)
+            if (!stored) return null
+            try {
+                const tweet = JSON.parse(stored) as Tweet
+                if (tweet.mid !== tweetId || !tweet.authorId) return null
+                if (!tweet.author) {
+                    const cachedAuthor = this.getCachedUserForDisplay(tweet.authorId)
+                    if (cachedAuthor) tweet.author = cachedAuthor
+                }
+                return tweet
+            } catch {
+                return null
+            }
+        },
+
         async getTweet(
             tweetId: MimeiId,
             authorId: MimeiId | undefined = undefined,
@@ -2294,12 +2320,15 @@ export const useTweetStore = defineStore('tweetStore', {
 
             // check if the tweet has been retrieved
             let cachedTweet = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
-            if (!forceRefresh && cachedTweet) {
+            if (!forceRefresh && !fromDetailView && cachedTweet) {
                 console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
             }
 
-            if (!forceRefresh && sessionStorage.getItem(tweetId)) {
+            // A detail route has an author id and must establish that author's
+            // live base route before reading the tweet. A session copy cannot
+            // prove that its old tweet/avatar host is still that route.
+            if (!forceRefresh && !fromDetailView && sessionStorage.getItem(tweetId)) {
                 console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
                 const cachedAuthorId = t.author?.mid ?? t.authorId
@@ -2405,9 +2434,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 // authorhostid lets the node skip a get_user_core_data lookup that
                 // assumes the author's core data is already synced there — an
                 // assumption that fails on exactly the under-synced nodes this path
-                // exists to repair. Resolved from caches only, never awaited: the
-                // author is deliberately off this critical path, so a miss simply
-                // omits the hint and the node falls back to looking it up.
+                // exists to repair. Detail callers resolve the author first; other
+                // callers may still supply this hint from an existing cache entry.
                 const getTweetParams: Record<string, unknown> = {
                     aid: this.lapi.appId,
                     ver: "last",
@@ -2452,37 +2480,36 @@ export const useTweetStore = defineStore('tweetStore', {
                             })())
                         }
                         return reads.get(ip)!
-                    }, `tweet ${tweetId}`)
+                    }, `tweet ${tweetId}`, 3)
                     // Compatibility routing can redirect a read to the root node.
                     // Media and comments must use the node that actually served it.
                     return winner?.result ?? null
                 }
 
-                // The node already serving the app may hold this tweet locally.
-                // Ask it immediately: discovery must not delay that read. Gateway
-                // domains are excluded because they are not storage-node routes.
-                const entryIps = browserUsableProviderRoutes([this.lapi.hostIP], window.location.hostname)
-                const entryRead = raceGetTweet(entryIps)
-                const discoveredRead = (async () => {
-                    let raceResult = null
+                // A deep-link caller resolves the author before asking for the
+                // tweet. That get_user response proves this exact route and also
+                // supplies the avatar URL, so read the tweet from the same node
+                // before considering unrelated entry or provider routes.
+                let raceResult = storageOwner?.providerIp
+                    ? await raceGetTweet([storageOwner.providerIp])
+                    : null
 
-                    // Discover other serving nodes while the entry-node read runs.
-                    // Preserve author-provider discovery and the tweet-provider fallback.
+                if (!raceResult) {
+                    // Keep the total concurrency bounded at three. The entry route
+                    // and advertised author routes share one ordered candidate list;
+                    // only after those batches fail do tweet-owned providers run.
+                    const entryIps = browserUsableProviderRoutes([this.lapi.hostIP], window.location.hostname)
+                    let authorIps: string[] = []
                     if (authorId) {
-                        const authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
+                        authorIps = await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
                         if (authorIps.length === 0) {
                             console.warn(`[fetchTweet] Author ${authorId} has no usable route`)
-                        } else {
-                            raceResult = await raceGetTweet(authorIps)
-                            if (!raceResult) {
-                                console.warn(`[fetchTweet] Author nodes did not serve ${tweetId}; trying the tweet's own providers`)
-                            }
                         }
                     }
+                    raceResult = await raceGetTweet([...new Set([...entryIps, ...authorIps])])
 
-                    // Discover the tweet's providers when there is no author route
-                    // or the author's nodes did not serve it.
                     if (!raceResult) {
+                        console.warn(`[fetchTweet] Author/entry nodes did not serve ${tweetId}; trying the tweet's own providers`)
                         const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
                         if (tweetIps.length > 0) {
                             raceResult = await raceGetTweet(tweetIps)
@@ -2497,16 +2524,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             console.warn(`[fetchTweet] No provider IPs for tweet ${tweetId} (racing path)`)
                         }
                     }
-                    return raceResult
-                })()
-
-                // A fast miss is not a winner; either route must return the
-                // requested record; discovery does not repeat the entry-node read.
-                const raceResult = await Promise.any([entryRead, discoveredRead].map(async read => {
-                    const result = await read
-                    if (!result) throw new Error(`No tweet ${tweetId} on this read path`)
-                    return result
-                })).catch(() => null)
+                }
 
                 if (!raceResult) {
                     console.error("[fetchTweet] All provider IPs failed for tweet", tweetId)
@@ -2875,7 +2893,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     throw new Error(`get_user returned no usable record from ${ip}`)
                 }
                 return { user, ip: route.ip }
-            }, `user ${userId}`)
+            }, `user ${userId}`, 3)
 
             if (!raceResult) {
                 console.error(`[_fetchUser] No provider served a record for user ${userId}`)
@@ -3032,54 +3050,51 @@ export const useTweetStore = defineStore('tweetStore', {
         async raceProviderIps<T>(
             ips: string[],
             apiCall: (ip: string, client: any) => Promise<T>,
-            context?: string
+            context?: string,
+            maxConcurrent: number = ips.length
         ): Promise<{ result: T, ip: string } | null> {
             if (ips.length === 0) {
                 return null;
             }
 
             const contextLabel = context ? ` for ${context}` : ''
-            console.log(`[raceProviderIps] Racing ${ips.length} IP(s)${contextLabel}:`, ips);
+            const batchSize = Math.max(1, Math.min(maxConcurrent, ips.length))
+            console.log(`[raceProviderIps] Racing ${ips.length} IP(s) in batches of ${batchSize}${contextLabel}:`, ips);
 
-            // Create promises for each IP with individual timeouts.
-            //
-            // IMPORTANT: use createPooledClient (auto-releasing proxy) instead
-            // of lapi.getClient (raw client). lapi.getClient acquires a pool
-            // slot but never releases it, leaking one slot per race attempt;
-            // after a few batches the pool saturates and subsequent races
-            // time out at 15s with "Connection request timeout for ...". The
-            // proxy releases the slot after each RPC method call.
-            const racePromises = ips.map(async (ip) => {
+            for (let batchStart = 0; batchStart < ips.length; batchStart += batchSize) {
+                const batch = ips.slice(batchStart, batchStart + batchSize)
+                const racePromises = batch.map(async (ip) => {
+                    try {
+                        // Auto-releasing proxies prevent a provider race from retaining
+                        // one connection-pool slot per losing request.
+                        const client = createPooledClient(ip, this.lapi.connectionPool);
+                        const raceMs = 15000
+                        const result = await Promise.race([
+                            apiCall(ip, client),
+                            new Promise<never>((_, reject) =>
+                                setTimeout(() => reject(new Error(`Timeout after ${raceMs}ms for ${ip}`)), raceMs)
+                            )
+                        ]);
+
+                        console.log(`[raceProviderIps] ✅ Success with IP: ${ip}${contextLabel}`);
+                        return { result, ip };
+                    } catch (error) {
+                        console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}${contextLabel}`, error);
+                        throw error;
+                    }
+                });
+
                 try {
-                    const client = createPooledClient(ip, this.lapi.connectionPool);
-
-                    // Race the API call with a 15-second timeout (slow nodes / follow path)
-                    const raceMs = 15000
-                    const result = await Promise.race([
-                        apiCall(ip, client),
-                        new Promise<never>((_, reject) =>
-                            setTimeout(() => reject(new Error(`Timeout after ${raceMs}ms for ${ip}`)), raceMs)
-                        )
-                    ]);
-
-                    console.log(`[raceProviderIps] ✅ Success with IP: ${ip}${contextLabel}`);
-                    return { result, ip };
+                    // First valid object response wins this batch. Only when all
+                    // three fail does the next advertised batch start.
+                    return await Promise.any(racePromises);
                 } catch (error) {
-                    console.warn(`[raceProviderIps] ❌ Failed with IP: ${ip}${contextLabel}`, error);
-                    throw error; // Re-throw so Promise.any sees this as a rejection
+                    console.warn(`[raceProviderIps] Batch ${batchStart / batchSize + 1} failed${contextLabel}`, error)
                 }
-            });
-
-            try {
-                // First fulfilled wins; rejections are ignored unless ALL reject.
-                // Using Promise.any (not Promise.race) so a fast rejection from a
-                // dead IP doesn't cancel the still-pending healthy IP.
-                const winner = await Promise.any(racePromises);
-                return winner;
-            } catch (error) {
-                console.error(`[raceProviderIps] All IPs failed${contextLabel}:`, error);
-                return null;
             }
+
+            console.error(`[raceProviderIps] All IPs failed${contextLabel}`);
+            return null;
         },
 
         /**
