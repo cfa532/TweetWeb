@@ -25,15 +25,15 @@ const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
 const UPDATE_TWEET_TIMEOUT_MS = 30_000
 // `register` is the heaviest entry the app calls: creating an account costs two MMCreate
 // calls, a DHT get_provider_ip lookup for the username uniqueness check, an MMBackup, a
-// MiMeiPublish and a node_update_score. Measured end-to-end in the entry node's own log it
+// MiMeiPublish. Measured end-to-end in the entry node's own log it
 // ranges from 4s to 25s, so the ordinary budget cuts it off while the server is still
 // working — and the server finishes anyway, leaving an account the user was told failed.
 const REGISTER_TIMEOUT_MS = 30_000
 // Both delete entries outrun the ordinary 15s budget. `delete_tweet` carries the same
-// MiMeiPublish and node_update_score tail as a toggle and destroys the tweet on top of
+// MiMeiPublish tail as a toggle and destroys the tweet on top of
 // it: unreferencing every attachment, an MMBackup, a MiMeiUnpublish, a version purge and
 // five list removals. `delete_comment` is lighter — no publish — but still opens two
-// Mimeis, purges versions, drops a ref and makes a nested node_update_score call. Those
+// Mimeis, purges versions, and drops a ref. Those
 // distributed operations, not the browser's link, are what a delete waits on: a root node
 // answering reads in ~1s was still working when 15s cut it off, and finished the delete
 // anyway. 30s matches update_tweet and register rather than the 60s toggles — long enough
