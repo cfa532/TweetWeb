@@ -374,7 +374,8 @@ async function showTweet(myGeneration: number) {
             originTweet.value = original
             if (isPureRetweet && original) {
                 isRetweet.value = true
-                void loadDetailComments(original, myGeneration)
+                // Comment and author updates must go through Vue's reactive owner.
+                void loadDetailComments(originTweet.value, myGeneration)
             }
         } catch (error) {
             console.warn('[TweetDetail] Failed to load original tweet:', error)
@@ -383,7 +384,15 @@ async function showTweet(myGeneration: number) {
         }
     }
     if (myGeneration !== loadGeneration) return
-    if (reloadRecoveryTweetId === tweetId.value) void resyncDetailTweets()
+    if (reloadRecoveryTweetId === tweetId.value) {
+        // Like iOS pull-to-refresh, read the comments brought in by the sync.
+        void resyncDetailTweets().then(() => {
+            if (myGeneration !== loadGeneration || !commentOwner.value) return
+            return refreshCommentsAndNotify(commentOwner.value)
+        }).catch(error => {
+            console.warn('[TweetDetail] Reload recovery failed:', error)
+        })
+    }
 }
 
 const MAX_TITLE_LENGTH = 40
