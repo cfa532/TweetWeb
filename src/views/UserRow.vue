@@ -48,8 +48,7 @@ const rowDisplayName = computed(() => {
 })
 
 // Show cached data immediately if available, otherwise load from server
-const cachedUser = tweetStore.users.get(props.userId) ||
-    (tweetStore.loginUser?.mid === props.userId ? tweetStore.loginUser : null)
+const cachedUser = tweetStore.getCachedUserForDisplay(props.userId)
 if (cachedUser) {
     user.value = cachedUser
     isLoading.value = false

@@ -1137,7 +1137,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 params.userid = user.mid
 
                 try {
-                    const readIp = await this.getUserReadIp(user, attempt > 1)
+                    const readIp = await this.getUserReadIp(user)
                     if (!readIp) {
                         throw new Error(`Tweets by user unavailable: could not resolve a read host for ${user.mid}`)
                     }
@@ -1677,7 +1677,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 try {
-                    const readIp = await this.getUserReadIp(user, attempt > 1)
+                    const readIp = await this.getUserReadIp(user)
                     if (!readIp) {
                         throw new Error(`Pinned tweets unavailable: could not resolve a read host for ${user.mid}`)
                     }
@@ -2015,7 +2015,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 this.cacheFeedTweets(user.mid)
 
-                return tweetsData?.length || null
+                return tweetsData?.length ?? 0
                 } catch (e) {
                     lastError = e
                     console.error(`Error fetching tweet feed (attempt ${attempt}/2):`, e)
@@ -2905,9 +2905,10 @@ export const useTweetStore = defineStore('tweetStore', {
             // IMPORTANT: Use nullish coalescing (??) to allow 0 as a valid value (meaning no service)
             // If cloudDrivePort is not set by server, it remains undefined (no backend service)
             user.cloudDrivePort = user.cloudDrivePort ?? user.clouddriveport
+            // Persist the display URL, not the raw avatar ID: cached rows render without RPC routing.
+            user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
             setStoredUser(userId, user)
             this._clearFetchFailure(userId)
-            user.avatar = this.normalizeAvatarUrl(user.avatar, `http://${providerIp}`)
             if (this._user?.mid === userId) {
                 const previousWritableHostIp = this._user.writableHostIp
                 const previousClient = this._user.client
@@ -3261,15 +3262,10 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         async getUserReadIp(user: User, refresh: boolean = false): Promise<string | null> {
-            const accessNodeId = user.hostIds?.[1] ?? user.hostIds?.[0]
-            if (accessNodeId) {
-                const nodeIp = await this.getNodeIpByHostId(accessNodeId, refresh)
-                if (nodeIp) {
-                    return nodeIp
-                }
-            }
-            const providerIp = await this.getProviderIp(user.mid, v4Only, refresh)
-            return providerIp
+            // Reuse the route proven by get_user. A HEAD-selected access node can
+            // answer HTTP while its app RPC fails, even after another provider wins.
+            const resolvedUser = await this._getUserForProviderRetryAttempt(user.mid, refresh ? 2 : 1)
+            return resolvedUser?.providerIp ?? null
         },
 
         /**

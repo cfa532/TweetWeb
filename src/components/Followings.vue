@@ -62,11 +62,18 @@ const loadNextBatch = async () => {
 
     // Start fetches FIRST so they're registered in _pendingUserFetches
     // before UserRow's onMounted runs and looks them up.
-    const fetches = idsToLoad.map(id => tweetStore.getUser(id).catch(() => undefined))
+    // Display-only rows can use persisted users without resolving a live RPC route.
+    // Match UserRow's cache lookup so cached users do not hold up the next batch.
+    const fetches = idsToLoad
+        .filter(id => !tweetStore.getCachedUserForDisplay(id))
+        .map(id => tweetStore.getUser(id).catch(() => undefined))
 
     // Reveal the rows now — UserRow placeholders mount and dedup with
     // the in-flight fetches above.
     currentIndex.value = endIndex
+
+    // Release the hidden list as soon as its rows can restore the saved viewport.
+    if (isRestoringFeed.value) await restoreAfterLoad(false)
 
     // Gate next batch on this batch settling.
     await Promise.allSettled(fetches)

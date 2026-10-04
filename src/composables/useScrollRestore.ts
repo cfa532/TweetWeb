@@ -93,14 +93,16 @@ export function useScrollRestore(storageKey: string | (() => string), opts: Scro
         if (y > 0) scrollInstant(y)
     }
 
-    /** Async restore for a fresh load / reload: page in content until tall enough, then jump. */
-    async function restoreAfterLoad() {
+    /** Restore cached content first; optionally page in missing content before jumping. */
+    async function restoreAfterLoad(loadMissingContent = true) {
+        const targetY = readSaved()
+        await nextTick()
+        const tallEnough = () =>
+            document.documentElement.scrollHeight >= targetY + window.innerHeight
+        // Keep the feed hidden if the cached layout cannot yet reach the saved spot.
+        if (!loadMissingContent && targetY > 0 && !tallEnough()) return
         try {
-            const targetY = readSaved()
             if (targetY <= 0) return
-            await nextTick()
-            const tallEnough = () =>
-                document.documentElement.scrollHeight >= targetY + window.innerHeight
             if (!tallEnough()) {
                 restoring.value = true
                 let pages = 0

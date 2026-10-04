@@ -183,7 +183,8 @@ async function loadMoreTweets() {
             }
         }
 
-        if (tweetsLoaded && tweetsLoaded > 0) {
+        if (tweetsLoaded === null) throw new Error('Tweet feed request failed');
+        if (tweetsLoaded > 0) {
             if (tweetsLoaded < pageSize) {
                 hasMoreTweets.value = false;
             } else {
@@ -209,7 +210,8 @@ async function loadMoreTweets() {
 // flash on back-navigation (synchronous, keep-alive DOM) and reload (page in
 // content first). See composables/useScrollRestore.ts.
 const { restoring: isRestoringFeed, restoreAfterLoad } = useScrollRestore('main', {
-    hasMore: () => hasMoreTweets.value,
+    // A failed page stays retryable, but must stop automatic scroll-restoration paging.
+    hasMore: () => hasMoreTweets.value && !loadError.value,
     loadMore: loadMoreTweets,
 });
 
@@ -233,6 +235,8 @@ onMounted(async () => {
     if (displayedTweets.value.length === 0) {
         displayedTweets.value = tweetStore.getCachedFeedTweets(tweetStore.loginUser.mid);
     }
+    // Cached rows can already restore the viewport; do not hide them behind RPC retries.
+    await restoreAfterLoad(false);
 
     // Only load tweets if we don't have any yet or if this is a fresh session
     const shouldLoad = tweetStore.tweets.length === 0 || initialLoad.value;
