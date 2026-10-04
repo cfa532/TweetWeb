@@ -227,14 +227,26 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
     const originalAuthorId = parentTweet.originalAuthorId
 
     return fetchTweetWithSingleRetry(
-        (refreshProviderRoute) => tweetStore.fetchTweet(
-            originalTweetId,
-            originalAuthorId,
-            false,
-            true,
-            false,
-            refreshProviderRoute
-        ),
+        async (refreshProviderRoute) => {
+            // Detail reads require a proven author route. The wrapper's author
+            // lookup does not resolve the embedded tweet's author.
+            const resolvedAuthor = originalAuthorId
+                ? await tweetStore.getUser(originalAuthorId, true)
+                : undefined
+
+            const original = await tweetStore.fetchTweet(
+                originalTweetId,
+                originalAuthorId,
+                false,
+                true,
+                false,
+                refreshProviderRoute
+            )
+            if (original && resolvedAuthor && original.authorId === resolvedAuthor.mid) {
+                original.author = resolvedAuthor
+            }
+            return original
+        },
         myGeneration,
         'Original tweet'
     )
