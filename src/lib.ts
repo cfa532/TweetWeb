@@ -251,10 +251,10 @@ export function isAudioType(type: string | undefined): boolean {
     return normalizeMediaType(type) === MEDIA_TYPES.AUDIO;
 }
 
-function formatTimeDifference(t: number) {
+// Shared with iOS and Android: completed units, 30-day months, 365-day years.
+function formatTimeDifference(t: number, now: number = Date.now()) {
     const tr = i18n.global.t
 
-    const now = Date.now();
     const diffInMilliseconds = now - t;
 
     const diffInSeconds = Math.floor(diffInMilliseconds / 1000);
@@ -262,23 +262,23 @@ function formatTimeDifference(t: number) {
     const diffInHours = Math.floor(diffInMinutes / 60);
     const diffInDays = Math.floor(diffInHours / 24);
     const diffInWeeks = Math.floor(diffInDays / 7);
-    const diffInMonths = Math.floor(diffInDays / 30.44);
-    const diffInYears = Math.floor(diffInDays / 365.25);
+    const diffInMonths = Math.floor(diffInDays / 30);
+    const diffInYears = Math.floor(diffInDays / 365);
 
     if (diffInSeconds < 60) {
-        return tr('time.secondsAgo', { n: diffInSeconds });
+        return tr('time.secondsAgo', { n: diffInSeconds }, diffInSeconds);
     } else if (diffInMinutes < 60) {
-        return tr('time.minutesAgo', { n: diffInMinutes + 1 });
+        return tr('time.minutesAgo', { n: diffInMinutes }, diffInMinutes);
     } else if (diffInHours < 24) {
-        return tr('time.hoursAgo', { n: diffInHours + 1 });
+        return tr('time.hoursAgo', { n: diffInHours }, diffInHours);
     } else if (diffInDays < 7) {
-        return tr('time.daysAgo', { n: diffInDays + 1 });
-    } else if (diffInWeeks < 4) {
-        return tr('time.weeksAgo', { n: diffInWeeks + 1 });
-    } else if (diffInMonths < 12) {
-        return tr('time.monthsAgo', { n: diffInMonths + 1 });
+        return tr('time.daysAgo', { n: diffInDays }, diffInDays);
+    } else if (diffInMonths < 1) {
+        return tr('time.weeksAgo', { n: diffInWeeks }, diffInWeeks);
+    } else if (diffInYears < 1) {
+        return tr('time.monthsAgo', { n: diffInMonths }, diffInMonths);
     } else {
-        return tr('time.yearsAgo', { n: diffInYears + 1 });
+        return tr('time.yearsAgo', { n: diffInYears }, diffInYears);
     }
 }
 

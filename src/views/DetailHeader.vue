@@ -3,7 +3,8 @@ import type { PropType } from 'vue';
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { formatTimeDifference, avatarSrc } from '@/lib';
+import { avatarSrc } from '@/lib';
+import { useRelativeTime } from '@/composables/useRelativeTime';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { CornerMenu } from '@/views';
@@ -25,6 +26,7 @@ const props = defineProps({
   afterDelete: { type: Function as PropType<() => void | Promise<void>>, required: false }
 });
 
+const timeDifference = useRelativeTime(() => props.timestamp);
 const tweetStore = useTweetStore();
 const router = useRouter();
 const { t } = useI18n();
@@ -283,7 +285,7 @@ watch(
               $t('tweet.loadingUsername') }}</span>
           </div>
           <div class='mt-1'>
-            <span v-if='props.timestamp' class='time text-muted'>{{ formatTimeDifference(props.timestamp as number) }}</span>
+            <span v-if='props.timestamp' class='time text-muted'>{{ timeDifference }}</span>
           </div>
         </div>
       </div>

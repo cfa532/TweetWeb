@@ -2,7 +2,8 @@
 import { computed } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
-import { formatTimeDifference, avatarSrc } from '@/lib';
+import { avatarSrc } from '@/lib';
+import { useRelativeTime } from '@/composables/useRelativeTime';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
 import { useI18n } from 'vue-i18n';
@@ -22,6 +23,7 @@ const props = defineProps({
 })
 const router = useRouter()
 const route = useRoute()
+const timeDifference = useRelativeTime(() => props.timestamp);
 const tweetStore = useTweetStore()
 
 const headerAuthor = computed<User | null>(() => {
@@ -143,7 +145,7 @@ function openDetailView() {
       <!-- Followers and Friends Links -->
       <div class='mt-1'>
         <span class='alias text-muted' :class='{ "loading-text": !headerAuthor }'>@{{ headerAuthor?.username || $t('tweet.loadingUsername') }}</span>
-        <span v-if='props.timestamp' class='time text-muted'> - {{ formatTimeDifference(props.timestamp as number)
+        <span v-if='props.timestamp' class='time text-muted'> - {{ timeDifference
           }}</span>
       </div>
     </div>

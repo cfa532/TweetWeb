@@ -144,13 +144,13 @@
     "retweetFailed": "Failed to retweet. Please try again."
   },
   "time": {
-    "secondsAgo": "{n} seconds ago",
-    "minutesAgo": "{n} minutes ago",
-    "hoursAgo": "{n} hours ago",
-    "daysAgo": "{n} days ago",
-    "weeksAgo": "{n} weeks ago",
-    "monthsAgo": "{n} months ago",
-    "yearsAgo": "{n} years ago"
+    "secondsAgo": "{n} second ago | {n} seconds ago",
+    "minutesAgo": "{n} minute ago | {n} minutes ago",
+    "hoursAgo": "{n} hour ago | {n} hours ago",
+    "daysAgo": "{n} day ago | {n} days ago",
+    "weeksAgo": "{n} week ago | {n} weeks ago",
+    "monthsAgo": "{n} month ago | {n} months ago",
+    "yearsAgo": "{n} year ago | {n} years ago"
   },
   "editor": {
     "titlePlaceholder": "Title...",
