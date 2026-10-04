@@ -161,6 +161,13 @@ async function loadMoreTweets() {
             candidateIds: feedCandidateIds,
         });
 
+        // Render the feed read before waiting for following-account synchronization.
+        if (routePageZeroToBanner) {
+            tweetStore.addFeedPendingCandidates(feedCandidateIds);
+        } else {
+            appendNewToDisplayed(feedCandidateIds);
+        }
+
         // Keep the opening sequence ordered like the mobile clients: finish the
         // main feed read before updating the following-tweets state.
         if (shouldUpdateFollowingTweets) {
@@ -193,11 +200,6 @@ async function loadMoreTweets() {
         lastErrorTime = Date.now();
     } finally {
         clearLoadMoreSpinnerDelay();
-        if (routePageZeroToBanner) {
-            tweetStore.addFeedPendingCandidates(feedCandidateIds);
-        } else {
-            appendNewToDisplayed(feedCandidateIds);
-        }
         isLoading.value = false;
         scheduleLoadMoreIfStillNearBottom();
     }
@@ -227,11 +229,9 @@ onMounted(async () => {
     }
     loadedForUser.value = tweetStore.loginUser.mid
 
-    if (displayedTweets.value.length === 0 && tweetStore.tweets.length === 0) {
-        const cachedFeedTweets = tweetStore.getCachedFeedTweets(tweetStore.loginUser.mid);
-        if (cachedFeedTweets.length > 0) {
-            displayedTweets.value = cachedFeedTweets;
-        }
+    // Profile tweets share the store, so their presence says nothing about the feed cache.
+    if (displayedTweets.value.length === 0) {
+        displayedTweets.value = tweetStore.getCachedFeedTweets(tweetStore.loginUser.mid);
     }
 
     // Only load tweets if we don't have any yet or if this is a fresh session
@@ -284,7 +284,8 @@ onActivated(() => {
     if (loadedForUser.value !== tweetStore.loginUser.mid) {
         loadedForUser.value = tweetStore.loginUser.mid;
         tweetStore.clearFeedPendingCandidates();
-        displayedTweets.value = [];
+        // Login can return to a kept-alive guest page without running onMounted again.
+        displayedTweets.value = tweetStore.getCachedFeedTweets(tweetStore.loginUser.mid);
         initialLoad.value = true;
         loadTweetsWithMinimum();
         return;
