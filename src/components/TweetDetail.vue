@@ -225,12 +225,13 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
     if (!parentTweet.originalTweetId) return null
     const originalTweetId = parentTweet.originalTweetId
     const originalAuthorId = parentTweet.originalAuthorId
+    const cachedOriginal = tweetStore.getCachedTweetForDisplay(originalTweetId)
+    const readContext = cachedOriginal?.provider ? cachedOriginal : undefined
 
     return fetchTweetWithSingleRetry(
         async (refreshProviderRoute) => {
-            // Detail reads require a proven author route. The wrapper's author
-            // lookup does not resolve the embedded tweet's author.
-            const resolvedAuthor = originalAuthorId
+            // An original with no known serving node needs its own author route.
+            const resolvedAuthor = originalAuthorId && !readContext
                 ? await tweetStore.getUser(originalAuthorId, true)
                 : undefined
 
@@ -240,7 +241,8 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
                 false,
                 true,
                 false,
-                refreshProviderRoute
+                refreshProviderRoute,
+                readContext
             )
             if (original && resolvedAuthor && original.authorId === resolvedAuthor.mid) {
                 original.author = resolvedAuthor
@@ -256,6 +258,7 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
     const myGeneration = ++loadGeneration
 
     const cachedTweet = tweetStore.getCachedTweetForDisplay(tweetId.value)
+    const readContext = cachedTweet?.provider ? cachedTweet : undefined
     const cachedAuthor = authorId.value
         ? tweetStore.getCachedUserForDisplay(authorId.value)
         : undefined
@@ -282,14 +285,9 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
                 const shouldRefreshRoute = refreshProviderRoute || options.forceRouteRefresh === true
                 let resolvedAuthor: User | undefined
 
-                // A detail URL carries the author id, so establish that user's
-                // proven read route first. fetchTweet then uses the same node for
-                // the tweet, author profile and avatar instead of letting a faster
-                // entry-node tweet response strand the header on a second lookup.
-                if (authorId.value) {
-                    // A cached author paints immediately above, but it never proves
-                    // the route for this detail load. Always race real get_user calls
-                    // so the tweet and avatar share the node that served the author.
+                // Feed and comment navigation reuse the node serving the row.
+                // Only a cold detail load without that node resolves the author.
+                if (authorId.value && !readContext) {
                     resolvedAuthor = await tweetStore.getUser(authorId.value, true)
                     if (!resolvedAuthor) return null
                 }
@@ -300,7 +298,8 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
                     false,
                     true,
                     false,
-                    shouldRefreshRoute
+                    shouldRefreshRoute,
+                    readContext
                 )
                 if (fetched && resolvedAuthor && fetched.authorId === resolvedAuthor.mid) {
                     fetched.author = resolvedAuthor

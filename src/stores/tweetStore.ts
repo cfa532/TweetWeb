@@ -2255,6 +2255,17 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         getCachedTweetForDisplay(tweetId: MimeiId): Tweet | null {
+            // Row navigation hands off the rendered object, including the node
+            // that served a comment. Comments need not be in the feed indexes.
+            const handedOff = sessionStorage.getItem('tweetDetail')
+            if (handedOff) {
+                try {
+                    const tweet = JSON.parse(handedOff) as Tweet
+                    if (tweet.mid === tweetId && tweet.authorId) return tweet
+                } catch {
+                    // Continue with the ordinary display caches.
+                }
+            }
             const inMemory = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
             if (inMemory) return inMemory
 
@@ -2295,14 +2306,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * that serves this tweet. 2nd, retrieve the tweet from it. Assume author
          * data is also available on that node. Get author data too.
          *
-         * Detail reads resolve the AUTHOR first because a user normally has many
-         * providers and that discovery is faster. If the selected author node has
-         * not received a new tweet yet, the one fallback resolves the tweet's own
-         * smaller provider set and races get_tweet there.
+         * Detail reads reuse the node that served the feed/comment row. Cold
+         * callers resolve the author first because users have more providers.
+         * If the selected node cannot serve the tweet, discover tweet providers.
          * @param tweetId The ID of the tweet to fetch
          * @param authorId Author ID; when known it selects the node to read from
          * @param loadMissingOriginalTweet If false, return the outer tweet without separately fetching a missing embedded tweet
          * @param refreshProviderRoute If true, refresh provider discovery without synchronizing tweet data
+         * @param readContext Tweet already displayed in a feed or comment list, including its serving node
          * @returns The tweet object or undefined if not found
          */
         async fetchTweet(
@@ -2311,7 +2322,8 @@ export const useTweetStore = defineStore('tweetStore', {
             forceRefresh: boolean = false,
             fromDetailView: boolean = false,
             loadMissingOriginalTweet: boolean = true,
-            refreshProviderRoute: boolean = false
+            refreshProviderRoute: boolean = false,
+            readContext?: Pick<Tweet, 'provider' | 'author' | 'interactionHostAuthor' | 'parentTweetId' | 'storageFormat'>
         ): Promise<Tweet | null> {
             if (this._deletedTweetIds.has(tweetId)) return null
 
@@ -2322,9 +2334,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 return cachedTweet
             }
 
-            // A detail route has an author id and must establish that author's
-            // live base route before reading the tweet. A session copy cannot
-            // prove that its old tweet/avatar host is still that route.
+            // Detail views still make a current server read, even when they
+            // reuse the serving node from an already-displayed tweet.
             if (!forceRefresh && !fromDetailView && sessionStorage.getItem(tweetId)) {
                 console.log(`[fetchTweet] ✅ Cache HIT (sessionStorage): ${tweetId} - No fetch needed!`)
                 let t = JSON.parse(sessionStorage.getItem(tweetId)!)
@@ -2431,8 +2442,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 // authorhostid lets the node skip a get_user_core_data lookup that
                 // assumes the author's core data is already synced there — an
                 // assumption that fails on exactly the under-synced nodes this path
-                // exists to repair. Detail callers resolve the author first; other
-                // callers may still supply this hint from an existing cache entry.
+                // exists to repair. The author can come from the displayed row
+                // or the cold detail caller's author lookup.
                 const getTweetParams: Record<string, unknown> = {
                     aid: this.lapi.appId,
                     ver: "last",
@@ -2440,16 +2451,18 @@ export const useTweetStore = defineStore('tweetStore', {
                     appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                     fromdetailview: rpcBool(fromDetailView),
                 }
-                const knownAuthorHostId = authorId
-                    ? (this.users.get(authorId)?.hostIds?.[0] ?? getStoredUser(authorId)?.hostIds?.[0])
-                    : undefined
+                // A comment's writer is not its storage owner. The parent list
+                // supplies both the serving node and the parent author.
+                const storageOwner = readContext
+                    ? readContext.interactionHostAuthor ?? readContext.author
+                    : authorId
+                        ? ((this.loginUser?.mid === authorId ? this.loginUser : undefined)
+                            ?? this.users.get(authorId)
+                            ?? getStoredUser(authorId))
+                        : undefined
+                const knownAuthorHostId = storageOwner?.hostIds?.[0]
                 if (knownAuthorHostId) getTweetParams.authorhostid = knownAuthorHostId
-                const storageOwner = authorId
-                    ? ((this.loginUser?.mid === authorId ? this.loginUser : undefined)
-                        ?? this.users.get(authorId)
-                        ?? getStoredUser(authorId))
-                    : undefined
-                const requiredFormat = cachedTweet?.storageFormat
+                const requiredFormat = readContext?.storageFormat ?? cachedTweet?.storageFormat
 
                 // Discovery can name the entry node again. Share each complete
                 // read within this fetch so racing paths do not duplicate RPCs.
@@ -2483,12 +2496,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     return winner?.result ?? null
                 }
 
-                // A deep-link caller resolves the author before asking for the
-                // tweet. That get_user response proves this exact route and also
-                // supplies the avatar URL, so read the tweet from the same node
-                // before considering unrelated entry or provider routes.
-                let raceResult = storageOwner?.providerIp
-                    ? await raceGetTweet([storageOwner.providerIp])
+                // Prefer the displayed tweet's serving node. A cold detail
+                // caller instead supplies a route proven by its author lookup.
+                const readProvider = readContext?.provider ?? storageOwner?.providerIp
+                let raceResult = readProvider
+                    ? await raceGetTweet([readProvider])
                     : null
 
                 if (!raceResult && !fromDetailView) {
@@ -2506,7 +2518,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     // the access node that already serves the user. Do not spend a
                     // second lookup on more user providers: discover the much smaller
                     // provider set for the tweet itself and try those nodes once.
-                    console.warn(`[fetchTweet] Author route did not serve ${tweetId}; trying tweet providers`)
+                    console.warn(`[fetchTweet] Selected route did not serve ${tweetId}; trying tweet providers`)
                     const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
                     if (tweetIps.length > 0) {
                         raceResult = await raceGetTweet(tweetIps)
@@ -2576,7 +2588,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 comments: [],
                 originalTweetId: tweetData.originalTweetId,
                 originalAuthorId: tweetData.originalAuthorId,
-                parentTweetId: tweetData.parentTweetId,
+                parentTweetId: readContext?.parentTweetId ?? tweetData.parentTweetId,
+                interactionHostAuthor: readContext?.interactionHostAuthor,
                 provider: providerIp,
                 likeCount: tweetData.favoriteCount ?? tweetData.likeCount,
                 bookmarkCount: tweetData.bookmarkCount,

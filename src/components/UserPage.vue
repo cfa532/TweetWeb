@@ -555,8 +555,9 @@ const metaTweets = computed(() => {
 const isMetaLoading = ref(false);
 
 watch(
-    () => [route.params.authorId, userView.value] as const,
-    async ([uid, view]) => {
+    () => [route.name, route.params.authorId, userView.value] as const,
+    async ([page, uid, view]) => {
+        if (page !== 'UserPage') return
         if (view === 'tweets' || !uid) {
             isMetaLoading.value = false
             return
@@ -671,7 +672,10 @@ watch(() => tweetStore.tweets.length, (newLen, oldLen) => {
 
 // Single entry point for loading profile tweets — covers initial mount, route
 // changes, and switching back from bookmark/favorite views.
-watch(() => [authorId.value, userView.value] as const, async ([nv, view]) => {
+// Keep-alive watchers also observe detail routes, whose authorId belongs to
+// the tweet/comment writer. Only a profile route may start profile loading.
+watch(() => [route.name, authorId.value, userView.value] as const, async ([page, nv, view]) => {
+    if (page !== 'UserPage') return;
     if (!nv) return;
 
     if (view !== 'tweets') {
