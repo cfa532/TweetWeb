@@ -13,7 +13,9 @@ export function useRelativeTime(timestamp: () => number | undefined) {
         now.value = Date.now();
         const publishedAt = timestamp();
         if (!active || document.hidden || publishedAt === undefined) return;
-        timer = setTimeout(refresh, now.value - publishedAt < 60_000 ? 1_000 : 60_000);
+        // One tick per minute for every post, matching iOS and Android. A new post's
+        // seconds label may lag up to a minute before it becomes "1m".
+        timer = setTimeout(refresh, 60_000);
     }
 
     function start() {
