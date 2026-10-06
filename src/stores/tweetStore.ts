@@ -632,6 +632,18 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Don't trust persisted writableHostIp — re-resolve fresh each session.
                 // Matches iOS which explicitly does not encode writableUrl across sessions.
                 usr.writableHostIp = null
+                // Keep one User object per account. Every refresh updates the login user
+                // in place and reaches rows through the object they share with `users`;
+                // a restored login user that is not that object leaves the profile header
+                // showing the new avatar while its tweet rows keep the old one. Cached
+                // tweets may already have registered their author before this first read.
+                const known = state.users.get(usr.mid)
+                if (known) {
+                    Object.assign(known, usr)
+                    usr = known
+                } else {
+                    state.users.set(usr.mid, usr)
+                }
                 state._user = usr
                 return usr
             }
