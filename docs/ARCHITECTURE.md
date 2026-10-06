@@ -860,12 +860,12 @@ Response:
     │             │             │                 │
 dtweet.com  www.dtweet.com  dl.dtweet.com    Leither clients
     │             │
-    └──── app links / browser 302 ───▶ http://t1.w333w.site
+    └──── app links / browser 302 ───▶ http://t1.ww33.world
 ```
 
 The Cloudflare Worker handles public app-link domains. Installed apps claim
 supported `dtweet.com` links; browser navigations are redirected to the HTTP
-TweetWeb host at `t1.w333w.site`. `dl.dtweet.com` remains a legacy Worker
+TweetWeb host at `t1.ww33.world`. `dl.dtweet.com` remains a legacy Worker
 asset/origin route, but its browser navigations use that same HTTP fallback so
 TweetWeb can connect to `ws://` Leither providers without mixed-content
 blocking. The Leither package is published independently with `tweet1.sh`;
@@ -883,7 +883,7 @@ The Worker classifies requests before choosing a destination:
 | App association file | Worker-generated JSON response |
 | Non-navigation Leither request | HTTP `dl.dtweet.com` origin behind the Worker |
 
-The fallback currently resolves to `http://t1.w333w.site`, but the hostname is
+The fallback currently resolves to `http://t1.ww33.world`, but the hostname is
 replaceable and must not be treated as an architectural constant. The Worker
 configuration is authoritative; DNS, nginx, and documentation move with it by
 following the browser fallback domain migration procedure.
@@ -892,17 +892,19 @@ TweetWeb must not execute under the HTTPS gateway origin while it still uses
 HTTP and `ws://` provider endpoints. Doing so loads the shell successfully but
 causes browsers to block every provider WebSocket as mixed content.
 
-av1 nginx keeps the native-client Fireshare domain families separate from the
-retired web domain family. `fireshare.us`, `*.fireshare.us`, `fireshare.uk`,
-and `*.fireshare.uk` are proxied to Leither on `127.0.0.1:4801` with their
-original hostnames intact. The retired `w3w3.store`, `www333.store`,
-`www3.shop`, `www33.online`, and generic `inoku.uk` Leither families redirect
-to the corresponding `w333w.site` hosts. The exact `registry.inoku.uk` service
-keeps its dedicated nginx route.
-This boundary is intentional: redirecting
-`tweet.fireshare.us` or `tweet.fireshare.uk` changes the app-link host and can
-prevent a native client from opening. The exact operational invariant and
-verification commands are in the [deployment guide](DEPLOYMENT.md#av1-nginx-domain-routing-invariant).
+av1 nginx proxies `ww33.world` and its subdomains to Leither on
+`127.0.0.1:4801`, with the release app bound to `t1.ww33.world`. Dedicated
+HTTPS handling for the root, `www`, `t1`, and `tweet` hosts clears HSTS and
+redirects to the same HTTP URL. The October 6 domain switch preserved existing
+browser routes; older retired families still redirect to `w33w.site`.
+
+Fireshare domains retain their original Host headers and Leither proxy routes.
+LifeDrive and its dedicated services under `lepan.org` also remain separate.
+Redirecting these unrelated hosts to the browser domain can break native-app
+and household routing. The active nginx file is
+`/etc/nginx/sites-enabled/leither-fireshare`, a regular file rather than a
+symlink. Current host mappings and verification commands are in the
+[deployment guide](DEPLOYMENT.md#av1-nginx-domain-routing-invariant).
 The repeatable replacement procedure is in the
 [browser fallback domain migration memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md).
 

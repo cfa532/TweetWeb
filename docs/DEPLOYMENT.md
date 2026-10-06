@@ -18,8 +18,16 @@ For a browser-domain replacement, use the separate
 - gen8 is always the Leither publication target. Resolve its volatile public IP
   through the Cloudflare-managed `gen8.leither.uk` record; never copy a
   currently resolved IP into scripts, documentation, DNS rules, or `.env`.
-- Ensure `ssh -p 220 pi@gen8.leither.uk` and
-  `scp -P 220 ... pi@gen8.leither.uk:...` work.
+- Before connecting, run `nslookup gen8.leither.uk` and set `GEN8_IP` to the
+  freshly returned IPv4 address for that session. Connect by that IP with
+  `HostKeyAlias=[gen8.leither.uk]:220` to preserve host-key verification:
+
+  ```bash
+  nslookup gen8.leither.uk
+  GEN8_IP='replace-with-freshly-resolved-IP'
+  ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP"
+  ```
+
 - Ensure Wrangler is authenticated for the `dtweet.com` Cloudflare account.
 - Keep the sibling `TweetBackendApp` repository next to `TweetWeb`; backend
   MApp scripts are copied from there when a release includes backend changes.
@@ -28,7 +36,7 @@ For a browser-domain replacement, use the separate
   directory.
 
 Both release (`tweet1`) and debug (`twbe`) must run the File-capable Go backend
-from `TweetBackendApp/go/`. Do not publish the legacy JavaScript backend into
+from `TweetBackendApp/`. Do not publish the legacy JavaScript backend into
 either package: it cannot read `tweet-file-v1` objects.
 
 ## 1. Select the Publication Environment
@@ -70,7 +78,9 @@ replace one whole directory with another project's files:
 ## 2. Publish Backend Changes First (When Applicable)
 
 Pushing or committing `TweetBackendApp` does not update either Leither app.
-Both packages use the same production `.go` sources from `TweetBackendApp/go/`.
+Production `.go` sources live in the `TweetBackendApp` repository root.
+Release and debug can have different published revisions. For a domain-only
+change, follow the migration memo and preserve each package’s other code and assets.
 Keep the existing app names and directories: they determine the AppIDs.
 
 | Environment | Package | AppID | Publisher |
@@ -88,19 +98,24 @@ For example, from TweetWeb, publish the debug backend (use `tweet1` and
 `tweet1.sh` for release):
 
 ```bash
-rsync -av -e 'ssh -p 220' \
+rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
   --exclude='*_test.go' --include='*.go' --exclude='*' \
-  ../TweetBackendApp/go/ pi@gen8.leither.uk:/home/pi/demo/twbe/
-shasum -a 256 ../TweetBackendApp/go/file_store.go
-ssh -p 220 pi@gen8.leither.uk \
+  ../TweetBackendApp/ "pi@$GEN8_IP:/home/pi/demo/twbe/"
+shasum -a 256 ../TweetBackendApp/file_store.go
+ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" \
   'shasum -a 256 /home/pi/demo/twbe/file_store.go'
-ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && bash -e ./twbe.sh'
+ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'cd /home/pi/demo && bash -e ./twbe.sh'
 ```
 
 Check upload, backup and publication results; the script's final success message
 alone is insufficient. Verify `health` by the new numbered version, then `last`:
 `storageFormats` must contain both `database` and `tweet-file-v1`, and
-`creationFormat` must equal `tweet-file-v1`. Check the same on serving/root nodes;
+creation policy must match the intended package and the
+[canonical sync contract](../../TweetBackendApp/docs/LEITHER_DATA_AND_SYNC_CONTRACT.md).
+Current full backend releases report `creationFormat: "mixed"` with
+`creationFormats` for each object type. A domain-only deployment preserves the
+package’s existing policy; the October 6 record documents the release/debug
+revision difference. Check the same on serving/root nodes;
 synchronize the application MID from gen8 if a node still serves an old package.
 Do not republish from those nodes, or synchronize/migrate user data as part of an
 application deployment. Never roll back to a database-only reader once File
@@ -108,7 +123,7 @@ objects exist.
 
 Complete backend publication before building TweetWeb. When both backend and
 web assets change, publish again after copying the generated web files. The Go
-runtime details are maintained in `TweetBackendApp/go/README.md`.
+runtime details are maintained in `TweetBackendApp/README.md`.
 
 ## 3. Build Once
 
@@ -131,7 +146,7 @@ release; for debug use its saved output, `/home/pi/demo/twbe/` and `twbe.sh`.
 Never overwrite one environment with the other environment's web bundle:
 
 ```bash
-scp -P 220 \
+scp -P 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' \
   dist/bootstrap.min.js \
   dist/gtag.js \
   dist/hprose.js \
@@ -139,13 +154,13 @@ scp -P 220 \
   dist/index.html \
   dist/index_entry.js \
   dist/popper.min.js \
-  pi@gen8.leither.uk:/home/pi/demo/tweet1/
+  "pi@$GEN8_IP:/home/pi/demo/tweet1/"
 ```
 
 Publish the package with the existing server-side script:
 
 ```bash
-ssh -p 220 pi@gen8.leither.uk 'cd /home/pi/demo && ./tweet1.sh'
+ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'cd /home/pi/demo && ./tweet1.sh'
 ```
 
 The command must finish with `APP published successfully` and report a new
@@ -159,10 +174,9 @@ The `dtweet-deeplink` Worker is both the public deeplink gateway and one of the
 two production copies of TweetWeb:
 
 `BROWSER_FALLBACK_ORIGIN` in the Worker source is the source of truth for the
-browser application domain. It currently equals `http://t1.w333.space`, but
+browser application domain. It currently equals `http://t1.ww33.world`, but
 that is replaceable operational configuration, not a permanent domain
-contract. The av1 section below records the historical `w333w.site` setup; see the
-migration memo for the current deployment. Use the
+contract. The av1 section below describes the current routing. Use the
 [Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)
 whenever the value changes.
 
@@ -172,7 +186,7 @@ whenever the value changes.
 - If no installed app claims a normal browser navigation, it redirects the
   route to the HTTP fallback host and converts path routes to hash routes. For
   example, `/author/<id>` becomes
-  `http://t1.w333.space/#author/<id>`. TweetWeb uses HTTP there because the
+  `http://t1.ww33.world/#author/<id>`. TweetWeb uses HTTP there because the
   Leither service it contacts does not accept HTTPS.
 - It terminates HTTPS for `dl.dtweet.com`. Static TweetWeb files are served
   from the Worker's asset binding, browser navigations are redirected to the
@@ -229,7 +243,7 @@ Both SHA-256 values must match. If an edge temporarily serves an older
 asset, wait for propagation and repeat the direct checks; a query string alone
 is not proof that the cached bundle changed.
 
-Do not hash `http://t1.w333.space/index_entry.js` directly. It is a Leither
+Do not hash `http://t1.ww33.world/index_entry.js` directly. It is a Leither
 domain whose loader generates the app entry response and resolves bare
 object names inside the published package; that URL is not a raw static-asset
 endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
@@ -240,7 +254,7 @@ Also confirm that both association files return JSON directly from
 `/tweet/<tweet-id>/<author-id>` and `/#tweet/<tweet-id>/<author-id>` URLs. With
 the app installed, the operating system should open the app. In a browser, the
 Worker must land both forms on
-`http://t1.w333.space/#tweet/<tweet-id>/<author-id>`, and that page must load the
+`http://t1.ww33.world/#tweet/<tweet-id>/<author-id>`, and that page must load the
 current bundle without mixed-content errors.
 
 ### Troubleshooting: `dl.dtweet.com` opens but no data loads
@@ -283,63 +297,49 @@ load.
 
 ### av1 nginx domain-routing invariant
 
-The active site is `/etc/nginx/sites-available/leither-fireshare` on `av1`
-(enabled through `sites-enabled`). Preserve these host-family boundaries:
+As verified October 6, 2026, the active site is
+`/etc/nginx/sites-enabled/leither-fireshare` on av1. It is a regular file,
+not a symlink to the older `sites-available` copy. Inspect `nginx -T` before
+editing and save dated backups outside `sites-enabled`.
 
-The September 2, 2026 `w333w.site` migration was applied to this file after
-creating the backup
-`/etc/nginx/sites-available/leither-fireshare.pre-w333w-20260902-0842`.
-Keep dated backups for future migrations; do not overwrite this known-good
-pre-migration copy.
-
-| Host family | Required behavior |
+| Host family | Current behavior to preserve |
 | --- | --- |
-| `fireshare.us`, `*.fireshare.us` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `w333w.site`. |
-| `fireshare.uk`, `*.fireshare.uk` | Proxy to Leither at `127.0.0.1:4801` with the original `Host` header. Never redirect to `w333w.site`. |
-| `w3w3.store`, `www333.store`, `www3.shop`, `www33.online`, generic `inoku.uk`, and their subdomains | Redirect to the equivalent `w333w.site` host; preserve the route, query, and subdomain. Canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
-| `registry.inoku.uk` | Preserve the dedicated registry service; its exact nginx block takes precedence over the generic retired-domain regex. |
-| `w333w.site`, `*.w333w.site` | Proxy to Leither; canonicalize external `/tweet/*` and `/author/*` paths with `/#`. |
+| `ww33.world`, `*.ww33.world` | Proxy HTTP to Leither at `127.0.0.1:4801` with the original Host header; canonicalize `/tweet/*` and `/author/*` to hash routes. Release app is bound to `t1.ww33.world`. |
+| `w33w.site`, `*.w33w.site`, `w333.space`, `*.w333.space` | Retain their existing Leither proxy routes. The October 6 switch did not retire these domains. |
+| `w333w.site`, `w3w3.store`, `www333.store`, `www3.shop`, `www33.online`, and their subdomains | Retain existing redirects to corresponding `w33w.site` hosts, preserving subdomain, route, query, and tweet/author hash markers. |
+| `fireshare.us`, `*.fireshare.us`, `fireshare.uk`, `*.fireshare.uk` | Proxy to Leither with the original Host header. Do not redirect native-client hosts to a browser domain. |
+| `*.lepan.org` | Preserve LifeDrive's Leither proxy and the dedicated exact-host routes for `drive.lepan.org`, `gw.lepan.org`, and `registry.lepan.org`; preserve the separate root site too. |
 
-The canonical browser hosts also have a dedicated port-443 downgrade block.
-It uses the Let's Encrypt certificate at
-`/etc/letsencrypt/live/w333w.site/`, sends
-`Strict-Transport-Security: max-age=0`, and redirects HTTPS back to the same
-HTTP host and request URI. This prevents Chrome's HTTPS upgrade from falling
-through to an unrelated TLS virtual host while keeping Leither and its
-providers on HTTP. The certificate currently covers the root, `www`, `t1`,
-and `tweet` hosts; Certbot renewal is managed by `certbot.timer`.
+The canonical HTTPS block uses `/etc/letsencrypt/live/ww33.world/` and covers
+`ww33.world`, `www.ww33.world`, `t1.ww33.world`, and `tweet.ww33.world`.
+It sends `Strict-Transport-Security: max-age=0` and redirects to the same HTTP
+host and request URI. The HTTP page is required for the app's HTTP and `ws://`
+providers. Renewal uses `/var/www/letsencrypt` and the enabled `certbot.timer`.
 
-The Fireshare domains are still used by native clients. Redirecting a host such
-as `tweet.fireshare.us` to `tweet.w333w.site` changes the app-link host and can
-prevent the native app from opening. An ordinary TweetWeb release must not
-replace the Fireshare proxy block with a catch-all legacy-domain redirect.
-
-After any nginx edit, validate and reload on `av1`, then check the canonical,
-Fireshare, and retired host families:
+After an nginx edit, validate before reloading and check the affected routes:
 
 ```bash
-ssh root@av1 'nginx -t'
-ssh root@av1 'systemctl reload nginx'
+ssh root@av1 'nginx -t && systemctl reload nginx'
+curl -I http://t1.ww33.world/
+curl -I http://t1.ww33.world/tweet/example/author
+curl -I https://ww33.world/
+curl -I https://t1.ww33.world/
+curl -I http://t1.w33w.site/
 curl -I http://tweet.fireshare.us/
 curl -I http://tweet.fireshare.uk/
-curl -I http://w333w.site/
-curl -I https://w333w.site/
-curl -I https://t1.w333w.site/
-curl -I http://t1.w3w3.store/tweet/example/author
-curl -I http://t1.www333.store/tweet/example/author
-curl -I http://t1.www3.shop/tweet/example/author
-curl -I --resolve t1.www33.online:80:47.245.61.67 http://t1.www33.online/tweet/example/author
-curl -I http://tweet.inoku.uk/author/example
-curl http://registry.inoku.uk/health
+curl -I http://drive.lepan.org/
+curl http://registry.lepan.org/health
 ```
 
-The Fireshare roots must not return a `Location` under `w333w.site`;
-`w333w.site` must reach Leither, and each retired host must redirect to the
-matching `w333w.site` host. `registry.inoku.uk` must continue to reach its
-dedicated service. `--resolve` is required for `www33.online` until
-that retired domain has public DNS pointing at av1. The two canonical HTTPS
-checks must present a valid certificate, clear HSTS with `max-age=0`, and
-redirect to the equivalent HTTP URL.
+The new `t1` host must serve the release app; its tweet route must redirect
+with `/#tweet/`. HTTPS must present a valid certificate, clear HSTS, and return
+to HTTP. Existing browser and Fireshare hosts must retain their routes, and
+LifeDrive and registry checks must reach their respective services.
+
+See the [October 6 migration record](BROWSER_FALLBACK_DOMAIN_MIGRATION.md#completed-ww33world-default-domain-switch)
+for published versions, backups, asset hash, and verification limits. Older
+migration records describe historical configurations and must not be reapplied
+over the current routes.
 
 ## 7. Restore Local Testing Configuration
 
@@ -357,8 +357,9 @@ Restoring `.env` does not alter already-built or deployed assets.
 - [ ] Exactly one `.env` section is active: `RELEASE` for a release build or
       `DEBUG` for a debug build.
 - [ ] Every `VITE_LEITHER_NODE` assignment is commented for both build types.
-- [ ] gen8 was addressed through `gen8.leither.uk`, not a pinned IP.
-- [ ] Both backend packages use the same File-capable production Go source;
+- [ ] gen8 DNS was freshly resolved and its returned IP used with the required
+      `HostKeyAlias`; no volatile IP was saved as permanent configuration.
+- [ ] Backend packages retain the intended File-capable Go revisions;
       no legacy JavaScript backend was introduced.
 - [ ] Changed Go files were hash-checked and published from the correct gen8
       package with its existing publisher script.
@@ -371,11 +372,9 @@ Restoring `.env` does not alter already-built or deployed assets.
 - [ ] The legacy browser-fallback zone rule is disabled.
 - [ ] Public asset hashes match `dist/index_entry.js`.
 - [ ] Association files return JSON and a browser tweet link redirects to
-      `http://t1.w333.space` and loads successfully.
-- [ ] av1 preserves `fireshare.us` and `fireshare.uk` hosts while redirecting
-      the retired `w3w3.store`, `www333.store`, `www3.shop`, `www33.online`,
-      and generic `inoku.uk` families to `w333w.site`, while preserving the
-      exact `registry.inoku.uk` service.
+      `http://t1.ww33.world` and loads successfully.
+- [ ] av1 serves `t1.ww33.world` and preserves existing browser-domain redirects,
+      Fireshare hosts, and LifeDrive/registry routes under `lepan.org`.
 - [ ] The developer's original local `.env` value was restored.
 
 ## Operational Incident: av1 Memory Exhaustion (2026-09-19)

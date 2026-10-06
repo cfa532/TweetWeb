@@ -9,7 +9,7 @@ Complete documentation for the TweetWeb decentralized social media platform.
 - **[Setup & Installation Guide](SETUP.md)** - Local development and service setup instructions
 - **[Publication & Deployment Guide](DEPLOYMENT.md)** - Canonical TweetWeb production release procedure
 - **[av1 Memory Exhaustion Incident](DEPLOYMENT.md#operational-incident-av1-memory-exhaustion-2026-09-19)** - September 19 outage evidence, swap configuration correction, and verification
-- **[Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)** - Repeatable DNS, av1 nginx, and Worker procedure plus the current `w333w.site` production record
+- **[Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)** - Repeatable DNS, av1 nginx, and Worker procedure plus the current `ww33.world` production record
 - **[Quick Start](#quick-start)** - Get up and running in 5 minutes
 
 ### Core Documentation
@@ -153,7 +153,8 @@ See: [Publication & Deployment Guide](DEPLOYMENT.md)
 The guide defines the mutually exclusive release/debug `.env` states, requires
 all `VITE_LEITHER_NODE` overrides to be commented for publication, maps
 TweetWeb and TweetBackendApp files to their respective gen8 app directories,
-and uses `gen8.leither.uk` instead of pinning gen8's volatile IP. It also covers
+and requires fresh `gen8.leither.uk` resolution with host-key verification
+when connecting by IP. It also covers
 building once, publishing with the existing gen8 scripts, deploying the Worker,
 verifying public hashes, and restoring the local environment.
 
@@ -339,7 +340,7 @@ MIT License - see LICENSE file for details
 
 - **Main README**: [/README.md](../README.md)
 - **Production**: https://dtweet.com/
-- **Browser fallback**: http://t1.w333w.site/
+- **Browser fallback**: http://t1.ww33.world/
 - **GitHub Issues**: Report bugs and request features
 
 ## Version History
