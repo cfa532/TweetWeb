@@ -42,7 +42,7 @@ const loadDirectory = async (path = '') => {
     console.log('Loading directory:', path);
     const username = tweetStore.loginUser?.username;
     if (!username) {
-      throw new Error('Username is required');
+      throw new Error(t('errors.usernameRequired'));
     }
     // Fetch directory listing from the backend
     const response = await fetch(`${TUS_SERVER_URL}/netd?path=${encodeURIComponent(path)}`, {
@@ -51,7 +51,7 @@ const loadDirectory = async (path = '') => {
       }
     });
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw new Error(t('errors.serverStatus', { status: response.status }));
     }
     const data = await response.json();
     console.log('Response:', data);
@@ -159,7 +159,7 @@ onMounted(async () => {
   console.log('Component mounted, route query:', route.query);
   const loginUser = tweetStore.loginUser
   if (!loginUser) {
-    error.value = 'Not logged in'
+    error.value = t('errors.notLoggedIn')
     loading.value = false
     return
   }

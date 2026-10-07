@@ -2462,8 +2462,8 @@ function stopVideo() {
       <div v-if="showVideoError" class="video-error-overlay">
         <div class="video-error-content">
           <div class="error-icon">⚠️</div>
-          <p class="error-message">Video playback error</p>
-          <p class="error-hint">This video format may not be supported in your browser</p>
+          <p class="error-message">{{ $t('media.videoError') }}</p>
+          <p class="error-hint">{{ $t('media.unsupportedVideo') }}</p>
         </div>
       </div>
 
@@ -2473,7 +2473,7 @@ function stopVideo() {
           <div class="play-button">
             <font-awesome-icon icon="play" />
           </div>
-          <p class="autoplay-message">Click to play video</p>
+          <p class="autoplay-message">{{ $t('media.clickToPlay') }}</p>
         </div>
       </div>
 
@@ -2499,7 +2499,7 @@ function stopVideo() {
         v-if="showFeedMuteButton"
         class="feed-mute-button"
         type="button"
-        :aria-label="isMuted ? 'Unmute video' : 'Mute video'"
+        :aria-label="isMuted ? $t('media.unmute') : $t('media.mute')"
         @click="handleMuteOverlayClick"
         @touchend.prevent="handleMuteOverlayClick"
       >
@@ -2519,7 +2519,7 @@ function stopVideo() {
         v-if="showFeedFullscreenButton"
         class="fullscreen-overlay-button"
         type="button"
-        aria-label="Enter fullscreen"
+        :aria-label="$t('media.fullscreen')"
         @click="handleFullscreenOverlayClick"
         @touchend.prevent="handleFullscreenOverlayClick"
       >

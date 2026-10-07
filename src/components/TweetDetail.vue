@@ -1156,7 +1156,7 @@ function retryLoad() {
         @touchstart="onDragStart"
     >
         <button class="download-button">
-            <img src="/src/ic_splash.png" alt="App Icon" class="download-icon" />
+            <img src="/src/ic_splash.png" :alt="$t('media.appIcon')" class="download-icon" />
             <span class="download-text">{{ $t('download.openInApp') }}</span>
         </button>
     </div>

@@ -6,7 +6,7 @@
 
 <template>
     <div v-if="props.visible" class="spinner-border text-primary" role="status">
-      <span class="loader">Loading...</span>
+      <span class="loader">{{ $t('common.loading') }}</span>
     </div>
   </template>
 

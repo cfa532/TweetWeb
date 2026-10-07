@@ -407,9 +407,9 @@ async function onAccountAvatarError() {
         <div class="header-row">
             <div class="header-left">
                 <div class="avatar me-2 ms-2 mt-1">
-                    <UserAvatar v-if="user" :user="user" @click="onAppAvatarClick" @error="onAvatarError" alt="User Avatar"
+                    <UserAvatar v-if="user" :user="user" @click="onAppAvatarClick" @error="onAvatarError" :alt="$t('media.userAvatar')"
                         class="rounded-circle" />
-                    <img v-else :src="avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" alt="Logo"
+                    <img v-else :src="avatarUrl" @click="onAppAvatarClick" @error="onAvatarError" :alt="$t('media.logo')"
                         class="rounded-circle" />
                 </div>
                 <!-- User Info -->

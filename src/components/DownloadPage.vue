@@ -3,7 +3,7 @@
     <div class="container">
       <div class="download-card">
         <div class="app-info">
-          <img src="/src/ic_splash.png" alt="App Icon" class="app-icon" />
+          <img src="/src/ic_splash.png" :alt="$t('media.appIcon')" class="app-icon" />
           <h1 class="app-name">dTweet</h1>
         </div>
         

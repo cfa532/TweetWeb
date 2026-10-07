@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import { computed, onMounted, ref, onUnmounted } from 'vue';
 import { useTweetStore } from '@/stores';
+
+const { t } = useI18n();
 // import axios from 'axios'; // Import Axios for making HTTP requests
 
 const formData = ref({
     username: '',
     accountId: '',
-    message: 'Please help me to delete my account.'
+    message: t('request.defaultMessage')
 });
 
 const isSubmitting = ref(false);
@@ -32,7 +35,7 @@ const handleSubmit = async () => {
         // }
     } catch (error: any) {
         console.error('Error submitting form:', error);
-        submissionError.value = error.message || 'An unexpected error occurred.';
+        submissionError.value = error.message || t('common.operationFailed');
     } finally {
         isSubmitting.value = false;
     }
@@ -41,28 +44,28 @@ const handleSubmit = async () => {
 
 <template>
     <div class="container">
-        <h1>Submit a Request</h1>
+        <h1>{{ $t('request.title') }}</h1>
         <form @submit.prevent="handleSubmit">
             <div class="form-group">
-                <label for="username">Username:</label>
+                <label for="username">{{ $t('auth.username') }}:</label>
                 <input type="text" id="username" v-model="formData.username" required class="form-control">
             </div>
             <div class="form-group">
-                <label for="accountId">Host ID:</label>
+                <label for="accountId">{{ $t('auth.hostId') }}:</label>
                 <input type="text" id="accountId" v-model="formData.accountId" required class="form-control">
             </div>
             <div class="form-group">
-                <label for="message">Message:</label>
+                <label for="message">{{ $t('common.message') }}:</label>
                 <textarea id="message" v-model="formData.message" rows="4" required class="form-control"></textarea>
             </div>
             <button type="submit" class="btn btn-primary" :disabled="isSubmitting">
-                {{ isSubmitting ? 'Submitting...' : 'Submit Request' }}
+                {{ isSubmitting ? $t('request.submitting') : $t('request.submit') }}
             </button>
             <div v-if="submissionSuccess" class="alert alert-success mt-3">
-                Request submitted successfully!
+                {{ $t('request.success') }}
             </div>
             <div v-if="submissionError" class="alert alert-danger mt-3">
-                Error submitting request: {{ submissionError }}
+                {{ $t('request.error', { error: submissionError }) }}
             </div>
         </form>
     </div>

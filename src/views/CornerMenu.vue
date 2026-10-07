@@ -238,7 +238,7 @@ async function submitEdit() {
   isSubmittingEdit.value = true
   try {
     if (props.isComment && props.parentTweet?.authorId !== target.authorId) {
-      throw new Error('This comment cannot be edited until the backend supports separate author and storage-owner routing')
+      throw new Error(t('errors.commentEditUnsupported'))
     }
     await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
     target.content = editContent.value

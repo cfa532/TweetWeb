@@ -61,7 +61,7 @@ const downloadPageUrl = computed(() => {
     <div v-if="show" class="modal-overlay" @click="emit('close')">
         <div class="modal-content" @click.stop>
             <div class="modal-header">
-                <button type="button" class="btn-close" @click="emit('close')" aria-label="Close"></button>
+                <button type="button" class="btn-close" @click="emit('close')" :aria-label="$t('common.close')"></button>
             </div>
             <div class="modal-title-section">
                 <div class="countdown-circle">

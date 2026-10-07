@@ -166,7 +166,7 @@ async function handleLogin() {
             errorMessage.value = t('auth.loginFailed');
         }
     } catch (err: any) {
-        errorMessage.value = err?.message || 'Login failed.';
+        errorMessage.value = err?.message || t('auth.loginFailed');
     } finally {
         isLoading.value = false;
     }
@@ -498,8 +498,8 @@ function goBack() {
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
                     <UserAvatar v-if="user" :user="user" :src="localAvatarUrl || user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                        alt="Avatar" @error="onProfileAvatarError" />
-                    <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" alt="Avatar" />
+                        :alt="$t('media.userAvatar')" @error="onProfileAvatarError" />
+                    <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" :alt="$t('media.userAvatar')" />
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
                     <span class="text-muted">@{{ user?.username }}</span>
                 </div>
@@ -589,8 +589,8 @@ function goBack() {
                 <div class="text-center mb-3">
                     <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
                         <UserAvatar v-if="user" :user="user" :src="localAvatarUrl || user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                            alt="Avatar" @error="onProfileAvatarError" />
-                        <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" alt="Avatar" />
+                            :alt="$t('media.userAvatar')" @error="onProfileAvatarError" />
+                        <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" :alt="$t('media.userAvatar')" />
                         <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
                             <span class="spinner-border spinner-border-sm text-white"></span>
                         </div>

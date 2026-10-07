@@ -16,7 +16,10 @@
     "ok": "OK",
     "done": "Done",
     "connectionTimeout": "Connection timed out. Please try again.",
-    "operationFailed": "Something went wrong. Please try again."
+    "operationFailed": "Something went wrong. Please try again.",
+    "error": "Error",
+    "notice": "Notice",
+    "message": "Message"
   },
   "auth": {
     "login": "Login",
@@ -174,7 +177,8 @@
     "fileTooLarge": "File {name} is too large. Maximum size is 4GB.",
     "networkError": "Network error uploading {name}",
     "uploadTimeout": "Upload timeout for {name}",
-    "videoProcessingFailed": "Video processing failed for {name}"
+    "videoProcessingFailed": "Video processing failed for {name}",
+    "fileTooLargeDetail": "File {name} is too large. {error}"
   },
   "download": {
     "downloadApp": "Download app for better experience",
@@ -222,7 +226,14 @@
     "descriptionPlaceholder": "Add a description for your files...",
     "calculating": "calculating...",
     "remaining": "remaining",
-    "videoNotSupported": "Your browser does not support the video/audio tag."
+    "videoNotSupported": "Your browser does not support the video/audio tag.",
+    "resumable": "Enable resumable uploads",
+    "viewFailed": "Failed to view file. Please try again.",
+    "fileNotFound": "File not found.",
+    "sharedFileFailed": "Failed to load shared file",
+    "retryCount": "Retry {count}/{max}",
+    "uploadUrlMissing": "Upload URL is missing after successful upload.",
+    "registrationFailed": "File registration failed: {status} - {error}"
   },
   "cid": {
     "fileName": "File Name",
@@ -236,7 +247,8 @@
     "audio": "Audio",
     "unknown": "Unknown",
     "addMimei": "Add mimei",
-    "fillCidFields": "Please fill in all the Cid fields before saving."
+    "fillCidFields": "Please fill in all the Cid fields before saving.",
+    "invalid": "Invalid CID for \"{name}\": must be a valid Mimei or IPFS ID"
   },
   "empty": {
     "noItems": "No items found"
@@ -254,5 +266,67 @@
     "choose": "Choose",
     "uploadSuccess": "Avatar updated successfully",
     "uploadFailed": "Failed to upload avatar"
+  },
+  "media": {
+    "userAvatar": "User Avatar",
+    "appIcon": "App Icon",
+    "logo": "Logo",
+    "thumbnail": "Thumbnail",
+    "thumbnailNumber": "Thumbnail {n}",
+    "previous": "Previous media",
+    "next": "Next media",
+    "empty": "No media to display",
+    "videoError": "Video playback error",
+    "unsupportedVideo": "This video format may not be supported in your browser",
+    "clickToPlay": "Click to play video",
+    "unmute": "Unmute video",
+    "mute": "Mute video",
+    "fullscreen": "Enter fullscreen",
+    "play": "Play",
+    "pause": "Pause",
+    "previousTrack": "Previous track",
+    "nextTrack": "Next track"
+  },
+  "package": {
+    "upload": "Upload App package",
+    "mini": "Mini",
+    "uploaded": "App package mimei: {mid}",
+    "maxSize": "Max file size exceeded"
+  },
+  "request": {
+    "title": "Submit a Request",
+    "defaultMessage": "Please help me to delete my account.",
+    "submitting": "Submitting...",
+    "submit": "Submit Request",
+    "success": "Request submitted successfully!",
+    "error": "Error submitting request: {error}"
+  },
+  "errors": {
+    "notLoggedIn": "Not logged in",
+    "usernameRequired": "Username is required",
+    "userNotFound": "User not found. Please check your username.",
+    "userDataFailed": "Could not fetch user data. Please try again.",
+    "authenticationFailed": "Authentication failed. Please check your credentials.",
+    "noServer": "No server connection available. Please try again later.",
+    "loginRetriesFailed": "Login failed after multiple attempts. Please try again later.",
+    "loginToFollow": "You must be logged in to toggle following",
+    "deleteUnauthorized": "Not authorized to delete this tweet",
+    "editUnauthorized": "Not authorized to edit this tweet",
+    "commentDeleteUnauthorized": "Not authorized to delete this comment",
+    "authorNotFound": "Tweet author not found",
+    "parentNotFound": "Parent tweet not found",
+    "parentAuthorNotFound": "Parent tweet author not found",
+    "resolveAuthor": "Could not resolve the tweet author",
+    "writableHost": "Writable host not configured",
+    "agentLogin": "Must be logged in to generate agent token",
+    "agentKeyUpdate": "Failed to update agent public key",
+    "commentEditUnsupported": "This comment cannot be edited until the backend supports separate author and storage-owner routing",
+    "attachmentsFailed": "Attachments uploading failed",
+    "tweetNoResponse": "Tweet upload failed: No response from server",
+    "updateNoResponse": "Tweet update failed: No response from server",
+    "uploadUnknown": "Unknown error occurred during tweet upload",
+    "serverStatus": "Server request failed: {status}",
+    "networkResponse": "Network response was not ok",
+    "responseReader": "Failed to get reader from response"
   }
 }

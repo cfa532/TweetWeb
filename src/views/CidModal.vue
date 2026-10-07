@@ -139,7 +139,7 @@ function isValidMid(mid: string): boolean {
 const emitSelectFiles = () => {
     const invalid = selectedFiles.value.find(file => !isValidMid(file.mid));
     if (invalid) {
-        useAlertStore().error(`Invalid CID for "${invalid.fileName}": must be a valid Mimei or IPFS ID`);
+        useAlertStore().error(t('cid.invalid', { name: invalid.fileName }));
         return;
     }
     console.log(selectedFiles.value);

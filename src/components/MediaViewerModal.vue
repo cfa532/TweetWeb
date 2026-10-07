@@ -249,7 +249,7 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
   >
     <div class="media-viewer-content" @click.stop>
       <!-- Close button -->
-      <button class="close-button" @click="closeModal" aria-label="Close">
+      <button class="close-button" @click="closeModal" :aria-label="$t('common.close')">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="18" y1="6" x2="6" y2="18"></line>
           <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -261,7 +261,7 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
         v-if="currentMediaIndex > 0"
         class="nav-button nav-button-left" 
         @click="previousMedia"
-        aria-label="Previous media"
+        :aria-label="$t('media.previous')"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="15,18 9,12 15,6"></polyline>
@@ -272,7 +272,7 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
         v-if="currentMediaIndex < mediaItems.length - 1"
         class="nav-button nav-button-right" 
         @click="nextMedia"
-        aria-label="Next media"
+        :aria-label="$t('media.next')"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="9,18 15,12 9,6"></polyline>
@@ -297,7 +297,7 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
           />
         </div>
         <div v-else class="no-media">
-          <p>No media to display</p>
+          <p>{{ $t('media.empty') }}</p>
         </div>
       </div>
 
@@ -319,7 +319,7 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
             v-if="media.type?.toLowerCase().includes('image')"
             :src="thumbnailSrc(media, Number(index))"
             loading="lazy"
-            :alt="`Thumbnail ${Number(index) + 1}`"
+            :alt="$t('media.thumbnailNumber', { n: Number(index) + 1 })"
           />
           <div 
             v-else

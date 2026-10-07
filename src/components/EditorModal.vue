@@ -53,14 +53,14 @@ const isEditing = computed(() => !!props.editTweet)
 
 async function resolveEditAuthor(): Promise<User> {
   const loginUser = tweetStore.loginUser
-  if (!loginUser) throw new Error('Not logged in')
+  if (!loginUser) throw new Error(t('errors.notLoggedIn'))
   if (!props.editTweet || props.editTweet.authorId === loginUser.mid) {
     return loginUser
   }
   const targetAuthor = props.editTweet.author
     || await tweetStore.getUser(props.editTweet.authorId)
   if (!targetAuthor) {
-    throw new Error('Could not resolve the tweet author')
+    throw new Error(t('errors.resolveAuthor'))
   }
   resolvedEditAuthor.value = targetAuthor
   return targetAuthor
@@ -296,17 +296,17 @@ async function uploadAttachedFiles(
       console.error(`Error uploading file ${file.name}:`, error);
       
       // Provide more specific error messages
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorMessage = error instanceof Error ? error.message : t('common.operationFailed');
       let finalErrorMessage = errorMessage;
       
       if (errorMessage.includes('Network error')) {
-        finalErrorMessage = `Network error uploading ${file.name}. Please check your connection and try again.`;
+        finalErrorMessage = t('editor.networkError', { name: file.name });
       } else if (errorMessage.includes('timeout')) {
-        finalErrorMessage = `Upload timeout for ${file.name}. The file may be too large or the server is busy.`;
+        finalErrorMessage = t('editor.uploadTimeout', { name: file.name });
       } else if (errorMessage.includes('exceeds the maximum')) {
-        finalErrorMessage = `File ${file.name} is too large. ${errorMessage}`;
+        finalErrorMessage = t('editor.fileTooLargeDetail', { name: file.name, error: errorMessage });
       } else if (errorMessage.includes('No CID returned')) {
-        finalErrorMessage = `Video processing failed for ${file.name}. Please try again.`;
+        finalErrorMessage = t('editor.videoProcessingFailed', { name: file.name });
       }
       
       results.push({ status: 'rejected', reason: new Error(finalErrorMessage) });
@@ -334,7 +334,7 @@ async function onSubmit() {
     if (props.editTweet
       && props.editTweet.authorId !== loginUser.mid
       && loginUser.username !== 'admin') {
-      throw new Error('Not authorized to edit this tweet')
+      throw new Error(t('errors.editUnauthorized'))
     }
     const uploadAuthor = await resolveEditAuthor()
     if (filesUpload.value.length > 0) {
@@ -342,7 +342,7 @@ async function onSubmit() {
         .filter((v) => v.status === 'fulfilled')
         .map((v: any) => v.value)
       if (attachments.length < filesUpload.value.length) {
-        throw new Error('Attachments uploading failed')
+        throw new Error(t('errors.attachmentsFailed'))
       }
     }
 
@@ -369,7 +369,7 @@ async function onSubmit() {
         { downloadable: downloadable.value, isPrivate: isPrivate.value },
       )
       if (!result) {
-        throw new Error('Tweet update failed: No response from server')
+        throw new Error(t('errors.updateNoResponse'))
       }
       props.editTweet.content = content
       props.editTweet.attachments = displayAttachments(attachmentReferences)
@@ -394,7 +394,7 @@ async function onSubmit() {
     const targetTweetId = tweetId.value as MimeiId
     const result = await tweetStore.uploadTweet(tweet, targetTweetId)
     if (!result) {
-      throw new Error('Tweet upload failed: No response from server')
+      throw new Error(t('errors.tweetNoResponse'))
     }
 
     useAlertStore().success(t('editor.tweetUploaded'))
@@ -697,7 +697,7 @@ function handleDragEnd() {
 
   <div style='background-color:aliceblue;'>
       <div class='editor-header'>
-        <UserAvatar :key='avatarRetry' :user='author' alt='Avatar' class='editor-avatar' @click='openUserPage' style='cursor:pointer' @error='onAvatarError' />
+        <UserAvatar :key='avatarRetry' :user='author' :alt="$t('media.userAvatar')" class='editor-avatar' @click='openUserPage' style='cursor:pointer' @error='onAvatarError' />
         <div class='editor-author' @click='openUserPage' style='cursor:pointer'>
           <div class='fw-bold'>{{ author.name }}</div>
           <div class='text-muted' style='font-size:0.85rem'>@{{ author.username }}</div>

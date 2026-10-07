@@ -3904,7 +3904,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     console.log(`[login] Got userId: ${userId}`)
                     if (!userId) {
                         console.error(`[login] getUserId returned null for username: ${username}`)
-                        throw new Error("User not found. Please check your username.")
+                        throw new Error(i18n.global.t('errors.userNotFound'))
                     }
                     
                     console.log(`[login] Calling getUser for userId: ${userId} with forceRefresh=true`);
@@ -3924,7 +3924,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             continue
                         }
                         console.error("Login failed: Could not fetch user data", userId)
-                        throw new Error("Could not fetch user data. Please try again.")
+                        throw new Error(i18n.global.t('errors.userDataFailed'))
                     }
                     
                     console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
@@ -3954,7 +3954,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             continue
                         }
                         console.error("Login failed: Authentication failed", userId)
-                        throw new Error("Authentication failed. Please check your credentials.")
+                        throw new Error(i18n.global.t('errors.authenticationFailed'))
                     }
                     
                     // Handle v2 format: check success field first, then status field for backward compatibility
@@ -3986,7 +3986,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         if (!user.providerIp) {
                             console.error("Login failed: No provider IP available for user", user)
-                            throw new Error("No server connection available. Please try again later.")
+                            throw new Error(i18n.global.t('errors.noServer'))
                         }
 
                         // Store user data and create client with auth provider IP
@@ -4014,7 +4014,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     } else {
                         // Don't retry on authentication errors with reason (likely invalid credentials)
                         console.error("Login failed:", failureReason)
-                        throw new Error(failureReason || "Login failed. Please check your credentials.")
+                        throw new Error(failureReason || i18n.global.t('auth.loginFailed'))
                     }
                 } catch (error) {
                     lastError = error
@@ -4033,7 +4033,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // If we exhausted all retries
             if (lastError) {
                 console.error("Login failed after all retries:", lastError)
-                throw new Error("Login failed after multiple attempts. Please try again later.")
+                throw new Error(i18n.global.t('errors.loginRetriesFailed'))
             }
         },
 
@@ -4088,7 +4088,7 @@ export const useTweetStore = defineStore('tweetStore', {
         async toggleFollowing(followingId: MimeiId): Promise<boolean> {
             const loginUser = this.loginUser
             if (!loginUser) {
-                throw new Error("You must be logged in to toggle following")
+                throw new Error(i18n.global.t('errors.loginToFollow'))
             }
 
             // Route the call directly to loginUser's primary host (hostIds[0])
@@ -4161,10 +4161,10 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
             if (!this.loginUser) {
-                throw new Error('Not authorized to delete this tweet')
+                throw new Error(i18n.global.t('errors.deleteUnauthorized'))
             }
             if (this.loginUser.username !== 'admin' && this.loginUser.mid !== authorId) {
-                throw new Error('Not authorized to delete this tweet')
+                throw new Error(i18n.global.t('errors.deleteUnauthorized'))
             }
 
             console.log('[deleteTweet] Starting delete', {
@@ -4199,7 +4199,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     ? this.loginUser
                     : await this.getUser(authorId)
                 if (!targetAuthor) {
-                    throw new Error('Tweet author not found')
+                    throw new Error(i18n.global.t('errors.authorNotFound'))
                 }
                 const hostId = targetAuthor.hostIds?.[0]
                 const writableIp = await this.resolveWritableHostIp(targetAuthor)
@@ -4242,7 +4242,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             alreadyGone = true
                             break
                         }
-                        throw new Error(typeof response.message === "string" ? response.message : "Delete tweet failed")
+                        throw new Error(typeof response.message === "string" ? response.message : i18n.global.t('tweet.failedDeleteTweet'))
                     }
                     if (response.success === true && "data" in response && response.data !== undefined) {
                         response = response.data
@@ -4481,7 +4481,7 @@ export const useTweetStore = defineStore('tweetStore', {
         async deleteComment(commentId: MimeiId, commentAuthorId: MimeiId, parentTweetId: MimeiId, parentAuthorId: MimeiId) {
             // Verify authorization: can be called by comment author or parent tweet author
             if (!this.loginUser || (this.loginUser.username !== 'admin' && this.loginUser.mid !== commentAuthorId && this.loginUser.mid !== parentAuthorId)) {
-                throw new Error("Not authorized to delete this comment")
+                throw new Error(i18n.global.t('errors.commentDeleteUnauthorized'))
             }
 
             // Get parent tweet author (comments are stored on the same node as the tweet).
@@ -4558,7 +4558,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async openTempFile() {
             const loginUser = this.loginUser
-            if (!loginUser) throw new Error('Not logged in')
+            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
             const fsid = await client.RunMApp("open_temp_file", {
@@ -4575,7 +4575,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * @returns a mid of the uploaded object
          */
         async uploadTweet(tweet: any, tweetId?: MimeiId) {
-            if (!this.loginUser) throw new Error('Not logged in')
+            if (!this.loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
             // Leither may be busy after video processing; allow 5 minutes per write.
             const effectiveTimeout = 5 * 60 * 1000
@@ -4591,9 +4591,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 const uploadPromise = (async () => {
                     if (tweetId) {
                         const parentTweet = await this.getTweet(tweetId)
-                        if (!parentTweet) throw new Error('Parent tweet not found')
+                        if (!parentTweet) throw new Error(i18n.global.t('errors.parentNotFound'))
                         const parentAuthor = parentTweet.author ?? await this.getUser(parentTweet.authorId)
-                        if (!parentAuthor) throw new Error('Parent tweet author not found')
+                        if (!parentAuthor) throw new Error(i18n.global.t('errors.parentAuthorNotFound'))
                         const parentAuthorHostId = parentAuthor.hostIds?.[0]
                         if (!parentAuthorHostId) {
                             throw new Error('Parent tweet author has no hostIds[0]')
@@ -4648,7 +4648,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 
             // Check if the backend returned null, indicating failure
             if (ret === null || ret === undefined || !ret.success) {
-                const errorMessage = ret?.message || 'Unknown error occurred during tweet upload'
+                const errorMessage = ret?.message || i18n.global.t('errors.uploadUnknown')
                 throw new Error(errorMessage);
             }
             if (!tweetId && this.loginUser) {
@@ -4786,7 +4786,7 @@ export const useTweetStore = defineStore('tweetStore', {
             options?: { downloadable?: boolean; isPrivate?: boolean },
         ) {
             if (!this.loginUser) {
-                throw new Error('Not authorized to edit this tweet')
+                throw new Error(i18n.global.t('errors.editUnauthorized'))
             }
             try {
                 const targetAuthorId = authorId ?? this.loginUser.mid
@@ -4845,7 +4845,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const ret = await client.RunMApp("update_tweet", request)
                 console.log('[updateTweet] update_tweet response', { tweetId, ret })
                 if (!ret || !ret.success) {
-                    throw new Error(ret?.message || 'Failed to update tweet')
+                    throw new Error(ret?.message || i18n.global.t('tweet.failedUpdateTweet'))
                 }
                 this.adoptWriteRouteForReads(targetAuthor, writableIp)
                 // Update local tweet in store
@@ -4884,7 +4884,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async uploadPackage(cid: string, mini: boolean = false) {
             const loginUser = this.loginUser
-            if (!loginUser) throw new Error('Not logged in')
+            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = client.timeout
@@ -4912,7 +4912,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async uploadFile(cid: string, filename: string) {
             const loginUser = this.loginUser
-            if (!loginUser) throw new Error('Not logged in')
+            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = client.timeout
@@ -4939,7 +4939,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async shareFile(file: FileSystemItem) {
             const loginUser = this.loginUser
-            if (!loginUser) throw new Error('Not logged in')
+            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
             const mid = await client.RunMApp("share_file", {
@@ -4989,9 +4989,9 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleFavorite(tweet: Tweet, isFavorite: boolean) {
             const loginUser = this.loginUser
-            if (!loginUser) throw new Error('Not logged in')
+            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const userHostId = loginUser.hostIds?.[0]
-            if (!userHostId) throw new Error('Writable host not configured')
+            if (!userHostId) throw new Error(i18n.global.t('errors.writableHost'))
             const storageAuthor = await this.resolveTweetStorageAuthor(tweet)
             const params = {
                 aid: this.appId, ver: "last", version: "v2",
@@ -5019,9 +5019,9 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async toggleBookmark(tweet: Tweet, isBookmarked: boolean) {
             const loginUser = this.loginUser
-            if (!loginUser) throw new Error('Not logged in')
+            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const userHostId = loginUser.hostIds?.[0]
-            if (!userHostId) throw new Error('Writable host not configured')
+            if (!userHostId) throw new Error(i18n.global.t('errors.writableHost'))
             const storageAuthor = await this.resolveTweetStorageAuthor(tweet)
             const params = {
                 aid: this.appId, ver: "last", version: "v2",
@@ -5102,7 +5102,7 @@ export const useTweetStore = defineStore('tweetStore', {
             try {
                 const response = await fetch(url);
                 if (!response.ok) {
-                    throw new Error('Network response was not ok');
+                    throw new Error(i18n.global.t('errors.networkResponse'));
                 }
                 
                 const blob = await response.blob();
@@ -5430,7 +5430,7 @@ export const useTweetStore = defineStore('tweetStore', {
             domainToShare?: string,
         }): Promise<boolean> {
             const user = this.loginUser
-            if (!user) throw new Error("Not logged in")
+            if (!user) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
             const userObj: any = {
                 mid: user.mid,
@@ -5482,9 +5482,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 writeClient.timeout = originalTimeout
             }
 
-            if (!ret) throw new Error("Profile update failed")
+            if (!ret) throw new Error(i18n.global.t('auth.updateFailed'))
             if (ret["success"] === false) {
-                throw new Error(ret["message"] || "Profile update failed")
+                throw new Error(ret["message"] || i18n.global.t('auth.updateFailed'))
             }
             this.adoptWriteRouteForReads(user, writableIp)
 
@@ -5507,7 +5507,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async generateAgentToken(): Promise<string> {
             const user = this.loginUser
-            if (!user) throw new Error("Must be logged in to generate agent token")
+            if (!user) throw new Error(i18n.global.t('errors.agentLogin'))
 
             const tokenResult = await createAgentTokenForUser(user.mid, ["post", "comment"])
 
@@ -5537,12 +5537,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 writeClient.timeout = originalTimeout
             }
 
-            if (!ret) throw new Error("Failed to update agent public key")
+            if (!ret) throw new Error(i18n.global.t('errors.agentKeyUpdate'))
             if (ret["success"] === false) {
-                throw new Error(ret["message"] || "Failed to update agent public key")
+                throw new Error(ret["message"] || i18n.global.t('errors.agentKeyUpdate'))
             }
             if (ret["status"] && ret["status"] !== "success") {
-                throw new Error(ret["reason"] || "Failed to update agent public key")
+                throw new Error(ret["reason"] || i18n.global.t('errors.agentKeyUpdate'))
             }
             this.adoptWriteRouteForReads(user, writableIp)
 
@@ -5560,7 +5560,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async setUserAvatar(blob: Blob): Promise<string> {
             const user = this.loginUser
-            if (!user) throw new Error("Not logged in")
+            if (!user) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
             const cid = await this.uploadBlobToIpfs(user, await blob.arrayBuffer())
 
@@ -5628,7 +5628,7 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async deleteAccount(): Promise<boolean> {
             const user = this.loginUser
-            if (!user) throw new Error("Not logged in")
+            if (!user) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
             // Mutation: route through user's writable host (hostIds[0]).
             const writableIp = await this.resolveWritableHostIp(user)
@@ -5648,7 +5648,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             if (ret && ret["success"] === false) {
-                throw new Error(ret["message"] || "Delete account failed")
+                throw new Error(ret["message"] || i18n.global.t('auth.deleteFailed'))
             }
 
             // Clean up local state same as logout

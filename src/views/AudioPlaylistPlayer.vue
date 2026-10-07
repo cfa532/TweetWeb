@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { PropType } from 'vue';
+
+const { t } = useI18n();
 
 const props = defineProps({
     mediaList: { type: Array as PropType<MimeiFileType[]>, required: true },
@@ -23,7 +26,7 @@ const audioItems = computed(() => props.mediaList.filter(media => {
 const currentMedia = computed(() => audioItems.value[currentIndex.value]);
 
 const currentTitle = computed(() => {
-    return currentMedia.value?.fileName?.trim() || 'Audio';
+    return currentMedia.value?.fileName?.trim() || t('cid.audio');
 });
 
 const progress = computed(() => {
@@ -182,7 +185,7 @@ onBeforeUnmount(() => {
                     type="button"
                     @click="selectItem(index)"
                 >
-                    <span class="playlist-item-name">{{ item.fileName || 'Audio' }}</span>
+                    <span class="playlist-item-name">{{ item.fileName || t('cid.audio') }}</span>
                     <span v-if="index === currentIndex" class="playlist-check" aria-hidden="true">
                         <svg viewBox="0 0 24 24" fill="currentColor">
                             <path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z" />
@@ -197,6 +200,7 @@ onBeforeUnmount(() => {
                 class="control-btn"
                 type="button"
                 :disabled="audioItems.length <= 1"
+                :aria-label="t('media.previousTrack')"
                 @click.stop="playPrevious"
             >
                 <svg viewBox="0 0 24 24" fill="currentColor">
@@ -208,6 +212,7 @@ onBeforeUnmount(() => {
                 class="control-btn primary"
                 type="button"
                 :disabled="hasError"
+                :aria-label="isPlaying ? t('media.pause') : t('media.play')"
                 @click.stop="togglePlay"
             >
                 <svg v-if="isLoading && !hasError" class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -227,6 +232,7 @@ onBeforeUnmount(() => {
                 class="control-btn"
                 type="button"
                 :disabled="audioItems.length <= 1"
+                :aria-label="t('media.nextTrack')"
                 @click.stop="playNext"
             >
                 <svg viewBox="0 0 24 24" fill="currentColor">
@@ -249,7 +255,7 @@ onBeforeUnmount(() => {
             />
             <div class="audio-times">
                 <span>{{ formatTime(currentTime) }}</span>
-                <span>{{ hasError ? 'Error' : formatTime(duration) }}</span>
+                <span>{{ hasError ? t('common.error') : formatTime(duration) }}</span>
             </div>
         </div>
     </section>

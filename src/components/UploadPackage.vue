@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import { ref, reactive, onMounted } from 'vue'
 import { Loading, Preview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router'
 import { requireLoginForWritableAction } from '@/lib/authNavigation'
+
+const { t } = useI18n();
 
 interface HTMLInputEvent extends Event {
     target: HTMLInputElement & EventTarget
@@ -27,9 +30,9 @@ const isMini = ref(false)
 
 async function uploadFile(file: File, index: number = 0): Promise<string> {
     if (file.size > sliceSize * 300) {
-        throw new Error('Max file size exceeded')
+        throw new Error(t('package.maxSize'))
     }
-    if (!tweetStore.loginUser) throw new Error('Not logged in')
+    if (!tweetStore.loginUser) throw new Error(t('errors.notLoggedIn'))
 
     uploadProgress[index] = 0
     const data = await file.arrayBuffer()
@@ -55,7 +58,7 @@ async function onSubmit() {
         console.log('Package mid:', mid)
         textValue.value = ""
         filesUpload.value = []
-        useAlertStore().success("App package mimei: " + mid)
+        useAlertStore().success(t('package.uploaded', { mid }))
     } catch (err) {
         // something wrong uploading files, abort
         console.error('onSubmit err:', err)
@@ -110,21 +113,21 @@ function removeFile(f: File) {
 <template>
 <div style="background-color:aliceblue;">
     <div class="card-header d-flex align-items-center">
-        <input v-model="isAppPackage" type="checkbox" unchecked>&nbsp;Upload App package</input>
-        <input v-model="isMini" type="checkbox" unchecked style="margin-left: 15px;">&nbsp;Mini</input>
+        <input v-model="isAppPackage" type="checkbox" unchecked>&nbsp;{{ $t('package.upload') }}</input>
+        <input v-model="isMini" type="checkbox" unchecked style="margin-left: 15px;">&nbsp;{{ $t('package.mini') }}</input>
     </div>
     <div class="modal-content" @dragover.prevent="dragOver" @drop.prevent="onSelect">
         <div class="input-container">
-            <textarea ref="textArea" v-model="textValue" placeholder="Input......" class="input-textarea"></textarea>
+            <textarea ref="textArea" v-model="textValue" :placeholder="$t('editor.contentPlaceholder')" class="input-textarea"></textarea>
             <div ref="dropHere" hidden class="drop-here">
-                <p>DROP HERE</p>
+                <p>{{ $t('editor.dropHere') }}</p>
             </div>
         </div>
         <form @submit.prevent="onSubmit" enctype="multipart/form-data" @paste.prevent="onSelect" class="form-container">
             <input ref="selectFiles" @change="onSelect" type="file" hidden multiple />
             <div class="button-container">
-                <button class="btn" @click.prevent="selectFiles.click()">Choose</button>
-                <button class="btn" type="submit">Submit</button>
+                <button class="btn" @click.prevent="selectFiles.click()">{{ $t('avatar.choose') }}</button>
+                <button class="btn" type="submit">{{ $t('common.submit') }}</button>
             </div>
             <Loading :visible="loading" />
         </form>

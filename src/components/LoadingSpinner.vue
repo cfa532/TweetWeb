@@ -23,7 +23,7 @@ const sizeClass = computed(() => {
 
 <template>
   <div v-if="visible" :class="['spinner-border', `text-${color}`, sizeClass]" role="status">
-    <span class="visually-hidden">Loading...</span>
+    <span class="visually-hidden">{{ $t('common.loading') }}</span>
   </div>
 </template>
 

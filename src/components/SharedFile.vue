@@ -27,7 +27,7 @@ const parentPath = ref<string | null>(null);
 const directoryHistory = ref<string[]>([]);
 const rootPath = ref('');
 const retryCount = ref(0);
-const rootDirectoryName = ref('Root');
+const rootDirectoryName = ref(t('netdisk.root'));
 
 // Progress tracking
 const progress = reactive({
@@ -62,7 +62,7 @@ const filteredDirectoryContents = computed(() =>
 const formatFileSize = (bytes: number) => {
   if (bytes === 0) return '0 ' + t('size.bytes');
   const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const sizes = [t('size.bytes'), 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
@@ -93,7 +93,7 @@ const processFileWithProgress = async (url: string, options: {
   fileSize?: number
 }) => {
   const response = await fetch(url);
-  if (!response.ok) throw new Error('Network response was not ok');
+  if (!response.ok) throw new Error(t('errors.networkResponse'));
   
   const contentLength = options.fileSize || Number(response.headers.get('Content-Length')) || 0;
   
@@ -109,7 +109,7 @@ const processFileWithProgress = async (url: string, options: {
   
   // For larger files, use streaming to avoid memory issues and show progress
   const reader = response.body?.getReader();
-  if (!reader) throw new Error('Failed to get reader from response');
+  if (!reader) throw new Error(t('errors.responseReader'));
   let receivedLength = 0;
   let startTime = Date.now();
   let lastUpdateTime = startTime;
@@ -204,7 +204,7 @@ const viewFile = async (file: FileSystemItem) => {
               <body>
                 <audio controls autoplay class='content'>
                   <source src='${file.url}' type='audio/${fileExt}'>
-                  Your browser does not support the audio tag.
+                  ${t('netdisk.videoNotSupported')}
                 </audio>
               </body>
             </html>
@@ -217,7 +217,7 @@ const viewFile = async (file: FileSystemItem) => {
     }
     // For smaller files or non-streamable types, use the progress-based loading and blob
     progress.show = true;
-    progress.operation = 'Loading';
+    progress.operation = t('common.loading');
     progress.value = 0;
     progress.speed = t('netdisk.calculating');
     progress.eta = t('netdisk.calculating');
@@ -267,7 +267,7 @@ const viewFile = async (file: FileSystemItem) => {
             <body>
               <audio controls autoplay class='content'>
                 <source src='${blobUrl}' type='audio/${fileExt}'>
-                Your browser does not support the audio tag.
+                ${t('netdisk.videoNotSupported')}
               </audio>
             </body>
           </html>
@@ -279,7 +279,7 @@ const viewFile = async (file: FileSystemItem) => {
     progress.show = false;
   } catch (error) {
     console.error('Error viewing file:', error);
-    alert('Failed to view file. Please try again.');
+    alert(t('netdisk.viewFailed'));
     progress.show = false;
   }
 };
@@ -346,7 +346,7 @@ const fetchDirectoryContents = async (path: string, baseUrl: string) => {
     retryCount.value = 0;
   } catch (err: any) {
     console.error('Failed to load directory contents:', err);
-    error.value = err.message || 'Failed to load directory contents';
+    error.value = err.message || t('netdisk.loadFailed');
     
     // Retry logic
     if (retryCount.value < MAX_RETRIES) {
@@ -406,7 +406,7 @@ const loadSharedFile = async () => {
         directoryHistory.value = [rootPath.value];
         
         const pathParts = rootPath.value.split('/');
-        rootDirectoryName.value = pathParts[pathParts.length - 1] || 'Root';
+        rootDirectoryName.value = pathParts[pathParts.length - 1] || t('netdisk.root');
         
         file.url = `${file.url}/netd/${encodeURIComponent(file.path)}`;
         directoryContents.value = [file];
@@ -414,7 +414,7 @@ const loadSharedFile = async () => {
       
       retryCount.value = 0;
     } else {
-      error.value = 'File not found.';
+      error.value = t('netdisk.fileNotFound');
       
       if (retryCount.value < MAX_RETRIES) {
         retryCount.value++;
@@ -424,7 +424,7 @@ const loadSharedFile = async () => {
     }
   } catch (err: any) {
     console.error('Failed to load shared file:', err);
-    error.value = err.message || 'Failed to load shared file';
+    error.value = err.message || t('netdisk.sharedFileFailed');
     
     if (retryCount.value < MAX_RETRIES) {
       retryCount.value++;
@@ -468,7 +468,7 @@ onMounted(() => {
     <!-- Loading indicator -->
     <div v-if='loading' class='loading'>
       <div class='loading-spinner'></div>
-      <p>Loading... {{ retryCount > 0 ? `(Retry ${retryCount}/${MAX_RETRIES})` : '' }}</p>
+      <p>{{ $t('common.loading') }} {{ retryCount > 0 ? $t('netdisk.retryCount', { count: retryCount, max: MAX_RETRIES }) : '' }}</p>
     </div>
 
     <!-- Error message -->

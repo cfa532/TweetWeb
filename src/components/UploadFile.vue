@@ -140,7 +140,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
                 try {
                     const uploadUrl = upload.url; // Get the final upload URL from tus
                     if (!uploadUrl) {
-                        throw new Error('Upload URL is missing after successful upload.');
+                        throw new Error(t('netdisk.uploadUrlMissing'));
                     }
 
                     const registerResponse = await fetch(`${tusServerUrl}/files/register`, {
@@ -157,7 +157,7 @@ async function uploadFileWithTus(file: File, index: number = 0): Promise<string>
 
                     if (!registerResponse.ok) {
                         const errorText = await registerResponse.text();
-                        throw new Error(`File registration failed: ${registerResponse.status} - ${errorText}`);
+                        throw new Error(t('netdisk.registrationFailed', { status: registerResponse.status, error: errorText }));
                     }
 
                     const registerData = await registerResponse.json();
@@ -337,7 +337,7 @@ function removeFile(f: File) {
 
     <div style="background-color:aliceblue;">
             <div class="card-header d-flex align-items-center">
-                <input v-model="isResumableUpload" type="checkbox" checked>&nbsp;Enable resumable uploads</input>
+                <input v-model="isResumableUpload" type="checkbox" checked>&nbsp;{{ $t('netdisk.resumable') }}</input>
                 <span @click='router.push({name: "netdisk"})' class='breadcrumb-link'>{{ $t('userActions.netdisk') }}</span>
                 <span @click='router.push({name: "main"})' class='breadcrumb-link'>{{ $t('netdisk.home') }}</span>
             </div>

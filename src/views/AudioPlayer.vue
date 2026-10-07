@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import { ref, onUnmounted } from 'vue';
 import type { PropType } from 'vue';
+
+const { t } = useI18n();
 
 const props = defineProps({
     media: { type: Object as PropType<MimeiFileType>, required: true },
@@ -88,10 +91,10 @@ onUnmounted(() => {
         </div>
 
         <div class="audio-body">
-            <div class="audio-filename">{{ props.media.fileName || 'Audio' }}</div>
+            <div class="audio-filename">{{ props.media.fileName || t('cid.audio') }}</div>
 
             <div class="audio-controls">
-                <button class="play-btn" @click="togglePlay" :disabled="hasError">
+                <button class="play-btn" :aria-label="isPlaying ? t('media.pause') : t('media.play')" @click="togglePlay" :disabled="hasError">
                     <svg v-if="isLoading" class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                         <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/>
                         <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="round"/>
@@ -118,7 +121,7 @@ onUnmounted(() => {
                     />
                     <div class="audio-times">
                         <span>{{ formatTime(currentTime) }}</span>
-                        <span>{{ hasError ? 'Error' : formatTime(duration) }}</span>
+                        <span>{{ hasError ? t('common.error') : formatTime(duration) }}</span>
                     </div>
                 </div>
             </div>

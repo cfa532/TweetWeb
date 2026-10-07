@@ -121,7 +121,7 @@ async function onToggleFollow(event: Event) {
   <div v-else-if="user" class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
     <!-- User Avatar -->
     <div class="avatar me-2">
-      <UserAvatar :user="user" alt="User Avatar" class="rounded-circle" />
+      <UserAvatar :user="user" :alt="$t('media.userAvatar')" class="rounded-circle" />
     </div>
 
     <!-- User Info -->

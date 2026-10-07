@@ -129,8 +129,8 @@ function openDetailView() {
   <div class='tweet-header d-flex'>
     <!-- User Avatar -->
     <div :class="['avatar', 'me-2', 'author-avatar', { 'comment-avatar': isComment }]">
-      <UserAvatar v-if='headerAuthor' :user='headerAuthor' alt='User Avatar' class='rounded-circle' @click.stop='openUserPage(headerAuthor.mid)' @error='handleAvatarError' />
-      <img v-else :src='avatarSrc(undefined)' alt='User Avatar' class='rounded-circle' @error='handleFallbackAvatarError' />
+      <UserAvatar v-if='headerAuthor' :user='headerAuthor' :alt="$t('media.userAvatar')" class='rounded-circle' @click.stop='openUserPage(headerAuthor.mid)' @error='handleAvatarError' />
+      <img v-else :src='avatarSrc(undefined)' :alt="$t('media.userAvatar')" class='rounded-circle' @error='handleFallbackAvatarError' />
     </div>
     <!-- User Info -->
     <div class='user-info flex-grow-1' @click.stop.prevent='openDetailView'>

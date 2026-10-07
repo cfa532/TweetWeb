@@ -224,7 +224,7 @@ function createVideoPlaceholder(): string {
         @drop="onDrop"
     >
         <div style="position: absolute; display: flex; top: -5px; right: -5px; z-index: 20;">
-            <button @click="cancel" title="Close" class="btn-reset" type="button">
+            <button @click="cancel" :title="$t('common.close')" class="btn-reset" type="button">
             <svg style="width:20px; height:20px;">
                 <circle cx="10" cy="10" r="10" stroke="black" stroke-width="0" fill="#d14e4e" />
                 <line x1="5" y1="5" x2="15" y2="15" style="stroke:#fff;stroke-width:2"></line>

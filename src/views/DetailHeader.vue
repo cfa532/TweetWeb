@@ -270,9 +270,9 @@ watch(
     <div class='d-flex justify-content-between align-items-center' style='width: 100%'>
       <div class='d-flex align-items-center'>
         <div class='avatar me-2'>
-          <UserAvatar v-if='headerAuthor' :user='headerAuthor' alt='User Avatar' class='rounded-circle'
+          <UserAvatar v-if='headerAuthor' :user='headerAuthor' :alt="$t('media.userAvatar')" class='rounded-circle'
             @click.stop='openUserPage(headerAuthor.mid)' />
-          <img v-else :src='avatarSrc(undefined)' alt='User Avatar' class='rounded-circle placeholder-avatar'
+          <img v-else :src='avatarSrc(undefined)' :alt="$t('media.userAvatar')" class='rounded-circle placeholder-avatar'
             @error='handleFallbackAvatarError' />
         </div>
         <div class='user-info flex-grow-1'>

@@ -32,7 +32,7 @@ function thumbnail() {
 <template>
     <div class="postbox_media_photo_wrapper" :style="{position: 'relative'}">
         <div style="position: absolute; display: flex; top: -5px; right: -20px;">
-            <button @click='emit("linkRemoved")' title="Close" class="btn-reset" type="button">
+            <button @click='emit("linkRemoved")' :title="$t('common.close')" class="btn-reset" type="button">
             <svg style="width:20px; height:20px;">
                 <circle cx="10" cy="10" r="10" stroke="black" stroke-width="0" fill="#ee8855" />
                 <line x1="5" y1="5" x2="15" y2="15" style="stroke:#fff;stroke-width:2"></line>
@@ -40,7 +40,7 @@ function thumbnail() {
             </svg>
             </button>
         </div>
-        <img :src="imageUrl" alt="Thumbnail" width="120" height="120" />
+        <img :src="imageUrl" :alt="$t('media.thumbnail')" width="120" height="120" />
         <div style="font-size:smaller; overflow-wrap: break-word;">{{caption}}</div>
     </div>
 </template>

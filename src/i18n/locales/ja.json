@@ -16,7 +16,10 @@
     "ok": "OK",
     "done": "完了",
     "connectionTimeout": "接続がタイムアウトしました。もう一度お試しください。",
-    "operationFailed": "問題が発生しました。もう一度お試しください。"
+    "operationFailed": "問題が発生しました。もう一度お試しください。",
+    "error": "エラー",
+    "notice": "お知らせ",
+    "message": "メッセージ"
   },
   "auth": {
     "login": "ログイン",
@@ -174,7 +177,8 @@
     "fileTooLarge": "ファイル {name} が大きすぎます。最大サイズは4GBです。",
     "networkError": "{name} のアップロード中にネットワークエラー",
     "uploadTimeout": "{name} のアップロードがタイムアウト",
-    "videoProcessingFailed": "{name} の動画処理に失敗しました"
+    "videoProcessingFailed": "{name} の動画処理に失敗しました",
+    "fileTooLargeDetail": "ファイル{name}が大きすぎます。{error}"
   },
   "download": {
     "downloadApp": "アプリをダウンロードしてより良い体験を",
@@ -222,7 +226,14 @@
     "descriptionPlaceholder": "ファイルの説明を追加...",
     "calculating": "計算中...",
     "remaining": "残り",
-    "videoNotSupported": "お使いのブラウザはこの動画/音声形式に対応していません。"
+    "videoNotSupported": "お使いのブラウザはこの動画/音声形式に対応していません。",
+    "resumable": "再開可能なアップロードを有効にする",
+    "viewFailed": "ファイルを表示できませんでした。もう一度お試しください。",
+    "fileNotFound": "ファイルが見つかりません。",
+    "sharedFileFailed": "共有ファイルを読み込めませんでした",
+    "retryCount": "再試行 {count}/{max}",
+    "uploadUrlMissing": "アップロードは完了しましたが、URL がありません。",
+    "registrationFailed": "ファイルの登録に失敗しました：{status} - {error}"
   },
   "cid": {
     "fileName": "ファイル名",
@@ -236,7 +247,8 @@
     "audio": "音声",
     "unknown": "不明",
     "addMimei": "mimeiを追加",
-    "fillCidFields": "保存する前にすべてのCIDフィールドを入力してください。"
+    "fillCidFields": "保存する前にすべてのCIDフィールドを入力してください。",
+    "invalid": "「{name}」の CID が無効です。有効な Mimei または IPFS ID を指定してください"
   },
   "empty": {
     "noItems": "アイテムが見つかりません"
@@ -254,5 +266,67 @@
     "choose": "選択",
     "uploadSuccess": "アバターが更新されました",
     "uploadFailed": "アバターのアップロードに失敗しました"
+  },
+  "media": {
+    "userAvatar": "ユーザーのアバター",
+    "appIcon": "アプリアイコン",
+    "logo": "ロゴ",
+    "thumbnail": "サムネイル",
+    "thumbnailNumber": "サムネイル{n}",
+    "previous": "前のメディア",
+    "next": "次のメディア",
+    "empty": "表示するメディアがありません",
+    "videoError": "動画の再生エラー",
+    "unsupportedVideo": "この動画形式はブラウザーでサポートされていない可能性があります",
+    "clickToPlay": "クリックして動画を再生",
+    "unmute": "動画のミュートを解除",
+    "mute": "動画をミュート",
+    "fullscreen": "全画面表示",
+    "play": "再生",
+    "pause": "一時停止",
+    "previousTrack": "前の曲",
+    "nextTrack": "次の曲"
+  },
+  "package": {
+    "upload": "アプリパッケージをアップロード",
+    "mini": "ミニ版",
+    "uploaded": "アプリパッケージの mimei：{mid}",
+    "maxSize": "ファイルサイズの上限を超えています"
+  },
+  "request": {
+    "title": "リクエストを送信",
+    "defaultMessage": "アカウントの削除をお願いします。",
+    "submitting": "送信中…",
+    "submit": "リクエストを送信",
+    "success": "リクエストを送信しました！",
+    "error": "リクエストの送信エラー：{error}"
+  },
+  "errors": {
+    "notLoggedIn": "ログインしていません",
+    "usernameRequired": "ユーザー名を入力してください",
+    "userNotFound": "ユーザーが見つかりません。ユーザー名を確認してください。",
+    "userDataFailed": "ユーザー情報を取得できませんでした。もう一度お試しください。",
+    "authenticationFailed": "認証に失敗しました。ログイン情報を確認してください。",
+    "noServer": "接続できるサーバーがありません。しばらくしてからお試しください。",
+    "loginRetriesFailed": "複数回ログインを試みましたが失敗しました。しばらくしてからお試しください。",
+    "loginToFollow": "フォロー状態を変更するにはログインが必要です",
+    "deleteUnauthorized": "このツイートを削除する権限がありません",
+    "editUnauthorized": "このツイートを編集する権限がありません",
+    "commentDeleteUnauthorized": "このコメントを削除する権限がありません",
+    "authorNotFound": "ツイートの投稿者が見つかりません",
+    "parentNotFound": "親ツイートが見つかりません",
+    "parentAuthorNotFound": "親ツイートの投稿者が見つかりません",
+    "resolveAuthor": "ツイートの投稿者を取得できませんでした",
+    "writableHost": "書き込み先のホストが設定されていません",
+    "agentLogin": "エージェントトークンを生成するにはログインが必要です",
+    "agentKeyUpdate": "エージェントの公開鍵を更新できませんでした",
+    "commentEditUnsupported": "バックエンドが投稿者と保存先の個別ルーティングに対応するまで、このコメントは編集できません",
+    "attachmentsFailed": "添付ファイルをアップロードできませんでした",
+    "tweetNoResponse": "ツイートのアップロードに失敗しました：サーバーから応答がありません",
+    "updateNoResponse": "ツイートの更新に失敗しました：サーバーから応答がありません",
+    "uploadUnknown": "ツイートのアップロード中に不明なエラーが発生しました",
+    "serverStatus": "サーバーへのリクエストに失敗しました：{status}",
+    "networkResponse": "ネットワーク応答が正常ではありません",
+    "responseReader": "応答を読み取れませんでした"
   }
 }

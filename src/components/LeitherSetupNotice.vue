@@ -4,14 +4,15 @@ import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import leitherSetupNoticeEn from '@/content/leither-setup-notice.en.md?raw'
 import leitherSetupNoticeZh from '@/content/leither-setup-notice.zh.md?raw'
+import leitherSetupNoticeJa from '@/content/leither-setup-notice.ja.md?raw'
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 
 function parseMarkdownNotice(raw: string): { title: string; htmlBody: string } {
   const normalized = raw.replace(/\r\n/g, '\n').trimStart()
   const h1Match = normalized.match(/^#\s+(.+?)\s*$/m)
   if (!h1Match) {
-    return { title: 'Notice', htmlBody: marked.parse(normalized) as string }
+    return { title: t('common.notice'), htmlBody: marked.parse(normalized) as string }
   }
 
   const title = h1Match[1].trim()
@@ -22,7 +23,7 @@ function parseMarkdownNotice(raw: string): { title: string; htmlBody: string } {
 
 const notice = computed(() => {
   const isChinese = locale.value?.toLowerCase().startsWith('zh')
-  const raw = isChinese ? leitherSetupNoticeZh : leitherSetupNoticeEn
+  const raw = isChinese ? leitherSetupNoticeZh : locale.value?.startsWith('ja') ? leitherSetupNoticeJa : leitherSetupNoticeEn
   return parseMarkdownNotice(raw)
 })
 </script>
