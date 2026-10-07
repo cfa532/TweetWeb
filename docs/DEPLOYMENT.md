@@ -1,7 +1,11 @@
 # TweetWeb Publication and Deployment
 
-This is the canonical production release procedure for TweetWeb. A release is
-complete only after the same `dist` build has been published to both targets:
+This is the canonical production release procedure for TweetWeb. Every release
+must upload both the newly compiled TweetWeb `dist` assets and all current
+production Go sources from `TweetBackendApp` to `/home/pi/demo/tweet1/` on gen8,
+verify their hashes, and then run `tweet1.sh`. Backend upload is mandatory even
+when the requested change was only in TweetWeb. A release is complete only after
+the same `dist` build has been published to both targets:
 
 1. the Leither `tweet1` app on gen8; and
 2. the `dtweet-deeplink` Cloudflare Worker asset binding.
@@ -29,8 +33,8 @@ For a browser-domain replacement, use the separate
   ```
 
 - Ensure Wrangler is authenticated for the `dtweet.com` Cloudflare account.
-- Keep the sibling `TweetBackendApp` repository next to `TweetWeb`; backend
-  MApp scripts are copied from there when a release includes backend changes.
+- Keep the sibling `TweetBackendApp` repository next to `TweetWeb`; all
+  production Go sources are copied from there for every release.
 - Keep the sibling `Tweet-iOS` repository next to `TweetWeb`; the Worker lives
   at `../Tweet-iOS/cloudflare/dtweet-worker` and reads this repository's `dist`
   directory.
@@ -75,7 +79,7 @@ replace one whole directory with another project's files:
 | TweetBackendApp production Go sources (release) | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
 | TweetBackendApp production Go sources (debug) | `/home/pi/demo/twbe/` | `/home/pi/demo/twbe.sh` |
 
-## 2. Publish Backend Changes First (When Applicable)
+## 2. Prepare the Backend Sources
 
 Pushing or committing `TweetBackendApp` does not update either Leither app.
 Production `.go` sources live in the `TweetBackendApp` repository root.
@@ -94,8 +98,9 @@ Exclude `*_test.go`, `go.mod`, `go.sum`, documentation, local tooling and signin
 keys. Remove superseded backend source files from the package after backing them
 up; retain browser JavaScript assets such as `hprose.js` and `index_entry.js`.
 
-For example, from TweetWeb, publish the debug backend (use `tweet1` and
-`tweet1.sh` for release):
+For a separate debug-backend publication, use the following commands. For a
+release, continue to steps 3 and 4 to upload both the backend and web build
+before running `tweet1.sh`:
 
 ```bash
 rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
@@ -121,9 +126,9 @@ Do not republish from those nodes, or synchronize/migrate user data as part of a
 application deployment. Never roll back to a database-only reader once File
 objects exist.
 
-Complete backend publication before building TweetWeb. When both backend and
-web assets change, publish again after copying the generated web files. The Go
-runtime details are maintained in `TweetBackendApp/README.md`.
+For a release, publish once after both the backend sources and generated web
+files have been uploaded and verified. The Go runtime details are maintained
+in `TweetBackendApp/README.md`.
 
 ## 3. Build Once
 
@@ -140,12 +145,16 @@ output.
 
 ## 4. Publish the Leither App
 
-Copy the generated entry files and static dependencies into the matching
-package on gen8: `tweet1` for release, `twbe` for debug. The example below is
+Copy all current production backend sources, generated entry files, and static
+dependencies into the matching package on gen8: `tweet1` for release, `twbe`
+for debug. The example below is
 release; for debug use its saved output, `/home/pi/demo/twbe/` and `twbe.sh`.
 Never overwrite one environment with the other environment's web bundle:
 
 ```bash
+rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
+  --exclude='*_test.go' --include='*.go' --exclude='*' \
+  ../TweetBackendApp/ "pi@$GEN8_IP:/home/pi/demo/tweet1/"
 scp -P 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' \
   dist/bootstrap.min.js \
   dist/gtag.js \
@@ -157,14 +166,33 @@ scp -P 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' \
   "pi@$GEN8_IP:/home/pi/demo/tweet1/"
 ```
 
-Publish the package with the existing server-side script:
+Compare SHA-256 hashes for every uploaded production Go file and all seven web
+assets against their local inputs. Inspect the remote source inventory as well:
+excluding tests or removed files from an upload does not remove older copies
+already on gen8. Resolve any package-content differences before publication,
+preserving existing download assets and keeping backups outside `tweet1/`.
+
+Only after both uploads and hash verification succeed, publish the package with
+the existing server-side script:
 
 ```bash
-ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'cd /home/pi/demo && ./tweet1.sh'
+ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'cd /home/pi/demo && bash -e ./tweet1.sh'
 ```
 
-The command must finish with `APP published successfully` and report a new
-backup/version number.
+Check the upload, backup, and MiMei publication results as well as the final
+`APP published successfully` message and new backup/version number. The script
+does not enable failure checking itself; `bash -e` stops it if a command fails.
+Its output can include signing material, so do not paste unfiltered publisher
+logs into chats or release records.
+
+Verify the published bundle and backend through the new numbered version and
+then `last`, including the backend health checks in step 2. The upload-time
+`Last` line describes the previous backup; it is not evidence that the uploaded
+files are old. Conversely, a new backup number alone does not prove that `last`
+serves the new code. Repeated regression to local version `1396` was recorded
+on October 6 after successful publications; its cause remains unresolved.
+Report any recurrence instead of treating another publication or temporary
+synchronization as a fix.
 
 ## 5. Deploy the Cloudflare Worker and Assets (Release Only)
 
@@ -361,13 +389,15 @@ Restoring `.env` does not alter already-built or deployed assets.
       `HostKeyAlias`; no volatile IP was saved as permanent configuration.
 - [ ] Backend packages retain the intended File-capable Go revisions;
       no legacy JavaScript backend was introduced.
-- [ ] Changed Go files were hash-checked and published from the correct gen8
-      package with its existing publisher script.
+- [ ] All current production Go sources were uploaded for this release and
+      their hashes matched the local `TweetBackendApp` files.
 - [ ] Numbered and `last` health responses advertise both storage formats on
       gen8 and serving/root nodes; File tweet and comment reads succeed.
 - [ ] `npm run build` completed successfully.
-- [ ] The seven generated assets were copied to gen8.
-- [ ] `tweet1.sh` published a new Leither app version.
+- [ ] The seven generated assets were copied to gen8 and their hashes matched
+      the same local `dist` build used for Cloudflare.
+- [ ] After both uploads were verified, `bash -e ./tweet1.sh` published a new
+      Leither app version; numbered and `last` responses serve the intended code.
 - [ ] Wrangler deployed a new Worker version with all three routes.
 - [ ] The legacy browser-fallback zone rule is disabled.
 - [ ] Public asset hashes match `dist/index_entry.js`.

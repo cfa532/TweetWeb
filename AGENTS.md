@@ -1,6 +1,7 @@
 # Repository Instructions
 
 - Before connecting to gen8, run `nslookup gen8.leither.uk` and use the freshly resolved IP for the connection. Do not try SSH first or reuse an IP from an earlier session. For SSH/SCP on port 220, preserve host-key verification with `HostKeyAlias=[gen8.leither.uk]:220` when connecting by IP.
+- Every release publication must build TweetWeb, upload both its compiled `dist` assets and all current production Go sources from `TweetBackendApp` to `/home/pi/demo/tweet1/` on gen8, verify the uploaded file hashes, and then run `/home/pi/demo/tweet1.sh` from `/home/pi/demo` with `bash -e`. Backend upload is mandatory for every release. Exclude tests, local tooling, module files, documentation, and signing keys. Follow `docs/DEPLOYMENT.md`, including publishing the same web build to Cloudflare and verifying the new numbered version and `last`; a final success message alone does not establish that the current code is served.
 
 - Before changing code, consider multiple plausible fixes and choose the one with the smallest coherent scope.
 - Prefer removing or simplifying conflicting logic before adding new state, variables, flags, or branches. Minus first, addition second.

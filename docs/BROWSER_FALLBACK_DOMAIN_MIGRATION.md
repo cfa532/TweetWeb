@@ -465,6 +465,26 @@ No automated tests were run. No Leither restart was required.
   `872b0f5cb7bb1aa2ba05f367691625a56f377ae8a3d4e7627d71c562c315655e`.
   Browser redirects and association-file responses were verified again.
 
+### Debug redeployment on October 6
+
+- Built the web app with debug AppID `d4lRyhABgqOnqY4bURSm_T-4FZ4` and default
+  following `6IQc_t22JUub1TEgDP9Fo_Boosm`, using environment overrides and a
+  separate output directory. The build and TypeScript check passed. `.env`,
+  release `dist`, the release package, and Cloudflare were left unchanged.
+- gen8 initially reported local debug `1659` while the network advertised
+  `1661`; it was synchronized before backup and publication. The recurring
+  local-version regression remains unresolved.
+- Verified existing debug Go sources against the synchronized published
+  package, then preserved those sources and their existing creation policy.
+  Backup: `/home/pi/demo/deploy-backups/debug-ww33-world-20261006-090155/`.
+- Copied and hash-checked seven debug web assets and published debug version
+  `1663`. Both `1663` and `last` return `domain: "t1.ww33.world"` and the
+  existing dual-format health response on gen8 and av1 after synchronization.
+- Debug bundle SHA-256 matches locally and in the published packages on both
+  nodes: `1219ad064cf771b5452c31e5584e424a1c1ccaaf1c56aa9f68c3d1d92c1485ae`.
+
+No automated tests were run. No service restart was required.
+
 ## Completed `w333.space` Default-Domain Switch
 
 Applied September 15, 2026, in nginx → binding → Worker → Go backend order:
