@@ -321,14 +321,19 @@ through the tweet page's inline composer.
 
 The following endpoints do NOT require authorization:
 - `/convert-video` - Video conversion to HLS
+- `/convert-video/resumable` - Convert a completed resumable tweet-video upload
 - `/convert-video/status/:jobId` - Video conversion status
+- `POST /upload` with TUS metadata `uploadType=tweet-video` - Resumable input for public video conversion
 - `/process-zip` - ZIP file processing
 - `/process-zip/status/:jobId` - ZIP processing status
 - `/extract-tar` - Tar file extraction
 - `/netd/*` - File access paths
 - `/files/register` - File registration
 
-All other endpoints require the `AUTHORIZED_USERNAME` to be provided via query params, request body, or headers.
+Ordinary drive uploads to `POST /upload` still require `AUTHORIZED_USERNAME`
+in TUS metadata. Existing-upload `PATCH` and `HEAD` requests do not repeat the
+username check. Other protected endpoints accept the username via query params,
+request body, or headers.
 
 ## Temporary Directory Cleanup
 

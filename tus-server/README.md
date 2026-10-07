@@ -33,7 +33,9 @@ npm start
 
 ### Environment Variables
 
-Create a `.env` file:
+Copy `.env.example` to `.env` and set the service port. For private-drive
+uploads and other username-protected routes, also set `AUTHORIZED_USERNAME`
+to the exact dTweet username allowed to use them:
 
 ```env
 PORT=3000
@@ -42,6 +44,13 @@ NET_DISK=/path/to/your/network/disk
 ```
 
 See [Setup Guide - Environment Configuration](../docs/SETUP.md#environment-configuration) for complete configuration options.
+
+`AUTHORIZED_USERNAME` is not required for tweet-video conversion. tus-server is
+an optional, separately installed package: users can publish tweets and upload
+attachments through the release app's `upload_ipfs` endpoint without it. When
+tus-server is configured but unavailable, rejects an upload, or fails conversion,
+TweetWeb falls back to uploading the original video through `upload_ipfs`.
+That fallback stores the original file without HLS conversion.
 
 ## Features
 

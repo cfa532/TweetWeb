@@ -98,6 +98,12 @@ Production files will be in the `dist/` directory.
 
 ## Backend Setup
 
+This section installs the optional, separate tus-server package for video
+processing and private-drive features. It is not required to publish tweets or
+upload attachments through the synchronized release app. Without tus-server,
+or if its upload/conversion fails, TweetWeb uploads the original video through
+the app's `upload_ipfs` endpoint without HLS conversion.
+
 ### 1. Navigate to TUS Server Directory
 
 ```bash
@@ -119,13 +125,18 @@ This will install:
 
 ### 3. Configure Environment
 
-Create a `.env` file in the `tus-server` directory:
+Copy `tus-server/.env.example` to `tus-server/.env`. Set `PORT` to an available
+port, allow client access through the firewall/router, and set the dTweet
+profile's `cloudDrivePort` to match. For private-drive uploads and other
+username-protected routes, set `AUTHORIZED_USERNAME` to the exact dTweet
+username allowed to use them. It is not required for tweet-video conversion.
+Restart tus-server after changing its environment.
 
 ```env
 # Server Configuration
 PORT=3000
 
-# Authorization (optional)
+# Required for private-drive access; not required for tweet-video conversion
 AUTHORIZED_USERNAME=admin
 
 # Network Disk Path (optional)
@@ -293,9 +304,8 @@ Create `.env` in `tus-server/` directory:
 PORT=3000
 NODE_ENV=development
 
-# Authorization
+# Required for private-drive access; not required for tweet-video conversion
 AUTHORIZED_USERNAME=admin
-AUTHORIZED_PASSWORD=your_secure_password
 
 # Network Disk
 NET_DISK=/path/to/network/disk

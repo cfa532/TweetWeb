@@ -469,14 +469,13 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
   
-  // For TUS upload requests (POST to /upload), extract username from metadata
+  // Tweet videos share the public conversion policy; drive uploads require the
+  // configured username. Parse all metadata before deciding, regardless of order.
   if (req.method === 'POST' && req.path === '/upload' && req.headers['upload-metadata']) {
     try {
       const metadataStr = req.headers['upload-metadata'];
-      console.log('Raw metadata:', metadataStr);
-      
       const metadataPairs = metadataStr.split(',');
-      let usernameFound = false;
+      const metadata = new Map();
       
       for (const pair of metadataPairs) {
         const parts = pair.split(' ');
@@ -485,28 +484,23 @@ function checkAuthorizedUser(req, res, next) {
         const key = parts[0];
         const encodedValue = parts[1];
         
-        if (key === 'username') {
-          usernameFound = true;
-          // Decode the base64 value
-          const username = Buffer.from(encodedValue, 'base64').toString('utf-8');
-          console.log('Username from TUS metadata:', username);
-          console.log('Expected username:', process.env.AUTHORIZED_USERNAME);
-          
-          if (username === process.env.AUTHORIZED_USERNAME) {
-            req.username = username;
-            return next();
-          } else {
-            console.log('Username mismatch');
-            // Return a plain text error for TUS client
-            return res.status(403).send('Authorization failed: Invalid username');
-          }
-        }
+        metadata.set(key, Buffer.from(encodedValue, 'base64').toString('utf-8'));
       }
-      
-      if (!usernameFound) {
-        console.log('No username found in metadata');
+
+      const username = metadata.get('username');
+      if (metadata.get('uploadType') === 'tweet-video') {
+        req.username = username;
+        return next();
+      }
+
+      if (!metadata.has('username')) {
         return res.status(403).send('Authorization failed: No username provided');
       }
+      if (username !== process.env.AUTHORIZED_USERNAME) {
+        return res.status(403).send('Authorization failed: Invalid username');
+      }
+      req.username = username;
+      return next();
     } catch (err) {
       console.error('Error parsing TUS metadata:', err);
       return res.status(400).send('Invalid metadata format');

@@ -219,50 +219,56 @@ async function uploadAttachedFiles(
         let backendVideoSize: number | undefined;
         let backendVideoAspectRatio: number | undefined;
 
-        if (!uploadAuthor.cloudDrivePort) {
-          // No backend HLS service configured: upload as a regular IPFS file
-          // regardless of size.
+        if (uploadAuthor.cloudDrivePort) {
+          try {
+            const cloudDrivePort = String(uploadAuthor.cloudDrivePort);
+            const rawWritableHost = await tweetStore.resolveWritableHostIp(uploadAuthor);
+            // Replace only the service port, preserving bracketed IPv6 hosts.
+            const uploadUrl = new URL(`http://${rawWritableHost}`);
+            uploadUrl.port = cloudDrivePort;
+            const baseUrl = uploadUrl.origin;
+
+            console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value} progressive=${progressiveVideo.value}`);
+
+            const serviceAvailable = await checkServiceAvailability(baseUrl);
+            if (!serviceAvailable) {
+              throw new Error(`Backend service at ${baseUrl} is not available (health check failed)`);
+            }
+
+            console.log(`[CLIENT-VIDEO-UPLOAD] backend service available at ${baseUrl}; starting resumable video upload`);
+
+            const videoResult = await retryUpload(
+              () => uploadVideo(
+                file,
+                baseUrl,
+                cloudDrivePort,
+                (progress) => { uploadProgress[i] = progress; },
+                noResample.value,
+                progressiveVideo.value,
+                uploadAuthor.username
+              ),
+              file.name
+            );
+
+            if (!videoResult.cid || videoResult.cid.trim() === '') {
+              throw new Error('Video upload failed: No CID returned from server');
+            }
+
+            cid = videoResult.cid;
+            backendVideoType = videoResult.mediaType || MEDIA_TYPES.VIDEO;
+            backendVideoSize = videoResult.size;
+            backendVideoAspectRatio = videoResult.aspectRatio;
+            uploadProgress[i] = 100;
+          } catch (error) {
+            // tus-server is optional. Its upload or conversion failure must not
+            // prevent publishing the original video through the release app.
+            console.warn('[CLIENT-VIDEO-UPLOAD] tus-server failed; uploading original video through IPFS:', error);
+          }
+        }
+
+        if (!cid) {
+          uploadProgress[i] = 0;
           cid = await retryUpload(() => uploadFileFromFile(file, i, uploadAuthor), file.name);
-        } else {
-          const cloudDrivePort = String(uploadAuthor.cloudDrivePort);
-          const rawWritableHost = await tweetStore.resolveWritableHostIp(uploadAuthor);
-          // Replace only the service port, preserving bracketed IPv6 hosts.
-          const uploadUrl = new URL(`http://${rawWritableHost}`);
-          uploadUrl.port = cloudDrivePort;
-          const baseUrl = uploadUrl.origin;
-
-          console.log(`[CLIENT-VIDEO-UPLOAD] editorRoute file="${file.name}" size=${(file.size / (1024 * 1024)).toFixed(2)}MB baseUrl=${baseUrl} cloudDrivePort=${cloudDrivePort} noResample=${noResample.value} progressive=${progressiveVideo.value}`);
-
-          const serviceAvailable = await checkServiceAvailability(baseUrl);
-          if (!serviceAvailable) {
-            throw new Error(`Backend service at ${baseUrl} is not available (health check failed)`);
-          }
-
-          console.log(`[CLIENT-VIDEO-UPLOAD] backend service available at ${baseUrl}; starting resumable video upload`);
-
-          const videoResult = await retryUpload(
-            () => uploadVideo(
-              file,
-              baseUrl,
-              cloudDrivePort,
-              (progress) => { uploadProgress[i] = progress; },
-              noResample.value,
-              progressiveVideo.value,
-              uploadAuthor.username
-            ),
-            file.name
-          );
-
-          cid = videoResult.cid;
-          backendVideoType = videoResult.mediaType || MEDIA_TYPES.VIDEO;
-          backendVideoSize = videoResult.size;
-          backendVideoAspectRatio = videoResult.aspectRatio;
-
-          if (!cid || cid.trim() === '') {
-            throw new Error('Video upload failed: No CID returned from server');
-          }
-
-          uploadProgress[i] = 100;
         }
         
         // Store backend-selected metadata for the attachment object.
