@@ -230,14 +230,18 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
 
     return fetchTweetWithSingleRetry(
         async (refreshProviderRoute) => {
-            // An original with no known serving node needs its own author route.
+            // Prefer the original's author route, but allow tweet-provider discovery
+            // when the author cannot be loaded.
             const resolvedAuthor = originalAuthorId && !readContext
-                ? await tweetStore.getUser(originalAuthorId, true)
+                ? await tweetStore.getUser(originalAuthorId, true).catch(error => {
+                    console.warn('[TweetDetail] Original author lookup failed; trying tweet providers:', error)
+                    return undefined
+                })
                 : undefined
 
             const original = await tweetStore.fetchTweet(
                 originalTweetId,
-                originalAuthorId,
+                readContext ? originalAuthorId : resolvedAuthor?.mid,
                 false,
                 true,
                 false,
@@ -288,13 +292,17 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
                 // Feed and comment navigation reuse the node serving the row.
                 // Only a cold detail load without that node resolves the author.
                 if (authorId.value && !readContext) {
-                    resolvedAuthor = await tweetStore.getUser(authorId.value, true)
-                    if (!resolvedAuthor) return null
+                    resolvedAuthor = await tweetStore.getUser(authorId.value, true).catch(error => {
+                        console.warn('[TweetDetail] Author lookup failed; trying tweet providers:', error)
+                        return undefined
+                    })
                 }
 
+                // Omit a failed author route so fetchTweet discovers the tweet's
+                // own providers instead of reusing an unproven cached author node.
                 const fetched = await tweetStore.fetchTweet(
                     tweetId.value,
-                    authorId.value,
+                    readContext ? authorId.value : resolvedAuthor?.mid,
                     false,
                     true,
                     false,
