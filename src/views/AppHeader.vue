@@ -333,10 +333,10 @@ watch(
             user.value = undefined
         }
         try {
-            // Use cache when available — racing provider IPs on every profile
-            // visit was wasteful. If the cached IP is dead, the avatar's
-            // @error handler force-refreshes to recover (see onAvatarError).
-            const u = await tweetStore.getUserFromRootHost(requestedId)
+            // Cached data paints immediately, but a restored route does not mean
+            // its statistics are current. Always read the profile on opening,
+            // including reloads on the root node where resync_user is skipped.
+            const u = await tweetStore.getUserFromRootHost(requestedId, true)
             if (userId.value !== requestedId) return
             user.value = u ?? syncPeek
         } catch (e) {
