@@ -640,9 +640,9 @@ async function recoverReloadedProfile(targetAuthorId: MimeiId) {
     recoveredProfileIds.add(targetAuthorId);
 
     try {
-        // Use the existing route when available. A cache miss performs the one
-        // user read needed to discover the access node before synchronization.
-        const currentUser = await tweetStore.getUser(targetAuthorId);
+        // Reload must resolve current provider IPs before recovery: session-cached
+        // routes may be stale. Share the header's concurrent forced user lookup.
+        const currentUser = await tweetStore.getUser(targetAuthorId, true);
         if (!currentUser) return;
         if (!shouldResyncUser(currentUser)) {
             console.log(`[UserPage] Skipping resync_user for ${targetAuthorId}: read/root nodes do not differ`);
