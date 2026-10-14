@@ -7,11 +7,7 @@
 
 import type ConnectionPoolManager from './connectionPool';
 
-/**
- * Thrown when a pooled RPC call exceeds its timeout.
- * Caught silently by the alert store — the raw IP/method detail is only
- * kept in the console; the UI should not surface network internals.
- */
+/** Keeps transport timeout details in the console and the UI message localized. */
 export class PoolTimeoutError extends Error {
   readonly isTimeout = true as const
   constructor(method: string, ip: string, ms: number) {
@@ -77,19 +73,20 @@ export function createPooledClient(ip: string, connectionPool: ConnectionPoolInt
             // Get the method from the actual client
             const method = (client as any)[prop];
             if (typeof method === 'function') {
-              // Race the RPC call against a timeout to guarantee connection release
-              // even if the underlying hprose call hangs indefinitely
-              const timeoutMs = customTimeout // match hprose client timeout (override via proxy.timeout)
-              const result = await Promise.race([
-                method.apply(client, args),
-                new Promise((_, reject) =>
-                  setTimeout(() => {
-                    const err = new PoolTimeoutError(String(prop), ip, timeoutMs)
-                    reject(err)
-                  }, timeoutMs)
-                )
-              ]);
-              return result;
+              // Hprose enforces client.timeout and closes its WebSocket before
+              // rejecting a timed-out call. Await that cleanup before releasing
+              // the connection: a separate timer can release it early, allowing
+              // the next RPC to reuse a socket Hprose is still about to close.
+              try {
+                return await method.apply(client, args);
+              } catch (error) {
+                // Preserve the timeout flag consumed by the editor and alerts,
+                // but only after Hprose has settled the underlying call.
+                if (error instanceof (window as any).TimeoutError) {
+                  throw new PoolTimeoutError(String(prop), ip, customTimeout);
+                }
+                throw error;
+              }
             }
             // If it's a property, return it
             return method;
