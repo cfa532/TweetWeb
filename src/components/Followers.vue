@@ -61,10 +61,14 @@ const loadNextBatch = async () => {
 
     // Start fetches FIRST so they're registered in _pendingUserFetches
     // before UserRow's onMounted runs and looks them up.
-    // Display-only rows can use persisted users without resolving a live RPC route.
-    // Match UserRow's cache lookup so cached users do not hold up the next batch.
+    // A persisted user has no route (providerIp/client are stripped), and UserRow
+    // resolves one on mount. Fetch every user without a live route here so those
+    // lookups stay inside this batch's gate instead of all firing as rows mount.
     const fetches = idsToLoad
-        .filter(id => !tweetStore.getCachedUserForDisplay(id))
+        .filter(id => {
+            const u = tweetStore.getCachedUserForDisplay(id)
+            return !(u?.providerIp && u?.client)
+        })
         .map(id => tweetStore.getUser(id).catch(() => undefined))
 
     // Reveal the rows now — UserRow placeholders mount and dedup with

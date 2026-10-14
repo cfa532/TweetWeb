@@ -59,7 +59,18 @@ watch(() => props.isFollowing, (value) => {
 }, { immediate: true })
 
 onMounted(async () => {
-    if (user.value) return // Already have cached data
+    // A persisted cache copy has no providerIp/client (stripped on write), so it
+    // is display data only; getUser() returns at once when a route is already live
+    // and otherwise resolves one, which the avatar hint reports as Base IP.
+    if (user.value) {
+        if (user.value.providerIp && user.value.client) return
+        try {
+            user.value = await tweetStore.getUser(props.userId) ?? user.value
+        } catch (error) {
+            console.error('Failed to resolve user route:', error)
+        }
+        return
+    }
     try {
         const userData = await Promise.race([
             tweetStore.getUser(props.userId),
