@@ -66,16 +66,18 @@ function updateMenuPermissions() {
         const editTarget = props.editTweet || props.tweet
         const isEditTargetAuthor = tweetStore.loginUser.mid === editTarget.authorId
         const isParentTweetAuthor = props.isComment && props.parentTweet && tweetStore.loginUser.mid === props.parentTweet.authorId
-        // update_tweet currently routes and authorizes by one user ID. A comment
-        // whose writer differs from its parent author needs separate storage-owner
-        // routing, which that API cannot express safely.
-        const hasSupportedEditRoute = !props.isComment
-          || props.parentTweet?.authorId === editTarget.authorId
 
         if (isAdmin || isTweetAuthor || isParentTweetAuthor) {
             canDelete.value = true
         }
-        if (hasSupportedEditRoute && (isAdmin || isEditTargetAuthor)) {
+        // Comments are never edited, only deleted (as on iOS): a comment is stored
+        // on its parent author's root node, but update_tweet routes and authorizes
+        // by one user ID (the writer's), so an edit would go to the wrong node.
+        // A detail page opened by a direct link gets no isComment prop, so the
+        // tweet itself decides: a comment has a parent and, unlike a quote tweet,
+        // quotes nothing.
+        const isCommentItem = props.isComment || (!!editTarget.parentTweetId && !editTarget.originalTweetId)
+        if (!isCommentItem && (isAdmin || isEditTargetAuthor)) {
             canEdit.value = true
         }
     }
@@ -205,11 +207,10 @@ function openEditor() {
   const target = props.editTweet || props.tweet
   // Top-level tweets live on their author's root node, which is also where
   // EditorModal uploads new files. Admin edits use the same editor and route
-  // uploads through the target author. Comments follow their parent author's
-  // routing contract and keep the existing content-only path here.
+  // uploads through the target author. Comments are never editable.
   const canEditAttachments = tweetStore.loginUser?.mid === target.authorId
     || tweetStore.loginUser?.username === 'admin'
-  if (!props.isComment && canEditAttachments) {
+  if (canEditAttachments) {
     attachmentEditTweet.value = target
     showAttachmentEditor.value = true
     return
@@ -237,9 +238,6 @@ async function submitEdit() {
   const target = props.editTweet || props.tweet
   isSubmittingEdit.value = true
   try {
-    if (props.isComment && props.parentTweet?.authorId !== target.authorId) {
-      throw new Error(t('errors.commentEditUnsupported'))
-    }
     await tweetStore.updateTweet(target.mid, editContent.value, target.authorId)
     target.content = editContent.value
     showEditor.value = false

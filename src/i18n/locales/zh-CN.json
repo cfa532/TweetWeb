@@ -320,7 +320,6 @@
     "writableHost": "尚未配置可写主机",
     "agentLogin": "请先登录再生成代理令牌",
     "agentKeyUpdate": "更新代理公钥失败",
-    "commentEditUnsupported": "后端尚不支持作者与存储所有者分开路由，暂时无法编辑此评论",
     "attachmentsFailed": "附件上传失败",
     "tweetNoResponse": "推文上传失败：服务器无响应",
     "updateNoResponse": "推文更新失败：服务器无响应",

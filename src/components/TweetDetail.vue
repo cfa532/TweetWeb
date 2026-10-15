@@ -1014,7 +1014,7 @@ function retryLoad() {
             </DetailHeader>
             <DetailHeader class="w-100" v-else :author="tweet.author ?? null"
                 :author-id="tweet.authorId" :timestamp="tweet.timestamp"
-                :exclude-tweet-id="tweet.mid"
+                :exclude-tweet-id="tweet.mid" :is-comment="isFromComment"
                 :tweet="isShowingTweetPlaceholder ? undefined : tweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
         </div>

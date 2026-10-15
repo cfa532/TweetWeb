@@ -320,7 +320,6 @@
     "writableHost": "Writable host not configured",
     "agentLogin": "Must be logged in to generate agent token",
     "agentKeyUpdate": "Failed to update agent public key",
-    "commentEditUnsupported": "This comment cannot be edited until the backend supports separate author and storage-owner routing",
     "attachmentsFailed": "Attachments uploading failed",
     "tweetNoResponse": "Tweet upload failed: No response from server",
     "updateNoResponse": "Tweet update failed: No response from server",
