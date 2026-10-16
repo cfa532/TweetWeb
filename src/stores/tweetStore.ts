@@ -2515,9 +2515,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     ? await raceGetTweet([readProvider])
                     : null
 
-                if (!raceResult && !fromDetailView) {
-                    // Non-detail callers may not have resolved the author first. Give
-                    // their entry/author routes the same bounded ordinary-read path.
+                if (!raceResult) {
+                    // The first read used one remembered route: a feed row's serving
+                    // node, a cached author route, or none at all. If that node no
+                    // longer serves the tweet, race the entry and author routes next.
+                    // A detail view handed a stale row route must not skip this and
+                    // go straight to the tweet's own providers, which can be empty
+                    // while the author still has a live node.
                     const entryIps = browserUsableProviderRoutes([this.lapi.hostIP], window.location.hostname)
                     const authorIps = authorId
                         ? await this.getProviderIps(authorId, v4Only, refreshProviderRoute)

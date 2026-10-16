@@ -250,6 +250,35 @@ describe('tweetStore public provider routing', () => {
     expect(getTweetRaces(store, tweetId)).toEqual([[staleAuthorIp], [tweetOwnIp]])
   })
 
+  it("tries the author's providers when a detail view's remembered row route is dead", async () => {
+    const store = useTweetStore()
+    const tweetId = 'detail-with-stale-row-route'
+    const authorId = 'author-with-live-node'
+    const staleRowIp = '220.0.0.1:8002'
+    const liveAuthorIp = '220.184.34.132:8002'
+
+    // The tweet itself has no usable provider; only the author still has a live node.
+    store.getProviderIps = vi.fn(async (mid: string) => (mid === authorId ? [staleRowIp, liveAuthorIp] : [])) as any
+    // fetchTweet reads winner.result as the get_tweet read itself: { result, ip }.
+    store.raceProviderIps = vi.fn(async (ips: string[]) =>
+      ips.includes(liveAuthorIp)
+        ? {
+          result: { result: { mid: tweetId, authorId, timestamp: 1, content: 'hi' }, ip: liveAuthorIp },
+          ip: liveAuthorIp,
+        }
+        : null,
+    ) as any
+
+    const tweet = await store.fetchTweet(tweetId, authorId, false, true, false, false, {
+      provider: staleRowIp,
+      author: { mid: authorId } as any,
+    })
+
+    expect(tweet?.mid).toBe(tweetId)
+    expect(getTweetRaces(store, tweetId)[0]).toEqual([staleRowIp])
+    expect(getTweetRaces(store, tweetId).flat()).toContain(liveAuthorIp)
+  })
+
   it('resolves the tweet mid directly when the caller has no author', async () => {
     const store = useTweetStore()
     const tweetId = 'tweet-without-author'
