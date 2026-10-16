@@ -610,7 +610,7 @@ user.client = createPooledClient(user.providerIp, this.lapi.connectionPool);
 ## Related Documentation
 
 - [Architecture Overview](ARCHITECTURE.md)
-- [Leither Connection Management](LEITHER_CONNECTION.md) - Server-side connection pooling
+- [Leither Connection Management](https://github.com/cfa532/Leither/blob/main/cfa532-docs/integrations/tweet/WEB_CONNECTION.md) - Server-side connection pooling
 - [API Documentation](API.md)
 - [Features Overview](FEATURES.md)
 

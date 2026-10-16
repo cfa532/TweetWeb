@@ -116,7 +116,7 @@ Check upload, backup and publication results; the script's final success message
 alone is insufficient. Verify `health` by the new numbered version, then `last`:
 `storageFormats` must contain both `database` and `tweet-file-v1`, and
 creation policy must match the intended package and the
-[canonical sync contract](../../TweetBackendApp/docs/LEITHER_DATA_AND_SYNC_CONTRACT.md).
+[canonical sync contract](https://github.com/cfa532/Leither/blob/main/cfa532-docs/integrations/tweet/DATA_AND_SYNC_CONTRACT.md).
 Current full backend releases report `creationFormat: "mixed"` with
 `creationFormats` for each object type. A domain-only deployment preserves the
 package’s existing policy; the October 6 record documents the release/debug
