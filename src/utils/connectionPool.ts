@@ -227,6 +227,10 @@ class ConnectionPoolManager {
   private createClient(ip: string): any {
     const client = window.hprose.Client.create("ws://" + ip + "/ws/", this.ayApi);
     client.timeout = 15000;
+    // Hprose's old socket close handler can reject a new invocation during
+    // reconnection. Close after each response (which detaches that handler)
+    // so pooled clients do not retain idle sockets across long video uploads.
+    client.keepAlive = false;
     return client;
   }
 

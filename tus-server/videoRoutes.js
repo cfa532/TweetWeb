@@ -26,9 +26,20 @@ const HLS_AUDIO_BITRATE_BPS = HLS_AUDIO_BITRATE * 1000;
 const HLS_CONVERSION_CUTOFF_MB = 50;
 // A progressive video is fetched and played back as one file rather than in
 // segments, so it is capped well below the 4GB HLS ceiling and its store step
-// gets a bounded budget instead of the multi-hour one the HLS path needs.
+// gets a shorter storage budget within the overall processing limit.
 const PROGRESSIVE_MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
 const PROGRESSIVE_STORE_TIMEOUT_MS = 20 * 60 * 1000;  // 20 minutes
+const VIDEO_PROCESSING_TIMEOUT_MS = 60 * 60 * 1000;
+
+// Conversion and storage share one budget, measured from job acceptance.
+function videoOperationTimeout(jobId, operationLimitMs = VIDEO_PROCESSING_TIMEOUT_MS) {
+  const job = processingJobs.get(jobId);
+  const remainingMs = job
+    ? job.startTime + VIDEO_PROCESSING_TIMEOUT_MS - Date.now()
+    : VIDEO_PROCESSING_TIMEOUT_MS;
+  if (remainingMs <= 0) throw new Error('Video processing exceeded 1 hour');
+  return Math.min(operationLimitMs, remainingMs);
+}
 
 function calculateVideoBitrateK(referenceResolution) {
   const resolution = Math.max(1, Number(referenceResolution) || 0);
@@ -124,12 +135,13 @@ function getNormalizedVideoCodec(sourceCodec, finalEncoder) {
   return 'h264';
 }
 
-async function logMediaProbe(label, filePath, logPrefix) {
+async function logMediaProbe(label, filePath, logPrefix, jobId) {
   try {
     const ffprobeCommand = `ffprobe -v error -print_format json -show_format -show_streams ${escapeShellArg(filePath)}`;
-    const result = await execAsync(ffprobeCommand, {
+    const result = await execAsync(`exec ${ffprobeCommand}`, {
       encoding: 'utf-8',
-      timeout: 30000,
+      timeout: videoOperationTimeout(jobId, 30000),
+      killSignal: 'SIGKILL',
       maxBuffer: 1024 * 1024
     });
     const metadata = JSON.parse(result.stdout);
@@ -183,8 +195,12 @@ async function executeWithProgressWithFallback(command, fallbackCommand, jobId, 
 }
 
 // Helper function to execute long-running commands with progress updates
-function executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize = 0, mediaDurationSec = 0) {
+function executeWithProgress(command, jobId, startProgress, endProgress, message, fileSize = 0, mediaDurationSec = 0, onProgress) {
   return new Promise((resolve, reject) => {
+    const operationLimitMs = fileSize < 10 * 1024 * 1024
+      ? 10 * 60 * 1000
+      : fileSize < 100 * 1024 * 1024 ? 30 * 60 * 1000 : VIDEO_PROCESSING_TIMEOUT_MS;
+    const timeoutMs = videoOperationTimeout(jobId, operationLimitMs);
     console.log(`[${jobId}] [PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
     const startTime = Date.now();
@@ -192,12 +208,11 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
     
     // Helper to update progress ensuring it never decreases (uses global safe helper with stage bounds)
     const updateProgress = (newProgress, progressMessage) => {
-      const boundedProgress = Math.min(newProgress, endProgress);
-      const finalProgress = updateProgressSafe(jobId, boundedProgress, progressMessage || message);
-      
-      // Update lastComputedProgress for this operation to track upward movement within this stage
-      if (finalProgress > lastComputedProgress) {
-        lastComputedProgress = finalProgress;
+      lastComputedProgress = Math.max(lastComputedProgress, Math.min(newProgress, endProgress));
+      if (onProgress) {
+        onProgress(lastComputedProgress, progressMessage || message);
+      } else {
+        updateProgressSafe(jobId, lastComputedProgress, progressMessage || message);
       }
     };
     
@@ -206,41 +221,21 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
       const minutes = Math.floor(elapsed / 60000);
       const seconds = Math.floor((elapsed % 60000) / 1000);
       
-      // Fallback to a simple elapsed-time heuristic only if we didn't parse progress from ffmpeg yet
-      const timeProgress = Math.min(elapsed / (5 * 60 * 1000), 1);
-      const heuristicProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
-      const currentProgress = Math.max(lastComputedProgress, heuristicProgress);
+      // Elapsed time is a heartbeat, not a measurement of completed media.
+      updateProgress(lastComputedProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
       
-      updateProgress(currentProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
-      
-      console.log(`[${jobId}] [PROGRESS] ${message}: ${currentProgress}% (${minutes}m ${seconds}s elapsed)`);
+      console.log(`[${jobId}] [PROGRESS] ${message}: ${lastComputedProgress}% (${minutes}m ${seconds}s elapsed)`);
     }, 5000); // Update progress every 5 seconds for better responsiveness
 
     // Spawn ffmpeg instead of exec to avoid large stdout buffering
-    const child = spawn('/bin/sh', ['-c', command], { stdio: ['ignore', 'ignore', 'pipe'] });
-
-    // Add dynamic timeout for FFmpeg commands based on file size
-    // For small files (<10MB): 10 minutes
-    // For medium files (10MB-100MB): 30 minutes  
-    // For large files (100MB-1GB): 2 hours
-    // For very large files (>1GB): 4 hours
-    let timeoutMs;
-    if (fileSize < 10 * 1024 * 1024) {
-      timeoutMs = 10 * 60 * 1000; // 10 minutes for small files
-    } else if (fileSize < 100 * 1024 * 1024) {
-      timeoutMs = 30 * 60 * 1000; // 30 minutes for medium files
-    } else if (fileSize < 1024 * 1024 * 1024) {
-      timeoutMs = 2 * 60 * 60 * 1000; // 2 hours for large files (1GB)
-    } else {
-      timeoutMs = 4 * 60 * 60 * 1000; // 4 hours for very large files (>1GB)
-    }
+    // Replace the shell so the timeout kills FFmpeg itself, and wait for exit
+    // before reporting failure or removing its input file.
+    const child = spawn('/bin/sh', ['-c', `exec ${command}`], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL'
+    });
     console.log(`[${jobId}] [TIMEOUT] File size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB, Timeout: ${timeoutMs / (60 * 1000)} minutes`);
-    const timeoutId = setTimeout(() => {
-      console.log(`[${jobId}] [TIMEOUT] FFmpeg command timed out after ${timeoutMs / 60000} minutes, killing process`);
-      child.kill('SIGKILL');
-      clearInterval(progressInterval);
-      reject(new Error(`FFmpeg command timed out after ${timeoutMs / 60000} minutes`));
-    }, timeoutMs);
 
     let stderrBuffer = '';
     child.stderr.on('data', (chunk) => {
@@ -271,21 +266,21 @@ function executeWithProgress(command, jobId, startProgress, endProgress, message
 
     child.on('error', (error) => {
       clearInterval(progressInterval);
-      clearTimeout(timeoutId); // Clear the timeout
       console.error(`[${jobId}] [PROGRESS] ${message} failed to start:`, error.message);
       reject(error);
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearInterval(progressInterval);
-      clearTimeout(timeoutId); // Clear the timeout
       if (code === 0) {
         // Ensure progress reaches at least the end of this stage
         updateProgress(endProgress, `${message} completed`);
         console.log(`[${jobId}] [PROGRESS] ${message} completed successfully`);
         resolve({ code, stderr: stderrBuffer });
       } else {
-        const err = new Error(`Command exited with code ${code}. Error details: ${stderrBuffer}`);
+        const err = new Error(signal === 'SIGKILL'
+          ? `Video conversion timeout after ${Math.round(timeoutMs / 60000)} minutes`
+          : `Command exited with code ${code}. Error details: ${stderrBuffer}`);
         console.error(`[${jobId}] [PROGRESS] ${message} failed:`, err.message);
         console.error(`[${jobId}] [FFMPEG] Full stderr output:`, stderrBuffer);
         reject(err);
@@ -424,56 +419,33 @@ async function executeLeitherCommand(command, requestId, timeoutMs = 6 * 60 * 60
 }
 
 // Helper function to execute Leither operations with progress updates
-function executeLeitherOperationWithProgress(command, jobId, startProgress, endProgress, message, timeoutMs = 6 * 60 * 60 * 1000) {
+function executeLeitherOperationWithProgress(command, jobId, startProgress, endProgress, message, timeoutMs = VIDEO_PROCESSING_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
+    timeoutMs = videoOperationTimeout(jobId, timeoutMs);
+    const leitherPath = getLeitherBinaryPath();
     console.log(`[${jobId}] [LEITHER-PROGRESS] Starting ${message} (${startProgress}% - ${endProgress}%)`);
     
     const startTime = Date.now();
-    let lastComputedProgress = startProgress;
-    
-    // Helper to update progress ensuring it never decreases (uses global safe helper with stage bounds)
-    const updateProgress = (newProgress, progressMessage) => {
-      const boundedProgress = Math.min(newProgress, endProgress);
-      const finalProgress = updateProgressSafe(jobId, boundedProgress, progressMessage || message);
-      
-      if (finalProgress > lastComputedProgress) {
-        lastComputedProgress = finalProgress;
-      }
-    };
-    
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime;
       const minutes = Math.floor(elapsed / 60000);
       const seconds = Math.floor((elapsed % 60000) / 1000);
       
-      // Update progress based on elapsed time (rough estimation)
-      const timeProgress = Math.min(elapsed / (10 * 60 * 1000), 1); // Assume 10 minutes max for Leither operations
-      const currentProgress = Math.floor(startProgress + (endProgress - startProgress) * timeProgress);
-      const finalProgress = Math.max(lastComputedProgress, currentProgress);
-      
-      updateProgress(finalProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
-      
-      console.log(`[${jobId}] [LEITHER-PROGRESS] ${message}: ${finalProgress}% (${minutes}m ${seconds}s elapsed)`);
+      // Storage has no measured percentage; completion advances this stage.
+      updateProgressSafe(jobId, startProgress, `${message} (${minutes}m ${seconds}s elapsed)`);
+      console.log(`[${jobId}] [LEITHER-PROGRESS] ${message} (${minutes}m ${seconds}s elapsed)`);
     }, 10000); // Update every 10 seconds for Leither operations
     
-    const leitherPath = getLeitherBinaryPath();
     console.log(`[${jobId}] [LEITHER] Executing command with path: ${leitherPath}`);
-    const fullCommand = `"${leitherPath}" ${command}`;
+    const fullCommand = `exec "${leitherPath}" ${command}`;
     console.log(`[${jobId}] [LEITHER] Full command: ${fullCommand}`);
-    let isResolved = false;
-    let timeoutId;
     
-    const child = exec(fullCommand, { 
+    exec(fullCommand, {
       maxBuffer: 1024 * 1024 * 100, // 100MB buffer
-      timeout: timeoutMs 
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL'
     }, (error, stdout, stderr) => {
       clearInterval(progressInterval);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      if (isResolved) return;
-      isResolved = true;
-      
       if (error) {
         console.error(`[${jobId}] [LEITHER-PROGRESS] ${message} failed:`, error.message);
         if (stderr) {
@@ -482,22 +454,12 @@ function executeLeitherOperationWithProgress(command, jobId, startProgress, endP
         reject(error);
       } else {
         // Ensure progress reaches at least the end of this stage
-        updateProgress(endProgress, `${message} completed`);
+        updateProgressSafe(jobId, endProgress, `${message} completed`);
         console.log(`[${jobId}] [LEITHER-PROGRESS] ${message} completed successfully`);
         const output = stdout.trim();
         resolve(output);
       }
     });
-    
-    // Setup timeout
-    timeoutId = setTimeout(() => {
-      if (!isResolved) {
-        isResolved = true;
-        clearInterval(progressInterval);
-        child.kill('SIGKILL');
-        reject(new Error(`${message} timeout after ${Math.round(timeoutMs / (60 * 1000))} minutes`));
-      }
-    }, timeoutMs);
   });
 }
 
@@ -1994,7 +1956,7 @@ async function processVideoUploadInternal(req, jobId) {
         return new Promise((resolve, reject) => {
           const ffprobeCommand = `ffprobe -v quiet -print_format json -show_format -show_streams ${escapeShellArg(uploadedFile.tempFilePath)}`;
           
-          execAsync(ffprobeCommand, { encoding: 'utf-8', timeout: 30000 })
+          execAsync(`exec ${ffprobeCommand}`, { encoding: 'utf-8', timeout: videoOperationTimeout(jobId, 30000), killSignal: 'SIGKILL' })
             .then(result => {
               if (!result.stdout) {
                 reject(new Error('No output from ffprobe'));
@@ -2401,7 +2363,7 @@ playlist.m3u8`;
           80,
           100,
           'Storing HLS stream...',
-          6 * 60 * 60 * 1000
+          VIDEO_PROCESSING_TIMEOUT_MS
         );
         const cid = extractCidFromLeitherOutput(cidOutput);
         if (!cid) {
@@ -2437,7 +2399,7 @@ playlist.m3u8`;
     console.log(`[${jobId}] [FFMPEG] Normalize command: ${ffmpegCmd}`);
     console.log(`[${jobId}] [FFMPEG] Running normalization command...`);
     await executeWithProgress(ffmpegCmd, jobId, 40, 60, 'Normalizing video...', uploadedFile.size, videoInfo && videoInfo.duration ? videoInfo.duration : 0);
-    await logMediaProbe('normalized.mp4', normalizedFilePath, `[${jobId}]`);
+    await logMediaProbe('normalized.mp4', normalizedFilePath, `[${jobId}]`, jobId);
     
     const normalizedFileSize = fs.statSync(normalizedFilePath).size;
     const normalizedFileSizeMB = normalizedFileSize / (1024 * 1024);
@@ -2729,6 +2691,9 @@ playlist.m3u8`;
       commands.forEach(command => {
         console.log(`[${jobId}] [FFMPEG] HLS command (${command.variant}): ${command.cmd}`);
       });
+      // Variants run concurrently: sum their completed shares instead of letting
+      // the variant assigned the later range advance the whole stage alone.
+      const variantProgress = commands.map(command => command.progressStart);
       await Promise.all(commands.map((command, index) =>
         executeWithProgress(
           command.cmd,
@@ -2737,7 +2702,15 @@ playlist.m3u8`;
           command.progressEnd,
           `Converting to ${command.variant} HLS...`,
           normalizedFileSize,
-          videoInfo && videoInfo.duration ? videoInfo.duration : 0
+          videoInfo && videoInfo.duration ? videoInfo.duration : 0,
+          (progress, message) => {
+            variantProgress[index] = progress;
+            const completedProgress = variantProgress.reduce(
+              (total, value, i) => total + value - commands[i].progressStart,
+              0
+            );
+            updateProgressSafe(jobId, Math.floor(60 + completedProgress), message);
+          }
         )
       ));
 
@@ -2770,7 +2743,7 @@ playlist.m3u8`;
         80,
         100,
         'Storing HLS stream...',
-        6 * 60 * 60 * 1000 // 6 hours for IPFS add
+        VIDEO_PROCESSING_TIMEOUT_MS
       );
       
       // Extract CID from output
@@ -2790,7 +2763,7 @@ playlist.m3u8`;
       }
       
       mediaType = 'hls_video';
-      outputSize = normalizedFileSize;
+      outputSize = getPathSizeSync(tempDir);
       console.log(`[${jobId}] [SUCCESS] HLS content uploaded to IPFS, CID: ${cid}`);
     }
     
@@ -3048,6 +3021,7 @@ async function processVideoUploadAsync(req, jobId) {
     
     // Process the video (reuse existing logic)
     const result = await processVideoUploadInternal(req, jobId);
+    videoOperationTimeout(jobId);
     
     console.log(`[${jobId}] Video processing completed, CID:`, result.cid);
     

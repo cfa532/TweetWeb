@@ -27,6 +27,9 @@ const divAttach = ref()
 const dropHere = ref()
 
 const filesUpload = ref<File[]>([])
+// A completed attachment belongs to the draft even if saving the tweet fails.
+// Key by the selected File so reordering preserves its uploaded reference.
+const completedAttachments = new WeakMap<File, MimeiFileType>()
 const uploadProgress = reactive<number[]>([])    // upload progress of each file
 const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
@@ -203,6 +206,13 @@ async function uploadAttachedFiles(
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     try {
+      const completed = completedAttachments.get(file);
+      if (completed) {
+        uploadProgress[i] = 100;
+        results.push({ status: 'fulfilled', value: completed });
+        continue;
+      }
+
       // Assign initial progress value
       uploadProgress[i] = 0;
 
@@ -296,6 +306,7 @@ async function uploadAttachedFiles(
         aspectRatio: aspectRatio
       } as MimeiFileType;
 
+      completedAttachments.set(file, fi);
       results.push({ status: 'fulfilled', value: fi });
 
     } catch (error) {
@@ -594,6 +605,7 @@ function dragLeave(e: DragEvent) {
 }
 
 function removeFile(f: File) {
+  completedAttachments.delete(f)
   // removed file from preview list
   var i = filesUpload.value.findIndex((e: File) => e == f)
   filesUpload.value.splice(i, 1)

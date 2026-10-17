@@ -223,6 +223,25 @@ export async function normalizeVideo(
   }
 }
 
+const VIDEO_PROCESSING_TIMEOUT_MS = 60 * 60 * 1000;
+const VIDEO_REQUEST_TIMEOUT_MS = 30_000;
+
+// Keep the timeout active through JSON decoding as well as response headers.
+async function fetchVideoJson(url: string, init: RequestInit = {}, timeoutMs = VIDEO_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const data = await response.json();
+    return { response, data };
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('Video service request timeout');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Upload a video in resumable chunks, then ask the service to convert it. */
 export async function uploadVideo(
   file: File,
@@ -322,12 +341,11 @@ export async function uploadVideo(
     for (const delay of [0, 1000, 3000, 5000]) {
       if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
       try {
-        const response = await fetch(videoUploadUrl, {
+        const { response, data: result } = await fetchVideoJson(videoUploadUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ uploadUrl: completedUploadUrl, noResample, progressive })
         });
-        const result = await response.json();
         if (!response.ok) throw new Error(result.message || `Upload handoff failed: ${response.status}`);
         uploadResult = result;
         handoffError = undefined;
@@ -375,17 +393,22 @@ export async function uploadVideo(
     return new Promise<VideoUploadResponse>((resolve, reject) => {
       let pollCount = 0;
       let consecutiveErrors = 0;
-      const deadline = Date.now() + (6 * 60 * 60 * 1000);
+      // The server starts its one-hour budget before acknowledging the handoff.
+      const deadline = Date.now() + VIDEO_PROCESSING_TIMEOUT_MS;
 
       const poll = async () => {
         if (Date.now() >= deadline) {
-          reject(new Error('Video processing exceeded 6 hours'));
+          reject(new Error('Video processing exceeded 1 hour'));
           return;
         }
 
         try {
           pollCount += 1;
-          const statusResponse = await fetch(`${statusUrl}/${jobId}`);
+          const { response: statusResponse, data: statusResult } = await fetchVideoJson(
+            `${statusUrl}/${jobId}`,
+            {},
+            Math.min(VIDEO_REQUEST_TIMEOUT_MS, deadline - Date.now())
+          );
           if (!statusResponse.ok) {
             if (statusResponse.status === 404) {
               throw new Error('Video processing job was not found');
@@ -394,30 +417,14 @@ export async function uploadVideo(
           }
 
           consecutiveErrors = 0;
-          const statusResult = await statusResponse.json();
           console.log(`[CLIENT-VIDEO-UPLOAD] poll=${pollCount} jobId=${jobId} status=${statusResult.status} progress=${statusResult.progress}% message="${statusResult.message || ''}" mediaType=${statusResult.mediaType || 'unknown'} size=${statusResult.size || 'unknown'} aspectRatio=${statusResult.aspectRatio || 'unknown'}`);
           
-          // Map server progress 0-50% → 40-70% (video processing)
-          // and 50-100% → 70-100% (server-side storage step).
-          if (onProgress && statusResult.progress) {
-            let mappedProgress;
-            if (statusResult.progress <= 50) {
-              mappedProgress = Math.floor(40 + (statusResult.progress * 0.6));
-            } else {
-              mappedProgress = Math.floor(70 + ((statusResult.progress - 50) * 0.6));
-            }
-            onProgress(mappedProgress);
-          }
-          
           if (statusResult.status === 'completed') {
-            if (onProgress) {
-              onProgress(95); // Show 95% for processing completion
-            }
-            
             if (!statusResult.cid) {
               reject(new Error('No CID returned from completed job'));
               return;
             }
+            onProgress?.(100);
             
             console.log(`[CLIENT-VIDEO-UPLOAD] completed jobId=${jobId} cid=${statusResult.cid} mediaType=${statusResult.mediaType || 'video'} size=${statusResult.size || 'unknown'} aspectRatio=${statusResult.aspectRatio || 'unknown'}`);
             resolve({
@@ -434,6 +441,8 @@ export async function uploadVideo(
             reject(new Error(statusResult.message || 'Video processing failed'));
             return;
           }
+          // Upload is the first 40%; reserve 100% for a completed result with a CID.
+          onProgress?.(Math.floor(40 + statusResult.progress * 0.59));
         } catch (error) {
           console.error(`[CLIENT-VIDEO-UPLOAD] polling error jobId=${jobId}:`, error);
           if (error instanceof Error && error.message === 'Video processing job was not found') {
@@ -446,7 +455,7 @@ export async function uploadVideo(
         const nextDelay = consecutiveErrors > 0
           ? Math.min(2000 * Math.pow(2, consecutiveErrors), 30000)
           : 5000;
-        setTimeout(poll, nextDelay);
+        setTimeout(poll, Math.min(nextDelay, Math.max(0, deadline - Date.now())));
       };
 
       void poll();
