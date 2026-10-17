@@ -2476,32 +2476,24 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (knownAuthorHostId) getTweetParams.authorhostid = knownAuthorHostId
                 const requiredFormat = readContext?.storageFormat ?? cachedTweet?.storageFormat
 
-                // Discovery can name the entry node again. Share each complete
-                // read within this fetch so racing paths do not duplicate RPCs.
-                const reads = new Map<string, Promise<{ result: any, ip: string }>>()
                 const raceGetTweet = async (ips: string[]) => {
                     // Race each complete read, including its compatibility check.
                     // Waiting for every check first lets an unreachable standby
                     // hold up a healthy provider on a cold detail-page load.
                     const winner = await this.raceProviderIps(ips, async (ip) => {
-                        if (!reads.has(ip)) {
-                            reads.set(ip, (async () => {
-                                const route = await this.storageCompatibleReadRoute(
-                                    ip,
-                                    storageOwner,
-                                    requiredFormat,
-                                    getTweetParams,
-                                )
-                                const result = await route.client.RunMApp("get_tweet", getTweetParams)
-                                // A node without this tweet must not win over one that has it.
-                                const record = Array.isArray(result) ? result[0] : result
-                                if (!record || record.mid !== tweetId || !record.authorId) {
-                                    throw new Error(`get_tweet returned no usable record from ${route.ip}`)
-                                }
-                                return { result, ip: route.ip }
-                            })())
+                        const route = await this.storageCompatibleReadRoute(
+                            ip,
+                            storageOwner,
+                            requiredFormat,
+                            getTweetParams,
+                        )
+                        const result = await route.client.RunMApp("get_tweet", getTweetParams)
+                        // A node without this tweet must not win over one that has it.
+                        const record = Array.isArray(result) ? result[0] : result
+                        if (!record || record.mid !== tweetId || !record.authorId) {
+                            throw new Error(`get_tweet returned no usable record from ${route.ip}`)
                         }
-                        return reads.get(ip)!
+                        return { result, ip: route.ip }
                     }, `tweet ${tweetId}`, 3)
                     // Compatibility routing can redirect a read to the root node.
                     // Media and comments must use the node that actually served it.
@@ -2521,9 +2513,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     // longer serves the tweet, race the entry and author routes next.
                     // A detail view handed a stale row route must not skip this and
                     // go straight to the tweet's own providers, which can be empty
-                    // while the author still has a live node.
+                    // while the author still has a live node. A cold detail load
+                    // already resolved the author, so it only tries the entry here.
                     const entryIps = browserUsableProviderRoutes([this.lapi.hostIP], window.location.hostname)
-                    const authorIps = authorId
+                    const authorIps = authorId && (!fromDetailView || !readProvider || readContext?.provider)
                         ? await this.getProviderIps(authorId, v4Only, refreshProviderRoute)
                         : []
                     raceResult = await raceGetTweet([...new Set([...entryIps, ...authorIps])])
@@ -2535,7 +2528,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     // second lookup on more user providers: discover the much smaller
                     // provider set for the tweet itself and try those nodes once.
                     console.warn(`[fetchTweet] Selected route did not serve ${tweetId}; trying tweet providers`)
-                    const tweetIps = await this.getProviderIps(tweetId, v4Only, refreshProviderRoute)
+                    // Refresh discovery after a failed read; a cached address list
+                    // can omit a newly announced provider. Each advertised node gets
+                    // a new read even if its earlier author-route read failed.
+                    const tweetIps = await this.getProviderIps(tweetId, v4Only, true)
                     if (tweetIps.length > 0) {
                         raceResult = await raceGetTweet(tweetIps)
                         if (!raceResult) {
