@@ -1,157 +1,224 @@
 # dTweet node installer
 
-`@inoku/dtweet` installs Leither, starts the node, synchronizes the public dTweet
-release application, and announces the node as a provider of that application.
-It follows LifeAlbum's `@inoku/lifedrive` npm launcher approach, with a
-dependency-free Node.js installer instead of an application bundle: dTweet's
-published application is obtained through Leither synchronization.
+`@inoku/dtweet` installs Leither, synchronizes and provides the public dTweet
+release application, and installs tus-server **inside the selected Leither
+directory**. It follows LifeAlbum's npm installer approach: reuse an existing
+node, download a verified runtime for a fresh node, and install the companion
+service alongside it.
 
-Release app MID: **`heWgeGkeBX2gaENbIBS_Iy1mdTS`**.
+Version **0.2.0** includes the colocated upload service and port-management
+utility. Version 0.1.0 installs only the Leither node and dTweet application.
 
-## Install your node
+## Requirements
 
-On the server that will host your dTweet node, run:
+- Linux with systemd, or macOS; x64 and arm64 runtime downloads are supported.
+- Node.js 22 or newer and npm.
+- FFmpeg and ffprobe on the installing account's PATH. Install FFmpeg with your
+  operating system's package manager before setup.
+- Run as the account that owns the node. Service registration uses sudo; the
+  services run as that account. `--no-services` allows manual service management.
 
-```sh
-npx --yes @inoku/dtweet@0.1.0
-```
+Windows is not supported by this installer version. It retains the existing
+Linux/macOS scope rather than changing the upload service for Windows shells.
 
-**HLS video requires both tus-server and FFmpeg.** This command installs the
-Leither runtime and synchronizes/provides the dTweet app. It does not install
-the separate upload and video-processing components described below.
+## Install from the package
 
-## Required setup for HLS video
-
-Install and configure both of these on your upload server:
-
-- **tus-server** accepts video uploads and coordinates video processing and
-  storage. Run it as a persistent service connected to your Leither node.
-- **FFmpeg**, including **ffprobe**, inspects videos and converts them into HLS
-  playlists and segments. Both executables must be available on the `PATH` of
-  the account running tus-server.
-
-Follow the [server setup guide](https://github.com/cfa532/TweetWeb/blob/main/docs/SETUP.md)
-for tus-server installation, environment configuration, and FFmpeg installation
-on your operating system. The
-[TUS server documentation](https://github.com/cfa532/TweetWeb/blob/main/docs/TUS_SERVER.md)
-describes its upload and HLS conversion endpoints.
-
-Choose an upload-service port distinct from Leither's port, allow it through
-your firewall/router, and configure your dTweet profile's `cloudDrivePort` to
-match. Completing this npm command alone does **not** mean your server is ready
-to accept and convert HLS video uploads.
-
-## Run from source
-
-Requires Node.js 22 or newer and Linux or macOS. Automatic runtime downloads
-support x64 and arm64. Process discovery uses `ps`, plus `/proc` on Linux or
-`lsof` on macOS. Run as the operating-system account that owns the Leither node.
-
-From the TweetWeb checkout:
-
-```sh
-node packages/dtweet-installer/bin/dtweet.js --help
-node packages/dtweet-installer/bin/dtweet.js
-```
-
-With no arguments, setup selects the sole running Leither instance. Otherwise,
-it uses an existing `./Leither` binary or installs into `~/Leither`. Multiple
-running nodes require `--leither-root`:
-
-```sh
-node packages/dtweet-installer/bin/dtweet.js --leither-root /srv/leither
-```
-
-For a new node, the default port is **8800**. Leither supplies its default
-bootstrap peers. Override these or pin the runtime download when necessary:
-
-```sh
-node packages/dtweet-installer/bin/dtweet.js \
-  --leither-root /srv/leither --port 8800 --bootstrap mimei.org \
-  --leither-version V0.24.29
-```
-
-Print the release MID without inspecting processes or installing anything:
-
-```sh
-node packages/dtweet-installer/bin/dtweet.js --mid
-```
-
-## Installation behavior
-
-1. Select the Leither directory. Reuse an existing executable and configuration.
-2. For a new installation, discover the latest runtime using the official
-   [Leither distribution](http://vzhan.cn/mm/Fc1BRTFafOGzq5P8KmkVJqwS2v2/),
-   download the platform binary, and verify its SHA-256 sidecar before installing.
-3. Initialize a new node with `Leither init -p 8800`, then start it with
-   `Leither run -d`. An already-running node is not restarted.
-4. Wait up to 60 seconds for `Leither swarm local` to return a TCP address.
-5. Run `Leither mimei sync --mid heWgeGkeBX2gaENbIBS_Iy1mdTS`.
-6. Only after successful sync, run
-   `Leither mimei provide --mid heWgeGkeBX2gaENbIBS_Iy1mdTS`.
-7. Print the release MID and installation directory.
-
-Rerunning the command synchronizes the same release MID again and announces the
-provider. It does not create or publish a new app, install the debug app, migrate
-user data, or upgrade an existing Leither executable. New-node options are
-rejected for existing configurations so they cannot silently change a live node.
-
-The official runtime host currently serves HTTP, including the checksum. This
-detects download corruption but does not authenticate the download against
-network tampering. This is the same distribution used by the upstream
-`install.sh`; its remote shell script is not executed by this package.
-
-If startup, sync, or provide fails, setup exits unsuccessfully and leaves the
-node available for inspection. Check the command output and `Leither.log`,
-resolve the reported issue, and rerun. The application is not republished or
-replaced by a fallback. Runtime downloads use a temporary directory that is
-removed after success or failure.
-
-Configure startup after reboot using your service manager and allow the node's
-port through your firewall/router. This package starts Leither in the background
-but does not create a systemd or launchd service or alter firewall rules.
-HLS video support additionally requires both tus-server and FFmpeg; see the
-required setup above.
-
-## Package and publish
-
-Build an installable tarball:
+Build an installable tarball from the TweetWeb source:
 
 ```sh
 cd packages/dtweet-installer
 npm pack
 ```
 
-Run that package locally without installing dependencies in TweetWeb:
+Then run the tarball on the computer that will host the node:
 
 ```sh
-npm exec --yes --package ./inoku-dtweet-0.1.0.tgz -- dtweet --help
+npm exec --yes --package ./inoku-dtweet-0.2.0.tgz -- dtweet \
+  --leither-root /path/to/Leither --tus-port 8010
 ```
 
-The package contains only its launcher, installer, metadata, and this README.
-It has no npm install/postinstall hook. Node setup happens only when the user
-runs `dtweet`.
-
-The first registry publication requires an authenticated maintainer of the
-`@inoku` scope because npm trusted publishing can only be configured after a
-package exists. Publish the reviewed tarball with `npm publish <tarball>
---access public --provenance=false` for this initial bootstrap; local publishing
-cannot generate GitHub Actions provenance.
-
-Then configure npm trusted publishing for `@inoku/dtweet` using repository
-`cfa532/TweetWeb` and workflow `publish-dtweet-installer.yml`, permitting direct
-`npm publish`. Keep the package version equal to the intended release tag, then
-push an annotated tag such as `dtweet-installer-v0.1.0`. The workflow publishes
-that exact tagged source using OIDC and provenance. For a bootstrapped version,
-it verifies that the registry integrity matches the tagged package instead of
-attempting to overwrite it. Use a new version and tag for every later release.
-
-The public npm install command for this release is:
+Install the pinned registry version with:
 
 ```sh
-npx --yes @inoku/dtweet@0.1.0
+npx --yes @inoku/dtweet@0.2.0 --leither-root /path/to/Leither --tus-port 8010
 ```
 
-The npm version pins installer code. Unless `--leither-version` is supplied,
-fresh runtime installs use the latest official runtime. Sync always fetches the
-published release app for the fixed MID, including newer app publications.
+With no directory option, setup selects the sole running Leither instance,
+otherwise an existing `./Leither`, otherwise `~/Leither`. Multiple running nodes
+require `--leither-root`. Fresh nodes use Leither port **8800** and upload port
+**8010** by default. Set the dTweet profile's `cloudDrivePort` to the chosen
+upload port and permit both service ports through your router/firewall.
+The installer does not alter firewall rules or profile data.
+
+## Installed layout
+
+```text
+Leither/
+  Leither                     Existing or downloaded executable
+  SystemVars.json             Leither node settings
+  hostkey.cfg, ds/, ...        Leither identity and storage
+  tus-server/
+    app.js, ...               Bundled upload service
+    dtweet-start.cjs           Launcher tied to this Leither node
+    package.json
+    package-lock.json
+    node_modules/             Locked production dependencies
+    port                      Upload port number, for example 8010
+    uploads/                  Uploads and resumable-upload state
+    logs/
+    .dtweet-install.json       Installer version and source hashes
+    .dtweet-service            Generated service definition
+```
+
+**No `.env` file is created or loaded.** The only upload configuration file is
+`tus-server/port`, containing a port number. The launcher derives the Leither
+binary path and service port from its parent directory and `SystemVars.json`.
+It runs Leither CLI children from that node's directory and explicitly selects
+that node for RPC, even when several nodes are running.
+
+The existing upload service's authorization checks remain in place. The
+installer supplies no private-drive username, network-drive path, credentials,
+or X session. Those optional routes retain their existing authorization rules;
+this package does not enable them by removing authentication. The machine-specific
+X/Playwright integration is disabled for this portable installation.
+
+## Services and existing nodes
+
+A fresh Leither node gets its own systemd service on Linux or LaunchDaemon on
+macOS. An already-running Leither process is never restarted or replaced. An
+existing node's service manager is retained; a stopped existing node without an
+installer-owned service uses the prior `Leither run -d` behavior, so its operator
+continues to manage startup after reboot.
+
+The upload service also gets a per-node systemd service or LaunchDaemon. Names
+include a hash of the Leither directory so installations do not share a service
+name. Setup prints both the service name and upload directory. Linux upload
+services are named `dtweet-tus-<hash>.service`; macOS labels are
+`uk.inoku.dtweet.tus.<hash>`.
+
+To install files without registering services:
+
+```sh
+npm exec --yes --package ./inoku-dtweet-0.2.0.tgz -- dtweet \
+  --leither-root /path/to/Leither --no-services
+node /path/to/Leither/tus-server/dtweet-start.cjs
+```
+
+In this mode Leither is still started with `run -d` if needed, and upload startup
+is manual. Keep Leither's native public port accessible: this package does not
+implement the experimental shared-port proxy.
+
+## Change the upload port
+
+Use the utility command instead of editing the configuration file:
+
+```sh
+dtweet set-tus-port 8012 --leither-root /path/to/Leither
+```
+
+With the local tarball, run:
+
+```sh
+npm exec --yes --package ./inoku-dtweet-0.2.0.tgz -- dtweet \
+  set-tus-port 8012 --leither-root /path/to/Leither
+```
+
+The command accepts ports 1024–65535, rejects Leither's port and occupied
+ports, and atomically updates the saved number. It prints an availability check
+before saving; an occupied port or permission error produces a warning and leaves
+the existing port and services unchanged. It restarts a running managed
+upload service and waits for its health response on the new port. A stopped
+service stays stopped and uses the new number on its next start. Leither is
+never restarted, and no application sync or runtime download is performed.
+If restart fails, the error identifies the saved port and service to inspect;
+the command does not silently restore a different port.
+
+For a manually managed installation, stop its upload process first and add
+`--no-services`; then start it again using your own service manager. Omitting
+`--leither-root` uses the existing node-selection rules without creating a node.
+After changing the port, update the dTweet profile's `cloudDrivePort` and
+firewall/router rules to match. A service restart interrupts active requests;
+resumable-upload state remains on disk.
+
+## Upgrades and preservation
+
+A matching installed version is reused. Use a new package version with
+`--upgrade` to replace a tus-server managed by this installer:
+
+```sh
+npx --yes @inoku/dtweet@<new-version> --leither-root /path/to/Leither --upgrade
+```
+
+Dependencies are installed in a staging directory before the running upload
+service is stopped. An upgrade replaces installer-owned code and dependencies,
+retaining `port`, uploads, upload registries, logs and other runtime data. The
+previous code and configuration are saved under `<Leither root>/.dtweet-backups/`.
+Only the managed upload service is stopped/started; Leither keeps running.
+Active uploads may be interrupted by that service restart; resumable state stays
+on disk. Local edits to managed source files and an existing unmanaged
+`tus-server` directory cause setup to stop rather than overwrite them.
+
+An existing tus-server outside the Leither directory is not moved, stopped or
+adopted automatically. A port already used by that service must be freed during
+an operator-managed migration, or a different upload port selected for the new
+installation. Back up uploads and configuration before such a migration.
+
+Existing Leither binaries, configuration, identities and applications are
+retained. The installer does not upgrade the Leither executable or republish
+user data. It synchronizes and provides release app MID
+`heWgeGkeBX2gaENbIBS_Iy1mdTS`, preserving the prior installer behavior.
+
+## Options
+
+Show general or command-specific help without inspecting or changing a node:
+
+```sh
+dtweet help
+dtweet help set-tus-port
+dtweet set-tus-port --help
+```
+
+`dtweet --help` and `dtweet -h` also show general help.
+
+| Option | Purpose |
+| --- | --- |
+| `--leither-root DIR` | Select an existing node or a new installation directory |
+| `--port NUMBER` | Fresh Leither port, default 8800 |
+| `--bootstrap ADDRESS` | Fresh Leither bootstrap peer |
+| `--leither-version Vx.y.z` | Pin a fresh runtime download |
+| `--tus-port NUMBER` | Fresh upload port, default 8010 |
+| `--upgrade` | Upgrade installer-managed tus-server |
+| `--no-services` | Leave automatic startup to the operator |
+| `--mid` | Print the release app MID without inspecting/installing anything |
+| `--help` | Show installer options |
+
+`set-tus-port NUMBER` is a separate utility subcommand. It accepts only
+`--leither-root DIR` and `--no-services`, not installation or upgrade options.
+
+New-node options cannot overwrite an existing Leither configuration. Runtime
+downloads use the official Leither distribution and verify the SHA-256 sidecar.
+The official download endpoint uses HTTP, including its checksum; verification
+detects corruption but does not authenticate against network tampering. No remote
+shell installer is executed.
+
+## Packaging and publication
+
+`npm pack` runs the prepack bundler, taking an explicit allowlist of production
+files from this checkout's `tus-server/`. The package carries those files and a
+SHA-256 manifest, so running it does not fetch mutable application code from a
+Git branch. It excludes `.env`, uploads, signing keys, cookies, test files,
+development tooling and the maintainer's installed dependencies. Node setup
+happens only when the user runs `dtweet`; there is no install/postinstall hook.
+The target node installs locked production dependencies with
+`npm ci --omit=dev --ignore-scripts`.
+
+Review the packed contents before publication. The existing
+`publish-dtweet-installer.yml` workflow publishes immutable annotated tags such
+as `dtweet-installer-v0.2.0` using npm trusted publishing and provenance. It
+checks syntax, creates the bundled package and rejects an existing version with
+different contents. Publishing this installer is separate from publishing a
+TweetWeb release or changing the gen8 debug deployment.
+
+This change was checked by JavaScript syntax review, package creation and
+inspection of the packaged file inventory and hashes. No test suite or live
+node installation was run.

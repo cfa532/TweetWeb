@@ -98,6 +98,15 @@ Production files will be in the `dist/` directory.
 
 ## Backend Setup
 
+The npm installer source now also installs tus-server inside the selected
+Leither directory and configures startup on Linux/macOS. See the
+[installer instructions](../packages/dtweet-installer/README.md) for building
+and using version 0.2.0. Its upload configuration is only
+`<Leither directory>/tus-server/port`, containing a port number; it derives the
+Leither binary and node port automatically. No `.env` file is used.
+
+The remaining steps describe manual installation.
+
 This section installs the optional, separate tus-server package for video
 processing and private-drive features. It is not required to publish tweets or
 upload attachments through the synchronized release app. Without tus-server,
@@ -125,12 +134,12 @@ This will install:
 
 ### 3. Configure Environment
 
-Copy `tus-server/.env.example` to `tus-server/.env`. Set `PORT` to an available
-port, allow client access through the firewall/router, and set the dTweet
-profile's `cloudDrivePort` to match. For private-drive uploads and other
-username-protected routes, set `AUTHORIZED_USERNAME` to the exact dTweet
-username allowed to use them. It is not required for tweet-video conversion.
-Restart tus-server after changing its environment.
+For manual startup, supply `PORT` and `LEITHER_PATH` through your service manager
+or process environment. `.env` files are no longer loaded. Allow client access
+through the firewall/router and set the dTweet profile's `cloudDrivePort` to
+match. The installer handles node selection automatically. Private-drive and
+other username-protected routes retain their existing `AUTHORIZED_USERNAME`
+checks; this setting is not needed for tweet-video conversion.
 
 ```env
 # Server Configuration
@@ -297,7 +306,9 @@ VITE_MAX_FILE_SIZE=524288000     # 500MB in bytes
 
 ### Backend Environment Variables
 
-Create `.env` in `tus-server/` directory:
+The npm installation uses only `tus-server/port`. For a manual service, supply
+the following values through the service manager's environment; a `.env` file
+is not loaded:
 
 ```env
 # Server Configuration
@@ -402,7 +413,7 @@ lsof -i :3000
 # Kill the process
 kill -9 <PID>
 
-# Or change PORT in .env file
+# Or use: dtweet set-tus-port 8012 --leither-root /path/to/Leither
 ```
 
 #### 3. Leither Connection Failed
@@ -464,7 +475,7 @@ Enable debug logging:
 # Backend
 DEBUG=* npm start
 
-# Or set in .env
+# Or set in the service manager's environment
 NODE_ENV=development
 DEBUG=true
 ```

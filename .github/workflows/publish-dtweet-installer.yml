@@ -45,6 +45,10 @@ jobs:
           NODE
           node --check bin/dtweet.js
           node --check lib/install.js
+          node --check lib/tus.js
+          node --check lib/services.js
+          node --check lib/tus-launcher.cjs
+          node --check scripts/bundle.js
       - name: Build package and check immutable version
         id: package
         working-directory: packages/dtweet-installer

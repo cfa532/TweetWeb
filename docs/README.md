@@ -272,7 +272,11 @@ VITE_API_BASE_URL=http://localhost:3000
 VITE_WS_URL=ws://localhost:3000
 ```
 
-### Backend (tus-server/.env)
+### Backend
+
+The npm installer configures uploads through a numeric `tus-server/port` file
+inside the Leither directory. `.env` files are not loaded. For a manually
+managed process, equivalent environment settings are:
 
 ```env
 PORT=3000

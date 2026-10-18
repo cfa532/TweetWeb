@@ -1,15 +1,19 @@
 {
   "name": "@inoku/dtweet",
-  "version": "0.1.0",
-  "description": "Install Leither and sync and provide the dTweet release application",
+  "version": "0.2.0",
+  "description": "Install Leither, dTweet, and a colocated tus-server upload service",
   "type": "module",
   "bin": {
     "dtweet": "bin/dtweet.js"
   },
   "files": [
     "bin",
-    "lib"
+    "lib",
+    "payload"
   ],
+  "scripts": {
+    "prepack": "node scripts/bundle.js"
+  },
   "engines": {
     "node": ">=22"
   },

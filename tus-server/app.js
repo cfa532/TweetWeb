@@ -4,8 +4,6 @@
  * and network disk functionality. It includes authorization middleware and CORS configuration.
  */
 
-require('dotenv').config()
-
 const cors = require('cors');
 const express = require('express');
 const fileUpload = require('express-fileupload');
@@ -64,7 +62,7 @@ const execAsync = promisify(exec);
 // Get the port from the environment variable, or default to 3000
 const port = process.env.PORT || 3000;
 const hostname = os.hostname().split('.')[0].toLowerCase();
-const commentRoutesEnabled = hostname === 'minipc'; // ksbox SSH alias
+const commentRoutesEnabled = process.env.COMMENT_ROUTES_ENABLED !== 'false' && hostname === 'minipc'; // ksbox SSH alias
 
 // Leither connection management
 let leitherConnections = new Map();

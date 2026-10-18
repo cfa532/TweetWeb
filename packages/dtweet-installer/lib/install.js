@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as delay } from 'node:timers/promises';
+import { installerPrerequisites, prepareUploads, setUploadPort } from './tus.js';
+import { managedService } from './services.js';
 
 // This is TweetWeb's RELEASE app, shared by all serving nodes. Never publish
 // a new app or substitute the debug MID when setting up a provider.
@@ -14,16 +16,22 @@ const RELEASE_MID = 'heWgeGkeBX2gaENbIBS_Iy1mdTS';
 const DOWNLOAD_BASE = 'http://vzhan.cn/mm/Fc1BRTFafOGzq5P8KmkVJqwS2v2/';
 
 const HELP = `Usage: dtweet [options]
+       dtweet set-tus-port NUMBER [--leither-root DIR] [--no-services]
+       dtweet help [set-tus-port]
 
-Install/start Leither, synchronize the dTweet release app, and provide it.
+Install/start Leither, synchronize/provide dTweet, and install tus-server.
 Existing Leither binaries, configuration, keys, and applications are retained.
-HLS video requires a separately configured tus-server and FFmpeg (with ffprobe).
+Uploads are installed inside <Leither directory>/tus-server.
+Requires Node.js 22+, npm, FFmpeg and ffprobe on PATH.
 Setup guide: https://github.com/cfa532/TweetWeb/blob/main/docs/SETUP.md
 
   --leither-root DIR       Select an existing node or a new installation directory
   --port NUMBER           New node's port (default: 8800)
   --bootstrap ADDRESS     New node's bootstrap peer (default: Leither defaults)
   --leither-version Vx.y.z  Runtime version for a new install (default: latest)
+  --tus-port NUMBER       New upload service's port (default: 8010)
+  --upgrade               Upgrade installer-managed tus-server; keep port/uploads
+  --no-services           Leave service registration/manual upload startup to you
   --mid                    Print the release app MID and exit
   -h, --help               Show this help
 
@@ -32,13 +40,37 @@ directory, or ~/Leither, in that order. Multiple running nodes require a choice.
 Run this command again to synchronize and provide the latest app publication.
 `;
 
+const PORT_HELP = `Usage: dtweet set-tus-port NUMBER [options]
+
+Change the upload port of an existing installer-managed tus-server.
+NUMBER must be between 1024 and 65535 and differ from Leither's port.
+Availability is checked before saving. An unavailable port prints a warning
+and leaves the saved port and services unchanged.
+Only a running managed upload service is restarted;
+Leither is left running. A stopped service uses the port on its next start.
+
+  --leither-root DIR  Select the installed Leither node
+  --no-services      Save the port after stopping your manually managed upload process
+  -h, --help         Show this help
+
+Example: dtweet set-tus-port 8012 --leither-root /path/to/Leither
+
+Update your profile's cloudDrivePort and firewall/router rules to match.
+Help does not inspect nodes, download files or change services.
+`;
+
 function parseOptions(args) {
   const options = {};
   const names = new Map([
     ['--leither-root', 'root'], ['--port', 'port'],
     ['--bootstrap', 'bootstrap'], ['--leither-version', 'version'],
+    ['--tus-port', 'tusPort'],
   ]);
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--upgrade' || args[i] === '--no-services') {
+      options[args[i] === '--upgrade' ? 'upgrade' : 'noServices'] = true;
+      continue;
+    }
     const name = names.get(args[i]);
     if (!name || !args[i + 1] || args[i + 1].startsWith('-')) {
       throw new Error(`Unknown option or missing value: ${args[i]}. Use --help.`);
@@ -50,6 +82,9 @@ function parseOptions(args) {
   }
   if (options.version && !/^V\d+\.\d+\.\d+$/.test(options.version)) {
     throw new Error('--leither-version must look like V0.24.29.');
+  }
+  if (options.tusPort && (!/^\d+$/.test(options.tusPort) || Number(options.tusPort) < 1024 || Number(options.tusPort) > 65535)) {
+    throw new Error('--tus-port must be between 1024 and 65535.');
   }
   return options;
 }
@@ -180,14 +215,40 @@ async function waitForNode(root) {
 }
 
 export async function main(args) {
+  if (args[0] === 'help') {
+    if (args.length > 2 || (args[1] && args[1] !== 'set-tus-port')) {
+      throw new Error('Use dtweet help or dtweet help set-tus-port.');
+    }
+    console.log(args[1] === 'set-tus-port' ? PORT_HELP : HELP);
+    return;
+  }
+  if (args.length === 2 && args[0] === 'set-tus-port' && ['--help', '-h'].includes(args[1])) {
+    console.log(PORT_HELP);
+    return;
+  }
   if (args.length === 1 && ['--help', '-h', '--mid'].includes(args[0])) {
     console.log(args[0] === '--mid' ? RELEASE_MID : HELP);
+    return;
+  }
+  if (args[0] === 'set-tus-port') {
+    const value = args[1];
+    if (!value || !/^\d+$/.test(value) || Number(value) < 1024 || Number(value) > 65535) {
+      throw new Error('Use dtweet set-tus-port NUMBER [--leither-root DIR] [--no-services], with a port between 1024 and 65535.');
+    }
+    const options = parseOptions(args.slice(2));
+    if (Object.keys(options).some(key => !['root', 'noServices'].includes(key))) {
+      throw new Error('set-tus-port accepts only --leither-root and --no-services.');
+    }
+    if (!['linux', 'darwin'].includes(process.platform)) throw new Error('This command supports Linux and macOS.');
+    const root = await fs.realpath(options.root ? path.resolve(options.root) : await selectRoot(options, await runningRoots()));
+    await setUploadPort(root, value, options);
     return;
   }
   const options = parseOptions(args);
   if (!['linux', 'darwin'].includes(process.platform)) {
     throw new Error('This installer supports Linux and macOS. Use Leither’s manual installation for Windows.');
   }
+  const uploadManifest = await installerPrerequisites(options.noServices);
   const roots = await runningRoots();
   let root = await selectRoot(options, roots);
   await fs.mkdir(root, { recursive: true, mode: 0o700 });
@@ -195,6 +256,10 @@ export async function main(args) {
   const binary = path.join(root, 'Leither');
   const configured = await exists(path.join(root, 'SystemVars.json'));
   const installed = await exists(binary);
+
+  if (options.upgrade && (!configured || !await exists(path.join(root, 'tus-server', '.dtweet-install.json')))) {
+    throw new Error('--upgrade requires an initialized Leither node and a tus-server managed by this installer.');
+  }
 
   if (configured && (options.port || options.bootstrap)) {
     throw new Error('--port and --bootstrap apply only to a new node; this node already has SystemVars.json.');
@@ -223,17 +288,25 @@ export async function main(args) {
       throw new Error('Leither init did not create SystemVars.json. Inspect its output before rerunning.');
     }
   }
-  if (!roots.has(root)) run(root, ['run', '-d']);
+  if (!roots.has(root)) {
+    if (!options.noServices && (!configured || await exists(path.join(root, '.dtweet-leither-service')))) {
+      await (await managedService(root, 'leither')).start();
+    } else {
+      run(root, ['run', '-d']);
+    }
+  }
   await waitForNode(root);
+  const uploads = await prepareUploads(root, options, uploadManifest);
 
   console.log(`Synchronizing dTweet release app ${RELEASE_MID}...`);
   run(root, ['mimei', 'sync', '--mid', RELEASE_MID]);
   console.log('Announcing this node as a provider of the release app...');
   run(root, ['mimei', 'provide', '--mid', RELEASE_MID]);
+  await uploads.install();
   console.log(`\ndTweet release app synchronized and provided.\nRelease app MID: ${RELEASE_MID}\nLeither directory: ${root}`);
-  console.log('Configure Leither startup after reboot and network access for this node.');
-  console.log('\nRequired for HLS video: install and configure tus-server and FFmpeg (including ffprobe).');
-  console.log('tus-server handles video uploads; FFmpeg converts them into HLS streams.');
-  console.log('These components are not installed by this command.');
+  console.log('Keep any existing Leither startup configuration; running nodes were not restarted.');
+  console.log(`\ntus-server installed at ${uploads.directory}`);
+  console.log(`Upload port: ${uploads.port}. Set your dTweet profile's cloudDrivePort to ${uploads.port}.`);
+  console.log('Allow both Leither and upload ports through your firewall/router. No firewall rules were changed.');
   console.log('Setup guide: https://github.com/cfa532/TweetWeb/blob/main/docs/SETUP.md');
 }

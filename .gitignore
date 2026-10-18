@@ -36,3 +36,6 @@ coverage
 /.claude
 tus-server/cookies.json
 /dist-debug
+/packages/dtweet-installer/payload/
+/packages/dtweet-installer/*.tgz
+/packages/dtweet-installer/*.tgz.sha256

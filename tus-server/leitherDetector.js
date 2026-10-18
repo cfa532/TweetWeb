@@ -125,6 +125,15 @@ async function testPortConnection(port) {
  * @returns {Promise<number>} The port number (defaults to 8081 if not found)
  */
 async function getLeitherPort() {
+  // Installers with a selected node must not accidentally connect to another
+  // Leither instance discovered first on the same machine.
+  if (process.env.LEITHER_PORT !== undefined) {
+    const port = Number(process.env.LEITHER_PORT);
+    if (!/^\d+$/.test(process.env.LEITHER_PORT) || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('LEITHER_PORT must be a TCP port between 1 and 65535.');
+    }
+    return port;
+  }
   const detectedPort = await detectLeitherPort();
   
   if (detectedPort) {
@@ -144,4 +153,4 @@ module.exports = {
   detectLeitherPort,
   testPortConnection,
   getLeitherPort
-}; 
+};

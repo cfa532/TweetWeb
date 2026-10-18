@@ -22,10 +22,11 @@ A privacy-focused, decentralized social media platform built with Vue.js and IPF
 ### Installation
 
 To install a serving node with Leither and synchronize/provide the release app,
-see the [dTweet npm installer](packages/dtweet-installer/README.md). The commands
-below set up the web development environment. **HLS video support requires both
-tus-server and FFmpeg**, configured separately from the npm node installer;
-see the [server setup guide](docs/SETUP.md).
+see the [dTweet npm installer](packages/dtweet-installer/README.md). Installer
+0.2.0 also installs tus-server inside the Leither directory, with only its upload
+port to configure. FFmpeg and ffprobe must already be available. The commands below set
+up the web development environment; see the [server setup guide](docs/SETUP.md)
+for manual server installation.
 
 ```bash
 # Clone the repository

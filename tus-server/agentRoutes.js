@@ -8,7 +8,7 @@
 const express = require('express');
 const crypto = require('crypto');
 
-const APP_ID = 'd4lRyhABgqOnqY4bURSm_T-4FZ4';
+const APP_ID = process.env.DTWEET_APP_ID || 'd4lRyhABgqOnqY4bURSm_T-4FZ4';
 const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
 // Sort object keys recursively for consistent signing
