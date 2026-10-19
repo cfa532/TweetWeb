@@ -20,6 +20,7 @@ const videoRouter = require('./videoRoutes');
 const zipRouter = require('./zipRoutes');
 const agentRouter = require('./agentRoutes');
 const createShareRoutes = require('./shareRoutes');
+const lifedriveRoutes = require('./lifedriveRoutes');
 const { getLeitherPort } = require('./leitherDetector');
 const app = express();
 
@@ -420,6 +421,12 @@ function checkAuthorizedUser(req, res, next) {
     return next();
   }
 
+  // LifeDrive network-drive downloads are gated by an unguessable ticket that
+  // the node's identity service issues and rechecks on every chunk.
+  if (req.path === '/lifedrive/ready' || req.path.startsWith('/lifedrive/download/')) {
+    return next();
+  }
+
   // Public share metadata is needed so clients can decide whether to prompt
   // for a password before redirecting to IPFS.
   if (req.method === 'GET' && req.path.startsWith('/shares/')) {
@@ -640,6 +647,7 @@ app.use(checkAuthorizedUser);
 // Mount the routers
 app.use('/', uploadRouter);     // TUS upload handling
 app.use('/', createShareRoutes(uploadRouter.registries)); // File sharing and gated downloads
+app.use('/', lifedriveRoutes);  // LifeDrive network-drive downloads
 app.use('/', fileBrowserRouter); // File browser interface
 app.use('/', netdisk);          // Network disk functionality
 app.use('/', videoRouter);       // Video routes
