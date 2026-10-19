@@ -7,8 +7,13 @@
  * public port, so receivers need no certificate and no extra open port.
  *
  * Nothing here is authorized by a username: the 43-character ticket in the
- * path is a short-lived capability issued by the identity service, which
- * rechecks the share on every chunk.
+ * path is a capability issued by the identity service, which rechecks the share
+ * on every chunk.
+ *
+ * The identity service answers Range requests (a file from the matching offset,
+ * a folder's ZIP regenerated identically), so Range and If-Range are passed up
+ * and 206/416 and the validators come back, which lets a browser continue a
+ * download that broke off.
  */
 
 const express = require('express');
@@ -19,16 +24,23 @@ const router = express.Router();
 
 const IDENTITY_URL = new URL(process.env.LIFEDRIVE_IDENTITY_URL || 'http://127.0.0.1:4811');
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
-// The only upstream headers worth forwarding. Content-Length is present for a
-// single file and absent for a streamed folder ZIP.
+// The only upstream headers worth forwarding. Content-Length is always present:
+// the identity service knows a folder ZIP's exact size before it sends any of it.
 const FORWARDED_HEADERS = [
   'content-type',
   'content-disposition',
   'content-length',
+  'content-range',
+  'accept-ranges',
+  'etag',
+  'last-modified',
+  'retry-after',
   'cache-control',
   'x-content-type-options',
   'referrer-policy'
 ];
+// A request for part of the download, and the condition on it, go to the identity service unchanged.
+const FORWARDED_REQUEST_HEADERS = ['range', 'if-range'];
 
 // LifeDrive's identity service probes this before it offers network-drive
 // sharing, so an older tus-server without this router never enables it.
@@ -46,18 +58,25 @@ router.all('/lifedrive/download/:ticket', (req, res) => {
     return res.status(403).send('Download unavailable');
   }
 
+  const headers = {};
+  for (const name of FORWARDED_REQUEST_HEADERS) {
+    if (req.headers[name] !== undefined) headers[name] = req.headers[name];
+  }
+
   const upstream = http.request({
     protocol: IDENTITY_URL.protocol,
     hostname: IDENTITY_URL.hostname,
     port: IDENTITY_URL.port,
     path: `/v1/network-download/${ticket}`,
     method: req.method,
+    headers,
     // A folder ZIP may take hours; the identity service enforces its own idle lease.
     timeout: 0
   });
 
   upstream.on('response', (reply) => {
-    if (reply.statusCode !== 200) {
+    // 200 and 206 carry the file; 416 says the range asked for lies outside it; 503 asks to try again.
+    if (![200, 206, 416, 503].includes(reply.statusCode)) {
       reply.resume();
       return res.status(reply.statusCode === 403 ? 403 : 502).send('Download unavailable');
     }
@@ -65,8 +84,8 @@ router.all('/lifedrive/download/:ticket', (req, res) => {
       if (reply.headers[name] !== undefined) res.setHeader(name, reply.headers[name]);
     }
     res.setHeader('X-Accel-Buffering', 'no');
-    res.status(200);
-    if (req.method === 'HEAD') {
+    res.status(reply.statusCode);
+    if (req.method === 'HEAD' || reply.statusCode === 416 || reply.statusCode === 503) {
       reply.resume();
       return res.end();
     }
