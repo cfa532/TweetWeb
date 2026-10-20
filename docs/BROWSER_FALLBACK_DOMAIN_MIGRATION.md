@@ -16,15 +16,17 @@ all subdomains to av1. After DNS is ready, perform these steps in order:
 The current completed migration is:
 
 ```text
-http://t1.w33w.site  ->  http://t1.ww33.world
+http://t1.ww33.world  ->  http://t1.www33.shop
 ```
 
-The October 6 migration switched the default browser and share domain;
-existing domain routes were preserved. See the
-[October 6 completion record](#completed-ww33world-default-domain-switch).
+The October 20 migration switched the default browser and share domain;
+existing domain routes, including `ww33.world`, were preserved. See the
+[October 20 completion record](#completed-www33shop-default-domain-switch).
+The earlier [October 6 record](#completed-ww33world-default-domain-switch)
+describes the previous default.
 Historical records below describe the configuration at their recorded dates.
 
-The same procedure applies to another retired family such as `www33.shop`.
+The same procedure applies to another retired family.
 Add every spelling that has actually been used to the legacy nginx host list;
 do not assume that `www3.shop`, `www33.shop`, `www333.store`, and
 `www33.online` are interchangeable DNS names.
@@ -367,6 +369,49 @@ the first case; the browser should land on the HTTP `t1` host for the second.
 4. Keep new DNS records during diagnosis unless they are themselves the cause.
    Removing DNS first makes the failure harder to inspect.
 5. Keep the Cloudflare zone Redirect Rule disabled throughout rollback.
+
+## Completed `www33.shop` Default-Domain Switch
+
+Applied October 20, 2026, in nginx → binding → Worker → Go backend order:
+
+- Root and wildcard DNS resolve to av1 (`47.245.61.67`). The root record was
+  added after the first check found only the wildcard. The active nginx file is
+  `/etc/nginx/sites-enabled/leither-fireshare`, a regular file.
+- Added HTTP proxying for `www33.shop` and all subdomains, preserving Host and
+  canonicalizing external tweet/author paths to hash routes. Existing domain
+  routes were preserved, including `ww33.world`, Fireshare, and the current
+  LifeDrive/registry hosts. No domain was retired. `www33.shop` was not in the
+  legacy `www3.shop`/`www33.online` redirect lists, so no overlap existed.
+- The certificate covers `www33.shop`, `www.www33.shop`, `t1.www33.shop`, and
+  `tweet.www33.shop`, expires January 18, 2027, and renews through the existing
+  Certbot timer. HTTPS clears HSTS and redirects to the same HTTP URL.
+- Release MID `heWgeGkeBX2gaENbIBS_Iy1mdTS` is bound to `t1.www33.shop`.
+- Worker version `7ca774ab-ec74-4af9-9741-ec381792e960` switches only
+  `BROWSER_FALLBACK_ORIGIN`, using the September 12 metadata method to retain
+  the deployed `ASSETS` binding. All three existing triggers remain active.
+- Deployed `file_entries.go` in `tweet1` and `twbe` matched the local source
+  except for `upgradeDomain`; only that line was changed in each package, and
+  the SHA-256 of both matches local:
+  `b0f8388bf41ed406e200ffbba79fd010c7e0f52a0fe4f2de0d16d663da8880ce`.
+  Release advanced to `1440`; debug to `1681`. Web/download assets were
+  preserved. The publisher output was filtered to avoid printing signing material.
+- av1 synchronized both application MIDs (debug was missing `1681`; release
+  `last` was briefly stale and corrected after synchronization). Numbered and
+  `last` `check_upgrade` return `t1.www33.shop` on gen8 and av1, and `health`
+  reports `["database", "tweet-file-v1"]`. No service restart was required.
+
+Backups:
+
+- Active av1 configuration:
+  `/etc/nginx/sites-available/leither-fireshare.pre-www33-shop-20261020`
+- gen8 packages: `/home/pi/demo/deploy-backups/domain-www33-shop-20261020/`
+
+Live checks confirmed the app on `t1.www33.shop` and the bare root, tweet/author
+redirects with the hash marker, HTTPS-to-HTTP with `max-age=0`, JSON
+app-association responses, Worker redirects from `dtweet.com` and
+`dl.dtweet.com`, and unchanged Fireshare, LifeDrive, registry, and
+`ww33.world` routes. No TweetWeb build or automated tests were run.
+Physical-device app-link handling was not exercised.
 
 ## Completed `ww33.world` Default-Domain Switch
 
