@@ -296,6 +296,24 @@ export async function uploadVideo(
         endpoint: tusUploadUrl,
         retryDelays: [0, 1000, 3000, 5000, 10000, 20000, 30000],
         chunkSize: 2 * 1024 * 1024,
+        // Safari can receive a disk-backed chunk's 204 response without ever
+        // completing its XHR. Materialize just this chunk as a memory-backed
+        // Blob; sending a byte array directly has the same Safari failure.
+        fileReader: {
+          async openFile(input: File) {
+            return {
+              size: input.size,
+              async slice(start: number, end: number) {
+                const chunk = input.slice(start, end);
+                return {
+                  value: new Blob([await chunk.arrayBuffer()], { type: chunk.type }),
+                  done: end >= input.size,
+                };
+              },
+              close() {},
+            };
+          },
+        },
         // Keep the completed URL until the conversion handoff succeeds. If that
         // small request loses its response, the outer retry reuses this upload.
         removeFingerprintOnSuccess: false,

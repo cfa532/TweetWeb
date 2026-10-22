@@ -1,132 +1,34 @@
-/**
- * Leither Service Port Detector
- * Uses system commands to detect the port where Leither service is running
- */
-
+/** Discover the port owned by the running Leither service. */
 const { exec } = require('child_process');
 const { promisify } = require('util');
 
 const execAsync = promisify(exec);
 
-/**
- * Detect Leither service port using netstat to find listening processes
- * @returns {Promise<number|null>} The port number or null if not found
- */
 async function detectLeitherPort() {
-  try {
-    console.log('Detecting Leither service port...');
-    
-    // Try different commands for different operating systems
-    const detectionCommands = [
-      // lsof is available on both macOS and Linux and is more reliable
-      'lsof -i -P -n | grep LISTEN',
-      // Linux style netstat
-      'netstat -tlnp | grep LISTEN',
-      // macOS style netstat (without -p flag)
-      'netstat -an | grep LISTEN',
-      // Alternative macOS style
-      'netstat -an | grep "\.80[0-9][0-9].*LISTEN"'
-    ];
-    
-    for (const command of detectionCommands) {
-      try {
-        console.log(`Trying command: ${command}`);
-        const { stdout } = await execAsync(command);
-        if (stdout) {
-          const lines = stdout.split('\n').filter(line => line.trim());
-          console.log(`Found ${lines.length} listening ports with command: ${command}`);
-          
-          for (const line of lines) {
-            // For lsof output, check if the process name is "Leither" (case-sensitive)
-            if (command.includes('lsof')) {
-              // lsof format: Leither 1234 user 23u IPv4 0x1234567890 0t0 TCP *:8081 (LISTEN)
-              const leitherMatch = line.match(/^Leither\s+\d+\s+\w+\s+\d+u\s+IPv[46]\s+\w+\s+\d+t\d+\s+TCP\s+\*:(\d{4,5})\s*\(LISTEN\)/);
-              if (leitherMatch) {
-                const port = parseInt(leitherMatch[1]);
-                if (port >= 8000 && port <= 9000) { // Leither port range
-                  console.log(`Found Leither process listening on port ${port}`);
-                  return port;
-                }
-              }
-            } else {
-              // For netstat output, use the old method but with webapi endpoint verification
-              const portMatches = [
-                // Linux netstat format: tcp 0 0 0.0.0.0:8081 0.0.0.0:* LISTEN
-                line.match(/:(\d{4,5})\s/),
-                // macOS netstat format: tcp4 0 0 *.8081 *.* LISTEN
-                line.match(/\.(\d{4,5})\s/),
-                // Alternative format: tcp 0 0 127.0.0.1:8081 0.0.0.0:* LISTEN
-                line.match(/127\.0\.0\.1:(\d{4,5})/),
-                line.match(/0\.0\.0\.0:(\d{4,5})/)
-              ];
-              
-              for (const match of portMatches) {
-                if (match) {
-                  const port = parseInt(match[1]);
-                  if (port >= 8000 && port <= 9000) { // Leither port range
-                    console.log(`Testing port ${port} for webapi endpoint...`);
-                    const isWebApi = await testWebApiEndpoint(port);
-                    if (isWebApi) {
-                      console.log(`Found webapi endpoint on port ${port} - likely Leither service`);
-                      return port;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.log(`Command failed: ${command} - ${error.message}`);
-        continue; // Try next command
+  // Only process-owned listeners establish which port belongs to Leither.
+  // An HTTP response from an arbitrary port cannot establish that identity.
+  for (const command of ['lsof -nP -iTCP -sTCP:LISTEN', 'netstat -tlnp']) {
+    try {
+      const { stdout } = await execAsync(command);
+      for (const line of stdout.split('\n')) {
+        const match = command.startsWith('lsof')
+          ? line.match(/^Leither\s+.*\bTCP\s+\S+:(\d+)\s+\(LISTEN\)/)
+          : /\b\d+\/Leither(?:\s|$)/.test(line)
+            ? line.match(/^tcp6?\s+\d+\s+\d+\s+\S+:(\d+)\s/)
+            : null;
+        if (!match) continue;
+        const port = Number(match[1]);
+        if (port > 0 && port <= 65535) return port;
       }
+    } catch (error) {
+      console.log(`Leither listener discovery failed (${command}): ${error.message}`);
     }
-    
-    console.log('Could not detect Leither service port automatically');
-    return null;
-    
-  } catch (error) {
-    console.error('Error detecting Leither port:', error);
-    return null;
   }
+  return null;
 }
 
-/**
- * Test if a port has a webapi endpoint
- * @param {number} port - Port to test
- * @returns {Promise<boolean>} True if webapi endpoint exists
- */
-async function testWebApiEndpoint(port) {
-  try {
-    // Test for webapi endpoint specifically
-    const { stdout } = await execAsync(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/webapi/`);
-    return stdout === '200' || stdout === '404' || stdout === '405'; // Any response means endpoint exists
-  } catch (error) {
-    return false;
-  }
-}
-
-/**
- * Test connection to a specific port
- * @param {number} port - Port to test
- * @returns {Promise<boolean>} True if connection successful
- */
-async function testPortConnection(port) {
-  try {
-    const { stdout } = await execAsync(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/webapi/`);
-    return stdout === '200' || stdout === '404' || stdout === '405'; // Any response means service is there
-  } catch (error) {
-    return false;
-  }
-}
-
-/**
- * Get the best available Leither port
- * @returns {Promise<number>} The port number (defaults to 8081 if not found)
- */
 async function getLeitherPort() {
-  // Installers with a selected node must not accidentally connect to another
-  // Leither instance discovered first on the same machine.
+  // The installer supplies the selected node's ServicePort from SystemVars.json.
   if (process.env.LEITHER_PORT !== undefined) {
     const port = Number(process.env.LEITHER_PORT);
     if (!/^\d+$/.test(process.env.LEITHER_PORT) || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -134,23 +36,10 @@ async function getLeitherPort() {
     }
     return port;
   }
-  const detectedPort = await detectLeitherPort();
-  
-  if (detectedPort) {
-    const isConnectable = await testPortConnection(detectedPort);
-    if (isConnectable) {
-      console.log(`Using detected Leither port: ${detectedPort}`);
-      return detectedPort;
-    }
-  }
-  
-  // Fallback to default port
-  console.log('Using default Leither port: 8081');
-  return 8081;
+
+  const port = await detectLeitherPort();
+  if (port === null) throw new Error('Could not discover the running Leither service port.');
+  return port;
 }
 
-module.exports = {
-  detectLeitherPort,
-  testPortConnection,
-  getLeitherPort
-};
+module.exports = { detectLeitherPort, getLeitherPort };

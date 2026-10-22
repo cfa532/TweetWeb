@@ -645,7 +645,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     state.users.set(usr.mid, usr)
                 }
                 state._user = usr
-                return usr
+                // Return the reactive store object, not the plain storage copy:
+                // avatar tooltips must track the IP filled in by a later read.
+                return state._user
             }
             return null
         },
@@ -1182,19 +1184,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     const tweetsData = payload.tweets
                     const originalTweetsData = payload.originalTweets
 
-                    // get_tweets_by_user reads this node's local copy of the author
-                    // and never syncs, so a node that does not carry them answers
-                    // success with an empty list — indistinguishable from the end of
-                    // a timeline. On the first page that is worth a second opinion:
-                    // drop the access node and ask the author's providers before
-                    // reporting a profile as empty. Later pages already proved the
-                    // route works, and a genuinely empty profile just costs one
-                    // extra call on attempt 2.
-                    if (attempt === 1 && pageNumber === 0 && (tweetsData?.length ?? 0) === 0
-                        && this.dropStaleAccessNode(user.mid)) {
-                        console.warn(`[loadTweetsByUser] Empty first page for ${user.mid} from an access node; retrying on the author's providers`)
-                        continue
-                    }
+                    // An empty timeline does not invalidate the node that just
+                    // served this user. Keep the proven route and user identity.
 
                     // Check for potential backend issue: retweets without original tweets
                     if (tweetsData && tweetsData.length > 0) {
@@ -2769,7 +2760,7 @@ export const useTweetStore = defineStore('tweetStore', {
          * and its directly referenced Tweets, then merge both into live caches.
          */
         async resyncUser(userId: MimeiId): Promise<{ user: User, tweets: Tweet[] }> {
-            let currentUser = await this.getUser(userId)
+            const currentUser = await this.getUser(userId)
             if (!currentUser?.client) {
                 throw new Error(`Route unavailable for resync user ${userId}`)
             }
@@ -2788,31 +2779,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 currentUser.storageFormat,
                 resyncParams,
             )
-            let rawResponse = await resyncClient.RunMApp("resync_user", resyncParams)
+            const rawResponse = await resyncClient.RunMApp("resync_user", resyncParams)
 
-            // A node that answers "user not found" is not carrying this author at
-            // all — it cannot synchronize them, and every later read sent there
-            // returns an empty profile. resync_user reports that as a null body
-            // (v3) or success:false, so both mean the same thing here: this route
-            // is not a route to the author. Forget it and ask the author's own
-            // providers instead of failing the whole recovery.
-            if (!rawResponse || rawResponse.success === false) {
-                if (this.dropStaleAccessNode(userId)) {
-                    currentUser = await this._getUserForProviderRetryAttempt(userId, 2)
-                    if (!currentUser?.client) {
-                        throw new Error(`Route unavailable for resync user ${userId}`)
-                    }
-                    const retryIp = currentUser.providerIp ?? currentUser.client.ip
-                    const retryClient = await this.storageCompatibleRequestedClient(
-                        retryIp,
-                        currentUser,
-                        currentUser.storageFormat,
-                        resyncParams,
-                    )
-                    rawResponse = await retryClient.RunMApp("resync_user", resyncParams)
-                }
-            }
-
+            // A failed synchronization is an operation error, not proof that
+            // the user's read route or access-node identity should be erased.
             if (!rawResponse) throw new Error(`No response from resync_user for ${userId}`)
             if (rawResponse?.success === false) {
                 throw new Error(rawResponse.message || `resync_user failed for ${userId}`)
@@ -2957,7 +2927,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             this.users.set(userId, user)
             this._rewriteUserMediaHosts(userId, providerIp)
-            return user
+            return this.users.get(userId)
         },
 
         /**
@@ -3176,48 +3146,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     clearStoredUser(userId)
                 }
             }
-        },
-
-        /**
-         * Forget the access node recorded on a user, after that node has answered
-         * that it does not carry the author.
-         *
-         * hostIds[1] is not a property of the author: the backend stamps it with
-         * whichever node happened to serve get_user_core_data, and it is then
-         * cached with the user across reloads. Once that node no longer holds the
-         * author's Mimei it still answers health probes and still answers reads —
-         * with an empty profile — so nothing in the normal retry path can escape
-         * it. Dropping it here restores hostIds to the author's root and clears
-         * the routes that lead back to the node, so the next resolution races the
-         * author's real providers.
-         *
-         * @returns the node id that was dropped, or null when there was none.
-         */
-        dropStaleAccessNode(userId: MimeiId): string | null {
-            stopReadingFromWriteHost(userId)
-            const forget = (user: User | undefined | null): string | null => {
-                const rootHostId = user?.hostIds?.[0]
-                const accessNodeId = user?.hostIds?.[1]
-                if (!user || !rootHostId || !accessNodeId || accessNodeId === rootHostId) return null
-                user.hostIds = [rootHostId]
-                // The route itself came from the dropped node; re-resolve it too.
-                user.providerIp = undefined
-                userRoutes.delete(user.mid)
-                user.client = undefined
-                return accessNodeId
-            }
-
-            const stored = getStoredUser(userId)
-            const droppedFromStore = forget(stored)
-            if (stored && droppedFromStore) setStoredUser(userId, stored)
-
-            const dropped = forget(this.users.get(userId)) ?? droppedFromStore
-            if (!dropped) return null
-
-            console.warn(`[dropStaleAccessNode] ${dropped} does not carry ${userId}; falling back to the author's providers`)
-            nodePool.invalidate(dropped)
-            nodePool.invalidate(userId)
-            return dropped
         },
 
         _isFetchCoolingDown(resourceId: string): boolean {

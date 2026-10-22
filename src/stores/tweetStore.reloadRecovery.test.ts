@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { computed, isReactive } from 'vue'
 import { useTweetStore } from './tweetStore'
 
 describe('tweetStore.resyncUser', () => {
@@ -53,43 +54,37 @@ describe('tweetStore.resyncUser', () => {
         expect(result.tweets[0].author).toBe(cachedUser)
     })
 
-    it('retries on the author providers when the access node does not carry them', async () => {
-        const staleRunMApp = vi.fn().mockResolvedValue(null)
-        const rootRunMApp = vi.fn().mockResolvedValue({
-            user: { mid: 'user-3', username: 'Recovered', hostIds: ['root', 'root'] },
-            tweets: [],
-        })
-        const staleUser = {
+    it.each([
+        { reply: null, error: 'No response from resync_user' },
+        { reply: { success: false, message: 'Synchronization failed' }, error: 'Synchronization failed' },
+    ])('preserves the login route when resync reports $error', async ({ reply, error }) => {
+        const runMApp = vi.fn().mockResolvedValue(reply)
+        const user = {
             mid: 'user-3',
             username: 'Cached',
-            hostIds: ['root', 'stale-access-node'],
+            hostIds: ['root', 'access-node'],
             providerIp: '127.0.0.1:1111',
-            client: { RunMApp: staleRunMApp },
-        } as unknown as User
-        const rootUser = {
-            mid: 'user-3',
-            username: 'Cached',
-            hostIds: ['root', 'root'],
-            providerIp: '127.0.0.1:2222',
-            client: { RunMApp: rootRunMApp },
+            client: { RunMApp: runMApp },
         } as unknown as User
         const store = useTweetStore()
-        store.users.set(staleUser.mid, staleUser)
-        localStorage.setItem(staleUser.mid, JSON.stringify({ cachedAt: Date.now(), value: staleUser }))
-        store.getUser = vi.fn().mockResolvedValue(staleUser)
-        store._getUserForProviderRetryAttempt = vi.fn().mockImplementation(async () => {
-            store.users.set(rootUser.mid, rootUser)
-            return rootUser
-        })
+        store.users.set(user.mid, user)
+        store._user = store.users.get(user.mid)!
+        const loginUser = store.loginUser!
+        const client = loginUser.client
+        localStorage.setItem(user.mid, JSON.stringify({ cachedAt: Date.now(), value: user }))
+        const persisted = localStorage.getItem(user.mid)
+        store.getUser = vi.fn().mockResolvedValue(loginUser)
+        store._getUserForProviderRetryAttempt = vi.fn()
 
-        const result = await store.resyncUser(staleUser.mid)
+        await expect(store.resyncUser(user.mid)).rejects.toThrow(error)
 
-        expect(staleRunMApp).toHaveBeenCalledTimes(1)
-        expect(rootRunMApp).toHaveBeenCalledTimes(1)
-        expect(result.user.username).toBe('Recovered')
-        // The dead access node is gone from the cache the next reload reads.
-        expect(JSON.parse(localStorage.getItem(staleUser.mid)!).value.hostIds)
-            .not.toContain('stale-access-node')
+        expect(runMApp).toHaveBeenCalledTimes(1)
+        expect(store._getUserForProviderRetryAttempt).not.toHaveBeenCalled()
+        expect(store.loginUser).toBe(loginUser)
+        expect(loginUser.hostIds).toEqual(['root', 'access-node'])
+        expect(loginUser.providerIp).toBe('127.0.0.1:1111')
+        expect(loginUser.client).toBe(client)
+        expect(localStorage.getItem(user.mid)).toBe(persisted)
     })
 
     it('reports a failure the access node explains rather than retrying blind', async () => {
@@ -187,7 +182,7 @@ describe('tweetStore.resyncUser', () => {
     })
 })
 
-describe('tweetStore.loadTweetsByUser access node fallback', () => {
+describe('tweetStore.loadTweetsByUser route preservation', () => {
     beforeEach(() => {
         ;(window as any).hprose = {
             Client: { create: () => ({ timeout: 0, useService: () => ({}) }) },
@@ -211,24 +206,27 @@ describe('tweetStore.loadTweetsByUser access node fallback', () => {
         return calls
     }
 
-    it('asks the author providers when the access node reports an empty first page', async () => {
+    it('preserves the login route when an access node reports an empty first page', async () => {
         const store = useTweetStore()
-        const staleUser = { mid: 'user-5', username: 'Cached', hostIds: ['root', 'stale-access-node'] } as unknown as User
-        const rootUser = { mid: 'user-5', username: 'Cached', hostIds: ['root', 'root'] } as unknown as User
-        store.users.set(staleUser.mid, staleUser)
-        store._getUserForProviderRetryAttempt = vi.fn().mockImplementation(async (_id: string, attempt: number) =>
-            attempt === 1 ? staleUser : rootUser)
+        const user = {
+            mid: 'user-5', username: 'Cached', hostIds: ['root', 'stale-access-node'],
+            providerIp: '127.0.0.1:1111', client: {},
+        } as unknown as User
+        store.users.set(user.mid, user)
+        store._user = store.users.get(user.mid)!
+        const loginUser = store.loginUser!
+        store._getUserForProviderRetryAttempt = vi.fn().mockResolvedValue(loginUser)
         const calls = stubProfileRoutes(store, {
             '127.0.0.1:1111': { success: true, tweets: [], originalTweets: [] },
-            '127.0.0.1:2222': {
-                success: true,
-                tweets: [{ mid: 'tweet-5', authorId: 'user-5', content: 'Real', timestamp: 5, attachments: [] }],
-                originalTweets: [],
-            },
         })
 
-        await expect(store.loadTweetsByUser('user-5', 0, 5)).resolves.toBe(1)
-        expect(calls).toEqual(['127.0.0.1:1111', '127.0.0.1:2222'])
+        await expect(store.loadTweetsByUser('user-5', 0, 5)).resolves.toBe(0)
+        expect(calls).toEqual(['127.0.0.1:1111'])
+        expect(store._getUserForProviderRetryAttempt).toHaveBeenCalledTimes(1)
+        expect(store.loginUser).toBe(loginUser)
+        expect(loginUser.hostIds).toEqual(['root', 'stale-access-node'])
+        expect(loginUser.providerIp).toBe('127.0.0.1:1111')
+        expect(loginUser.client).toBeDefined()
     })
 
     it('accepts an empty first page from the author own root as the end of the timeline', async () => {
@@ -242,5 +240,28 @@ describe('tweetStore.loadTweetsByUser access node fallback', () => {
 
         await expect(store.loadTweetsByUser('user-6', 0, 5)).resolves.toBe(0)
         expect(calls).toEqual(['127.0.0.1:2222'])
+    })
+})
+
+describe('restored login user reactivity', () => {
+    beforeEach(() => {
+        setActivePinia(createPinia())
+        sessionStorage.clear()
+        localStorage.clear()
+    })
+
+    it('updates an avatar tooltip when the restored user receives its read route', () => {
+        sessionStorage.setItem('user', JSON.stringify({ mid: 'restored-login-user', username: 'Cached' }))
+        const store = useTweetStore()
+        const restored = store.loginUser!
+        const tooltip = computed(() => restored.providerIp ?? 'N/A')
+
+        expect(tooltip.value).toBe('N/A')
+        expect(isReactive(restored)).toBe(true)
+        expect(restored).toBe(store._user)
+        expect(restored).toBe(store.users.get(restored.mid))
+
+        store._user!.providerIp = '127.0.0.1:1234'
+        expect(tooltip.value).toBe('127.0.0.1:1234')
     })
 })

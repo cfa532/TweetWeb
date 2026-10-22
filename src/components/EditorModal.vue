@@ -167,7 +167,7 @@ async function retryUpload<T>(
   throw lastError;
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (props.editTweet) {
     tweet.value = props.editTweet
     txtConent.value = props.editTweet.content || ''
@@ -190,6 +190,18 @@ onMounted(() => {
     }
   }
   document.addEventListener('paste', onSelect as EventListener)
+
+  // Reloading /post restores account data without its session-only route/client.
+  // Unlike feed/profile pages, the editor must initiate that ordinary user read.
+  loading.value = true
+  try {
+    const user = await tweetStore.getUser(tweetStore.loginUser!.mid)
+    if (!user) throw new Error(t('errors.noServer'))
+  } catch (err) {
+    submitError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    loading.value = false
+  }
 })
 
 onUnmounted(() => {
@@ -343,6 +355,13 @@ async function onSubmit() {
   }
   const loginUser = tweetStore.loginUser
   if (!loginUser) return
+
+  // Base IP is providerIp in the avatar tooltip. Reject before starting uploads
+  // so an account without a read route keeps its draft and gets a visible error.
+  if (!loginUser.providerIp?.trim()) {
+    submitError.value = t('errors.noServer')
+    return
+  }
 
   loading.value = true
   submitError.value = ''

@@ -100,10 +100,10 @@ async function initializeLeither() {
     leitherPort = await getLeitherPort();
     console.log(`[LEITHER-INIT] Detected Leither service on port: ${leitherPort}`);
     
-    // Test connection by creating a client
+    // Client creation configures the RPC proxy; it does not verify connectivity.
     const testClient = await createLeitherClient(leitherPort);
     if (testClient) {
-      console.log('[LEITHER-INIT] Leither connection test successful');
+      console.log('[LEITHER-INIT] Leither RPC client configured');
       leitherInitialized = true;
     }
   } catch (error) {
