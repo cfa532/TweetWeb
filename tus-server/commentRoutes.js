@@ -2,13 +2,8 @@
  * Comment Route
  *
  * POST /comment — post a reply to an X (Twitter) tweet using Playwright
- * with session cookies from cookies.json. Navigates to the tweet page
+ * with session cookies from x.com_cookies.txt. Navigates to the tweet page
  * and submits the comment through the browser UI.
- *
- * minipc only: this route runs solely on minipc (/home/pi/tus-server), the one
- * host with the X session cookies, comment keys, pic1.png and Playwright's
- * Chromium. Other tus-server deployments (e.g. the dTweet installer) ship
- * without it. Deploy changes to minipc by hand and restart tus-server there.
  */
 
 const express = require('express');
@@ -19,7 +14,7 @@ const { chromium } = require('playwright');
 
 const router = express.Router();
 
-const COOKIES_PATH = path.join(__dirname, 'cookies.json');
+const COOKIES_PATH = path.join(__dirname, 'x.com_cookies.txt');
 const COMMENT_PRIVATE_KEY_PATH =
   process.env.COMMENT_PRIVATE_KEY_PATH ||
   path.join(__dirname, 'comment_private_key.pem');
@@ -43,57 +38,58 @@ function resolveMediaAttachment(text) {
 }
 
 /**
- * Load cookies from cookies.json and convert them to Playwright's format.
- * Filters to only x.com / twitter.com cookies.
+ * Load a Netscape cookie export and convert it to Playwright's format.
+ * Keep unexpired X / Twitter cookies, including #HttpOnly_ entries.
  */
 function loadCookies() {
   const raw = fs.readFileSync(COOKIES_PATH, 'utf8');
-  const arr = JSON.parse(raw);
-  if (!Array.isArray(arr)) {
-    throw new Error('cookies.json must be a JSON array');
+  const cookies = [];
+  const now = Date.now() / 1000;
+
+  for (const [index, line] of raw.replace(/^\uFEFF/, '').split(/\r?\n/).entries()) {
+    const httpOnly = line.startsWith('#HttpOnly_');
+    if (!line.trim() || (line.startsWith('#') && !httpOnly)) continue;
+
+    const fields = (httpOnly ? line.slice('#HttpOnly_'.length) : line).split('\t');
+    if (fields.length !== 7) {
+      throw new Error(`Invalid Netscape cookie at line ${index + 1} in x.com_cookies.txt`);
+    }
+
+    const [domain, includeSubdomains, cookiePath, secure, expiration, name, value] = fields;
+    const host = domain.replace(/^\./, '').toLowerCase();
+    if (
+      host !== 'x.com' && !host.endsWith('.x.com') &&
+      host !== 'twitter.com' && !host.endsWith('.twitter.com')
+    ) continue;
+
+    const expires = Number(expiration);
+    if (
+      !['TRUE', 'FALSE'].includes(includeSubdomains) ||
+      !['TRUE', 'FALSE'].includes(secure) ||
+      !/^\d+$/.test(expiration) || !Number.isSafeInteger(expires) ||
+      !name || !cookiePath.startsWith('/')
+    ) {
+      throw new Error(`Invalid Netscape cookie at line ${index + 1} in x.com_cookies.txt`);
+    }
+    // Netscape uses zero for session cookies; omit expires in that case.
+    if (expires > 0 && expires <= now) continue;
+
+    const cookie = {
+      name,
+      value,
+      domain: includeSubdomains === 'TRUE' ? `.${host}` : host,
+      path: cookiePath,
+      secure: secure === 'TRUE',
+      httpOnly,
+    };
+    if (expires > 0) cookie.expires = expires;
+    cookies.push(cookie);
   }
 
-  const isXDomain = (domain) => {
-    if (typeof domain !== 'string') return false;
-    const d = domain.replace(/^\./, '').toLowerCase();
-    return (
-      d === 'x.com' ||
-      d.endsWith('.x.com') ||
-      d === 'twitter.com' ||
-      d.endsWith('.twitter.com')
-    );
-  };
-
-  const sameSiteMap = {
-    no_restriction: 'None',
-    lax: 'Lax',
-    strict: 'Strict',
-    unspecified: 'Lax',
-  };
-
-  return arr
-    .filter(
-      (c) =>
-        c &&
-        typeof c.name === 'string' &&
-        typeof c.value === 'string' &&
-        isXDomain(c.domain)
-    )
-    .map((c) => {
-      const cookie = {
-        name: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path || '/',
-        secure: c.secure !== false,
-        httpOnly: c.httpOnly === true,
-        sameSite: sameSiteMap[(c.sameSite || '').toLowerCase()] || 'Lax',
-      };
-      if (c.expirationDate && c.expirationDate > 0) {
-        cookie.expires = c.expirationDate;
-      }
-      return cookie;
-    });
+  if (!cookies.length) {
+    throw new Error('No unexpired X / Twitter cookies found in x.com_cookies.txt');
+  }
+  return cookies;
 }
 
 function readCommentPrivateKey() {
