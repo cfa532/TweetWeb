@@ -4,6 +4,11 @@
  * POST /comment — post a reply to an X (Twitter) tweet using Playwright
  * with session cookies from cookies.json. Navigates to the tweet page
  * and submits the comment through the browser UI.
+ *
+ * minipc only: this route runs solely on minipc (/home/pi/tus-server), the one
+ * host with the X session cookies, comment keys, pic1.png and Playwright's
+ * Chromium. Other tus-server deployments (e.g. the dTweet installer) ship
+ * without it. Deploy changes to minipc by hand and restart tus-server there.
  */
 
 const express = require('express');

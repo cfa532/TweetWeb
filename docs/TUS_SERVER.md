@@ -271,6 +271,11 @@ encrypted `{"tweet_id", "text"}` payload (keys: `comment_private_key.pem` /
 the logged-in X session in `tus-server/cookies.json` and submits the reply
 through the tweet page's inline composer.
 
+- **minipc only:** this route runs only on minipc (`/home/pi/tus-server`), the
+  one host with the X cookies, comment keys, `pic1.png` and Playwright's
+  Chromium. Copy `commentRoutes.js` there by hand and restart `tus-server`.
+  Install Chromium from that directory so it matches the Playwright version the
+  service loads (`cd /home/pi/tus-server && npx playwright install chromium`).
 - **Fire-and-forget:** the route returns `202 {"status":"accepted"}` as soon as
   the payload decrypts. A `202` does **not** mean the reply was posted; the
   outcome is only in the server log (`[COMMENT] <id> completed` / `failed`).
