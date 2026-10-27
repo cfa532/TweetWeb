@@ -35,6 +35,7 @@ const props = defineProps({
   mediaLoadState: { type: String as PropType<MediaLoadState>, required: false, default: 'visible' },
 })
 const router = useRouter();
+let removeRouteGuard: (() => void) | undefined;
 const tweetStore = useTweetStore();
 const vdiv = ref();
 const video = ref();
@@ -880,7 +881,7 @@ onMounted(() => {
   window.addEventListener(TWEET_MEDIA_PRELOAD_STALE_EVENT, cancelStalePreload);
   
   // Add route change listener
-  router.beforeEach((to, from, next) => {
+  removeRouteGuard = router.beforeEach((to, from, next) => {
     stopVideo();
     next();
   });
@@ -952,6 +953,9 @@ watch(() => props.mediaLoadState, (state) => {
 
 onUnmounted(() => {
   isUnmounting = true;
+  // The router outlives this player; release its closure so destroyed players
+  // are not retained or stopped again on every subsequent navigation.
+  removeRouteGuard?.();
   // Clean up event listeners
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('fullscreenchange', handleFullscreenChange);
