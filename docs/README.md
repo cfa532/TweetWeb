@@ -8,6 +8,7 @@ Complete documentation for the TweetWeb decentralized social media platform.
 
 - **[Setup & Installation Guide](SETUP.md)** - Local development and service setup instructions
 - **[Publication & Deployment Guide](DEPLOYMENT.md)** - Canonical TweetWeb production release procedure
+- **[App Busy During Account Migration](DEPLOYMENT.md#deferred-issue-app-busy-during-account-migration-2026-10-30)** - October 30 error, incomplete-migration risk, and decision to prioritize the Leither runtime fix
 - **[av1 Memory Exhaustion Incident](DEPLOYMENT.md#operational-incident-av1-memory-exhaustion-2026-09-19)** - September 19 outage evidence, swap configuration correction, and verification
 - **[Browser Fallback Domain Migration](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)** - Repeatable DNS, av1 nginx, and Worker procedure plus the current `ww33.world` production record
 - **[Quick Start](#quick-start)** - Get up and running in 5 minutes

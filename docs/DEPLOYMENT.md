@@ -407,6 +407,51 @@ Restoring `.env` does not alter already-built or deployed assets.
       Fireshare hosts, and LifeDrive/registry routes under `lepan.org`.
 - [ ] The developer's original local `.env` value was restored.
 
+## Deferred Issue: App Busy During Account Migration (2026-10-30)
+
+**Decision:** Prioritize the Leither developer's fix for the App busy / bounded
+MApp execution issue. Defer further migration recovery redesign until that issue
+has been investigated. This is an unresolved issue, not a completed fix.
+
+### Observed behavior
+
+The user reported that a TweetWeb migration failed on the first attempt and
+succeeded on a manual retry. TweetWeb displayed the failure and retry guidance
+correctly. The destination logged:
+
+```text
+10:31:49 [mapp][E] Tweed Error sync_user: MiMeiSync(uNQJBPk5SPnHIwkJm5T0Getbf_g): mapp call bounded: node is still working for this app, request={"aid":"d4lRyhABgqOnqY4bURSm_T-4FZ4","author":"5lrADJpzRpYZ82-6jkewoa1w3jB","hostid":"ReyCUFHHZmk0N5w_wxUeEuoY5Xr","mid":"uNQJBPk5SPnHIwkJm5T0Getbf_g","migrate":"true","src":"user","ver":"last","version":"v2","via":"hprose"}
+```
+
+The request identifies the debug app and uses `last`; the exact numbered version
+is not in the log. At this point, release 1456 and debug 1691 had been published.
+The error does not establish which other operation was still active or whether
+that operation later completed. The Leither developer should investigate the
+busy condition before clients add workarounds for it.
+
+### Remaining migration risk
+
+- The origin saves and publishes the destination as `hostIds[0]` before the
+  destination's `sync_user` succeeds. A destination failure does not revert that
+  origin update. Migration save and sync requests each have a 60-second timeout.
+- A manual retry can complete the migration. There is no durable pending-migration
+  record or login-time resume step. Logout or browser closure can therefore leave
+  an incomplete migration without retaining the current retry context.
+- Login may still authenticate through the origin or another provider, but it
+  does not finish migration. Subsequent writes target the destination and may fail
+  if its account copy is missing or incomplete. Background replication is not a
+  verified completion mechanism for this case.
+
+Keep this risk recorded even after the busy issue is fixed: interrupted migration
+can also result from network failure or client closure. Revisit preparing the
+destination before changing ownership and durable recovery across sessions when
+migration work resumes. Do not add automatic rollback, hidden retries, or IP/port
+substitution as an interim workaround.
+
+Relevant code: TweetWeb `src/stores/tweetStore.ts` (`updateProfile`, `login`,
+`logout`); TweetBackendApp `profile_entries.go` (`entrySetAuthorCoreData`) and
+`user_entries.go` (`entrySyncUser`, `entryLogin`).
+
 ## Operational Incident: av1 Memory Exhaustion (2026-09-19)
 
 All times below are UTC+8. `http://t1.fireshare.us/` stopped responding;

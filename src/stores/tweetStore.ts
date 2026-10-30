@@ -5,7 +5,7 @@ import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, publicIpAddressBaseUrl, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
-import { browserUsableProviderRoutes } from '@/utils/browserNetwork';
+import { browserUsableProviderRoutes, resolvedNodeAddress } from '@/utils/browserNetwork';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -23,6 +23,7 @@ const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
 const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
 const UPDATE_TWEET_TIMEOUT_MS = 30_000
+const MIGRATION_TIMEOUT_MS = 60_000
 // `register` is the heaviest entry the app calls: creating an account costs two MMCreate
 // calls, a DHT get_provider_ip lookup for the username uniqueness check, an MMBackup, a
 // MiMeiPublish. Measured end-to-end in the entry node's own log it
@@ -3260,7 +3261,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             const resolve = async () => {
-                const resolved = await this._resolveNodeIps(hostId, refresh)
+                const resolved = await this._resolveNodeIps(hostId, refresh, usePool ? undefined : MIGRATION_TIMEOUT_MS)
                 // This callback runs once for all callers sharing the NodePool
                 // request, so one failed probe produces one cooldown increment.
                 if (resolved.length > 0) {
@@ -3276,10 +3277,10 @@ export const useTweetStore = defineStore('tweetStore', {
             const ips = usePool
                 ? await nodePool.resolveIPs(hostId, resolve, true)
                 : await resolve()
-            return ips[0] ?? null
+            return ips[0] ? resolvedNodeAddress(ips[0]) : null
         },
 
-        async _resolveNodeIps(hostId: string, refresh: boolean = false): Promise<string[]> {
+        async _resolveNodeIps(hostId: string, refresh: boolean = false, timeoutMs?: number): Promise<string[]> {
             try {
                 const params: any = {
                     aid: this.lapi.appId, ver: "last", version: "v2",
@@ -3287,7 +3288,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 };
                 if (v4Only) params.v4only = "true";
 
-                const ipResponse = await this.lapi.client.RunMApp("get_node_ips", params);
+                // Writes use one discovery endpoint. A failed lookup must not rotate
+                // entry nodes or substitute an unverified address.
+                const lookupClient = timeoutMs === undefined
+                    ? this.lapi.client
+                    : createPooledClient(this.lapi.client.ip, this.lapi.connectionPool)
+                if (timeoutMs !== undefined) lookupClient.timeout = timeoutMs
+                const ipResponse = await lookupClient.RunMApp("get_node_ips", params);
                 if (!ipResponse) {
                     console.error(`[getNodeIp] No response for nodeId ${hostId}`);
                     return [];
@@ -3331,11 +3338,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 });
 
                 if (!winner) {
-                    // Same reasoning as _resolveProviderIps: an unanswered probe on a
-                    // cold node must not cost the caller its route (and a fetch-failure
-                    // cooldown on top). The RPC that follows has its own timeout.
-                    console.warn(`[getNodeIp] No candidate answered the health probe for nodeId ${hostId}; returning ${candidates.length} unverified route(s)`);
-                    return candidates;
+                    console.warn(`[getNodeIp] No candidate answered the health probe for nodeId ${hostId}`);
+                    return [];
                 }
 
                 console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
@@ -5242,21 +5246,32 @@ export const useTweetStore = defineStore('tweetStore', {
                 userObj.hostIds = [hostId.trim()]
             }
 
-            const originalTimeout = this.lapi.client.timeout
-            this.lapi.client.timeout = REGISTER_TIMEOUT_MS
+            // A supplied root ID selects the receiving node, not just account metadata.
+            const registrationIp = hostId?.trim()
+                ? await this.getNodeIpByHostId(hostId.trim(), true, false)
+                : null
+            if (hostId?.trim() && !registrationIp) throw new Error(i18n.global.t('errors.writableHost'))
+            const registrationClient = registrationIp
+                ? createPooledClient(registrationIp, this.lapi.connectionPool)
+                : this.lapi.client
+            const originalTimeout = registrationClient.timeout
+            registrationClient.timeout = REGISTER_TIMEOUT_MS
             let ret
             try {
                 // No failover: a register that overruns the timeout is still completed by
                 // the node, so a second node would answer "Username is taken" for the
                 // account this call just created. One node, one attempt, as on iOS/Android.
-                ret = await this.lapi.client.callWithoutFailover("RunMApp", "register", {
+                const params = {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
                     user: JSON.stringify(userObj)
-                })
+                }
+                ret = registrationIp
+                    ? await registrationClient.RunMApp("register", params)
+                    : await registrationClient.callWithoutFailover("RunMApp", "register", params)
             } finally {
-                this.lapi.client.timeout = originalTimeout
+                registrationClient.timeout = originalTimeout
             }
 
             if (!ret || !ret["success"]) {
@@ -5359,6 +5374,16 @@ export const useTweetStore = defineStore('tweetStore', {
         }): Promise<boolean> {
             const user = this.loginUser
             if (!user) throw new Error(i18n.global.t('errors.notLoggedIn'))
+            const destinationHost = updates.hostId?.trim()
+            const migrating = !!destinationHost
+
+            // Only an explicit root change may use a surviving provider. Resolve
+            // the destination before committing ownership on that recovery copy.
+            const writableIp = migrating
+                ? await this.getNodeIpByHostId(destinationHost!, true, false)
+                : await this.resolveWritableHostIp(user)
+            if (!writableIp) throw new Error(i18n.global.t('errors.writableHost'))
+            const updateIp = migrating ? await this.getProfileMigrationIp(user) : writableIp
 
             const userObj: any = {
                 mid: user.mid,
@@ -5393,17 +5418,16 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (trimmed) userObj.domainToShare = trimmed
             }
 
-            // Mutation: route through user's writable host (hostIds[0]).
-            const writableIp = await this.resolveWritableHostIp(user)
-            const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            const writeClient = createPooledClient(updateIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
-            writeClient.timeout = 30000
+            writeClient.timeout = migrating ? MIGRATION_TIMEOUT_MS : 30000
             let ret
             try {
                 ret = await writeClient.RunMApp("set_author_core_data", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
+                    migrate: rpcBool(migrating),
                     user: JSON.stringify(userObj)
                 })
             } finally {
@@ -5414,7 +5438,21 @@ export const useTweetStore = defineStore('tweetStore', {
             if (ret["success"] === false) {
                 throw new Error(ret["message"] || i18n.global.t('auth.updateFailed'))
             }
-            this.adoptWriteRouteForReads(user, writableIp)
+            if (migrating) {
+                if (ret.migrationSaved !== true) {
+                    throw new Error('The server did not acknowledge the migration source. Keep this session open and retry with an updated backend.')
+                }
+                const destinationClient = createPooledClient(writableIp, this.lapi.connectionPool)
+                destinationClient.timeout = MIGRATION_TIMEOUT_MS
+                const sync = unwrapNestedV2Map(await destinationClient.RunMApp('sync_user', {
+                    aid: this.appId, ver: 'last', version: 'v2',
+                    mid: user.mid, hostid: destinationHost, migrate: 'true',
+                }))
+                if (sync?.migrationComplete !== true || sync.user?.mid !== user.mid ||
+                    sync.user?.hostIds?.[0] !== destinationHost || sync.user?.hostIds?.[1] !== destinationHost) {
+                    throw new Error('The new root did not confirm migration. Keep this session open and retry the same Host ID.')
+                }
+            }
 
             // Update local state
             if (updates.name !== undefined) user.name = updates.name
@@ -5423,10 +5461,37 @@ export const useTweetStore = defineStore('tweetStore', {
             if (updates.hostId !== undefined && updates.hostId.trim()) {
                 user.hostIds = [updates.hostId.trim()]
             }
+            this.adoptWriteRouteForReads(user, writableIp)
             this._user = user
             this._mergeUserIntoCachedRefs(user.mid, user)
 
             return true
+        },
+
+        /** A resolution failure stops migration; only a failed read permits recovery. */
+        async getProfileMigrationIp(user: User): Promise<string> {
+            const rootId = user.hostIds?.[0]
+            if (!rootId) throw new Error('Current root host is missing')
+            const root = await this.getNodeIpByHostId(rootId, true, false)
+            if (!root) throw new Error('Cannot resolve the current root IP and port')
+            const holdsUser = async (ip: string): Promise<boolean> => {
+                const client = createPooledClient(ip, this.lapi.connectionPool)
+                client.timeout = MIGRATION_TIMEOUT_MS
+                try {
+                    const record = unwrapNestedV2Map(await client.RunMApp('get_user_core_data', {
+                        aid: this.appId, ver: 'last', version: 'v2', userid: user.mid,
+                    }))
+                    return record?.mid === user.mid && !!record.hostIds?.[0]
+                } catch {
+                    return false
+                }
+            }
+            if (await holdsUser(root)) return root
+            for (const candidate of await this.getProviderIps(user.mid, v4Only, true)) {
+                const ip = resolvedNodeAddress(candidate)
+                if (await holdsUser(ip)) return ip
+            }
+            throw new Error('No surviving account copy is available for migration')
         },
 
         /**

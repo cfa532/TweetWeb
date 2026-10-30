@@ -1,3 +1,14 @@
+/** Node discovery must supply the complete endpoint; never invent a port. */
+export function resolvedNodeAddress(address: string): string {
+  const raw = address.trim()
+  const match = raw.match(/^(?:\[[^\]]+\]|[^:/?#@\s]+):(\d+)$/)
+  const port = match ? Number(match[1]) : NaN
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || !new URL(`http://${raw}`).hostname) {
+    throw new Error('Node resolution did not return a valid IP and explicit port')
+  }
+  return raw
+}
+
 function hostFromAddress(address: string): string {
   const raw = String(address ?? '').trim()
   if (!raw) return ''

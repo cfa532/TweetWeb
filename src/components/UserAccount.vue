@@ -108,7 +108,8 @@ function populateEditFields() {
         editProfile.value = user.value.profile || '';
         editPassword.value = '';
         editConfirmPassword.value = '';
-        editHostId.value = user.value.hostIds?.[0] || '';
+        // Blank preserves the current root; an entered host explicitly requests migration.
+        editHostId.value = '';
         editCloudDrivePort.value = user.value.cloudDrivePort ? String(user.value.cloudDrivePort) : '';
         editDomainToShare.value = '';
     }
@@ -233,9 +234,8 @@ function handleUpdateProfile() {
         }
     }
 
-    const originalHostId = user.value?.hostIds?.[0] || '';
     const newHostId = editHostId.value.trim();
-    const hostIdChanged = newHostId.length === MIMEI_ID_LENGTH && newHostId !== originalHostId;
+    const hostIdChanged = newHostId.length === MIMEI_ID_LENGTH;
 
     if (hostIdChanged) {
         showHostIdChangeConfirm.value = true;
@@ -250,12 +250,8 @@ function isTimeoutError(err: any): boolean {
     return message.includes('timed out') || message.includes('timeout');
 }
 
-function finishHostIdChange(message: string, type: 'success' | 'warning') {
-    if (type === 'warning') {
-        alertStore.warning(message);
-    } else {
-        alertStore.success(message);
-    }
+function finishHostIdChange(message: string) {
+    alertStore.success(message);
     tweetStore.logout();
     activeView.value = 'login';
     loginUsername.value = '';
@@ -280,7 +276,7 @@ async function doUpdateProfile(hostIdChanged: boolean) {
             domainToShare: editDomainToShare.value.trim() || undefined,
         });
         if (hostIdChanged) {
-            finishHostIdChange(t('auth.hostIdUpdatedLoginNewHost'), 'success');
+            finishHostIdChange(t('auth.hostIdUpdatedLoginNewHost'));
         } else {
             alertStore.success(t('auth.profileUpdated'));
             editPassword.value = '';
@@ -289,7 +285,8 @@ async function doUpdateProfile(hostIdChanged: boolean) {
         }
     } catch (err: any) {
         if (hostIdChanged && isTimeoutError(err)) {
-            finishHostIdChange(t('auth.hostIdUpdateTimedOutVerify'), 'warning');
+            // Keep the recovery session and entered destination for an explicit retry.
+            errorMessage.value = t('auth.hostIdUpdateTimedOutVerify');
         } else {
             errorMessage.value = err?.message || t('auth.updateFailed');
         }
