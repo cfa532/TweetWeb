@@ -5564,17 +5564,20 @@ export const useTweetStore = defineStore('tweetStore', {
             const writeClient = createPooledClient(writableIp, this.lapi.connectionPool)
             const originalTimeout = writeClient.timeout
             writeClient.timeout = 30000
-            let confirmedAvatar: string = cid
+            let ret
             try {
-                const ret = await writeClient.RunMApp("set_user_avatar", {
+                ret = await writeClient.RunMApp("set_user_avatar", {
                     aid: this.appId, ver: "last", version: "v2",
                     userid: user.mid, avatar: cid,
                 })
-                if (ret && typeof ret === 'object') confirmedAvatar = ret.data || ret.avatar || cid
-                else if (typeof ret === 'string') confirmedAvatar = ret
             } finally {
                 writeClient.timeout = originalTimeout
             }
+            // Uploading the image does not confirm that the user's avatar was saved.
+            if (ret?.success !== true || typeof ret.data !== 'string' || !ret.data) {
+                throw new Error(ret?.message || i18n.global.t('avatar.uploadFailed'))
+            }
+            const confirmedAvatar = ret.data
 
             // Use writableIp for display: the CID was just uploaded there and is
             // guaranteed to exist. providerIp (read host) may not have replicated it yet,

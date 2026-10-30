@@ -361,9 +361,6 @@ async function copyAgentToken() {
     }
 }
 
-// Local blob URL for immediate avatar display after crop
-const localAvatarUrl = ref<string | null>(null);
-
 /** Falls back to the default logo on load failure. Guarded so a default logo
  *  that itself fails to load (dead network, blocked host) doesn't re-trigger
  *  @error in an infinite reload loop (setting img.src to its current value
@@ -381,16 +378,15 @@ async function handleAvatarCrop(blob: Blob) {
         return;
     }
     showAvatarCropper.value = false;
+    clearError();
     isUploadingAvatar.value = true;
-    // Show cropped image immediately using local blob URL
-    localAvatarUrl.value = URL.createObjectURL(blob);
+    // Keep the saved avatar until the user-object update is confirmed.
     try {
         await tweetStore.setUserAvatar(blob);
         alertStore.success(t('avatar.uploadSuccess'));
     } catch (err: any) {
-        // Revert local preview on failure
-        localAvatarUrl.value = null;
-        alertStore.error(err?.message || t('avatar.uploadFailed'));
+        errorMessage.value = err?.message || t('avatar.uploadFailed');
+        alertStore.error(errorMessage.value);
     } finally {
         isUploadingAvatar.value = false;
     }
@@ -494,7 +490,7 @@ function goBack() {
             <!-- PROFILE VIEW (matches iOS ProfileView.swift) -->
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
-                    <UserAvatar v-if="user" :user="user" :src="localAvatarUrl || user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                    <UserAvatar v-if="user" :user="user" :src="user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
                         :alt="$t('media.userAvatar')" @error="onProfileAvatarError" />
                     <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" :alt="$t('media.userAvatar')" />
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
@@ -585,7 +581,7 @@ function goBack() {
             <form v-if="activeView === 'edit'" @submit.prevent="handleUpdateProfile">
                 <div class="text-center mb-3">
                     <div class="avatar-edit-wrapper" @click="!isUploadingAvatar && (showAvatarCropper = true)">
-                        <UserAvatar v-if="user" :user="user" :src="localAvatarUrl || user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                        <UserAvatar v-if="user" :user="user" :src="user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
                             :alt="$t('media.userAvatar')" @error="onProfileAvatarError" />
                         <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" :alt="$t('media.userAvatar')" />
                         <div v-if="isUploadingAvatar" class="avatar-upload-overlay">
