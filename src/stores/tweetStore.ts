@@ -12,8 +12,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 const GUEST_ID = "000000000000000000000000000"
 const LOCAL_TWEET_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
 const LOCAL_USER_CACHE_TTL = 72 * 60 * 60 * 1000
-const HEALTH_CHECK_CACHE_TTL = 30 * 60 * 1000
-const HEALTH_CHECK_FAILURE_TTL = 60 * 1000      // unhealthy verdicts expire fast; see getFreshHealthStatus
+const HEALTH_CHECK_CACHE_TTL = 5 * 60 * 1000
 // HEAD checks are reserved for node-address and share-URL reachability.
 // Tweet/user provider races judge routes by their actual data responses.
 const HEALTH_PROBE_TIMEOUT_MS = 2500
@@ -3020,12 +3019,7 @@ export const useTweetStore = defineStore('tweetStore', {
         getFreshHealthStatus(ip: string): boolean | undefined {
             const cached = this.healthCheckCache.get(ip);
             if (!cached) return undefined;
-            // A failed probe is far weaker evidence than a successful one: on a
-            // cold start the probe budget expires before a sleeping node answers.
-            // Remembering that "failure" for the full healthy TTL made the route
-            // unusable for half an hour and made the retry button fail instantly.
-            const ttl = cached.isHealthy ? HEALTH_CHECK_CACHE_TTL : HEALTH_CHECK_FAILURE_TTL;
-            return (Date.now() - cached.timestamp) < ttl ? cached.isHealthy : undefined;
+            return (Date.now() - cached.timestamp) < HEALTH_CHECK_CACHE_TTL ? cached.isHealthy : undefined;
         },
 
         async isServerHealthyWithTimeout(ip: string, timeout: number = 5000, refresh: boolean = false): Promise<boolean> {
@@ -3325,25 +3319,30 @@ export const useTweetStore = defineStore('tweetStore', {
                     return [];
                 }
 
-                const winner = await new Promise<string | null>((resolve) => {
-                    let settled = 0;
-                    for (const ip of candidates) {
-                        this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS, refresh).then(healthy => {
-                            if (healthy) { resolve(ip); return; }
-                            if (++settled === candidates.length) resolve(null);
-                        }).catch(() => {
-                            if (++settled === candidates.length) resolve(null);
-                        });
-                    }
-                });
+                // Match the native clients: exhaust a pair before probing the
+                // next pair, and return as soon as either address answers.
+                for (let start = 0; start < candidates.length; start += 2) {
+                    const pair = candidates.slice(start, start + 2);
+                    const winner = await new Promise<string | null>((resolve) => {
+                        let settled = 0;
+                        for (const ip of pair) {
+                            this.isServerHealthyWithTimeout(ip, HEALTH_PROBE_TIMEOUT_MS, refresh).then(healthy => {
+                                if (healthy) { resolve(ip); return; }
+                                if (++settled === pair.length) resolve(null);
+                            }).catch(() => {
+                                if (++settled === pair.length) resolve(null);
+                            });
+                        }
+                    });
 
-                if (!winner) {
-                    console.warn(`[getNodeIp] No candidate answered the health probe for nodeId ${hostId}`);
-                    return [];
+                    if (winner) {
+                        console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
+                        return [winner];
+                    }
                 }
 
-                console.log(`[getNodeIp] ✅ First healthy IP for nodeId ${hostId}:`, winner);
-                return [winner];
+                console.warn(`[getNodeIp] No candidate answered the health probe for nodeId ${hostId}`);
+                return [];
             } catch (error) {
                 console.error(`[getNodeIp] Error for nodeId ${hostId}:`, error);
                 return [];

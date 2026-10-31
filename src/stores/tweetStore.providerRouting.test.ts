@@ -187,14 +187,56 @@ describe('tweetStore public provider routing', () => {
     await expect(store.getProviderIps('cold-tweet', true, false)).resolves.toEqual([providerIp])
   })
 
-  it('lets an unhealthy verdict expire long before a healthy one', () => {
+  it('expires both healthy and unhealthy verdicts at five minutes', () => {
     const store = useTweetStore()
     const now = Date.now()
-    store.healthCheckCache.set('cold-ip', { isHealthy: false, timestamp: now - 5 * 60 * 1000 })
-    store.healthCheckCache.set('warm-ip', { isHealthy: true, timestamp: now - 5 * 60 * 1000 })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      store.healthCheckCache.set('cold-ip', { isHealthy: false, timestamp: now })
+      store.healthCheckCache.set('warm-ip', { isHealthy: true, timestamp: now })
+      clock.mockReturnValue(now + 5 * 60 * 1000 - 1)
+      expect(store.getFreshHealthStatus('cold-ip')).toBe(false)
+      expect(store.getFreshHealthStatus('warm-ip')).toBe(true)
+      clock.mockReturnValue(now + 5 * 60 * 1000)
+      expect(store.getFreshHealthStatus('cold-ip')).toBeUndefined()
+      expect(store.getFreshHealthStatus('warm-ip')).toBeUndefined()
+    } finally {
+      clock.mockRestore()
+    }
+  })
 
-    expect(store.getFreshHealthStatus('cold-ip')).toBeUndefined()
-    expect(store.getFreshHealthStatus('warm-ip')).toBe(true)
+  it('returns the first healthy IP in a node pair without starting later pairs', async () => {
+    const store = useTweetStore()
+    const ips = ['220.1.1.1:8002', '220.1.1.2:8002', '220.1.1.3:8002']
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue(ips)
+    const finish: ((healthy: boolean) => void)[] = []
+    store.isServerHealthyWithTimeout = vi.fn(() => new Promise<boolean>(resolve => finish.push(resolve)))
+
+    const lookup = store._resolveNodeIps('node', true)
+    await vi.waitFor(() => expect(finish).toHaveLength(2))
+    finish[1](true)
+    await expect(lookup).resolves.toEqual([ips[1]])
+    expect(store.isServerHealthyWithTimeout).toHaveBeenCalledTimes(2)
+    finish[0](false)
+  })
+
+  it('waits for both node IPs to fail before starting the next pair', async () => {
+    const store = useTweetStore()
+    const ips = ['220.1.1.1:8002', '220.1.1.2:8002', '220.1.1.3:8002', '220.1.1.4:8002']
+    store.lapi.client.RunMApp = vi.fn().mockResolvedValue(ips)
+    const finish: ((healthy: boolean) => void)[] = []
+    store.isServerHealthyWithTimeout = vi.fn(() => new Promise<boolean>(resolve => finish.push(resolve)))
+
+    const lookup = store._resolveNodeIps('node', true)
+    await vi.waitFor(() => expect(finish).toHaveLength(2))
+    finish[0](false)
+    await Promise.resolve()
+    expect(store.isServerHealthyWithTimeout).toHaveBeenCalledTimes(2)
+    finish[1](false)
+    await vi.waitFor(() => expect(finish).toHaveLength(4))
+    finish[3](true)
+    await expect(lookup).resolves.toEqual([ips[3]])
+    finish[2](false)
   })
 
   it('keeps unverified node routes instead of taking a fetch-failure cooldown', async () => {
