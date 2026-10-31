@@ -1,155 +1,111 @@
 # TweetWeb Publication and Deployment
 
-This is the canonical production release procedure for TweetWeb. Every release
-must upload both the newly compiled TweetWeb `dist` assets and all current
-production Go sources from `TweetBackendApp` to `/home/pi/demo/tweet1/` on gen8,
-verify their hashes, and then run `tweet1.sh`. Backend upload is mandatory even
-when the requested change was only in TweetWeb. A release is complete only after
-the same `dist` build has been published to both targets:
+This is the canonical release procedure for TweetWeb. Build once, upload the
+web assets and all current production Go sources to gen8, publish with
+`tweet1.sh`, and deploy that same web build to Cloudflare unless the user
+explicitly defers Cloudflare.
 
-1. the Leither `tweet1` app on gen8; and
-2. the `dtweet-deeplink` Cloudflare Worker asset binding.
+After the requested publication commands finish, perform **one HTTP GET
+availability check** against the release site's root URL. No other verification
+is part of a routine release. Do not run tests, hash comparisons, remote source
+inventories, numbered/`last` probes, backend health or provider checks, browser
+verification, asset inspections, association-file checks, or separate Cloudflare
+checks unless explicitly requested.
 
-Publishing only one target leaves the other target serving the previous web
-application.
+The availability check establishes only that the site responds with HTTP 200;
+it does not establish bundle freshness or application behavior. Required build,
+upload, and publication commands must succeed. Stop and address a reported
+failure rather than describing the publication as successful.
 
-For a browser-domain replacement, use the separate
+For domain or routing changes, use the separate
 [Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md).
+Its migration diagnostics are not routine release steps.
 
 ## Prerequisites
 
-- Run the commands from the `TweetWeb` repository unless a step says otherwise.
-- gen8 is always the Leither publication target. Resolve its volatile public IP
-  through the Cloudflare-managed `gen8.leither.uk` record; never copy a
-  currently resolved IP into scripts, documentation, DNS rules, or `.env`.
-- Before connecting, run `nslookup gen8.leither.uk` and set `GEN8_IP` to the
-  freshly returned IPv4 address for that session. Connect by that IP with
-  `HostKeyAlias=[gen8.leither.uk]:220` to preserve host-key verification:
+- Run local commands from `TweetWeb` unless a step says otherwise.
+- Keep the sibling `TweetBackendApp` repository available; its production Go
+  sources are required for every release, including web-only changes.
+- Keep the sibling `Tweet-iOS` repository available when publishing Cloudflare.
+  The Worker lives at `../Tweet-iOS/cloudflare/dtweet-worker` and reads `dist`.
+- Use the existing gen8 publication scripts. Leave Leither's own files, including
+  `temp.html`, unchanged.
 
-  ```bash
-  nslookup gen8.leither.uk
-  GEN8_IP='replace-with-freshly-resolved-IP'
-  ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP"
-  ```
+Before connecting to gen8, resolve its current public IP:
 
-- Ensure Wrangler is authenticated for the `dtweet.com` Cloudflare account.
-- Keep the sibling `TweetBackendApp` repository next to `TweetWeb`; all
-  production Go sources are copied from there for every release.
-- Keep the sibling `Tweet-iOS` repository next to `TweetWeb`; the Worker lives
-  at `../Tweet-iOS/cloudflare/dtweet-worker` and reads this repository's `dist`
-  directory.
+```bash
+nslookup gen8.leither.uk
+GEN8_IP='replace-with-freshly-resolved-IP'
+```
 
-Both release (`tweet1`) and debug (`twbe`) must run the File-capable Go backend
-from `TweetBackendApp/`. Do not publish the legacy JavaScript backend into
-either package: it cannot read `tweet-file-v1` objects.
+Use that freshly resolved IP for SSH/SCP on port 220, with
+`HostKeyAlias=[gen8.leither.uk]:220` to retain host-key verification. Do not reuse
+an IP from an earlier session or save it as permanent configuration.
 
 ## 1. Select the Publication Environment
 
-The repository `.env` contains mutually exclusive `RELEASE` and `DEBUG`
-sections. Select exactly one before building:
+The `.env` file contains release and debug values. Use the release AppID and
+followings for a release, with every `VITE_LEITHER_NODE` assignment commented
+out. A fixed local node must never be embedded in a published build.
 
-| Publication | `.env` state |
-| --- | --- |
-| Release | Keep the `RELEASE` variables active. Comment every variable in the `DEBUG` section. |
-| Debug | Comment the `RELEASE` variables. Uncomment every variable in the `DEBUG` section. |
+| Environment | AppID | Default followings | Target | Publisher |
+| --- | --- | --- | --- | --- |
+| Release | `heWgeGkeBX2gaENbIBS_Iy1mdTS` | `mKOihoVuFnQ2xt33R51KTQXSBkX` | `/home/pi/demo/tweet1/` | `tweet1.sh` |
+| Debug | `d4lRyhABgqOnqY4bURSm_T-4FZ4` | `6IQc_t22JUub1TEgDP9Fo_Boosm` | `/home/pi/demo/twbe/` | `twbe.sh` |
 
-For both release and debug publication, comment every
-`VITE_LEITHER_NODE` assignment. It is a local testing override and must never
-be embedded in a published bundle:
-
-```dotenv
-# VITE_LEITHER_NODE=192.168.99.1:8002       # gen8
-# VITE_LEITHER_NODE=192.168.99.6:8081       # tahoe
-# VITE_LEITHER_NODE=192.168.1.21:8003        # beijing
-# VITE_LEITHER_NODE=125.229.161.122:8080    # ksbox
-# VITE_LEITHER_NODE=192.168.5.4:8080        # minipc
-```
-
-Do not commit an `.env` change made only for publication. Record the original
-local state so it can be restored after verification.
-
-### gen8 target directories
-
-Publish each project into its existing application directory on gen8. Do not
-replace one whole directory with another project's files:
-
-| Source | gen8 target | Publisher |
-| --- | --- | --- |
-| TweetWeb release `dist` assets | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
-| TweetBackendApp production Go sources (release) | `/home/pi/demo/tweet1/` | `/home/pi/demo/tweet1.sh` |
-| TweetBackendApp production Go sources (debug) | `/home/pi/demo/twbe/` | `/home/pi/demo/twbe.sh` |
+Environment overrides may select the build without editing `.env`. If `.env`
+is changed for publication, record its original contents and restore them at
+the end. Do not commit publication-only environment changes.
 
 ## 2. Prepare the Backend Sources
 
-Pushing or committing `TweetBackendApp` does not update either Leither app.
-Production `.go` sources live in the `TweetBackendApp` repository root.
-Release and debug can have different published revisions. For a domain-only
-change, follow the migration memo and preserve each package’s other code and assets.
-Keep the existing app names and directories: they determine the AppIDs.
+Every release includes the current production `.go` sources from the root of
+`TweetBackendApp`. Exclude `*_test.go`, module files, documentation, local tooling,
+and signing keys. Both release and debug use this File-capable Go backend;
+`legacy-js/` is not a publication source.
 
-| Environment | Package | AppID | Publisher |
-| --- | --- | --- | --- |
-| Release | `/home/pi/demo/tweet1/` | `heWgeGkeBX2gaENbIBS_Iy1mdTS` | `tweet1.sh` |
-| Debug | `/home/pi/demo/twbe/` | `d4lRyhABgqOnqY4bURSm_T-4FZ4` | `twbe.sh` |
+Back up the existing package outside its application directory before uploading.
+Preserve existing download assets and browser dependencies. Do not replace an
+entire package with another project's directory. Superseded source files must be
+removed when a change explicitly replaces them; do not add a separate remote
+inventory or hash audit to the release procedure.
 
-Back up packages outside their application directories. Copy production Go
-sources to the selected package, preserving existing public web/download assets.
-Exclude `*_test.go`, `go.mod`, `go.sum`, documentation, local tooling and signing
-keys. Remove superseded backend source files from the package after backing them
-up; retain browser JavaScript assets such as `hprose.js` and `index_entry.js`.
-
-For a separate debug-backend publication, use the following commands. For a
-release, continue to steps 3 and 4 to upload both the backend and web build
-before running `tweet1.sh`:
-
-```bash
-rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
-  --exclude='*_test.go' --include='*.go' --exclude='*' \
-  ../TweetBackendApp/ "pi@$GEN8_IP:/home/pi/demo/twbe/"
-shasum -a 256 ../TweetBackendApp/file_store.go
-ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" \
-  'shasum -a 256 /home/pi/demo/twbe/file_store.go'
-ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'cd /home/pi/demo && bash -e ./twbe.sh'
-```
-
-Check upload, backup and publication results; the script's final success message
-alone is insufficient. Verify `health` by the new numbered version, then `last`:
-`storageFormats` must contain both `database` and `tweet-file-v1`, and
-creation policy must match the intended package and the
-[canonical sync contract](https://github.com/cfa532/Leither/blob/main/cfa532-docs/integrations/tweet/DATA_AND_SYNC_CONTRACT.md).
-Current full backend releases report `creationFormat: "mixed"` with
-`creationFormats` for each object type. A domain-only deployment preserves the
-package’s existing policy; the October 6 record documents the release/debug
-revision difference. Check the same on serving/root nodes;
-synchronize the application MID from gen8 if a node still serves an old package.
-Do not republish from those nodes, or synchronize/migrate user data as part of an
-application deployment. Never roll back to a database-only reader once File
-objects exist.
-
-For a release, publish once after both the backend sources and generated web
-files have been uploaded and verified. The Go runtime details are maintained
-in `TweetBackendApp/README.md`.
+The Go runtime details are maintained in `TweetBackendApp/README.md`.
 
 ## 3. Build Once
+
+With the release environment selected and no fixed node configured:
 
 ```bash
 npm run build
 ```
 
-This runs the TypeScript check and creates the selected environment's package in `dist`.
-When publishing both environments, build each with its own AppID and default
-followings, and save their outputs separately. Environment overrides can select
-the build without editing `.env`. Keep the release output in `dist` for Wrangler.
-Do not rebuild between the two publication targets; both must receive the same
-output.
+The build includes TypeScript compilation checks and writes the release assets to
+`dist`. Do not run tests or separate checks. Keep this exact `dist` output for
+both gen8 and Cloudflare, including when Cloudflare publication is deferred.
+
+Debug builds must use their own AppID and followings and a separate output
+folder so they do not overwrite a release waiting for Cloudflare. The extra
+`--` below forwards Vite's output-folder option through the build script:
+
+```bash
+VITE_MIMEI_APPID=d4lRyhABgqOnqY4bURSm_T-4FZ4 \
+VITE_DEFAULT_FOLLOWINGS=6IQc_t22JUub1TEgDP9Fo_Boosm \
+VITE_LEITHER_NODE= \
+npm run build -- -- --outDir /private/tmp/tweetweb-debug-dist
+```
 
 ## 4. Publish the Leither App
 
-Copy all current production backend sources, generated entry files, and static
-dependencies into the matching package on gen8: `tweet1` for release, `twbe`
-for debug. The example below is
-release; for debug use its saved output, `/home/pi/demo/twbe/` and `twbe.sh`.
-Never overwrite one environment with the other environment's web bundle:
+For a release, first back up `tweet1` outside the package directory:
+
+```bash
+ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'set -e
+backup_dir=$(mktemp -d /home/pi/demo/tweet1-before-release.XXXXXX)
+cp -a /home/pi/demo/tweet1 "$backup_dir/"'
+```
+
+Upload all production backend Go sources and the seven web assets:
 
 ```bash
 rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
@@ -166,246 +122,94 @@ scp -P 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' \
   "pi@$GEN8_IP:/home/pi/demo/tweet1/"
 ```
 
-Compare SHA-256 hashes for every uploaded production Go file and all seven web
-assets against their local inputs. Inspect the remote source inventory as well:
-excluding tests or removed files from an upload does not remove older copies
-already on gen8. Resolve any package-content differences before publication,
-preserving existing download assets and keeping backups outside `tweet1/`.
-
-Only after both uploads and hash verification succeed, publish the package with
-the existing server-side script:
+After both uploads succeed, publish once with the existing script:
 
 ```bash
-ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" 'cd /home/pi/demo && bash -e ./tweet1.sh'
+ssh -p 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' "pi@$GEN8_IP" \
+  'cd /home/pi/demo && bash -e ./tweet1.sh'
 ```
 
-Check the upload, backup, and MiMei publication results as well as the final
-`APP published successfully` message and new backup/version number. The script
-does not enable failure checking itself; `bash -e` stops it if a command fails.
-Its output can include signing material, so do not paste unfiltered publisher
-logs into chats or release records.
+Use the command's exit status and publication output to report the result and
+new version. `bash -e` stops the publisher if a command fails. Publisher output
+can contain signing material: capture it privately and report only the needed
+success/error information and version number. Do not paste unfiltered logs.
+Do not follow publication with API, version, source, asset, or provider probes.
 
-Verify the published bundle and backend through the new numbered version and
-then `last`, including the backend health checks in step 2. The upload-time
-`Last` line describes the previous backup; it is not evidence that the uploaded
-files are old. Conversely, a new backup number alone does not prove that `last`
-serves the new code. Repeated regression to local version `1396` was recorded
-on October 6 after successful publications; its cause remains unresolved.
-Report any recurrence instead of treating another publication or temporary
-synchronization as a fix.
+For debug publication, back up and upload to `/home/pi/demo/twbe/`, use the saved
+debug web assets, and run `bash -e ./twbe.sh` from `/home/pi/demo`. Do not deploy
+debug to Cloudflare or run separate debug verification unless requested.
 
 ## 5. Deploy the Cloudflare Worker and Assets (Release Only)
 
-### Why the Worker is required
-
-The `dtweet-deeplink` Worker is both the public deeplink gateway and one of the
-two production copies of TweetWeb:
-
-`BROWSER_FALLBACK_ORIGIN` in the Worker source is the source of truth for the
-browser application domain. It currently equals `http://t1.ww33.world`, but
-that is replaceable operational configuration, not a permanent domain
-contract. The av1 section below describes the current routing. Use the
-[Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md)
-whenever the value changes.
-
-- It serves the Apple and Android association files from `dtweet.com`, allowing
-  an installed native app to claim `/tweet/*`, `/author/*`, `#tweet/*`, and
-  `#author/*` links before the browser opens them.
-- If no installed app claims a normal browser navigation, it redirects the
-  route to the HTTP fallback host and converts path routes to hash routes. For
-  example, `/author/<id>` becomes
-  `http://t1.ww33.world/#author/<id>`. TweetWeb uses HTTP there because the
-  Leither service it contacts does not accept HTTPS.
-- It terminates HTTPS for `dl.dtweet.com`. Static TweetWeb files are served
-  from the Worker's asset binding, browser navigations are redirected to the
-  separate HTTP fallback host, and other requests are proxied to the HTTP
-  Leither origin. Do not redirect `dl.dtweet.com` back to HTTP on the same
-  hostname: browsers such as Chrome can upgrade the URL to HTTPS again and
-  create a redirect loop.
-
-The Worker's asset binding is independent of the Leither `tweet1` package on
-gen8. Running `tweet1.sh` updates only gen8; it does not update Cloudflare.
-Likewise, deploying the Worker updates only Cloudflare; it does not publish the
-Leither package. Every TweetWeb release must therefore publish the exact same
-`dist` build to both targets.
-
-### How to deploy it
-
-`../Tweet-iOS/cloudflare/dtweet-worker/wrangler.toml` points its `ASSETS`
-binding directly at `TweetWeb/dist`. Build once, copy that build to gen8, run
-`tweet1.sh`, and then deploy the Worker without rebuilding in between:
+Unless the user explicitly defers Cloudflare, publish the same release build:
 
 ```bash
 cd ../Tweet-iOS/cloudflare/dtweet-worker
 npx wrangler deploy
 ```
 
-Wrangler compares the current `dist` files with the deployed asset set, uploads
-the changed assets, publishes the Worker code, and reports a new Worker version
-ID. A successful deployment must list all three production triggers below.
-Return to the TweetWeb repository afterward and perform the hash and routing
-checks in step 6.
+The Worker's `ASSETS` binding reads `TweetWeb/dist`. Do not rebuild between the
+gen8 and Cloudflare publications. Use Wrangler's command result to report
+success or failure; do not add configuration, route, asset, or provider checks.
 
-Confirm Wrangler reports a new version and all production routes:
+When Cloudflare is deferred, skip this step, keep the release `dist` available,
+and state in the handoff that only gen8 was updated. Do not deploy Cloudflare
+as an unrequested follow-up.
 
-- `dtweet.com`
-- `www.dtweet.com`
-- `dl.dtweet.com/*`
+The Worker owns redirects from `dtweet.com` and `www.dtweet.com`, as well as
+HTTPS handling for `dl.dtweet.com`. Its `BROWSER_FALLBACK_ORIGIN` in
+`src/index.js` identifies the release browser site. A routine publication does
+not change domain bindings, nginx configuration, or redirect rules.
 
-The `dtweet.com` zone's legacy browser-fallback Redirect Rule must remain
-disabled. The Worker owns the
-browser redirect after serving the iOS and Android association files. An
-active zone redirect runs before the Worker and bypasses that routing logic.
+## 6. Check Site Availability Once
 
-## 6. Verify Production
-
-From the `TweetWeb` repository, compare the local JavaScript bundle with the
-legacy Worker asset host:
+After all requested publication commands succeed, make one GET to the release
+site's root. Use `BROWSER_FALLBACK_ORIGIN` from the Worker source as the URL;
+it is currently `http://t1.www33.shop`:
 
 ```bash
-shasum -a 256 dist/index_entry.js
-curl -fsSL https://dl.dtweet.com/index_entry.js | shasum -a 256
+RELEASE_SITE_URL='http://t1.www33.shop'
+curl --fail --silent --show-error --location \
+  --connect-timeout 10 --max-time 30 \
+  --header 'Accept: text/html' \
+  --output /dev/null --write-out 'Site availability: HTTP %{http_code}\n' \
+  "$RELEASE_SITE_URL/"
 ```
 
-Both SHA-256 values must match. If an edge temporarily serves an older
-asset, wait for propagation and repeat the direct checks; a query string alone
-is not proof that the cached bundle changed.
-
-Do not hash `http://t1.ww33.world/index_entry.js` directly. It is a Leither
-domain whose loader generates the app entry response and resolves bare
-object names inside the published package; that URL is not a raw static-asset
-endpoint. The local-versus-gen8 hash check before `tweet1.sh` verifies the
-Leither package input.
-
-Also confirm that both association files return JSON directly from
-`https://dtweet.com`, then open both production
-`/tweet/<tweet-id>/<author-id>` and `/#tweet/<tweet-id>/<author-id>` URLs. With
-the app installed, the operating system should open the app. In a browser, the
-Worker must land both forms on
-`http://t1.ww33.world/#tweet/<tweet-id>/<author-id>`, and that page must load the
-current bundle without mixed-content errors.
-
-### Troubleshooting: `dl.dtweet.com` opens but no data loads
-
-If `https://dl.dtweet.com` returns the TweetWeb shell but profiles and tweets do
-not load, inspect the browser console. This incident occurred on September 5,
-2026 when the Worker served HTML navigation from its HTTPS asset binding. The
-page then tried to open Leither's `ws://` provider endpoints, and the browser
-rejected every attempt with `SecurityError: An insecure WebSocket connection
-may not be initiated from a page loaded over HTTPS`.
-
-The correct fix is request-class routing in the Worker, not an HTTPS-to-HTTP
-redirect on the same `dl.dtweet.com` hostname:
-
-| Request to `dl.dtweet.com` | Required result |
-| --- | --- |
-| Browser `GET` accepting `text/html` | `302` to the current `BROWSER_FALLBACK_ORIGIN`; `/tweet/*` and `/author/*` become hash routes |
-| Listed static asset such as `/index_entry.js` | `200` from the Worker `ASSETS` binding |
-| Apple or Android association file | `200` JSON from the Worker |
-| Other request | Proxy through Cloudflare to the HTTP Leither origin |
-
-Do not redirect to `http://dl.dtweet.com`: Chrome can upgrade that URL back to
-HTTPS and create a loop. Redirect browser navigation to the separate fallback
-host. Use real `GET` requests because `HEAD` does not enter the navigation
-branch:
-
-```bash
-curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' \
-  -H 'Accept: text/html' https://dl.dtweet.com/
-curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' \
-  -H 'Accept: text/html' https://dl.dtweet.com/author/example-author
-curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' \
-  https://dl.dtweet.com/index_entry.js
-```
-
-Finally, open a fragment-form link in a real browser, such as
-`https://dl.dtweet.com/#author/<id>`. Confirm that the final URL retains the
-fragment under the configured HTTP fallback and that profile and tweet data
-load.
-
-### av1 nginx domain-routing invariant
-
-As verified October 6, 2026, the active site is
-`/etc/nginx/sites-enabled/leither-fireshare` on av1. It is a regular file,
-not a symlink to the older `sites-available` copy. Inspect `nginx -T` before
-editing and save dated backups outside `sites-enabled`.
-
-| Host family | Current behavior to preserve |
-| --- | --- |
-| `ww33.world`, `*.ww33.world` | Proxy HTTP to Leither at `127.0.0.1:4801` with the original Host header; canonicalize `/tweet/*` and `/author/*` to hash routes. Release app is bound to `t1.ww33.world`. |
-| `w33w.site`, `*.w33w.site`, `w333.space`, `*.w333.space` | Retain their existing Leither proxy routes. The October 6 switch did not retire these domains. |
-| `w333w.site`, `w3w3.store`, `www333.store`, `www3.shop`, `www33.online`, and their subdomains | Retain existing redirects to corresponding `w33w.site` hosts, preserving subdomain, route, query, and tweet/author hash markers. |
-| `fireshare.us`, `*.fireshare.us`, `fireshare.uk`, `*.fireshare.uk` | Proxy to Leither with the original Host header. Do not redirect native-client hosts to a browser domain. |
-| `*.lepan.org` | Preserve LifeDrive's Leither proxy and the dedicated exact-host routes for `drive.lepan.org`, `gw.lepan.org`, and `registry.lepan.org`; preserve the separate root site too. |
-
-The canonical HTTPS block uses `/etc/letsencrypt/live/ww33.world/` and covers
-`ww33.world`, `www.ww33.world`, `t1.ww33.world`, and `tweet.ww33.world`.
-It sends `Strict-Transport-Security: max-age=0` and redirects to the same HTTP
-host and request URI. The HTTP page is required for the app's HTTP and `ws://`
-providers. Renewal uses `/var/www/letsencrypt` and the enabled `certbot.timer`.
-
-After an nginx edit, validate before reloading and check the affected routes:
-
-```bash
-ssh root@av1 'nginx -t && systemctl reload nginx'
-curl -I http://t1.ww33.world/
-curl -I http://t1.ww33.world/tweet/example/author
-curl -I https://ww33.world/
-curl -I https://t1.ww33.world/
-curl -I http://t1.w33w.site/
-curl -I http://tweet.fireshare.us/
-curl -I http://tweet.fireshare.uk/
-curl -I http://drive.lepan.org/
-curl http://registry.lepan.org/health
-```
-
-The new `t1` host must serve the release app; its tweet route must redirect
-with `/#tweet/`. HTTPS must present a valid certificate, clear HSTS, and return
-to HTTP. Existing browser and Fireshare hosts must retain their routes, and
-LifeDrive and registry checks must reach their respective services.
-
-See the [October 6 migration record](BROWSER_FALLBACK_DOMAIN_MIGRATION.md#completed-ww33world-default-domain-switch)
-for published versions, backups, asset hash, and verification limits. Older
-migration records describe historical configurations and must not be reapplied
-over the current routes.
+Require a successful command and final HTTP 200. A timeout, request failure, or
+other final status is a failed availability check: report and address the
+reported failure. Do not automatically broaden it into other checks, repeated
+probes, or a browser session. Following a redirect within this single check is
+allowed. If it succeeds, there are no further release verification steps.
 
 ## 7. Restore Local Testing Configuration
 
-After verification, restore the developer's original `.env` value when local
-testing requires a fixed node:
-
-```dotenv
-VITE_LEITHER_NODE=192.168.99.1:8002       #gen8
-```
-
-Restoring `.env` does not alter already-built or deployed assets.
+Restore any local environment settings changed for publication. This does not
+alter already-built or published assets. Leave the release `dist` intact if
+Cloudflare publication is pending.
 
 ## Publication Checklist
 
-- [ ] Exactly one `.env` section is active: `RELEASE` for a release build or
-      `DEBUG` for a debug build.
-- [ ] Every `VITE_LEITHER_NODE` assignment is commented for both build types.
-- [ ] gen8 DNS was freshly resolved and its returned IP used with the required
-      `HostKeyAlias`; no volatile IP was saved as permanent configuration.
-- [ ] Backend packages retain the intended File-capable Go revisions;
-      no legacy JavaScript backend was introduced.
-- [ ] All current production Go sources were uploaded for this release and
-      their hashes matched the local `TweetBackendApp` files.
-- [ ] Numbered and `last` health responses advertise both storage formats on
-      gen8 and serving/root nodes; File tweet and comment reads succeed.
-- [ ] `npm run build` completed successfully.
-- [ ] The seven generated assets were copied to gen8 and their hashes matched
-      the same local `dist` build used for Cloudflare.
-- [ ] After both uploads were verified, `bash -e ./tweet1.sh` published a new
-      Leither app version; numbered and `last` responses serve the intended code.
-- [ ] Wrangler deployed a new Worker version with all three routes.
-- [ ] The legacy browser-fallback zone rule is disabled.
-- [ ] Public asset hashes match `dist/index_entry.js`.
-- [ ] Association files return JSON and a browser tweet link redirects to
-      `http://t1.ww33.world` and loads successfully.
-- [ ] av1 serves `t1.ww33.world` and preserves existing browser-domain redirects,
-      Fireshare hosts, and LifeDrive/registry routes under `lepan.org`.
-- [ ] The developer's original local `.env` value was restored.
+- [ ] Release environment selected; no fixed node embedded in the build.
+- [ ] gen8 freshly resolved; required `HostKeyAlias` used for connections.
+- [ ] Existing gen8 package backed up outside its application directory.
+- [ ] `npm run build` succeeded.
+- [ ] Current production Go sources and all seven release web assets uploaded.
+- [ ] `bash -e ./tweet1.sh` succeeded; publication version recorded from its output.
+- [ ] Same `dist` published to Cloudflare, or Cloudflare explicitly deferred.
+- [ ] One site-root HTTP availability check succeeded with HTTP 200.
+- [ ] Any temporary local environment changes restored.
+
+## av1 nginx domain-routing invariant
+
+Domain, proxy, certificate, and redirect changes belong to the separate
+[Browser Fallback Domain Migration Memo](BROWSER_FALLBACK_DOMAIN_MIGRATION.md).
+Preserve the existing browser, native-client, Fireshare, and LifeDrive routes
+when doing that work. Their migration-specific diagnostics are outside the
+routine release procedure above.
+
+The following incident records are background context. Their diagnostic commands
+are not release steps and must not be run as extra publication verification.
 
 ## Deferred Issue: App Busy During Account Migration (2026-10-30)
 

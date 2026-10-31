@@ -259,7 +259,7 @@ const upgradeDomain = "t1.<new-domain>"
 ```
 
 This value must agree with the Worker's `BROWSER_FALLBACK_ORIGIN`, which includes
-`http://`. Follow [the backend publication procedure](DEPLOYMENT.md#2-publish-backend-changes-first-when-applicable)
+`http://`. Follow [the backend publication procedure](DEPLOYMENT.md#2-prepare-the-backend-sources)
 to publish changes to the existing gen8 packages with `tweet1.sh` and `twbe.sh`.
 For a domain-only migration, compare each package with its published numbered
 version, back it up, and change only `upgradeDomain` in each deployed
