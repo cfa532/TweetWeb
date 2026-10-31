@@ -64,14 +64,24 @@ const providerProfileLinks = computed(() => {
     });
 });
 
-onMounted(() => {
+onMounted(async () => {
     const requestedView = route.query.view;
     if (!isLoggedIn.value && (requestedView === 'login' || requestedView === 'register')) {
         activeView.value = requestedView;
         return;
     }
-    if (isLoggedIn.value) {
+    const userId = user.value?.mid;
+    if (userId) {
         activeView.value = 'profile';
+        // Cached profile data paints immediately; opening the page always makes a fresh read.
+        try {
+            const refreshedUser = await tweetStore.getUser(userId, true);
+            if (!refreshedUser && user.value?.mid === userId) {
+                errorMessage.value = t('errors.userDataFailed');
+            }
+        } catch {
+            if (user.value?.mid === userId) errorMessage.value = t('errors.userDataFailed');
+        }
     }
 });
 
@@ -373,9 +383,16 @@ function onProfileAvatarError(event: Event) {
 }
 
 function openAvatarViewer() {
+    const currentUser = user.value;
+    if (!currentUser) return;
     sessionStorage.setItem('mediaViewerData', JSON.stringify({
-        mediaList: [{ mid: user.value?.avatar || defaultAvatar, type: 'image' }],
+        mediaList: [{ mid: currentUser.avatar || defaultAvatar, type: 'image' }],
         initialIndex: 0,
+        avatarInfo: {
+            userId: currentUser.mid,
+            hostId: currentUser.hostIds?.[0],
+            baseIp: currentUser.providerIp,
+        },
     }));
     router.push('/media-viewer');
 }

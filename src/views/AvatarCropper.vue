@@ -33,8 +33,6 @@ let lastOffsetY = 0;
 let lastPinchDist = 0;
 
 const CIRCLE_SIZE = 256;
-// Output resolution for the cropped avatar
-const OUTPUT_SIZE = 200;
 
 // Canvas display dimensions (CSS pixels)
 let canvasCSSWidth = 0;
@@ -224,12 +222,13 @@ function handleCrop() {
     const clampedY = Math.max(0, Math.min(cropY, img.height - clampedSize));
 
     const outCanvas = document.createElement('canvas');
-    outCanvas.width = OUTPUT_SIZE;
-    outCanvas.height = OUTPUT_SIZE;
+    // Keep the selected region at source resolution instead of shrinking it to a thumbnail.
+    outCanvas.width = Math.round(clampedSize);
+    outCanvas.height = outCanvas.width;
     const outCtx = outCanvas.getContext('2d');
     if (!outCtx) return;
 
-    outCtx.drawImage(img, clampedX, clampedY, clampedSize, clampedSize, 0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+    outCtx.drawImage(img, clampedX, clampedY, clampedSize, clampedSize, 0, 0, outCanvas.width, outCanvas.height);
 
     outCanvas.toBlob((blob) => {
         if (blob) emit('crop', blob);

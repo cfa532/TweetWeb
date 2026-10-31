@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import type { PropType } from 'vue';
 import { Image, VideoJS } from '@/views';
+import { useTweetStore } from '@/stores';
+import { avatarSrc } from '@/lib';
 
 const props = defineProps({
   mediaList: { type: Array as PropType<MimeiFileType[]>, required: false },
@@ -11,6 +13,7 @@ const props = defineProps({
 });
 
 const router = useRouter();
+const tweetStore = useTweetStore();
 
 // Get data from session storage if not provided as props
 const mediaViewerData = ref<any>(null);
@@ -74,6 +77,36 @@ const dragThreshold = 50; // Minimum distance to trigger swipe
 // Get media list from props or session storage
 const mediaList = computed(() => props.mediaList || mediaViewerData.value?.mediaList || []);
 const tweet = computed(() => props.tweet || mediaViewerData.value?.tweet);
+const avatarInfo = computed(() => mediaViewerData.value?.avatarInfo);
+
+watch(() => avatarInfo.value?.userId as string | undefined, async (userId, _, onCleanup) => {
+  if (!userId) return;
+  const savedData = mediaViewerData.value;
+  let active = true;
+  onCleanup(() => { active = false; });
+  // Keep the saved image and details visible until a fresh ordinary read succeeds.
+  try {
+    const user = await tweetStore.getUser(userId, true);
+    if (!active) return;
+    if (!user) {
+      console.warn('[MediaViewer] Could not refresh avatar details for', userId);
+      return;
+    }
+    const refreshedData = {
+      ...savedData,
+      mediaList: [{ ...savedData.mediaList[0], mid: avatarSrc(user.avatar) }],
+      avatarInfo: {
+        userId: user.mid,
+        hostId: user.hostIds?.[0],
+        baseIp: user.providerIp,
+      },
+    };
+    sessionStorage.setItem('mediaViewerData', JSON.stringify(refreshedData));
+    mediaViewerData.value = refreshedData;
+  } catch (error) {
+    if (active) console.warn('[MediaViewer] Avatar refresh failed:', error);
+  }
+});
 
 // Filter media to include images and videos
 const mediaItems = computed(() => 
@@ -238,6 +271,7 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
 <template>
   <div
     class="media-viewer-modal"
+    :class="{ 'avatar-viewer': avatarInfo }"
     @click="closeModal"
     @touchstart="handleTouchStart"
     @touchmove="handleTouchMove"
@@ -300,6 +334,15 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
           <p>{{ $t('media.empty') }}</p>
         </div>
       </div>
+
+      <dl v-if="avatarInfo" class="avatar-info">
+        <dt>{{ $t('auth.userId') }}</dt>
+        <dd>{{ avatarInfo.userId }}</dd>
+        <dt>{{ $t('auth.hostId') }}</dt>
+        <dd>{{ avatarInfo.hostId ?? 'N/A' }}</dd>
+        <dt>{{ $t('media.baseIp') }}</dt>
+        <dd>{{ avatarInfo.baseIp ?? 'N/A' }}</dd>
+      </dl>
 
       <!-- Media counter -->
       <div v-if="mediaItems.length > 1" class="media-counter">
@@ -470,6 +513,63 @@ function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
   max-height: none !important;
   object-fit: unset !important;
   display: block;
+}
+
+/* Fit avatars above their account details without pushing those details off screen. */
+.avatar-viewer {
+  height: 100dvh;
+}
+
+.avatar-viewer .media-viewer-content {
+  flex-direction: column;
+}
+
+.avatar-viewer .media-container {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.avatar-viewer .image-container {
+  align-items: center;
+  overflow: hidden;
+}
+
+.avatar-viewer .fullscreen-image {
+  width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-viewer .image-container :deep(img) {
+  max-height: 100% !important;
+  object-fit: contain !important;
+}
+
+.avatar-info {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 640px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  padding: 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  color: white;
+  font-size: 14px;
+}
+
+.avatar-info dt {
+  color: #bbb;
+}
+
+.avatar-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .video-container :deep(.video-container) {

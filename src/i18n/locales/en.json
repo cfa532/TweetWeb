@@ -268,6 +268,7 @@
     "uploadFailed": "Failed to upload avatar"
   },
   "media": {
+    "baseIp": "Base IP",
     "userAvatar": "User Avatar",
     "appIcon": "App Icon",
     "logo": "Logo",
