@@ -372,6 +372,14 @@ function onProfileAvatarError(event: Event) {
     img.src = defaultAvatar;
 }
 
+function openAvatarViewer() {
+    sessionStorage.setItem('mediaViewerData', JSON.stringify({
+        mediaList: [{ mid: user.value?.avatar || defaultAvatar, type: 'image' }],
+        initialIndex: 0,
+    }));
+    router.push('/media-viewer');
+}
+
 async function handleAvatarCrop(blob: Blob) {
     if (!requireWritableLogin()) {
         showAvatarCropper.value = false;
@@ -490,9 +498,12 @@ function goBack() {
             <!-- PROFILE VIEW (matches iOS ProfileView.swift) -->
             <div v-if="activeView === 'profile'">
                 <div class="text-center mb-3">
-                    <UserAvatar v-if="user" :user="user" :src="user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
-                        :alt="$t('media.userAvatar')" @error="onProfileAvatarError" />
-                    <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" :alt="$t('media.userAvatar')" />
+                    <button type="button" class="profile-avatar-button rounded-circle" :aria-label="$t('media.userAvatar')"
+                        @click="openAvatarViewer">
+                        <UserAvatar v-if="user" :user="user" :src="user.avatar || defaultAvatar" class="rounded-circle profile-avatar"
+                            :alt="$t('media.userAvatar')" @error="onProfileAvatarError" />
+                        <img v-else :src="defaultAvatar" class="rounded-circle profile-avatar" :alt="$t('media.userAvatar')" />
+                    </button>
                     <h5 class="mt-2 mb-0">{{ user?.name || user?.username }}</h5>
                     <span class="text-muted">@{{ user?.username }}</span>
                 </div>
@@ -778,6 +789,13 @@ function goBack() {
     width: 80px;
     height: 80px;
     object-fit: cover;
+}
+
+.profile-avatar-button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
 }
 
 .avatar-edit-wrapper {
