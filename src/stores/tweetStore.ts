@@ -3093,7 +3093,7 @@ export const useTweetStore = defineStore('tweetStore', {
             return ips.length > 0 ? ips[0] : null;
         },
 
-        /** Resolve a fresh, healthy public IPv4 specifically for a shared URL. */
+        /** Resolve a public IPv4 with an uncached reachability check for a shared URL. */
         async getPublicProviderIPv4(mid: string): Promise<string | null> {
             const ips = await this._resolveProviderIps(mid, true, true, true);
             return ips[0] ?? null;
@@ -3187,12 +3187,12 @@ export const useTweetStore = defineStore('tweetStore', {
          * Get provider candidates without probing or ranking their HTTP reachability
          * @param mid The mid to get provider IPs for
          * @param v4only Whether to filter out IPv6 addresses (default: v4Only)
+         * @param refresh Bypass TweetWeb's cached and in-flight lookups; Leither still controls announcement freshness
          * @returns All browser-usable provider IPs, or an empty array if none found
          */
         async getProviderIps(mid: string, v4only: boolean = v4Only, refresh: boolean = false): Promise<string[]> {
-            // A cold-start retry must not join the original in-flight lookup.
-            // Refresh provider discovery directly, while keeping tweet retrieval
-            // on the ordinary get_tweet path (not the recovery-only refresh_tweet).
+            // Bypass the local pool and any original in-flight lookup. The backend
+            // reads Leither's announcements and has no server-side refresh option.
             if (refresh) {
                 const refreshedIps = await this._resolveProviderIps(mid, v4only, true, false, false)
                 if (refreshedIps.length > 0) {
@@ -3349,16 +3349,16 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
 
-        /** Raw RPC call to resolve provider IPs — called via nodePool for caching & dedup */
+        /** Read Leither's announced provider IPs; refreshHealthCheck bypasses only the local health cache. */
         async _resolveProviderIps(
             mid: string,
             v4only: boolean,
-            refresh: boolean,
+            refreshHealthCheck: boolean,
             publicIPv4Only: boolean = false,
             requireHealthy: boolean = true,
         ): Promise<string[]> {
             try {
-                console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only}, refresh: ${refresh})...`);
+                console.log(`[getProviderIps] RPC call for ${mid} (v4only: ${v4only})...`);
 
                 // Call get_provider_ips (plural) to get list of IPs
                 const params: any = {
@@ -3371,11 +3371,6 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Only add v4only parameter if true
                 if (v4only) {
                     params.v4only = "true";
-                }
-
-                // Force server to bypass its IP cache and return fresh IPs
-                if (refresh) {
-                    params.refresh = "true";
                 }
 
                 const ipResponse = await this.lapi.client.RunMApp("get_provider_ips", params);
@@ -3426,10 +3421,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     : browserUsableProviderRoutes(ipAddresses, window.location.hostname);
 
                 if (candidates.length === 0) {
-                    if (!refresh) {
-                        console.warn(`[getProviderIps] Only unusable cached routes returned for ${mid}; retrying with refresh`);
-                        return this._resolveProviderIps(mid, v4only, true, publicIPv4Only, requireHealthy);
-                    }
                     console.error("[getProviderIps] No valid IPs returned for", mid);
                     return [];
                 }
@@ -3441,7 +3432,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 const winner = await new Promise<string | null>((resolve) => {
                     let settled = 0;
                     for (const ip of candidates) {
-                        this.isServerHealthyWithTimeout(ip, probeTimeoutMs, refresh).then(healthy => {
+                        this.isServerHealthyWithTimeout(ip, probeTimeoutMs, refreshHealthCheck).then(healthy => {
                             if (healthy) { resolve(ip); return; }
                             if (++settled === candidates.length) resolve(null);
                         }).catch(() => {
@@ -3838,8 +3829,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                     
                     console.log(`[login] Calling getUser for userId: ${userId} with forceRefresh=true`);
-                    // Force refresh to bypass cache and get fresh IP (like iOS does)
-                    // Clear any cached user data before retry to force fresh IP resolution
+                    // Bypass local caches and read Leither's announced routes again.
+                    // This cannot force Leither to update stale announcements.
                     if (attempt > 0) {
                         this._invalidateUserProviderCache(userId)
                     }
