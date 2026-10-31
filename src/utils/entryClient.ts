@@ -8,10 +8,9 @@
  * client answers. Binding it to one address made the node that served the page
  * a single point of failure, and the detail view's retry went back to it.
  *
- * This client walks the node-interleaved candidate list from `orderEntryRoutes`
- * instead. On a transport failure it advances to the next candidate — a
- * different node, by construction of that list — and stays there, so one dead
- * node costs one failed call rather than every call after it.
+ * The first read-only lookup races up to two addresses per node. Concurrent
+ * callers share that selection, and later calls use its winner. On transport
+ * failure the client walks the full candidate list and stays on what answers.
  *
  * Only a thrown error rotates the route. A null RPC result is an answer from a
  * healthy node ("no providers for this mid"), not a routing failure, and the
@@ -30,6 +29,8 @@ export const DEFAULT_ENTRY_TIMEOUT_MS = 15000
 export interface EntryClientOptions {
     /** Ordered candidates; consecutive entries are expected to be different nodes. */
     routes: string[]
+    /** Up to two addresses per node, raced by the first read-only lookup. */
+    raceRoutes?: string[]
     /** Builds the underlying RPC client for one address. Injected for testing. */
     createClient: (address: string) => any
     timeout?: number
@@ -46,6 +47,7 @@ const IGNORED_PROPS = [
 
 export function createEntryClient({
     routes,
+    raceRoutes = [],
     createClient,
     timeout = DEFAULT_ENTRY_TIMEOUT_MS,
     maxAttempts = MAX_ENTRY_ROUTE_ATTEMPTS,
@@ -58,6 +60,8 @@ export function createEntryClient({
     const clients = new Map<string, any>()
     let activeIndex = 0
     let currentTimeout = timeout
+    const raceIndices = [...new Set(raceRoutes.map(route => candidates.indexOf(route)).filter(index => index >= 0))]
+    let selection: Promise<{ index: number, result: any }> | undefined
 
     const clientFor = (index: number) => {
         const address = candidates[index]
@@ -73,7 +77,41 @@ export function createEntryClient({
         return client
     }
 
-    const call = async (method: string, args: any[], attemptLimit = maxAttempts) => {
+    const selectRoute = async (method: string, args: any[]) => {
+        const request = async (index: number) => ({ index, result: await clientFor(index)[method](...args) })
+        try {
+            return await Promise.any(raceIndices.map(request))
+        } catch (error) {
+            // Retain the other published interfaces as recovery routes when
+            // neither of the two selected addresses on any node can answer.
+            let lastError: unknown = error
+            const remaining = candidates.map((_, index) => index)
+                .filter(index => !raceIndices.includes(index)).slice(0, maxAttempts)
+            for (const index of remaining) {
+                try { return await request(index) } catch (error) { lastError = error }
+            }
+            throw lastError
+        }
+    }
+
+    const call = async (method: string, args: any[], attemptLimit = maxAttempts, allowRace = true) => {
+        // Only known read-only lookups may elect the entry route. In particular,
+        // registration must never be duplicated across racing nodes.
+        const lookup = method === 'Getvar' || (method === 'RunMApp' &&
+            ['get_provider_ips', 'get_node_ips', 'get_userid', 'get_shared_file_ip'].includes(args[0]))
+        if (allowRace && lookup && raceIndices.length > 0 && !selection) {
+            selection = selectRoute(method, args).then(winner => {
+                activeIndex = winner.index
+                return winner
+            })
+            try { return (await selection).result } catch (error) {
+                selection = undefined
+                throw error
+            }
+        }
+        // A write can follow a lookup, but never participates in its race.
+        if (selection) await selection
+
         const attempts = Math.min(candidates.length, Math.max(1, attemptLimit))
         // Walk from where the pointer stood when this call began. Reading the
         // live pointer each time skips nodes, because a failure below moves it
@@ -133,7 +171,7 @@ export function createEntryClient({
              * so the entry name is an argument and cannot select this by itself.
              */
             if (prop === 'callWithoutFailover') {
-                return (method: string, ...args: any[]) => call(method, args, 1)
+                return (method: string, ...args: any[]) => call(method, args, 1, false)
             }
 
             return (...args: any[]) => call(prop, args)

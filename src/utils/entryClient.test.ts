@@ -21,6 +21,65 @@ function fakeNodes(responders: Record<string, Responder>) {
 
 const down = () => { throw new Error('connection refused') }
 
+describe('initial entry selection', () => {
+    it('races the sampled addresses and keeps the first success when a slower one finishes', async () => {
+        let finishSlow!: (value: string) => void
+        const { createClient, calls } = fakeNodes({
+            'public:80': () => new Promise<string>(resolve => { finishSlow = resolve }),
+            'private:80': () => 'fast private',
+            'other:80': down,
+        })
+        const routes = ['public:80', 'private:80', 'other:80']
+        const client = createEntryClient({ routes, raceRoutes: routes, createClient })
+
+        await expect(client.RunMApp('get_provider_ips', {})).resolves.toBe('fast private')
+        expect(calls).toHaveLength(3)
+        finishSlow('slow public')
+        await Promise.resolve()
+        expect(client.ip).toBe('private:80')
+        calls.length = 0
+        await client.RunMApp('get_node_ips', {})
+        expect(calls).toEqual(['private:80:RunMApp'])
+    })
+
+    it('shares selection with a concurrent caller and preserves its own request', async () => {
+        let finish!: (value: string) => void
+        const { createClient, calls } = fakeNodes({
+            'a:80': (_method, args) => args[0] === 'get_provider_ips'
+                ? new Promise<string>(resolve => { finish = resolve }) : 'second lookup',
+            'b:80': down,
+        })
+        const routes = ['a:80', 'b:80']
+        const client = createEntryClient({ routes, raceRoutes: routes, createClient })
+        const first = client.RunMApp('get_provider_ips', {})
+        const second = client.RunMApp('get_node_ips', {})
+        expect(calls).toHaveLength(2)
+        finish('first lookup')
+        await expect(Promise.all([first, second])).resolves.toEqual(['first lookup', 'second lookup'])
+        expect(calls).toEqual(['a:80:RunMApp', 'b:80:RunMApp', 'a:80:RunMApp'])
+    })
+
+    it('retains unsampled interfaces when the race cannot reach any selected address', async () => {
+        const { createClient, calls } = fakeNodes({
+            'a:80': down, 'b:80': down, 'lan:80': () => 'reachable third address',
+        })
+        const client = createEntryClient({
+            routes: ['a:80', 'b:80', 'lan:80'], raceRoutes: ['a:80', 'b:80'], createClient,
+        })
+        await expect(client.RunMApp('get_provider_ips', {})).resolves.toBe('reachable third address')
+        expect(calls).toEqual(['a:80:RunMApp', 'b:80:RunMApp', 'lan:80:RunMApp'])
+        expect(client.ip).toBe('lan:80')
+    })
+
+    it('never races a registration even when race candidates are configured', async () => {
+        const { createClient, calls } = fakeNodes({ 'a:80': down, 'b:80': () => 'registered' })
+        const routes = ['a:80', 'b:80']
+        const client = createEntryClient({ routes, raceRoutes: routes, createClient })
+        await expect(client.callWithoutFailover('RunMApp', 'register', {})).rejects.toThrow('connection refused')
+        expect(calls).toEqual(['a:80:RunMApp'])
+    })
+})
+
 describe('entry client failover', () => {
     it('moves to the next node when a call fails', async () => {
         const { createClient, calls } = fakeNodes({

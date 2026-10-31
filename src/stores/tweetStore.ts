@@ -3419,10 +3419,9 @@ export const useTweetStore = defineStore('tweetStore', {
                         return true;
                     });
 
-                // A public page cannot contact RFC1918/RFC6598 routes even when
-                // the device itself belongs to that tailnet: Chrome blocks the
-                // request through Private Network Access before it reaches the
-                // network. Private-origin deployments retain those routes.
+                // Discovery prefers public IPs per node, but can return two
+                // private/VPN routes for a node with no public IP. Keep those
+                // candidates for actual requests; public share URLs stay strict.
                 const candidates = publicIPv4Only
                     ? ipAddresses.filter(ip => publicIPv4BaseUrl(ip) !== undefined)
                     : browserUsableProviderRoutes(ipAddresses, window.location.hostname);

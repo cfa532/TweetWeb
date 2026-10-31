@@ -79,12 +79,10 @@ export function isPrivateBrowserHost(address: string): boolean {
 }
 
 /**
- * Removes routes Chrome will block through Private Network Access.
- * Private/tailnet pages retain private routes because both sides are in the
- * same browser address space.
+ * Normalize and deduplicate node routes without rejecting a node's private-only
+ * fallback. The actual request determines whether the browser can reach it.
  */
 export function browserUsableProviderRoutes(addresses: string[], originHostname: string): string[] {
-  const publicGateway = isPublicWebGatewayHost(originHostname)
   const seen = new Set<string>()
 
   return addresses
@@ -94,7 +92,6 @@ export function browserUsableProviderRoutes(addresses: string[], originHostname:
     // them regardless of the current origin so stale routes cannot be restored
     // when the app is embedded or opened through a legacy Leither hostname.
     .filter(address => !isPublicWebGatewayHost(address))
-    .filter(address => !publicGateway || !isPrivateBrowserHost(address))
     .filter(address => {
       if (seen.has(address)) return false
       seen.add(address)

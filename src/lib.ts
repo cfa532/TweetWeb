@@ -104,6 +104,7 @@ export function publicIPv4BaseUrl(value: string | undefined | null): string | un
 
     const nonPublic =
         a === 0 || a === 10 || a === 127 || a >= 224 ||
+        (a === 26 && b === 26 && c === 26) ||             // Known VPN TUN subnet
         (a === 100 && b >= 64 && b <= 127) ||             // RFC 6598 / Tailscale
         (a === 169 && b === 254) ||
         (a === 172 && b >= 16 && b <= 31) ||
@@ -153,10 +154,16 @@ export function publicIpAddressBaseUrl(value: string | undefined | null): string
     const hostname = new URL(baseUrl).hostname.replace(/^\[|\]$/g, '').toLowerCase();
     if (!hostname.includes(':')) return publicIPv4BaseUrl(value);
 
+    // Only native global unicast addresses are node routes. This also excludes
+    // private IPv4 hidden inside IPv4-mapped IPv6 literals. URL canonicalizes
+    // IPv6 first, so expanded spellings cannot bypass the subnet checks.
+    const [first, second, third] = hostname.split(':').map(part => parseInt(part || '0', 16));
     const nonPublicIPv6 =
-        hostname === '::' || hostname === '::1' ||
-        hostname.startsWith('fc') || hostname.startsWith('fd') ||
-        /^fe[89ab]/.test(hostname) || hostname.startsWith('ff');
+        first < 0x2000 || first > 0x3fff ||
+        (first === 0x2001 && second === 0xdb8) ||         // Documentation
+        (first === 0x3fff && second < 0x1000) ||         // Documentation
+        (first === 0x2001 && second === 2 && third === 0) || // Benchmarking
+        /^2001::ffff:ffff:ffff:fff[0-3]$/.test(hostname);  // Hysteria TUN /126
     return nonPublicIPv6 ? undefined : baseUrl;
 }
 

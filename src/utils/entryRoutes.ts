@@ -6,6 +6,9 @@
  *
  *   addrs[node] = [[ip, metric], [ip, metric], ...]
  *
+ * Prefer public routes before selecting each node's race candidates. A node
+ * with no public route contributes up to two of its other IP addresses.
+ *
  * One node contributes several addresses because it is reachable on several
  * interfaces — public IPv4, IPv6, tailnet, LAN — and the metric orders those
  * addresses by how fast that interface answers for that node. The grouping is
@@ -24,7 +27,8 @@
  * the tweet can be fetched at all, and the boot page's own flat `ips` list left
  * that call with a single address to try.
  */
-import { browserUsableProviderRoutes, isPrivateBrowserHost } from './browserNetwork'
+import { browserUsableProviderRoutes } from './browserNetwork'
+import { ipAddressBaseUrl, publicIpAddressBaseUrl } from '@/lib'
 
 /** The parameter block the Leither boot page exposes via `window.getParam()`. */
 export interface LeitherEntryParam {
@@ -56,14 +60,16 @@ interface RankedAddress {
     metric: number
 }
 
-/** One node's addresses, fastest first. */
+/** Prefer public IPs; private-only nodes retain their two best-ranked routes. */
 function nodeAddresses(node: unknown): RankedAddress[] {
     if (!Array.isArray(node)) return []
-    return [...node]
+    const addresses = [...node]
         .filter(pair => Array.isArray(pair))
         .sort((a, b) => metricOf(a) - metricOf(b))
         .map(pair => ({ address: normalizeAddress((pair as unknown[])[0]), metric: metricOf(pair) }))
-        .filter(entry => entry.address.length > 0)
+        .filter(entry => ipAddressBaseUrl(entry.address) !== undefined)
+    const publicAddresses = addresses.filter(entry => publicIpAddressBaseUrl(entry.address) !== undefined)
+    return publicAddresses.length > 0 ? publicAddresses : addresses.slice(0, 2)
 }
 
 /**
@@ -109,17 +115,18 @@ function servingAddress(param: LeitherEntryParam): string {
  *
  * @param param what `window.getParam()` returned, or null when the page was not
  *   served by a Leither boot page at all.
- * @param originHostname `window.location.hostname` — decides which routes this
- *   browser is allowed to open at all.
+ * @param originHostname `window.location.hostname`.
+ * @param addressesPerNode limit used for the initial race; omit for full failover.
  */
 export function orderEntryRoutes(
     param: LeitherEntryParam | null | undefined,
     originHostname: string,
+    addressesPerNode = Number.POSITIVE_INFINITY,
 ): string[] {
     if (!param) return []
 
     const nodes = (Array.isArray(param.addrs) ? param.addrs : [])
-        .map(nodeAddresses)
+        .map(node => nodeAddresses(node).slice(0, addressesPerNode))
         .filter(node => node.length > 0)
 
     // A boot page older than this ordering publishes only the flat list it
@@ -127,19 +134,11 @@ export function orderEntryRoutes(
     // usable fallback — just not one that can be re-grouped.
     const candidates = nodes.length > 0
         ? interleaveByRank(nodes)
-        : (Array.isArray(param.ips) ? param.ips.map(normalizeAddress).filter(Boolean) : [])
+        : (Number.isFinite(addressesPerNode) ? []
+            : nodeAddresses(Array.isArray(param.ips) ? param.ips.map(address => [address]) : [])
+                .map(entry => entry.address))
 
-    // A browser on the open internet cannot open a LAN or tailnet route at all,
-    // so those sink below the publicly routable ones — but they stay in the
-    // list, because on a private deployment they are the only way in. Order is
-    // preserved within each group, so consecutive candidates remain different
-    // nodes.
-    const publicFirst = [
-        ...candidates.filter(address => !isPrivateBrowserHost(address)),
-        ...candidates.filter(address => isPrivateBrowserHost(address)),
-    ]
-
-    const usable = browserUsableProviderRoutes(publicFirst, originHostname)
+    const usable = browserUsableProviderRoutes(candidates, originHostname)
 
     // The node that served this page answered a real request moments ago, which
     // outranks any published metric. Everything else keeps its order behind it.

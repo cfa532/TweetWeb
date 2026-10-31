@@ -2,14 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { browserUsableProviderRoutes, isPrivateBrowserHost, isPublicWebGatewayHost } from './browserNetwork'
 
 describe('browser provider route eligibility', () => {
-  it('keeps later public routes and rejects private routes from a public origin', () => {
+  it('keeps private-only node fallback routes even from a public origin', () => {
     expect(browserUsableProviderRoutes([
       'dl.dtweet.com',
       '100.79.13.15:8002',
       '100.89.71.56:8080',
       '192.168.5.4:8080',
       '220.184.34.132:8002',
-    ], 'dl.dtweet.com')).toEqual(['220.184.34.132:8002'])
+    ], 'dl.dtweet.com')).toEqual([
+      '100.79.13.15:8002', '100.89.71.56:8080', '192.168.5.4:8080', '220.184.34.132:8002',
+    ])
   })
 
   it('retains Tailscale routes when the page itself is on the tailnet', () => {

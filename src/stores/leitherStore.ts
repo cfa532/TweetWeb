@@ -20,33 +20,34 @@ const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGe
  * Ordered entry-node candidates, best first.
  *
  * The boot page publishes every address it knows, grouped by node;
- * orderEntryRoutes turns that into a list whose consecutive entries are
- * different nodes, so the client below can fail over to a machine that is not
- * down for the same reason as the one that just failed. Only the single winner
- * used to survive this step, which left nothing to fail over to.
+ * Race two public IPs per node, or two other IPs when that node has no public
+ * route. Retain all public addresses for subsequent failover.
  */
-function getEntryRoutes(): string[] {
+function getEntryRoutes(): { routes: string[], raceRoutes: string[] } {
     // A configured node is the entire list: it exists to pin every request to
     // one machine, and failing over would defeat the point of setting it.
-    if (import.meta.env.VITE_LEITHER_NODE) return [import.meta.env.VITE_LEITHER_NODE]
+    if (import.meta.env.VITE_LEITHER_NODE) return { routes: [import.meta.env.VITE_LEITHER_NODE], raceRoutes: [] }
 
     // getParam is a Leither function
     if (window.getParam != null) {
         const p = window.getParam()
         console.log(p)
         const routes = orderEntryRoutes(p, window.location.hostname)
-        if (routes.length > 0) return routes
+        if (routes.length > 0) return {
+            routes,
+            raceRoutes: orderEntryRoutes(p, window.location.hostname, 2),
+        }
     }
 
     // Served by something that is not a Leither boot page — the public gateway,
     // or a dev server. That origin is the only entry there is.
     if (window.location.host != "") {
         console.log("window.location", window.location.host)
-        return [window.location.host]
+        return { routes: [window.location.host], raceRoutes: [] }
     }
-    return ["127.0.0.1:4800"]
+    return { routes: ["127.0.0.1:4800"], raceRoutes: [] }
 };
-const entryRoutes = getEntryRoutes();
+const { routes: entryRoutes, raceRoutes: entryRaceRoutes } = getEntryRoutes();
 
 // Create a singleton connection pool manager
 const connectionPool = new ConnectionPoolManager(ayApi);
@@ -72,7 +73,7 @@ export const useLeitherStore = defineStore({
         entryRoutes,      // ordered entry-node candidates, one node after another
         // markRaw: the client is a Proxy that answers every property with an RPC
         // wrapper, so Vue must not walk it looking for reactive internals.
-        client: markRaw(createEntryClient({ routes: entryRoutes, createClient: createHproseClient })),
+        client: markRaw(createEntryClient({ routes: entryRoutes, raceRoutes: entryRaceRoutes, createClient: createHproseClient })),
         logoUrl: import.meta.env.VITE_APP_LOGO,
         connectionPool: connectionPool as ConnectionPoolManager,
     }),
