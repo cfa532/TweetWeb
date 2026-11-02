@@ -4929,7 +4929,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // The tweet's counters live on the author's host; the login user's favorites
             // list lives on its own (userhostid). Both sides were written.
             this.adoptWriteRouteForReads(storageAuthor, writableIp)
-            this.adoptWriteRouteForReads(loginUser, loginUser.writableHostIp)
+            this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
             return this._applyServerTweet(tweet, ret)
         },
         /**
@@ -4959,7 +4959,7 @@ export const useTweetStore = defineStore('tweetStore', {
             // Same split as toggle_favorite: author's host for the tweet, login user's
             // host for the bookmark list.
             this.adoptWriteRouteForReads(storageAuthor, writableIp)
-            this.adoptWriteRouteForReads(loginUser, loginUser.writableHostIp)
+            this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
             return this._applyServerTweet(tweet, ret)
         },
         _applyServerTweet(tweet: Tweet, ret: any): Tweet {
@@ -5113,6 +5113,25 @@ export const useTweetStore = defineStore('tweetStore', {
          *
          * Mirrors iOS HproseInstance.adoptWriteRouteForReads.
          */
+        /**
+         * The login user's root-host IP for adoptWriteRouteForReads after a saved-list
+         * toggle. Those toggles are sent to the tweet author's host, so nothing has
+         * resolved the login user's own write host this session (writableHostIp is
+         * reset on load) — without this the read route never moves and the saved
+         * list is read from the access node before it has synced the write.
+         * The write already succeeded, so a failed resolution only skips the route
+         * hint, matching iOS adoptWriteRouteForReads (`try? resolveWritableUrl()`).
+         */
+        async loginWritableIpForReadRoute(loginUser: User): Promise<string | null> {
+            if (loginUser.writableHostIp) return loginUser.writableHostIp
+            try {
+                return await this.resolveWritableHostIp(loginUser)
+            } catch (e) {
+                console.warn('[adoptWriteRouteForReads] could not resolve login user write host:', e)
+                return null
+            }
+        },
+
         adoptWriteRouteForReads(user: User | undefined | null, writableIp: string | undefined | null) {
             const writeHostId = user?.hostIds?.[0]
             if (!user?.mid || !writeHostId || !writableIp) return
