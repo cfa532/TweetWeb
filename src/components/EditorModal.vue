@@ -215,6 +215,10 @@ async function uploadAttachedFiles(
 ): Promise<PromiseSettledResult<MimeiFileType>[]> {
   const results: PromiseSettledResult<MimeiFileType>[] = [];
 
+  // One post resolves its write route once: clearing an earlier write's route makes
+  // the first upload resolve hostIds[0] fresh, and later files reuse that result.
+  uploadAuthor.writableHostIp = null;
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     try {
@@ -244,7 +248,7 @@ async function uploadAttachedFiles(
         if (uploadAuthor.cloudDrivePort) {
           try {
             const cloudDrivePort = String(uploadAuthor.cloudDrivePort);
-            const rawWritableHost = await tweetStore.resolveWritableHostIp(uploadAuthor);
+            const rawWritableHost = uploadAuthor.writableHostIp || await tweetStore.resolveWritableHostIp(uploadAuthor);
             // Replace only the service port, preserving bracketed IPv6 hosts.
             const uploadUrl = new URL(`http://${rawWritableHost}`);
             uploadUrl.port = cloudDrivePort;
@@ -516,7 +520,8 @@ async function uploadFileFromFile(
   const cid = await tweetStore.uploadBlobToIpfs(
     uploadAuthor,
     data,
-    (percent) => { uploadProgress[fileIndex] = percent }
+    (percent) => { uploadProgress[fileIndex] = percent },
+    uploadAuthor.writableHostIp,
   )
   uploadProgress[fileIndex] = 100
   return cid

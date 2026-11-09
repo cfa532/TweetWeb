@@ -5149,11 +5149,14 @@ export const useTweetStore = defineStore('tweetStore', {
          * Uploads binary data via chunked upload_ipfs to the user's writable host.
          * Matches iOS MediaProcessor.uploadRegularFile: chunked PUT loop followed
          * by a separate finalization call. Returns the resulting CID.
+         * A batch passes the writable IP it already resolved as knownWritableIp so
+         * each file does not repeat the lookup; only the first attempt trusts it.
          */
         async uploadBlobToIpfs(
             user: User,
             data: ArrayBuffer | Uint8Array,
             onProgress?: (percent: number) => void,
+            knownWritableIp?: string | null,
         ): Promise<string> {
             const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
             const chunkSize = 2 * 1024 * 1024 // 2MB chunks
@@ -5171,7 +5174,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             // Matches iOS uploadRegularFile: 2 attempts. resolveWritableHostIp resolves
-            // hostIds[0] fresh every call, so the retry naturally re-probes the route.
+            // hostIds[0] fresh every call, so the retry always re-probes the route.
             const maxAttempts = 2
             let lastError: any
             // Keep the server-side temporary file and acknowledged offset across
@@ -5180,7 +5183,7 @@ export const useTweetStore = defineStore('tweetStore', {
             let offset = 0
             let fsid: string | null = null
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                const uploadIp = await this.resolveWritableHostIp(user)
+                const uploadIp = (attempt === 1 && knownWritableIp) || await this.resolveWritableHostIp(user)
                 console.log(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} using IP:`, uploadIp)
                 const client = await this.lapi.connectionPool.getConnection(uploadIp)
                 const originalTimeout = client.timeout
@@ -5210,6 +5213,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 } catch (error) {
                     lastError = error
                     console.error(`[uploadBlobToIpfs] Attempt ${attempt}/${maxAttempts} failed:`, error)
+                    // Any failure drops the route, so a later retry or the next file
+                    // in a batch resolves again instead of reusing this host.
+                    user.writableHostIp = null
                     if (attempt < maxAttempts) {
                         // MFTemp2Ipfs may have consumed the temporary file before
                         // its response was lost, so only that ambiguous final call
@@ -5218,7 +5224,6 @@ export const useTweetStore = defineStore('tweetStore', {
                             offset = 0
                             fsid = null
                         }
-                        user.writableHostIp = null
                         this.lapi.connectionPool.clearAll()
                         await new Promise(resolve => setTimeout(resolve, 1000))
                     }
