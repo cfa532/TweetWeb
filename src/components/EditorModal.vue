@@ -516,10 +516,9 @@ async function uploadFileFromFile(
   fileIndex: number,
   uploadAuthor: User,
 ): Promise<string> {
-  const data = await file.arrayBuffer()
   const cid = await tweetStore.uploadBlobToIpfs(
     uploadAuthor,
-    data,
+    file,
     (percent) => { uploadProgress[fileIndex] = percent },
     uploadAuthor.writableHostIp,
   )

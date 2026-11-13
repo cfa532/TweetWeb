@@ -5147,6 +5147,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
         /**
          * Uploads binary data via chunked upload_ipfs to the user's writable host.
+         * Read each slice on demand so large attachments never need a whole-file buffer.
          * Matches iOS MediaProcessor.uploadRegularFile: chunked PUT loop followed
          * by a separate finalization call. Returns the resulting CID.
          * A batch passes the writable IP it already resolved as knownWritableIp so
@@ -5154,11 +5155,10 @@ export const useTweetStore = defineStore('tweetStore', {
          */
         async uploadBlobToIpfs(
             user: User,
-            data: ArrayBuffer | Uint8Array,
+            blob: Blob,
             onProgress?: (percent: number) => void,
             knownWritableIp?: string | null,
         ): Promise<string> {
-            const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
             const chunkSize = 2 * 1024 * 1024 // 2MB chunks
             const uploadTimeout = 10 * 60 * 1000 // 10 min for large files
 
@@ -5190,14 +5190,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 client.timeout = uploadTimeout
                 let finalizing = false
                 try {
-                    while (offset < bytes.length) {
-                        const end = Math.min(offset + chunkSize, bytes.length)
-                        const chunk = bytes.slice(offset, end)
+                    while (offset < blob.size) {
+                        const end = Math.min(offset + chunkSize, blob.size)
+                        const chunk = new Uint8Array(await blob.slice(offset, end).arrayBuffer())
                         const request: any = { aid: this.appId, ver: 'last', version: 'v2', offset }
                         if (fsid) request.fsid = fsid
                         fsid = parseFsid(await client.RunMApp('upload_ipfs', request, [chunk]))
                         offset = end
-                        onProgress?.(Math.max(1, Math.round((offset / bytes.length) * 100)))
+                        onProgress?.(Math.max(1, Math.round((offset / blob.size) * 100)))
                     }
                     if (!fsid) throw new Error('upload_ipfs returned no fsid')
 
@@ -5568,7 +5568,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const user = this.loginUser
             if (!user) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
-            const cid = await this.uploadBlobToIpfs(user, await blob.arrayBuffer())
+            const cid = await this.uploadBlobToIpfs(user, blob)
 
             // Mutation: route through user's writable host (hostIds[0]) so the
             // change lands on the writable node directly instead of relying on

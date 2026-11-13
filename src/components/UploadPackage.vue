@@ -35,10 +35,9 @@ async function uploadFile(file: File, index: number = 0): Promise<string> {
     if (!tweetStore.loginUser) throw new Error(t('errors.notLoggedIn'))
 
     uploadProgress[index] = 0
-    const data = await file.arrayBuffer()
     const cid = await tweetStore.uploadBlobToIpfs(
         tweetStore.loginUser,
-        data,
+        file,
         (percent) => { uploadProgress[index] = percent }
     )
     uploadProgress[index] = 100
