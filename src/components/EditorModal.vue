@@ -35,6 +35,11 @@ const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 const loading = ref(false)
 const submitError = ref('')
+// Names this composition for the whole time the editor is recovering from a
+// failed submission: a retry after a lost response sends the same id, and the
+// backend resolves the same tweet instead of creating a duplicate. Cleared on
+// success so the next composition gets a fresh one.
+const submitRequestId = ref<string | null>(null)
 const selectFiles = ref()
 const isPrivate = ref(false)
 const downloadable = ref(true)  // whether the attachment is downloadable
@@ -110,6 +115,12 @@ const UPLOAD_RETRY_CONFIG = {
   initialDelay: 1000, // 1 second
   maxDelay: 10000, // 10 seconds
   backoffMultiplier: 2
+}
+
+// A submission id: random on every platform that offers it, timestamp-backed
+// where it does not.
+function newRequestId(): string {
+  return crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 // Utility function to determine if an error is retryable
@@ -421,6 +432,7 @@ async function onSubmit() {
       return
     }
 
+    if (!submitRequestId.value) submitRequestId.value = newRequestId()
     const tweet = {
       authorId: loginUser.mid,
       title: tweetTitle.value,
@@ -428,6 +440,7 @@ async function onSubmit() {
       attachments: finalAttachments,
       isPrivate: isPrivate.value,
       downloadable: downloadable.value,
+      clientRequestId: submitRequestId.value,
       timestamp: Date.now(),
     }
 
@@ -440,6 +453,7 @@ async function onSubmit() {
     useAlertStore().success(t('editor.tweetUploaded'))
 
     // Clear form only on success
+    submitRequestId.value = null
     txtConent.value = null
     tweetTitle.value = null
     filesUpload.value = []
@@ -465,6 +479,9 @@ async function onSubmit() {
           parentTweetId: targetTweetId,
           originalTweetId: targetTweetId,
           originalAuthorId: parentTweet.authorId,
+          // The quote is a second object from the same composition; its own id
+          // keeps it from colliding with the comment's.
+          clientRequestId: tweet.clientRequestId + '-quote',
           timestamp: Date.now(),
         }
         const quoteMid = await tweetStore.uploadTweet(quoteTweet, undefined)

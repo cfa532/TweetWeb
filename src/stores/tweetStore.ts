@@ -4670,6 +4670,15 @@ export const useTweetStore = defineStore('tweetStore', {
         async uploadTweet(tweet: any, tweetId?: MimeiId) {
             if (!this.loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
+            // A submission's id names the object deterministically on the node,
+            // so a retry after a lost response resolves the same tweet instead
+            // of creating a duplicate. Compositions carry one (clientRequestId);
+            // a caller that has none gets a fresh id, which only names that
+            // single call.
+            const requestid = typeof tweet.clientRequestId === 'string' && tweet.clientRequestId
+                ? tweet.clientRequestId
+                : crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+
             // Leither may be busy after video processing; allow 5 minutes per write.
             const effectiveTimeout = 5 * 60 * 1000
 
@@ -4723,6 +4732,7 @@ export const useTweetStore = defineStore('tweetStore', {
                                 comment: JSON.stringify(commentPayload),
                                 tweetauthorid: parentAuthor.mid,
                                 hostid: parentAuthorHostId,
+                                requestid,
                             })
                             this.adoptWriteRouteForReads(parentAuthor, parentWritableIp)
                             return added
@@ -4736,10 +4746,11 @@ export const useTweetStore = defineStore('tweetStore', {
                     const writeOriginalTimeout = writeClient.timeout
                     writeClient.timeout = effectiveTimeout
                     try {
-                        const added = await writeClient.RunMApp('add_tweet', {
+                        const added = await this.runWrite(writeClient, writableIp, 'add_tweet', {
                             aid: this.appId, ver: 'last',
                             tweet: JSON.stringify(tweet),
                             hostid: loginUser.hostIds?.[0],
+                            requestid,
                         })
                         // The tweet is stored on hostIds[0]; read it back from there
                         // rather than from an access node that has not copied it yet.
