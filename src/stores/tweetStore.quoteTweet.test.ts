@@ -46,7 +46,10 @@ describe('uploadTweet comment payload', () => {
         const payload: any = { authorId: 'me', content: 'a comment', timestamp: 1 }
         await store.uploadTweet(payload, PARENT_ID)
 
-        expect(JSON.parse(sent[0].comment).parentTweetId).toBe(PARENT_ID)
+        // The commentDelegation capability probe rides the same pooled client
+        // and lands in `sent` first, so find the add_comment call by shape.
+        const addCommentCall = sent.find((params) => params.comment !== undefined)
+        expect(JSON.parse(addCommentCall.comment).parentTweetId).toBe(PARENT_ID)
         // The editor reuses this object to publish the quote tweet, which sets
         // its own references — an implicit stamp here would be a surprise.
         expect(payload.parentTweetId).toBeUndefined()

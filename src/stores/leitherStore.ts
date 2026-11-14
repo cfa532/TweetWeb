@@ -5,7 +5,7 @@ import { isPublicWebGatewayHost } from '@/utils/browserNetwork';
 import { orderEntryRoutes } from '@/utils/entryRoutes';
 import { createEntryClient, DEFAULT_ENTRY_TIMEOUT_MS } from '@/utils/entryClient';
 
-const ayApi = ["GetVarByContext", "Act", "Login", "Getvar", "SwarmLocal", "DhtGetAllKeys",
+const ayApi = ["GetVarByContext", "Act", "Login", "Register", "Getvar", "SwarmLocal", "DhtGetAllKeys",
     "MFOpenByPath","DhtGet", "DhtGets", "SignPPT", "RequestService", "SwarmAddrs",
     "MFOpenTempFile", "MFTemp2MacFile", "MFSetData", "MFGetData", "MMCreate", "MMOpen",
     "Hset", "Hget", "Hmset", "Hmget", "Zadd", "Zrangebyscore", "Zrange", "MFOpenMacFile",

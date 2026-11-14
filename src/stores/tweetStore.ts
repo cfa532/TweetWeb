@@ -6,6 +6,10 @@ import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
 import { normalizeMediaType, publicIpAddressBaseUrl, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
 import { browserUsableProviderRoutes, resolvedNodeAddress } from '@/utils/browserNetwork';
+import {
+    cachedSession, discardSession, isSessionInvalid,
+    leitherLogin, leitherRegister, loadCredential, rememberSession, storeCredential,
+} from '@/utils/userSession';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -46,6 +50,11 @@ const FILE_STORAGE_FORMAT = 'tweet-file-v1'
 
 type BackendStorageCapabilities = {
     formats: Set<string>
+    // health flags beyond storage: userSessions says this node checks the
+    // caller's Leither session ("usersid"); commentDelegation says it routes
+    // comments through the writer's own root. Both false on an older backend.
+    userSessions: boolean
+    commentDelegation: boolean
     checkedAt: number
 }
 
@@ -706,7 +715,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 } else {
                     formats = new Set([DATABASE_STORAGE_FORMAT])
                 }
-                const result = { formats, checkedAt: Date.now() }
+                const result: BackendStorageCapabilities = {
+                    formats,
+                    userSessions: reply.userSessions === true,
+                    commentDelegation: reply.commentDelegation === true,
+                    checkedAt: Date.now(),
+                }
                 storageCapabilitiesCache.set(key, result)
                 return result
             })()
@@ -716,6 +730,101 @@ export const useTweetStore = defineStore('tweetStore', {
             } finally {
                 storageCapabilitiesInProgress.delete(key)
             }
+        },
+
+        /**
+         * The account an entry writes to, for the entries where the backend
+         * checks that the caller owns it (mirrors the requireOwner call sites
+         * in TweetBackendApp; nil for every other entry). An account named
+         * through a JSON payload (add_tweet, add_comment, set_author_core_data)
+         * is read out of that payload.
+         */
+        _ownedAccountKey(entry: string, params: Record<string, any>): string | null {
+            const jsonField = (raw: unknown, key: string): string | null => {
+                if (typeof raw !== 'string' || !raw) return null
+                try {
+                    const value = JSON.parse(raw)?.[key]
+                    return typeof value === 'string' && value ? value : null
+                } catch {
+                    return null
+                }
+            }
+            switch (entry) {
+                case 'update_tweet':
+                case 'toggle_tweet_privacy':
+                case 'toggle_pinned_tweet':
+                case 'delete_comment':
+                    return params.appuserid ?? null
+                case 'delete_tweet':
+                case 'toggle_following':
+                case 'block_user':
+                case 'remove_blacklisted_relationship':
+                case 'set_user_avatar':
+                case 'delete_account':
+                case 'message_outgoing':
+                case 'message_fetch':
+                case 'share_file':
+                case 'upload_file':
+                    return params.userid ?? null
+                case 'add_tweet':
+                    return jsonField(params.tweet, 'authorId')
+                case 'add_comment':
+                    return jsonField(params.comment, 'authorId')
+                case 'set_author_core_data':
+                    return jsonField(params.user, 'mid')
+                default:
+                    return null
+            }
+        },
+
+        /**
+         * The Leither session proving to the node at ip that this caller
+         * controls accountId. Only an account whose guest credential this tab
+         * holds can be signed in — admin acting on another user's tweet, for
+         * example, has nothing to present and writes without a session.
+         */
+        async _userSession(accountId: string, ip: string, client: any): Promise<string | null> {
+            // The credential check comes first: a cached session is only ever used
+            // for an account this tab still holds, so signing out (which clears
+            // sessionStorage) also ends the use of anything cached in memory.
+            const credential = loadCredential(accountId)
+            if (!credential) return null
+            const cached = cachedSession(accountId, ip)
+            if (cached) return cached
+            try {
+                const capabilities = await this.storageCapabilities(ip)
+                if (!capabilities.userSessions) return null
+            } catch {
+                return null
+            }
+            const reply = await leitherLogin(client, credential.username, credential.password)
+            if (!reply) return null
+            rememberSession(accountId, ip, reply.Sid)
+            return reply.Sid
+        },
+
+        /**
+         * Every write to the signed-in user's own data passes through here:
+         * the session is attached when the device holds the account's
+         * credential, and a node that dropped the session ("Session invalid")
+         * gets one re-signed-in attempt before the failure is returned.
+         */
+        async runWrite(client: any, ip: string, entry: string, params: Record<string, any>): Promise<any> {
+            const owner = this._ownedAccountKey(entry, params)
+            if (owner) {
+                const sid = await this._userSession(owner, ip, client)
+                if (sid) params.usersid = sid
+            }
+            let reply = await client.RunMApp(entry, params)
+            if (owner && isSessionInvalid(reply)) {
+                discardSession(owner, ip)
+                const renewed = await this._userSession(owner, ip, client)
+                if (renewed) {
+                    params.usersid = renewed
+                    reply = await client.RunMApp(entry, params)
+                }
+            }
+            return reply
         },
 
         /**
@@ -3848,22 +3957,60 @@ export const useTweetStore = defineStore('tweetStore', {
                         throw new Error(i18n.global.t('errors.userDataFailed'))
                     }
                     
-                    console.log(`[login] Calling login API for user: ${username} at ${user.providerIp}`);
+                    // A backend with userSessions identifies the caller by a Leither
+                    // session rather than a stored password. Sign in on the account's
+                    // root node — where an older account still carrying a password is
+                    // bound on its first login — and present the session alongside the
+                    // credentials (the password is what binds that older account and is
+                    // ignored once bound). An older backend takes the same entry on the
+                    // provider node, unchanged.
+                    let loginClient = user.client
+                    let loginIp = user.providerIp ?? ""
+                    let usersid: string | undefined
+                    try {
+                        const rootIp = await this.resolveWritableHostIp(user)
+                        if ((await this.storageCapabilities(rootIp)).userSessions) {
+                            const rootClient = createPooledClient(rootIp, this.lapi.connectionPool)
+                            const reply = await leitherLogin(rootClient, username, password)
+                            if (reply) {
+                                rememberSession(userId, rootIp, reply.Sid)
+                                loginClient = rootClient
+                                loginIp = rootIp
+                                usersid = reply.Sid
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('[login] session sign-in failed; falling back to password login', error)
+                    }
+                    console.log(`[login] Calling login API for user: ${username} at ${loginIp}`);
                     // Login can be slower than routine RPC; allow 30s (default RPC is 15s).
-                    const originalTimeout = user.client.timeout
-                    user.client.timeout = 30000
+                    const originalTimeout = loginClient.timeout
+                    loginClient.timeout = 30000
+                    const loginParams: Record<string, any> = {
+                        aid: this.appId,
+                        ver: "last",
+                        version: "v2",  // Request v2 format response
+                        username: username,
+                        password: password,
+                    }
+                    if (usersid) loginParams.usersid = usersid
                     let ret
                     try {
-                        ret = await user.client.RunMApp("login", {
-                            aid: this.appId, 
-                            ver: "last", 
-                            version: "v2",  // Request v2 format response
-                            username: username, 
-                            password: password
-                        })
+                        ret = await loginClient.RunMApp("login", loginParams)
+                        if (usersid && isSessionInvalid(ret)) {
+                            // The node dropped the session between sign-in and login;
+                            // one re-signed-in attempt, as with every other write.
+                            discardSession(userId, loginIp)
+                            const renewed = await leitherLogin(loginClient, username, password)
+                            if (renewed) {
+                                rememberSession(userId, loginIp, renewed.Sid)
+                                loginParams.usersid = renewed.Sid
+                                ret = await loginClient.RunMApp("login", loginParams)
+                            }
+                        }
                     } finally {
                         // Restore original timeout
-                        user.client.timeout = originalTimeout
+                        loginClient.timeout = originalTimeout
                     }
                     console.log(`[login] Login API returned:`, ret);
                     if (!ret) {
@@ -3912,6 +4059,9 @@ export const useTweetStore = defineStore('tweetStore', {
 
                         // Store user data and create client with auth provider IP
                         setStoredLoginUser(user)
+                        // Keep the guest credential for this tab: later writes
+                        // re-open Leither sessions with it on the user's root.
+                        storeCredential(userId, username, password)
                         user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
                         this._user = user
                         this.addFollowing(userId)
@@ -4032,7 +4182,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (!followingHostId) {
                     throw new Error(`Following user's root host is unavailable: ${followingId}`)
                 }
-                ret = await homeClient.RunMApp("toggle_following", {
+                ret = await this.runWrite(homeClient, writableIp, "toggle_following", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -4149,7 +4299,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 let alreadyGone = false
                 let response: any
                 try {
-                    response = await deleteClient.RunMApp("delete_tweet", payload)
+                    response = await this.runWrite(deleteClient, writableIp, "delete_tweet", payload)
                 } catch (callError) {
                     if (!isTweetNotFound((callError as any)?.message)) throw callError
                     alreadyGone = true
@@ -4423,13 +4573,27 @@ export const useTweetStore = defineStore('tweetStore', {
             // Resolve a fresh writable IP rather than reusing parentAuthor.client, which may
             // be pinned to a stale/unhealthy IP from a previous race.
             const writableIp = await this.resolveWritableHostIp(parentAuthor)
-            const deleteClient = createPooledClient(writableIp, this.lapi.connectionPool)
+            // As with add_comment: a backend with commentDelegation takes the
+            // request on the deleter's own root, signed by their session, and
+            // asks the parent author's node to perform the deletion. The window
+            // is wider because the request now makes two hops.
+            let deleteIp = writableIp
+            let deleteClient = createPooledClient(deleteIp, this.lapi.connectionPool)
+            try {
+                const capabilities = await this.storageCapabilities(writableIp)
+                if (capabilities.commentDelegation) {
+                    deleteIp = await this.resolveWritableHostIp(this.loginUser)
+                    deleteClient = createPooledClient(deleteIp, this.lapi.connectionPool)
+                }
+            } catch (error) {
+                console.warn('[deleteComment] commentDelegation probe failed; using the old form', error)
+            }
             const originalTimeout = deleteClient.timeout
             deleteClient.timeout = DELETE_MUTATION_TIMEOUT_MS
 
             // Call delete_comment API with proper parameters matching server expectations
             try {
-                await deleteClient.RunMApp("delete_comment", {
+                await this.runWrite(deleteClient, deleteIp, "delete_comment", {
                     aid: this.appId,
                     ver: "last",
                     appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
@@ -4520,15 +4684,32 @@ export const useTweetStore = defineStore('tweetStore', {
                             throw new Error('Parent tweet author has no hostIds[0]')
                         }
                         const parentWritableIp = await this.resolveWritableHostIp(parentAuthor)
-                        const parentClient = createPooledClient(parentWritableIp, this.lapi.connectionPool)
+                        // A backend with commentDelegation takes add_comment on the
+                        // signed-in user's own root, signed by their session; that
+                        // node asks the parent author's node to perform the write, so
+                        // a guest never needs a session anywhere but their own node.
+                        // The parent author's node decides — it is the node that must
+                        // accept the write. An older backend still takes the request
+                        // on the parent author's node, in the old form.
+                        let commentClient = createPooledClient(parentWritableIp, this.lapi.connectionPool)
+                        let commentIp = parentWritableIp
+                        try {
+                            const capabilities = await this.storageCapabilities(parentWritableIp)
+                            if (capabilities.commentDelegation) {
+                                commentIp = await this.resolveWritableHostIp(this.loginUser!)
+                                commentClient = createPooledClient(commentIp, this.lapi.connectionPool)
+                            }
+                        } catch (error) {
+                            console.warn('[uploadTweet] commentDelegation probe failed; using the old form', error)
+                        }
                         // Attach the parent on a copy, never on the caller's object:
                         // the editor reuses the same payload to publish the standalone
                         // quote tweet, which sets its own references explicitly.
                         const commentPayload = { ...tweet, parentTweetId: tweetId }
-                        const parentOriginalTimeout = parentClient.timeout
-                        parentClient.timeout = effectiveTimeout
+                        const parentOriginalTimeout = commentClient.timeout
+                        commentClient.timeout = effectiveTimeout
                         try {
-                            const added = await parentClient.RunMApp('add_comment', {
+                            const added = await this.runWrite(commentClient, commentIp, 'add_comment', {
                                 aid: this.appId, ver: 'last', version: 'v2',
                                 tweetid: tweetId,
                                 comment: JSON.stringify(commentPayload),
@@ -4538,7 +4719,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             this.adoptWriteRouteForReads(parentAuthor, parentWritableIp)
                             return added
                         } finally {
-                            parentClient.timeout = parentOriginalTimeout
+                            commentClient.timeout = parentOriginalTimeout
                         }
                     }
                     const loginUser = this.loginUser!
@@ -4763,7 +4944,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (options?.isPrivate !== undefined) {
                     request.isPrivate = options.isPrivate
                 }
-                const ret = await client.RunMApp("update_tweet", request)
+                const ret = await this.runWrite(client, writableIp, "update_tweet", request)
                 console.log('[updateTweet] update_tweet response', { tweetId, ret })
                 if (!ret || !ret.success) {
                     throw new Error(ret?.message || i18n.global.t('tweet.failedUpdateTweet'))
@@ -4841,9 +5022,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 // Use longer timeout for file upload (10 minutes)
                 client.timeout = 10 * 60 * 1000
                 
-                const mid = await client.RunMApp("upload_file", {
+                const mid = await this.runWrite(client, writableIp, "upload_file", {
                     aid: this.lapi.appId,
-                    ver: "last", 
+                    ver: "last",
                     cid: cid,
                     userid: loginUser.mid,
                 })
@@ -4863,7 +5044,7 @@ export const useTweetStore = defineStore('tweetStore', {
             if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
-            const mid = await client.RunMApp("share_file", {
+            const mid = await this.runWrite(client, writableIp, "share_file", {
                 aid: this.lapi.appId,
                 ver: "last",
                 file: JSON.stringify(file),
@@ -5267,6 +5448,34 @@ export const useTweetStore = defineStore('tweetStore', {
             const registrationClient = registrationIp
                 ? createPooledClient(registrationIp, this.lapi.connectionPool)
                 : this.lapi.client
+            // A backend with userSessions registers the guest with Leither on this
+            // node first; the app account is then created with the session and
+            // stores no password. An older backend takes the password in the user
+            // blob, as before.
+            const registrationAddress = registrationIp ?? this.lapi.client.ip
+            let usersid: string | undefined
+            let payload = userObj
+            try {
+                if (registrationAddress
+                    && (await this.storageCapabilities(registrationAddress)).userSessions) {
+                    const uid = await leitherRegister(registrationClient, username, password)
+                    if (uid) {
+                        const reply = await leitherLogin(registrationClient, username, password)
+                        if (reply) {
+                            usersid = reply.Sid
+                            payload = { ...userObj }
+                            delete payload.password
+                        } else {
+                            // The Leither user exists but no session could be opened;
+                            // an app account without one would strand it.
+                            throw new Error("Registered with the node, but sign-in failed. Try logging in.")
+                        }
+                    }
+                }
+            } catch (error) {
+                if (error instanceof Error && error.message.startsWith("Registered with the node")) throw error
+                console.warn('[register] Leither registration not attempted; using the old form', error)
+            }
             const originalTimeout = registrationClient.timeout
             registrationClient.timeout = REGISTER_TIMEOUT_MS
             let ret
@@ -5274,12 +5483,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 // No failover: a register that overruns the timeout is still completed by
                 // the node, so a second node would answer "Username is taken" for the
                 // account this call just created. One node, one attempt, as on iOS/Android.
-                const params = {
+                const params: Record<string, any> = {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
-                    user: JSON.stringify(userObj)
+                    user: JSON.stringify(payload)
                 }
+                if (usersid) params.usersid = usersid
                 ret = registrationIp
                     ? await registrationClient.RunMApp("register", params)
                     : await registrationClient.callWithoutFailover("RunMApp", "register", params)
@@ -5293,6 +5503,12 @@ export const useTweetStore = defineStore('tweetStore', {
             }
             const { mid: registeredMid, user: registeredBlob } = parseRegisterSuccessUser(ret)
             if (registeredMid) {
+                // The new account writes with the session just opened for it, and
+                // the auto-follow below re-uses it.
+                if (usersid && registrationAddress) {
+                    rememberSession(registeredMid, registrationAddress, usersid)
+                    storeCredential(registeredMid, username, password)
+                }
                 void this._autoFollowDefaultUsersAfterRegister(
                     registeredMid,
                     registeredBlob,
@@ -5354,7 +5570,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             console.warn(`[register:autoFollow] User has no root host, skip: ${followingId}`)
                             continue
                         }
-                        const toggled = await followerClient.RunMApp("toggle_following", {
+                        const toggled = await this.runWrite(followerClient, writableIp, "toggle_following", {
                             aid: this.appId,
                             ver: "last",
                             version: "v2",
@@ -5436,7 +5652,7 @@ export const useTweetStore = defineStore('tweetStore', {
             writeClient.timeout = migrating ? MIGRATION_TIMEOUT_MS : 30000
             let ret
             try {
-                ret = await writeClient.RunMApp("set_author_core_data", {
+                ret = await this.runWrite(writeClient, updateIp, "set_author_core_data", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -5533,7 +5749,7 @@ export const useTweetStore = defineStore('tweetStore', {
             writeClient.timeout = 30000
             let ret
             try {
-                ret = await writeClient.RunMApp("set_author_core_data", {
+                ret = await this.runWrite(writeClient, writableIp, "set_author_core_data", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -5579,7 +5795,7 @@ export const useTweetStore = defineStore('tweetStore', {
             writeClient.timeout = 30000
             let ret
             try {
-                ret = await writeClient.RunMApp("set_user_avatar", {
+                ret = await this.runWrite(writeClient, writableIp, "set_user_avatar", {
                     aid: this.appId, ver: "last", version: "v2",
                     userid: user.mid, avatar: cid,
                 })
@@ -5646,7 +5862,7 @@ export const useTweetStore = defineStore('tweetStore', {
             writeClient.timeout = 30000
             let ret
             try {
-                ret = await writeClient.RunMApp("delete_account", {
+                ret = await this.runWrite(writeClient, writableIp, "delete_account", {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
