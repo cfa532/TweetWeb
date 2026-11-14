@@ -52,9 +52,12 @@ type BackendStorageCapabilities = {
     formats: Set<string>
     // health flags beyond storage: userSessions says this node checks the
     // caller's Leither session ("usersid"); commentDelegation says it routes
-    // comments through the writer's own root. Both false on an older backend.
+    // comments through the writer's own root; engagementDelegation says the
+    // same for likes, bookmarks and retweet counts. All false on an older
+    // backend.
     userSessions: boolean
     commentDelegation: boolean
+    engagementDelegation: boolean
     checkedAt: number
 }
 
@@ -719,6 +722,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     formats,
                     userSessions: reply.userSessions === true,
                     commentDelegation: reply.commentDelegation === true,
+                    engagementDelegation: reply.engagementDelegation === true,
                     checkedAt: Date.now(),
                 }
                 storageCapabilitiesCache.set(key, result)
@@ -754,9 +758,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 case 'toggle_tweet_privacy':
                 case 'toggle_pinned_tweet':
                 case 'delete_comment':
+                case 'toggle_favorite':
+                case 'retweet_added':
+                case 'retweet_removed':
                     return params.appuserid ?? null
                 case 'delete_tweet':
                 case 'toggle_following':
+                case 'toggle_bookmark':
                 case 'block_user':
                 case 'remove_blacklisted_relationship':
                 case 'set_user_avatar':
@@ -4817,11 +4825,12 @@ export const useTweetStore = defineStore('tweetStore', {
                     return null
                 }
                 const storageAuthor = await this.resolveTweetStorageAuthor(originalTweet)
-                const writableIp = await this.resolveWritableHostIp(storageAuthor)
-                const client = createPooledClient(writableIp, this.lapi.connectionPool)
-                client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-                const entry = direction === 1 ? "retweet_added" : "retweet_removed"
-                const ret = await client.RunMApp(entry, {
+                let writableIp = await this.resolveWritableHostIp(storageAuthor)
+                let client = createPooledClient(writableIp, this.lapi.connectionPool)
+                // On a delegating backend the retweeter's own root performs the
+                // request and the original author's node is only the target of
+                // its delegation; the hostid names it.
+                const params: Record<string, any> = {
                     aid: this.appId,
                     ver: "last",
                     version: "v2",
@@ -4829,7 +4838,19 @@ export const useTweetStore = defineStore('tweetStore', {
                     retweetid: retweetId,
                     tweetid: originalTweet.mid,
                     authorid: storageAuthor.mid,
-                })
+                }
+                try {
+                    if ((await this.storageCapabilities(writableIp)).engagementDelegation) {
+                        params.hostid = storageAuthor.hostIds?.[0]
+                        writableIp = await this.resolveWritableHostIp(loginUser)
+                        client = createPooledClient(writableIp, this.lapi.connectionPool)
+                    }
+                } catch (error) {
+                    console.warn('[updateRetweetCount] engagementDelegation probe failed; using the old form', error)
+                }
+                client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+                const entry = direction === 1 ? "retweet_added" : "retweet_removed"
+                const ret = await this.runWrite(client, writableIp, entry, params)
                 const tweetDict = unwrapNestedV2Map(ret)
                 if (!tweetDict) {
                     console.warn('[updateRetweetCount] Server returned invalid tweet data')
@@ -5095,7 +5116,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const userHostId = loginUser.hostIds?.[0]
             if (!userHostId) throw new Error(i18n.global.t('errors.writableHost'))
             const storageAuthor = await this.resolveTweetStorageAuthor(tweet)
-            const params = {
+            const params: Record<string, any> = {
                 aid: this.appId, ver: "last", version: "v2",
                 appuserid: loginUser.mid,
                 tweetid: tweet.mid,
@@ -5103,13 +5124,26 @@ export const useTweetStore = defineStore('tweetStore', {
                 userhostid: userHostId,
                 isfavorite: rpcBool(isFavorite),
             }
-            const writableIp = await this.resolveWritableHostIp(storageAuthor)
-            const client = createPooledClient(writableIp, this.lapi.connectionPool)
+            let writableIp = await this.resolveWritableHostIp(storageAuthor)
+            let client = createPooledClient(writableIp, this.lapi.connectionPool)
+            // A backend with engagementDelegation takes the toggle on the
+            // signed-in user's own root, signed by their session; that node
+            // asks the tweet author's node to perform its half. An older
+            // backend takes the toggle on the author's node, in the old form.
+            try {
+                if ((await this.storageCapabilities(writableIp)).engagementDelegation) {
+                    params.hostid = storageAuthor.hostIds?.[0]
+                    writableIp = await this.resolveWritableHostIp(loginUser)
+                    client = createPooledClient(writableIp, this.lapi.connectionPool)
+                }
+            } catch (error) {
+                console.warn('[toggleFavorite] engagementDelegation probe failed; using the old form', error)
+            }
             client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            const ret = await client.RunMApp("toggle_favorite", params)
+            const ret = await this.runWrite(client, writableIp, "toggle_favorite", params)
             // The tweet's counters live on the author's host; the login user's favorites
-            // list lives on its own (userhostid). Both sides were written.
-            this.adoptWriteRouteForReads(storageAuthor, writableIp)
+            // list lives on its own. Both sides were written.
+            this.adoptWriteRouteForReads(storageAuthor, await this.resolveWritableHostIp(storageAuthor))
             this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
             return this._applyServerTweet(tweet, ret)
         },
@@ -5125,7 +5159,7 @@ export const useTweetStore = defineStore('tweetStore', {
             const userHostId = loginUser.hostIds?.[0]
             if (!userHostId) throw new Error(i18n.global.t('errors.writableHost'))
             const storageAuthor = await this.resolveTweetStorageAuthor(tweet)
-            const params = {
+            const params: Record<string, any> = {
                 aid: this.appId, ver: "last", version: "v2",
                 userid: loginUser.mid,
                 tweetid: tweet.mid,
@@ -5133,13 +5167,24 @@ export const useTweetStore = defineStore('tweetStore', {
                 userhostid: userHostId,
                 isbookmarked: rpcBool(isBookmarked),
             }
-            const writableIp = await this.resolveWritableHostIp(storageAuthor)
-            const client = createPooledClient(writableIp, this.lapi.connectionPool)
+            let writableIp = await this.resolveWritableHostIp(storageAuthor)
+            let client = createPooledClient(writableIp, this.lapi.connectionPool)
+            // As with toggle_favorite: the user's own root on a delegating
+            // backend, the author's node otherwise.
+            try {
+                if ((await this.storageCapabilities(writableIp)).engagementDelegation) {
+                    params.hostid = storageAuthor.hostIds?.[0]
+                    writableIp = await this.resolveWritableHostIp(loginUser)
+                    client = createPooledClient(writableIp, this.lapi.connectionPool)
+                }
+            } catch (error) {
+                console.warn('[toggleBookmark] engagementDelegation probe failed; using the old form', error)
+            }
             client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            const ret = await client.RunMApp("toggle_bookmark", params)
+            const ret = await this.runWrite(client, writableIp, "toggle_bookmark", params)
             // Same split as toggle_favorite: author's host for the tweet, login user's
             // host for the bookmark list.
-            this.adoptWriteRouteForReads(storageAuthor, writableIp)
+            this.adoptWriteRouteForReads(storageAuthor, await this.resolveWritableHostIp(storageAuthor))
             this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
             return this._applyServerTweet(tweet, ret)
         },

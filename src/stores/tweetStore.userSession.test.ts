@@ -33,14 +33,16 @@ describe('caller sessions on writes', () => {
 
         expect(store._ownedAccountKey('update_tweet', { appuserid: 'author-1' })).toBe('author-1')
         expect(store._ownedAccountKey('delete_comment', { appuserid: 'author-1' })).toBe('author-1')
+        expect(store._ownedAccountKey('toggle_favorite', { appuserid: 'author-1' })).toBe('author-1')
+        expect(store._ownedAccountKey('retweet_added', { appuserid: 'author-1' })).toBe('author-1')
         expect(store._ownedAccountKey('delete_tweet', { userid: 'author-1' })).toBe('author-1')
+        expect(store._ownedAccountKey('toggle_bookmark', { userid: 'author-1' })).toBe('author-1')
         expect(store._ownedAccountKey('toggle_following', { userid: 'author-1' })).toBe('author-1')
         expect(store._ownedAccountKey('add_tweet', { tweet })).toBe('author-1')
         expect(store._ownedAccountKey('add_comment', { comment: tweet })).toBe('author-1')
         expect(store._ownedAccountKey('set_author_core_data', { user })).toBe('author-1')
-        // Reads and engagement toggles carry no session.
+        // Reads carry no session.
         expect(store._ownedAccountKey('get_tweet', {})).toBeNull()
-        expect(store._ownedAccountKey('toggle_favorite', { appuserid: 'author-1' })).toBeNull()
     })
 
     it('attaches the session of an account this tab holds a credential for', async () => {
