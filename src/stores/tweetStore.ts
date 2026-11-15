@@ -792,9 +792,9 @@ export const useTweetStore = defineStore('tweetStore', {
          * example, has nothing to present and writes without a session.
          */
         async _userSession(accountId: string, ip: string, client: any): Promise<string | null> {
-            // The credential check comes first: a cached session is only ever used
-            // for an account this tab still holds, so signing out (which clears
-            // sessionStorage) also ends the use of anything cached in memory.
+            // Legacy writes can target the other user's node. Only the caller's
+            // root can receive their password or reuse their node-local session.
+            if (routeEntry(accountId).writable !== ip) return null
             const credential = loadCredential(accountId)
             if (!credential) return null
             const cached = cachedSession(accountId, ip)
@@ -3965,30 +3965,21 @@ export const useTweetStore = defineStore('tweetStore', {
                         throw new Error(i18n.global.t('errors.userDataFailed'))
                     }
                     
-                    // A backend with userSessions identifies the caller by a Leither
-                    // session rather than a stored password. Sign in on the account's
-                    // root node — where an older account still carrying a password is
-                    // bound on its first login — and present the session alongside the
-                    // credentials (the password is what binds that older account and is
-                    // ignored once bound). An older backend takes the same entry on the
-                    // provider node, unchanged.
-                    let loginClient = user.client
-                    let loginIp = user.providerIp ?? ""
+                    // Both login forms carry the password. Resolve the account's root
+                    // before either call, even if the account was read from a replica.
+                    const loginIp = await this.resolveWritableHostIp(user)
+                    const loginClient = createPooledClient(loginIp, this.lapi.connectionPool)
                     let usersid: string | undefined
                     try {
-                        const rootIp = await this.resolveWritableHostIp(user)
-                        if ((await this.storageCapabilities(rootIp)).userSessions) {
-                            const rootClient = createPooledClient(rootIp, this.lapi.connectionPool)
-                            const reply = await leitherLogin(rootClient, username, password)
+                        if ((await this.storageCapabilities(loginIp)).userSessions) {
+                            const reply = await leitherLogin(loginClient, username, password)
                             if (reply) {
-                                rememberSession(userId, rootIp, reply.Sid)
-                                loginClient = rootClient
-                                loginIp = rootIp
+                                rememberSession(userId, loginIp, reply.Sid)
                                 usersid = reply.Sid
                             }
                         }
                     } catch (error) {
-                        console.warn('[login] session sign-in failed; falling back to password login', error)
+                        console.warn('[login] Could not check session support on the account root', error)
                     }
                     console.log(`[login] Calling login API for user: ${username} at ${loginIp}`);
                     // Login can be slower than routine RPC; allow 30s (default RPC is 15s).
