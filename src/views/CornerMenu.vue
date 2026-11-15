@@ -370,7 +370,7 @@ async function confirmDeleteItem() {
               <span class="menu-text"><font-awesome-icon icon="share-from-square" style="margin-right: 5px;" />{{ $t('tweet.share') }}</span>
           </div>
           <div v-if="canEdit" class="item clickable-item" @click.stop="openEditor">
-              <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t('common.edit') }}</span>
+              <span class="menu-text"><font-awesome-icon icon="pen" style="margin-right: 5px;" />{{ $t(tweetStore.loginUser?.username === 'admin' && tweetStore.loginUser.mid !== (editTweet || tweet)?.authorId ? 'tweet.editByAdmin' : 'common.edit') }}</span>
           </div>
           <div v-if="canDelete" class="item clickable-item" @click.stop="requestDeleteItem">
               <span class="menu-text"><font-awesome-icon icon="trash-can" style="margin-right: 5px;" />{{ $t('common.delete') }}</span>

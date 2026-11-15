@@ -111,6 +111,7 @@
     "loadingQuotedTweet": "正在加载引用的推文...",
     "loadingAuthor": "加载中...",
     "loadingUsername": "加载中",
+    "editByAdmin": "编辑（管理员）",
     "editTweet": "编辑推文",
     "failedUpdateTweet": "更新推文失败",
     "failedDeleteTweet": "删除推文失败",

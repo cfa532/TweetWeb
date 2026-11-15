@@ -111,6 +111,7 @@
     "loadingQuotedTweet": "Loading quoted tweet...",
     "loadingAuthor": "Loading...",
     "loadingUsername": "loading",
+    "editByAdmin": "Edit (admin)",
     "editTweet": "Edit Tweet",
     "failedUpdateTweet": "Failed to update tweet",
     "failedDeleteTweet": "Failed to delete tweet",

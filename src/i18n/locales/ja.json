@@ -111,6 +111,7 @@
     "loadingQuotedTweet": "引用ツイートを読み込み中...",
     "loadingAuthor": "読み込み中...",
     "loadingUsername": "読み込み中",
+    "editByAdmin": "編集（管理者）",
     "editTweet": "ツイートを編集",
     "failedUpdateTweet": "ツイートの更新に失敗しました",
     "failedDeleteTweet": "ツイートの削除に失敗しました",
