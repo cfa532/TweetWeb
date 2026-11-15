@@ -12,6 +12,13 @@ const probeClient: any = { timeout: 0, RunMApp: vi.fn() }
 
 import { useTweetStore } from './tweetStore'
 
+// A session is opened only on the account's own root, which the store learns by
+// resolving the account's write route.
+async function rootAccountAt(store: any, mid: string, ip: string) {
+    store.getNodeIp = vi.fn(async () => ip)
+    await store.resolveWritableHostIp({ mid, hostIds: ['root-host'] })
+}
+
 describe('caller sessions on writes', () => {
     beforeEach(() => {
         ;(window as any).hprose = {
@@ -58,6 +65,7 @@ describe('caller sessions on writes', () => {
             RunMApp: vi.fn().mockResolvedValue({ success: true }),
         }
         const params: Record<string, any> = { userid: 'author-1' }
+        await rootAccountAt(store, 'author-1', '10.0.0.1:8002')
         await store.runWrite(client, '10.0.0.1:8002', 'delete_tweet', params)
 
         expect(client.Login).toHaveBeenCalledWith('alice', 'pw')
@@ -84,6 +92,29 @@ describe('caller sessions on writes', () => {
         expect(params.usersid).toBeUndefined()
     })
 
+    it('does not sign in at a node that is not the account\'s root', async () => {
+        const store = useTweetStore()
+        store.storageCapabilities = vi.fn(async () => ({
+            formats: new Set(), userSessions: true, commentDelegation: false, checkedAt: Date.now(),
+        })) as any
+        storeCredential('author-9', 'alice', 'pw')
+        await rootAccountAt(store, 'author-9', '10.0.0.9:8002')
+
+        // A like sent in the old form goes to the tweet author's node: the
+        // password must not follow it there.
+        const client = {
+            timeout: 0,
+            Login: vi.fn().mockResolvedValue({ Sid: 'sid-x', Uid: 'uid-x' }),
+            RunMApp: vi.fn().mockResolvedValue({ success: true }),
+        }
+        const params: Record<string, any> = { appuserid: 'author-9' }
+        await store.runWrite(client, '10.0.0.77:8002', 'toggle_favorite', params)
+
+        expect(client.Login).not.toHaveBeenCalled()
+        expect(params.usersid).toBeUndefined()
+        expect(client.RunMApp).toHaveBeenCalledWith('toggle_favorite', params)
+    })
+
     it('re-signs-in once when the node dropped the session', async () => {
         const store = useTweetStore()
         store.storageCapabilities = vi.fn(async () => ({
@@ -101,6 +132,7 @@ describe('caller sessions on writes', () => {
                 .mockResolvedValueOnce({ success: true }),
         }
         const params: Record<string, any> = { userid: 'author-1' }
+        await rootAccountAt(store, 'author-1', '10.0.0.2:8002')
         const reply = await store.runWrite(client, '10.0.0.2:8002', 'delete_tweet', params)
 
         expect(reply).toEqual({ success: true })
