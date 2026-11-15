@@ -763,6 +763,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 case 'retweet_removed':
                     return params.appuserid ?? null
                 case 'delete_tweet':
+                case 'admin_mutate_tweet':
                 case 'toggle_following':
                 case 'toggle_bookmark':
                 case 'block_user':
@@ -788,8 +789,7 @@ export const useTweetStore = defineStore('tweetStore', {
         /**
          * The Leither session proving to the node at ip that this caller
          * controls accountId. Only an account whose guest credential this tab
-         * holds can be signed in — admin acting on another user's tweet, for
-         * example, has nothing to present and writes without a session.
+         * holds can be signed in.
          */
         async _userSession(accountId: string, ip: string, client: any): Promise<string | null> {
             // Legacy writes can target the other user's node. Only the caller's
@@ -4230,17 +4230,17 @@ export const useTweetStore = defineStore('tweetStore', {
          * @param authorId The ID of the tweet author
          */
         async deleteTweet(tweetId: MimeiId, authorId: MimeiId) {
-            if (!this.loginUser) {
+            const loginUser = this.loginUser
+            if (!loginUser || (loginUser.username !== 'admin' && loginUser.mid !== authorId)) {
                 throw new Error(i18n.global.t('errors.deleteUnauthorized'))
             }
-            if (this.loginUser.username !== 'admin' && this.loginUser.mid !== authorId) {
-                throw new Error(i18n.global.t('errors.deleteUnauthorized'))
-            }
+            const delegated = loginUser.mid !== authorId
+            const entry = delegated ? "admin_mutate_tweet" : "delete_tweet"
 
             console.log('[deleteTweet] Starting delete', {
                 tweetId,
                 authorId,
-                callerId: this.loginUser.mid,
+                callerId: loginUser.mid,
             })
 
             const tweetIndex = this.tweets.findIndex(e => e.mid === tweetId)
@@ -4265,14 +4265,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             try {
-                const targetAuthor = authorId === this.loginUser.mid
-                    ? this.loginUser
-                    : await this.getUser(authorId)
-                if (!targetAuthor) {
-                    throw new Error(i18n.global.t('errors.authorNotFound'))
-                }
-                const hostId = targetAuthor.hostIds?.[0]
-                const writableIp = await this.resolveWritableHostIp(targetAuthor)
+                const writableIp = await this.resolveWritableHostIp(loginUser)
                 const deleteClient = createPooledClient(writableIp, this.lapi.connectionPool)
                 const originalTimeout = deleteClient.timeout
                 deleteClient.timeout = DELETE_MUTATION_TIMEOUT_MS
@@ -4281,14 +4274,14 @@ export const useTweetStore = defineStore('tweetStore', {
                     aid: this.appId,
                     ver: "last",
                     version: "v3",
-                    appuserid: this.loginUser.mid, // caller identity (admin or owner)
-                    userid: authorId, // tweet owner; backend resolves this user's host
+                    appuserid: loginUser.mid,
+                    userid: loginUser.mid,
                     tweetid: tweetId,
-                    authorid: authorId, // tweet owner
-                    hostid: hostId,
+                    authorid: authorId,
                 }
+                if (delegated) payload.action = 'delete'
 
-                console.log('[deleteTweet] Calling delete_tweet', { ...payload, writableIp })
+                console.log('[deleteTweet] Calling', entry, { ...payload, writableIp })
                 // A tweet the server no longer holds is already in the state the
                 // caller asked for, so "Tweet not found" counts as a successful
                 // delete and the local copy still has to go.
@@ -4298,14 +4291,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 let alreadyGone = false
                 let response: any
                 try {
-                    response = await this.runWrite(deleteClient, writableIp, "delete_tweet", payload)
+                    response = await this.runWrite(deleteClient, writableIp, entry, payload)
                 } catch (callError) {
                     if (!isTweetNotFound((callError as any)?.message)) throw callError
                     alreadyGone = true
                 } finally {
                     deleteClient.timeout = originalTimeout
                 }
-                console.log('[deleteTweet] delete_tweet response', { tweetId, response, alreadyGone })
+                console.log('[deleteTweet] Response', { entry, tweetId, response, alreadyGone })
                 for (let depth = 0; depth < 3 && !alreadyGone && response && typeof response === "object"; depth++) {
                     if (response.success === false) {
                         if (isTweetNotFound(response.message)) {
@@ -4324,7 +4317,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (typeof deletedTweetId !== "string" || !deletedTweetId) {
                     throw new Error("Delete tweet failed: server returned success but no tweetid")
                 }
-                this.adoptWriteRouteForReads(targetAuthor, writableIp)
+                this.adoptWriteRouteForReads(loginUser, writableIp)
                 try {
                     this.evictDeletedTweetFromCaches(tweetId)
                 } catch (cacheError) {
@@ -4353,7 +4346,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 // removedTweet was captured before the local cache was cleared above.
                 const originalTweetId = removedTweet?.originalTweetId
                 const originalAuthorId = removedTweet?.originalAuthorId
-                if (originalTweetId) {
+                if (originalTweetId && !delegated) {
                     try {
                         const original = await this.getTweet(originalTweetId, originalAuthorId)
                         if (original) {
@@ -4910,21 +4903,24 @@ export const useTweetStore = defineStore('tweetStore', {
             attachments?: MimeiFileType[],
             options?: { downloadable?: boolean; isPrivate?: boolean },
         ) {
-            if (!this.loginUser) {
+            const loginUser = this.loginUser
+            if (!loginUser) {
+                throw new Error(i18n.global.t('errors.editUnauthorized'))
+            }
+            const targetAuthorId = authorId ?? loginUser.mid
+            const delegated = targetAuthorId !== loginUser.mid
+            if (delegated && loginUser.username !== 'admin') {
                 throw new Error(i18n.global.t('errors.editUnauthorized'))
             }
             try {
-                const targetAuthorId = authorId ?? this.loginUser.mid
                 console.log('[updateTweet] Starting update', {
                     tweetId,
                     targetAuthorId,
-                    callerId: this.loginUser.mid,
+                    callerId: loginUser.mid,
                     contentLength: content.length,
                 })
-                const targetAuthor = targetAuthorId === this.loginUser.mid
-                    ? this.loginUser
-                    : await this.getUser(targetAuthorId)
-                if (targetAuthorId !== this.loginUser.mid) {
+                const targetAuthor = delegated ? await this.getUser(targetAuthorId) : loginUser
+                if (delegated) {
                     console.log('[updateTweet] Resolved target author', {
                         tweetId,
                         targetAuthorId,
@@ -4936,9 +4932,9 @@ export const useTweetStore = defineStore('tweetStore', {
                     throw new Error(`Could not resolve tweet author ${targetAuthorId}`)
                 }
 
-                // update_tweet enforces author identity in appuserid, so for admin edits
-                // we must act on the tweet owner's node and pass owner id as appuserid.
-                const writableIp = await this.resolveWritableHostIp(targetAuthor)
+                const authorIp = await this.resolveWritableHostIp(targetAuthor)
+                const writableIp = delegated ? await this.resolveWritableHostIp(loginUser) : authorIp
+                const entry = delegated ? "admin_mutate_tweet" : "update_tweet"
                 const client = createPooledClient(writableIp, this.lapi.connectionPool)
                 client.timeout = UPDATE_TWEET_TIMEOUT_MS
                 const attachmentReferences = attachments?.map(attachment => {
@@ -4952,12 +4948,13 @@ export const useTweetStore = defineStore('tweetStore', {
                 const request: Record<string, unknown> = {
                     aid: this.appId,
                     ver: "last",
-                    appuserid: targetAuthorId,
-                    userid: targetAuthorId,
-                    hostid: targetAuthor.hostIds?.[0],
+                    appuserid: loginUser.mid,
+                    userid: loginUser.mid,
+                    authorid: targetAuthorId,
                     tweetid: tweetId,
                     content: content,
                 }
+                if (delegated) request.action = 'update'
                 if (attachmentReferences !== undefined) {
                     request.attachments = JSON.stringify(attachmentReferences)
                 }
@@ -4967,12 +4964,12 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (options?.isPrivate !== undefined) {
                     request.isPrivate = options.isPrivate
                 }
-                const ret = await this.runWrite(client, writableIp, "update_tweet", request)
-                console.log('[updateTweet] update_tweet response', { tweetId, ret })
+                const ret = await this.runWrite(client, writableIp, entry, request)
+                console.log('[updateTweet] Response', { entry, tweetId, ret })
                 if (!ret || !ret.success) {
                     throw new Error(ret?.message || i18n.global.t('tweet.failedUpdateTweet'))
                 }
-                this.adoptWriteRouteForReads(targetAuthor, writableIp)
+                this.adoptWriteRouteForReads(loginUser, writableIp)
                 // Update local tweet in store
                 const idx = this.tweets.findIndex(t => t.mid === tweetId)
                 if (idx !== -1) {
@@ -4980,7 +4977,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     if (attachmentReferences !== undefined) {
                         this.tweets[idx].attachments = attachmentReferences.map(attachment => ({
                             ...attachment,
-                            mid: this.getMediaUrl(attachment.mid, `http://${writableIp}`),
+                            mid: this.getMediaUrl(attachment.mid, `http://${authorIp}`),
                             downloadable: options?.downloadable ?? attachment.downloadable,
                         }))
                     }
