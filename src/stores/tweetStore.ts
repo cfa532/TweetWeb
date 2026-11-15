@@ -5103,95 +5103,79 @@ export const useTweetStore = defineStore('tweetStore', {
             file.url = `http://${ip0}:${sharingUser?.cloudDrivePort}`   // base url for the file
             return file
         },
-        /**
-         * Toggles the like status of a tweet
-         * @param tweet The tweet to update
-         * @param isFavorite The desired favorite state
-         * @returns The updated tweet object
-         */
-        async toggleFavorite(tweet: Tweet, isFavorite: boolean) {
+        async toggleFavorite(tweet: Tweet, isFavorite: boolean): Promise<Tweet> {
+            return this.toggleSavedTweet(tweet, 'favorite', isFavorite)
+        },
+
+        async toggleBookmark(tweet: Tweet, isBookmarked: boolean): Promise<Tweet> {
+            return this.toggleSavedTweet(tweet, 'bookmark', isBookmarked)
+        },
+
+        async toggleSavedTweet(tweet: Tweet, kind: 'favorite' | 'bookmark', wanted: boolean): Promise<Tweet> {
             const loginUser = this.loginUser
             if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
             const userHostId = loginUser.hostIds?.[0]
             if (!userHostId) throw new Error(i18n.global.t('errors.writableHost'))
-            const storageAuthor = await this.resolveTweetStorageAuthor(tweet)
+
+            const entry = kind === 'favorite' ? 'toggle_favorite' : 'toggle_bookmark'
+            const userParam = kind === 'favorite' ? 'appuserid' : 'userid'
+            const stateParam = kind === 'favorite' ? 'isfavorite' : 'isbookmarked'
             const params: Record<string, any> = {
                 aid: this.appId, ver: "last", version: "v2",
-                appuserid: loginUser.mid,
+                [userParam]: loginUser.mid,
                 tweetid: tweet.mid,
-                authorid: storageAuthor.mid,
                 userhostid: userHostId,
-                isfavorite: rpcBool(isFavorite),
+                [stateParam]: rpcBool(wanted),
             }
-            let writableIp = await this.resolveWritableHostIp(storageAuthor)
-            let client = createPooledClient(writableIp, this.lapi.connectionPool)
-            // A backend with engagementDelegation takes the toggle on the
-            // signed-in user's own root, signed by their session; that node
-            // asks the tweet author's node to perform its half. An older
-            // backend takes the toggle on the author's node, in the old form.
+
+            let authorRoute: { author: User; ip: string } | undefined
+            let writableIp: string
             try {
-                if ((await this.storageCapabilities(writableIp)).engagementDelegation) {
-                    params.hostid = storageAuthor.hostIds?.[0]
-                    writableIp = await this.resolveWritableHostIp(loginUser)
-                    client = createPooledClient(writableIp, this.lapi.connectionPool)
-                }
+                const author = await this.resolveTweetStorageAuthor(tweet)
+                writableIp = await this.resolveWritableHostIp(author)
+                authorRoute = { author, ip: writableIp }
             } catch (error) {
-                console.warn('[toggleFavorite] engagementDelegation probe failed; using the old form', error)
+                // The backend can remove from the user's list if the author
+                // route is unavailable before sending the mutation.
+                if (wanted) throw error
+                writableIp = await this.resolveWritableHostIp(loginUser)
+                if (!(await this.storageCapabilities(writableIp)).engagementDelegation) throw error
             }
-            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            const ret = await this.runWrite(client, writableIp, "toggle_favorite", params)
-            // The tweet's counters live on the author's host; the login user's favorites
-            // list lives on its own. Both sides were written.
-            this.adoptWriteRouteForReads(storageAuthor, await this.resolveWritableHostIp(storageAuthor))
-            this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
-            return this._applyServerTweet(tweet, ret)
-        },
-        /**
-         * Toggles the bookmark status of a tweet
-         * @param tweet The tweet to toggle bookmark for
-         * @param isBookmarked The desired bookmark state
-         * @returns The updated tweet object
-         */
-        async toggleBookmark(tweet: Tweet, isBookmarked: boolean) {
-            const loginUser = this.loginUser
-            if (!loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
-            const userHostId = loginUser.hostIds?.[0]
-            if (!userHostId) throw new Error(i18n.global.t('errors.writableHost'))
-            const storageAuthor = await this.resolveTweetStorageAuthor(tweet)
-            const params: Record<string, any> = {
-                aid: this.appId, ver: "last", version: "v2",
-                userid: loginUser.mid,
-                tweetid: tweet.mid,
-                authorid: storageAuthor.mid,
-                userhostid: userHostId,
-                isbookmarked: rpcBool(isBookmarked),
-            }
-            let writableIp = await this.resolveWritableHostIp(storageAuthor)
-            let client = createPooledClient(writableIp, this.lapi.connectionPool)
-            // As with toggle_favorite: the user's own root on a delegating
-            // backend, the author's node otherwise.
-            try {
-                if ((await this.storageCapabilities(writableIp)).engagementDelegation) {
-                    params.hostid = storageAuthor.hostIds?.[0]
+
+            if (authorRoute) {
+                const { author, ip } = authorRoute
+                params.authorid = author.mid
+                const capabilities = await this.storageCapabilities(ip).catch(error => {
+                    console.warn(`[${entry}] engagementDelegation probe failed; using the old form`, error)
+                    return null
+                })
+                if (capabilities?.engagementDelegation) {
+                    params.hostid = author.hostIds?.[0]
                     writableIp = await this.resolveWritableHostIp(loginUser)
-                    client = createPooledClient(writableIp, this.lapi.connectionPool)
                 }
-            } catch (error) {
-                console.warn('[toggleBookmark] engagementDelegation probe failed; using the old form', error)
             }
+
+            const client = createPooledClient(writableIp, this.lapi.connectionPool)
             client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            const ret = await this.runWrite(client, writableIp, "toggle_bookmark", params)
-            // Same split as toggle_favorite: author's host for the tweet, login user's
-            // host for the bookmark list.
-            this.adoptWriteRouteForReads(storageAuthor, await this.resolveWritableHostIp(storageAuthor))
+            const ret = await this.runWrite(client, writableIp, entry, params)
+            const updatedTweet = this._applyServerTweet(tweet, ret, authorRoute ? undefined : kind)
+            if (authorRoute) this.adoptWriteRouteForReads(authorRoute.author, authorRoute.ip)
             this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
-            return this._applyServerTweet(tweet, ret)
+            return updatedTweet
         },
-        _applyServerTweet(tweet: Tweet, ret: any): Tweet {
-            // Unwrap v2 response: if ret has data field, use it
+
+        _applyServerTweet(tweet: Tweet, ret: any, removedKind?: 'favorite' | 'bookmark'): Tweet {
             const response = (ret?.success && ret.data) ? ret.data : ret
-            if (response?.success && response.tweet) {
-                const s = response.tweet
+            if (response?.success && (response.tweet || (removedKind && response.user))) {
+                let s = response.tweet
+                if (!s) {
+                    // A list-only removal returns the updated user and no tweet.
+                    const favorites = this.resolvedInteractionFlags(tweet)
+                    favorites[removedKind === 'favorite' ? 0 : 1] = false
+                    s = { favorites }
+                    if (removedKind === 'favorite') s.favoriteCount = Math.max(0, (tweet.likeCount ?? 0) - 1)
+                    else s.bookmarkCount = Math.max(0, (tweet.bookmarkCount ?? 0) - 1)
+                }
                 const updated = { ...tweet,
                     likeCount: s.favoriteCount ?? tweet.likeCount,
                     bookmarkCount: s.bookmarkCount ?? tweet.bookmarkCount,
