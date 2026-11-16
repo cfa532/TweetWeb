@@ -1142,7 +1142,7 @@ function retryLoad() {
 <style scoped>
 .quoted-tweet {
     margin: 8px 0;
-    border: 1px solid #edf1f5;
+    border: 1px solid #c5ced8;
     border-radius: 8px;
     overflow: hidden;
     background-color: #d0d8e4;
