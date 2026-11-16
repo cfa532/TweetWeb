@@ -2,10 +2,11 @@
 import { onMounted, onUnmounted, ref, computed, nextTick, provide, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
-import { useRouter, useRoute } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { AudioPlaylistPlayer, MediaView, ItemHeader, TweetActionBar } from '@/views';
 import { useTweetStore } from '@/stores';
-import { normalizeMediaType } from '@/lib';
+import { isImageType, isVideoType, normalizeMediaType, tweetDetailPath } from '@/lib';
+import { UserAvatar } from '@/components';
 import {
   TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY,
   type MediaLoadState,
@@ -14,7 +15,6 @@ import {
 const { t } = useI18n();
 const tweetStore = useTweetStore()
 const router = useRouter()
-const route = useRoute()
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
@@ -54,18 +54,37 @@ onMounted(async () => {
     originalTweet.value = currentTweet.value.originalTweet
       || await tweetStore.fetchTweet(
         currentTweet.value.originalTweetId,
-        currentTweet.value.originalAuthorId
-      );
+        currentTweet.value.originalAuthorId,
+        false,
+        false,
+        false,
+        false,
+        { provider: currentTweet.value.provider }
+      ).catch(() => null);
 
-    if (originalTweet.value) {
-      if (!tweetHasOwnBody(currentTweet.value)) {
-        // A retweet.
-        retweetedBy.value = currentTweet.value.author.username;
-        isRetweet.value = true;
-      }
+    if (originalTweet.value && currentTweet.value.author && !tweetHasOwnBody(currentTweet.value)) {
+      retweetedBy.value = currentTweet.value.author.username;
+      isRetweet.value = true;
     }
   }
 });
+
+const quoteAttachment = computed(() => originalTweet.value?.attachments?.[0]);
+const quoteText = computed(() =>
+  [originalTweet.value?.title, originalTweet.value?.content]
+    .filter(Boolean)
+    .join('\n\n')
+    .replace(/<br\b[^>]*\/?>|<\/(?:p|div)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .trim()
+);
+const quoteForwardedBy = computed(() => currentTweet.value.authorId === tweetStore.loginUser?.mid
+  ? t('tweet.forwardedByYou')
+  : t('tweet.forwardedBy', { name: currentTweet.value.author?.username || currentTweet.value.authorId }));
+
+function cacheQuoteForDetail(tweet: Tweet) {
+  sessionStorage.setItem('tweetDetail', JSON.stringify(tweet));
+}
 
 const displayedTweet = computed(() => {
   return isRetweet.value && originalTweet.value ? originalTweet.value : currentTweet.value;
@@ -80,52 +99,8 @@ function applyActionUpdate(updatedTweet: Tweet) {
 }
 
 function openDetailView() {
-    sessionStorage.setItem('tweetDetail', JSON.stringify(displayedTweet.value));
-    const authorId = displayedTweet.value.author?.mid || displayedTweet.value.authorId;
-    const basePath = `/tweet/${displayedTweet.value.mid}${authorId ? '/' + authorId : ''}`;
-
-    if (props.isComment) {
-        // Use props.parentTweet for correct parent information
-        const parentTweetId = props.parentTweet?.mid;
-        const parentAuthorId = props.parentTweet?.author?.mid;
-
-        if (!parentTweetId) {
-            // Fallback to route params if parentTweet is not available
-            const fallbackParentId = route.params.tweetId as string;
-            const fallbackAuthorId = route.params.authorId as string | undefined;
-            console.warn('[TweetView] Using fallback parent ID:', fallbackParentId);
-            const navigationMeta = {
-                fromComment: true,
-                parentTweetId: fallbackParentId,
-                parentAuthorId: fallbackAuthorId
-            };
-            sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
-            const queryParams = new URLSearchParams({
-                fromComment: 'true',
-                parentTweetId: fallbackParentId,
-                ...(fallbackAuthorId && { parentAuthorId: fallbackAuthorId })
-            });
-            router.push(`${basePath}?${queryParams.toString()}`);
-        } else {
-            // Use correct parent tweet information
-            const navigationMeta = {
-                fromComment: true,
-                parentTweetId: parentTweetId,
-                parentAuthorId: parentAuthorId
-            };
-            sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
-            const queryParams = new URLSearchParams({
-                fromComment: 'true',
-                parentTweetId: parentTweetId,
-                ...(parentAuthorId && { parentAuthorId })
-            });
-            router.push(`${basePath}?${queryParams.toString()}`);
-        }
-    } else {
-        // Clear navigation metadata for regular tweet navigation
-        sessionStorage.removeItem('navigationMeta');
-        router.push(basePath);
-    }
+  cacheQuoteForDetail(displayedTweet.value);
+  router.push(tweetDetailPath(displayedTweet.value, props.isComment ? props.parentTweet : undefined));
 }
 
 function onTextClick(event: MouseEvent) {
@@ -437,7 +412,10 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']"
     :data-tweet-mid='props.tweet.mid'
   >
-    <div class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
+    <p v-if="!isQuoted && !isRetweet && currentTweet.originalTweetId" class="quote-forwarded-by">
+      {{ quoteForwardedBy }}
+    </p>
+    <div v-if="!currentTweet.savedTweetUnavailable" class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
         :actual-tweet='currentTweet'
@@ -459,6 +437,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       />
     </div>
     <div class='card-body' :id="props.tweet.mid">
+      <p v-if="currentTweet.savedTweetUnavailable" class="quoted-tweet-placeholder">
+        {{ t('tweet.savedTweetUnavailable') }}
+      </p>
       <div
         v-if='displayedTweet.content'
         class='tweet-content-wrapper'
@@ -681,16 +662,34 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       </div>
       <!-- Embedded original tweet for quote tweets -->
       <blockquote v-if="!isRetweet && !isQuoted && (currentTweet.originalTweetId || currentTweet.savedParentTweet)" class="quoted-tweet">
-        <TweetView
-          v-if="originalTweet"
-          :tweet="originalTweet"
-          :is-quoted="true"
-          :max-content-lines="props.maxContentLines"
-        />
-        <p v-else class="quoted-tweet-placeholder">{{ t('tweet.loadingQuotedTweet') }}</p>
+        <RouterLink v-if="originalTweet" :to="tweetDetailPath(originalTweet)" class="quote-preview"
+          @click="cacheQuoteForDetail(originalTweet)">
+          <div class="quote-preview-author">
+            <UserAvatar v-if="originalTweet.author" :user="originalTweet.author" alt="" />
+            <strong>{{ originalTweet.author?.name || originalTweet.author?.username || originalTweet.authorId }}</strong>
+            <span v-if="originalTweet.author?.username">@{{ originalTweet.author.username }}</span>
+          </div>
+          <div class="quote-preview-body">
+            <div v-if="quoteAttachment" class="quote-preview-media">
+              <img v-if="isImageType(quoteAttachment.type)" :src="quoteAttachment.mid" alt=""
+                loading="lazy" decoding="async" />
+              <template v-else-if="isVideoType(quoteAttachment.type)">
+                <video v-if="normalizeMediaType(quoteAttachment.type) === 'video'"
+                  :src="quoteAttachment.mid + '#t=0.1'" preload="metadata" playsinline muted aria-hidden="true" />
+                <span class="quote-preview-play" aria-hidden="true">▶</span>
+              </template>
+              <span v-else class="quote-preview-file">{{ quoteAttachment.fileName || quoteAttachment.type }}</span>
+            </div>
+            <p class="quote-preview-text">{{ quoteText }}</p>
+          </div>
+        </RouterLink>
+        <p v-else class="quoted-tweet-placeholder">{{ t('tweet.tweetNotFound') }}</p>
       </blockquote>
     </div>
-    <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet" @updated="applyActionUpdate" />
+    <TweetActionBar v-if="!isQuoted" :tweet="displayedTweet"
+      :comment-parent-id="isComment ? parentTweet?.mid : undefined"
+      :comment-parent-author-id="isComment ? parentTweet?.authorId : undefined"
+      @updated="applyActionUpdate" />
   </div>
 </template>
 
@@ -705,12 +704,103 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background-color: #d0d8e4;
 }
 .quoted-tweet {
-  margin: 8px 0 8px 48px;
+  margin: 8px 0;
   padding: 0;
-  border: 1px solid #e6ecf0;
+  border: 1px solid #edf1f5;
   border-radius: 8px;
   overflow: hidden;
   background-color: #f0f2f5;
+}
+.quote-forwarded-by {
+  margin: 6px 12px 0;
+  color: #536471;
+  font-size: 0.8rem;
+}
+.quote-preview {
+  display: flex;
+  aspect-ratio: 3 / 1;
+  box-sizing: border-box;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  color: inherit;
+  text-decoration: none;
+  background: var(--bs-body-bg);
+}
+.quote-preview:hover {
+  color: inherit;
+  text-decoration: none;
+}
+.quote-preview-author {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.875rem;
+}
+.quote-preview-author strong, .quote-preview-author span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quote-preview-author :deep(img) {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.quote-preview-body {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+}
+.quote-preview-media {
+  position: relative;
+  display: grid;
+  flex: none;
+  height: 100%;
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #e6ecf0;
+}
+.quote-preview-media img, .quote-preview-media video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.quote-preview-play {
+  z-index: 1;
+  padding: 2px 5px;
+  color: white;
+  background: #0009;
+  border-radius: 4px;
+}
+.quote-preview-file {
+  padding: 4px;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.quote-preview-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  font-size: 0.875rem;
 }
 .quoted-tweet-placeholder {
   margin: 0;

@@ -32,14 +32,14 @@ const isTogglingFollow = ref(false)
 
 const canShowFollowButton = computed(() => {
   return props.showFollowButton &&
-    !!user.value &&
-    (!tweetStore.loginUser || user.value.mid !== tweetStore.loginUser.mid)
+    (!!user.value || localIsFollowing.value || isTogglingFollow.value) &&
+    props.userId !== tweetStore.loginUser?.mid
 })
 
 /** Bold name — use username when display name is missing (same as ItemHeader). */
 const rowDisplayName = computed(() => {
   const u = user.value
-  if (!u) return ''
+  if (!u) return props.userId
   const name = u.name
   if (name != null && String(name).trim() !== '') return name
   const un = u.username
@@ -81,7 +81,7 @@ onMounted(async () => {
         console.error('Failed to load user:', error)
     } finally {
         isLoading.value = false
-        if (!user.value) {
+        if (!user.value && !canShowFollowButton.value) {
             emit('resolve-failed', props.userId)
         }
     }
@@ -94,7 +94,7 @@ function openUserPage(userId: string) {
 
 async function onToggleFollow(event: Event) {
     event.stopPropagation()
-    if (!user.value || isTogglingFollow.value) return
+    if (isTogglingFollow.value || (!user.value && !localIsFollowing.value)) return
     if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return
 
     const previous = localIsFollowing.value
@@ -102,9 +102,10 @@ async function onToggleFollow(event: Event) {
     isTogglingFollow.value = true
 
     try {
-        const nextState = await tweetStore.toggleFollowing(user.value.mid)
+        const nextState = await tweetStore.toggleFollowing(props.userId, !previous)
         localIsFollowing.value = nextState
-        emit('follow-toggled', { userId: user.value.mid, isFollowing: nextState })
+        emit('follow-toggled', { userId: props.userId, isFollowing: nextState })
+        if (!nextState && !user.value) emit('resolve-failed', props.userId)
     } catch (error) {
         localIsFollowing.value = previous
         console.error('Failed to toggle following:', error, { mid: user.value?.mid, username: user.value?.username })
@@ -128,10 +129,8 @@ async function onToggleFollow(event: Event) {
     </div>
   </div>
 
-  <!-- User data loaded -->
-  <div v-else-if="user" class="tweet-header d-flex align-items-start" @click.stop="openUserPage(user.mid)">
-    <!-- User Avatar -->
-    <div class="avatar me-2">
+  <div v-else-if="user || canShowFollowButton" class="tweet-header d-flex align-items-start" @click.stop="user && openUserPage(user.mid)">
+    <div v-if="user" class="avatar me-2">
       <UserAvatar :user="user" :alt="$t('media.userAvatar')" class="rounded-circle" />
     </div>
 
@@ -140,12 +139,12 @@ async function onToggleFollow(event: Event) {
       <!-- Username, Alias, and Time -->
       <div class="username-alias-time">
         <span class="username fw-bold">{{ rowDisplayName }}</span>
-        <span class="alias text-muted">@{{ user.username }}</span>
-        <span class="time text-muted">- {{ formatTimeDifference(user.timestamp as number) }}</span>
+        <span v-if="user" class="alias text-muted">@{{ user.username }}</span>
+        <span v-if="user" class="time text-muted">- {{ formatTimeDifference(user.timestamp as number) }}</span>
       </div>
 
       <!-- Followers and Friends Links -->
-      <div v-if="showDetail" class="links mt-1">
+      <div v-if="showDetail && user" class="links mt-1">
         <span class="alias text-muted">{{ user.profile }}</span>
       </div>
     </div>
@@ -160,7 +159,6 @@ async function onToggleFollow(event: Event) {
     </button>
   </div>
 
-  <!-- Unresolved users are removed by the parent via @resolve-failed -->
 </template>
 <style>
 .tweet-header {

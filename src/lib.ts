@@ -75,6 +75,33 @@ export function avatarSrc(avatar: string | undefined | null): string {
     return avatar && avatar.trim() !== '' ? avatar : import.meta.env.VITE_APP_LOGO;
 }
 
+/** Stored media references use the CID/MID, even when the feed displays a full URL. */
+export function attachmentReferenceId(mid: string): string {
+    const value = String(mid || '').trim();
+    return value.substring(value.lastIndexOf('/') + 1);
+}
+
+/** Comment detail links carry the immediate parent's identity across reloads. */
+export function tweetDetailPath(
+    tweet: Tweet,
+    commentParent?: Pick<Tweet, 'mid' | 'authorId'>,
+): string {
+    const authorId = tweet.author?.mid || tweet.authorId;
+    const path = `/tweet/${tweet.mid}${authorId ? '/' + authorId : ''}`;
+    const parent = commentParent ?? tweet.savedParentTweet;
+    // Legacy standalone quotes can have a parent ID without being comments.
+    const parentId = parent?.mid ?? (tweet.originalTweetId ? undefined : tweet.parentTweetId);
+    if (!parentId || parentId === tweet.mid) return path;
+
+    const parentAuthorId = parent?.authorId ?? tweet.interactionHostAuthor?.mid;
+    const params = new URLSearchParams({
+        fromComment: 'true',
+        parentTweetId: parentId,
+        ...(parentAuthorId ? { parentAuthorId } : {}),
+    });
+    return `${path}?${params.toString()}`;
+}
+
 /** Canonical public URL used by every TweetWeb tweet sharing surface. */
 export function tweetShareUrl(
     tweet: Pick<Tweet, 'mid' | 'authorId' | 'author'>,

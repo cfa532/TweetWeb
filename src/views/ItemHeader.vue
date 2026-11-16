@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { PropType } from 'vue'
-import { useRouter, useRoute } from 'vue-router';
-import { avatarSrc } from '@/lib';
+import { useRouter } from 'vue-router';
+import { avatarSrc, tweetDetailPath } from '@/lib';
 import { useRelativeTime } from '@/composables/useRelativeTime';
 import { UserAvatar } from '@/components';
 import { useTweetStore } from '@/stores';
@@ -22,7 +22,6 @@ const props = defineProps({
     isComment: {type: Boolean, required: false, default: false}
 })
 const router = useRouter()
-const route = useRoute()
 const timeDifference = useRelativeTime(() => props.timestamp);
 const tweetStore = useTweetStore()
 
@@ -77,51 +76,10 @@ function handleFallbackAvatarError(event: Event) {
   img.src = '/ic_splash.png'
 }
 function openDetailView() {
-    sessionStorage.setItem("tweetDetail", JSON.stringify(props.tweet))
-    const authorId = props.tweet?.author?.mid || props.tweet?.authorId;
-    const basePath = `/tweet/${props.tweet?.mid}${authorId ? '/' + authorId : ''}`;
-
-    if (props.isComment) {
-      const parentTweetId = props.parentTweet?.mid;
-      const parentAuthorId = props.parentTweet?.author?.mid;
-
-      if (!parentTweetId) {
-        // Fallback to current detail route when parent tweet prop is unavailable
-        const fallbackParentId = route.params.tweetId as string;
-        const fallbackAuthorId = route.params.authorId as string | undefined;
-        const navigationMeta = {
-          fromComment: true,
-          parentTweetId: fallbackParentId,
-          parentAuthorId: fallbackAuthorId,
-        };
-        sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
-        const queryParams = new URLSearchParams({
-          fromComment: 'true',
-          parentTweetId: fallbackParentId,
-          ...(fallbackAuthorId && { parentAuthorId: fallbackAuthorId }),
-        });
-        router.push(`${basePath}?${queryParams.toString()}`);
-      } else {
-        const navigationMeta = {
-          fromComment: true,
-          parentTweetId: parentTweetId,
-          parentAuthorId: parentAuthorId,
-        };
-        sessionStorage.setItem('navigationMeta', JSON.stringify(navigationMeta));
-        const queryParams = new URLSearchParams({
-          fromComment: 'true',
-          parentTweetId: parentTweetId,
-          ...(parentAuthorId && { parentAuthorId }),
-        });
-        router.push(`${basePath}?${queryParams.toString()}`);
-      }
-      return;
-    }
-
-    // Clear comment-navigation metadata for regular tweet navigation
-    sessionStorage.removeItem('navigationMeta');
-    router.push(basePath);
-};
+  if (!props.tweet) return;
+  sessionStorage.setItem('tweetDetail', JSON.stringify(props.tweet));
+  router.push(tweetDetailPath(props.tweet, props.isComment ? props.parentTweet : undefined));
+}
 
 </script>
 

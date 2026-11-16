@@ -4,7 +4,7 @@ import { useLeitherStore } from './leitherStore';
 import { useAlertStore } from './alert.store';
 import { createPooledClient } from '@/utils/clientProxy';
 import { nodePool } from '@/utils/nodePool';
-import { normalizeMediaType, publicIpAddressBaseUrl, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
+import { attachmentReferenceId, normalizeMediaType, publicIpAddressBaseUrl, publicIPv4BaseUrl, shouldResyncUser, v4Only } from '@/lib';
 import { browserUsableProviderRoutes, resolvedNodeAddress } from '@/utils/browserNetwork';
 import {
     cachedSession, discardSession, isSessionInvalid,
@@ -12,6 +12,10 @@ import {
 } from '@/utils/userSession';
 import i18n from '@/i18n';
 import { ed25519 } from '@noble/curves/ed25519.js';
+
+export type TweetReadContext = Partial<Pick<Tweet,
+    'provider' | 'author' | 'interactionHostAuthor' | 'parentTweetId' | 'storageFormat'
+>> & { storageAuthorId?: MimeiId };
 
 const GUEST_ID = "000000000000000000000000000"
 const LOCAL_TWEET_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
@@ -24,6 +28,7 @@ const HEALTH_PROBE_STRICT_TIMEOUT_MS = 6000
 const FETCH_FAILURE_COOLDOWN_MS = 10 * 1000
 const LOGIN_USER_STORAGE_KEY = "user"
 const TOGGLE_MUTATION_TIMEOUT_MS = 60_000
+const SAVED_TWEET_MUTATION_TIMEOUT_MS = 120_000
 const UPDATE_FOLLOWING_TWEETS_TIMEOUT_MS = 30_000
 const UPDATE_TWEET_TIMEOUT_MS = 30_000
 const MIGRATION_TIMEOUT_MS = 60_000
@@ -58,6 +63,7 @@ type BackendStorageCapabilities = {
     userSessions: boolean
     commentDelegation: boolean
     engagementDelegation: boolean
+    independentSavedTweetWrites: boolean
     checkedAt: number
 }
 
@@ -154,14 +160,7 @@ function collectNestedOriginalTweetsFromRows(tweetsData: any[] | undefined): any
     return out
 }
 
-function tweetHasOwnBody(tweet: Pick<Tweet, 'title' | 'content' | 'attachments'> | undefined | null): boolean {
-    if (!tweet) return false
-    if (typeof tweet.title === 'string' && tweet.title.trim()) return true
-    if (typeof tweet.content === 'string' && tweet.content.trim()) return true
-    return Array.isArray(tweet.attachments) && tweet.attachments.length > 0
-}
-
-/** Remove a deleted tweet and any unusable pure-retweet wrappers from a cached list. */
+/** Remove the deleted tweet and clear embedded copies of that ID. */
 function withoutDeletedTweet(
     tweets: Tweet[],
     deletedTweetId: MimeiId,
@@ -177,16 +176,8 @@ function withoutDeletedTweet(
 
         const referencesDeletedTweet = tweet.originalTweetId === deletedTweetId
             || tweet.originalTweet?.mid === deletedTweetId
-        if (referencesDeletedTweet && !tweetHasOwnBody(tweet)) {
-            // A pure retweet has no content without its deleted original.
-            removedIds.add(tweet.mid)
-            continue
-        }
-
         let sanitized = tweet
         if (referencesDeletedTweet) {
-            // `undefined` means a quote can still render its own body without
-            // the original; `null` is reserved for an unresolved pure retweet.
             sanitized = { ...sanitized, originalTweet: undefined }
         }
         if (sanitized.savedParentTweet?.mid === deletedTweetId) {
@@ -723,6 +714,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     userSessions: reply.userSessions === true,
                     commentDelegation: reply.commentDelegation === true,
                     engagementDelegation: reply.engagementDelegation === true,
+                    independentSavedTweetWrites: reply.independentSavedTweetWrites === true,
                     checkedAt: Date.now(),
                 }
                 storageCapabilitiesCache.set(key, result)
@@ -901,6 +893,13 @@ export const useTweetStore = defineStore('tweetStore', {
             return createPooledClient(ip, this.lapi.connectionPool)
         },
 
+        applyViewerSavedFlags(tweet: Tweet) {
+            if (tweet.viewerSavedStateAtRoot !== true || !Array.isArray(tweet.favorites)) return
+            const pending = this.optimisticSavedListStates.get(tweet.mid)
+            if (pending?.favorite === undefined) this.setInteractionOverride(tweet.mid, 'favorite', tweet.favorites[0] === true)
+            if (pending?.bookmark === undefined) this.setInteractionOverride(tweet.mid, 'bookmark', tweet.favorites[1] === true)
+        },
+
         resolvedInteractionFlags(tweet: Tweet): boolean[] {
             const flags = Array.isArray(tweet.favorites)
                 ? [...tweet.favorites]
@@ -1057,7 +1056,11 @@ export const useTweetStore = defineStore('tweetStore', {
          * Processes and enriches tweet data with author information and media URLs
          * @param tweets Array of tweets to process and add to the store
          */
-        async addTweetToStore(tweet: Tweet, isFeedTweet: boolean = false) {
+        async addTweetToStore(
+            tweet: Tweet,
+            isFeedTweet = false,
+            { keepWithoutAuthor = false } = {},
+        ): Promise<Tweet | undefined> {
             try {
                 if (this._deletedTweetIds.has(tweet.mid)) return
                 if (tweet.favoriteOverride !== undefined || tweet.bookmarkOverride !== undefined) {
@@ -1066,17 +1069,20 @@ export const useTweetStore = defineStore('tweetStore', {
                         bookmark: tweet.bookmarkOverride,
                     })
                 }
+                this.applyViewerSavedFlags(tweet)
                 const existing = this.tweetIndex.get(tweet.mid)
                 if (existing) {
                     // Tweet already cached — refresh mutable fields from fresh data.
                     this.refreshCachedTweet(existing, tweet)
                     if (isFeedTweet) this.feedTweetIds.add(tweet.mid)
-                    return
+                    return existing
                 }
 
                 // Use pre-resolved author if caller already set it, otherwise fetch
                 let author = tweet.author || await this.getUser(tweet.authorId)
                 if (!author) {
+                    // Saved lists can remove their rows by tweet ID.
+                    if (keepWithoutAuthor) return tweet
                     console.warn("Author not found for tweet:", tweet.mid, "authorId:", tweet.authorId)
                     return
                 }
@@ -1095,7 +1101,7 @@ export const useTweetStore = defineStore('tweetStore', {
 
                 tweet.comments = []     // load comments only on detail page
                 tweet.author = author
-                tweet.provider = author.providerIp
+                tweet.provider ??= author.providerIp
                 // Map server field name to web field name
                 if (tweet.likeCount === undefined && (tweet as any).favoriteCount !== undefined) {
                     tweet.likeCount = (tweet as any).favoriteCount
@@ -1162,38 +1168,11 @@ export const useTweetStore = defineStore('tweetStore', {
                             }
                         }
                         
-                        // Pure retweets cannot render without their original, but quote
-                        // tweets still have their own content/media and should remain visible.
-                        if (!tweet.originalTweet) {
-                            if (tweetHasOwnBody(tweet)) {
-                                tweet.originalTweet = undefined
-                                console.warn(`[addTweetToStore] Original quote target unavailable; rendering quote wrapper only:
-  Quote Tweet ID: ${tweet.mid}
-  Original Tweet ID: ${tweet.originalTweetId}`)
-                            } else {
-                                console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET - Original tweet unavailable:
-  Retweet ID: ${tweet.mid}
-  Original Tweet ID: ${tweet.originalTweetId}`)
-                                return
-                            }
-                        }
                     } catch (error) {
-                        console.error(`[addTweetToStore] ❌ ERROR fetching original tweet:
-  Retweet ID: ${tweet.mid}
-  Original Tweet ID: ${tweet.originalTweetId}
-  Error:`, error)
-                        if (tweetHasOwnBody(tweet)) {
-                            tweet.originalTweet = undefined
-                            console.warn(`[addTweetToStore] Original quote target errored; rendering quote wrapper only:
-  Quote Tweet ID: ${tweet.mid}
-  Original Tweet ID: ${tweet.originalTweetId}`)
-                        } else {
-                            console.warn(`[addTweetToStore] ❌ SKIPPING RETWEET due to fetch error`)
-                            return
-                        }
+                        console.warn("[addTweetToStore] Could not load the original", tweet.originalTweetId, error)
                     }
                 }
-                
+
                 try {
                     sessionStorage.setItem(tweet.mid, JSON.stringify(tweetForSessionStorage(tweet)))
                 } catch (error) {
@@ -1204,6 +1183,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.tweets.push(tweet);
                 this.tweetIndex.set(tweet.mid, tweet);
                 if (isFeedTweet) this.feedTweetIds.add(tweet.mid);
+                return tweet
             } catch (error) {
                 console.error("Error in getTweetReady for tweet:", tweet.mid, error)
                 throw error; // Re-throw to let caller handle it
@@ -1425,6 +1405,10 @@ export const useTweetStore = defineStore('tweetStore', {
                 const result: Tweet[] = []
                 for (const cachedTweet of cachedTweets) {
                     if (this._deletedTweetIds.has(cachedTweet.mid)) continue
+                    if (cachedTweet.savedTweetUnavailable) {
+                        result.push(cachedTweet)
+                        continue
+                    }
                     if (cachedTweet.author) {
                         delete (cachedTweet.author as any).providerIp
                         if (attachNodePoolRoute(cachedTweet.author, this.lapi.connectionPool)) {
@@ -1441,8 +1425,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         this.refreshCachedTweet(existing, cachedTweet)
                         result.push(existing)
                     } else {
-                        this.tweets.push(cachedTweet)
-                        this.tweetIndex.set(cachedTweet.mid, cachedTweet)
+                        if (cachedTweet.author) {
+                            this.tweets.push(cachedTweet)
+                            this.tweetIndex.set(cachedTweet.mid, cachedTweet)
+                        }
                         result.push(cachedTweet)
                     }
                     if (
@@ -1526,7 +1512,7 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             const storedTweet = this.tweetIndex.get(tweet.mid)
-            if (storedTweet) {
+            if (storedTweet && !tweet.savedTweetUnavailable) {
                 Object.assign(storedTweet, updated)
                 updated = storedTweet
             }
@@ -1998,24 +1984,33 @@ export const useTweetStore = defineStore('tweetStore', {
                     ? pendingState?.bookmark
                     : pendingState?.favorite
                 if (optimisticState === false) continue
+                const ownList = userId === this.loginUser?.mid
+                if (t.savedTweetUnavailable === true) {
+                    if (ownList) this.setInteractionOverride(t.mid, type === 'bookmark_list' ? 'bookmark' : 'favorite', true)
+                    result.push({
+                        mid: t.mid, authorId: '', timestamp: 0,
+                        savedTweetUnavailable: true,
+                        favorites: [ownList && type === 'favorite_list', ownList && type === 'bookmark_list', false],
+                    } as Tweet)
+                    continue
+                }
 
-                const flags = Array.isArray(t.favorites) ? [...t.favorites] : [false, false, false]
-                while (flags.length < 3) flags.push(false)
-                flags[type === 'bookmark_list' ? 1 : 0] = optimisticState ?? true
-                t.favorites = flags
-                if (type === 'bookmark_list') t.bookmarkOverride = optimisticState ?? true
-                else t.favoriteOverride = optimisticState ?? true
-                const savedOverride = this.interactionOverrides.get(t.mid) ?? {}
-                if (type === 'bookmark_list') savedOverride.bookmark = optimisticState ?? true
-                else savedOverride.favorite = optimisticState ?? true
-                this.interactionOverrides.set(t.mid, savedOverride)
+                if (ownList) {
+                    const flags = this.resolvedInteractionFlags(t)
+                    const isBookmark = type === 'bookmark_list'
+                    flags[isBookmark ? 1 : 0] = optimisticState ?? true
+                    t.favorites = flags
+                    if (isBookmark) t.bookmarkOverride = flags[1]
+                    else t.favoriteOverride = flags[0]
+                    this.setInteractionOverride(t.mid, isBookmark ? 'bookmark' : 'favorite', optimisticState ?? true)
+                }
+                let stored: Tweet | undefined
                 try {
-                    await this.addTweetToStore(t)
+                    stored = await this.addTweetToStore(t, false, { keepWithoutAuthor: true })
                 } catch (e) {
                     console.error(`[loadUserTweetsByType] addTweetToStore failed for`, t.mid, e)
                     continue
                 }
-                const stored = this.tweetIndex.get(t.mid)
                 if (stored) {
                     let displayTweet = stored
                     // Saved comments reuse the existing quote presentation, with
@@ -2443,12 +2438,12 @@ export const useTweetStore = defineStore('tweetStore', {
             fromDetailView: boolean = false,
             loadMissingOriginalTweet: boolean = true,
             refreshProviderRoute: boolean = false,
-            readContext?: Pick<Tweet, 'provider' | 'author' | 'interactionHostAuthor' | 'parentTweetId' | 'storageFormat'>
+            readContext?: TweetReadContext
         ): Promise<Tweet | null> {
             if (this._deletedTweetIds.has(tweetId)) return null
 
             // check if the tweet has been retrieved
-            let cachedTweet = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
+            const cachedTweet = this.tweetIndex.get(tweetId) ?? this.originalTweetIndex.get(tweetId)
             if (!forceRefresh && !fromDetailView && cachedTweet) {
                 console.log(`[fetchTweet] ✅ Cache HIT (in-memory): ${tweetId} - No fetch needed!`)
                 return cachedTweet
@@ -2515,29 +2510,61 @@ export const useTweetStore = defineStore('tweetStore', {
             }
 
             console.log(`[fetchTweet] ⚠️ Cache MISS: ${tweetId} - Will fetch (authorId: ${authorId})`)
-            let author: any, providerClient: any, providerIp: any, tweetInDB: any
+            let providerIp: string | undefined
+            let tweetInDB: any
+            let commentStorageAuthor = readContext?.interactionHostAuthor ?? cachedTweet?.interactionHostAuthor
+            const parentId = readContext?.parentTweetId ?? (cachedTweet?.originalTweetId ? undefined : cachedTweet?.parentTweetId)
+            const commentRead = (fromDetailView || forceRefresh) &&
+                !!(readContext?.storageAuthorId || commentStorageAuthor || parentId)
+            if (commentRead) {
+                const parentAuthorId = readContext?.storageAuthorId ?? commentStorageAuthor?.mid
+                    ?? (parentId && parentId !== tweetId
+                        ? await this.commentParentAuthorId(parentId, readContext?.provider ?? cachedTweet?.provider)
+                        : undefined)
+                if (!parentAuthorId) throw new Error(i18n.global.t('errors.parentAuthorNotFound'))
 
-            if (authorId && forceRefresh) {
+                const knownAuthor = commentStorageAuthor?.mid === parentAuthorId
+                    ? commentStorageAuthor : this.getCachedUserForDisplay(parentAuthorId)
+                commentStorageAuthor = knownAuthor?.hostIds?.[0] ? knownAuthor : await this.getUser(parentAuthorId)
+                const root = commentStorageAuthor?.hostIds?.[0]
+                if (!root || !commentStorageAuthor) throw new Error(i18n.global.t('errors.parentAuthorNotFound'))
+                const ip = await this.getNodeIpByHostId(root, false, false)
+                if (!ip) throw new Error(`Could not resolve comment storage root ${root}`)
+                const params = {
+                    aid: this.lapi.appId, ver: 'last', tweetid: tweetId,
+                    appuserid: this.loginUser?.mid ?? GUEST_ID,
+                }
+                const client = await this.storageCompatibleRequestedClient(
+                    ip, commentStorageAuthor, readContext?.storageFormat ?? cachedTweet?.storageFormat, params,
+                )
+                // This is already the authoritative copy. Web reloads need
+                // a new read from this node without kicking off a synchronization.
+                const response = await client.RunMApp('get_tweet', params)
+                const record = Array.isArray(response) ? response[0] : response
+                if (!record || record.mid !== tweetId || !record.authorId) return null
+                tweetInDB = response
+                providerIp = ip
+            } else if (authorId && forceRefresh) {
                 // A forced fetch means "read this from a node, not from the cache", and
                 // the ordinary read below satisfies that on its own. refresh_tweet is
                 // the heavier root-node synchronization, so it stays reserved for the
                 // one case that needs it: an author whose read node is not its root
                 // node. Everyone else falls through and is served by get_tweet, which
                 // the node syncs from root itself via fromdetailview.
-                author = await this.getUser(authorId)
-                if (author && author.providerIp && shouldResyncUser(author)) {
-                    providerIp = author.providerIp
+                const refreshOwner = await this.getUser(authorId)
+                if (refreshOwner?.providerIp && shouldResyncUser(refreshOwner)) {
+                    providerIp = refreshOwner.providerIp
                     const refreshParams = {
                         aid: this.lapi.appId,
                         ver: "last",
                         tweetid: tweetId,
                         appuserid: this.loginUser?.mid ? this.loginUser?.mid : GUEST_ID,
                         userid: authorId,
-                        hostid: author?.hostIds?.[0],
+                        hostid: refreshOwner.hostIds?.[0],
                     }
-                    providerClient = await this.storageCompatibleRequestedClient(
+                    const providerClient = await this.storageCompatibleRequestedClient(
                         providerIp,
-                        author,
+                        refreshOwner,
                         cachedTweet?.storageFormat,
                         refreshParams,
                     )
@@ -2573,13 +2600,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 // A comment's writer is not its storage owner. The parent list
                 // supplies both the serving node and the parent author.
-                const storageOwner = readContext
-                    ? readContext.interactionHostAuthor ?? readContext.author
-                    : authorId
-                        ? ((this.loginUser?.mid === authorId ? this.loginUser : undefined)
-                            ?? this.users.get(authorId)
-                            ?? getStoredUser(authorId))
-                        : undefined
+                const storageOwner = commentStorageAuthor ?? readContext?.author ?? (authorId
+                    ? ((this.loginUser?.mid === authorId ? this.loginUser : undefined)
+                        ?? this.users.get(authorId)
+                        ?? getStoredUser(authorId))
+                    : undefined)
                 const knownAuthorHostId = storageOwner?.hostIds?.[0]
                 if (knownAuthorHostId) getTweetParams.authorhostid = knownAuthorHostId
                 const requiredFormat = readContext?.storageFormat ?? cachedTweet?.storageFormat
@@ -2658,10 +2683,8 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
                 tweetInDB = raceResult.result
                 providerIp = raceResult.ip
-                // Use auto-releasing proxy so the pool slot is freed after each RPC.
-                providerClient = createPooledClient(providerIp, this.lapi.connectionPool)
             }
-            if (!tweetInDB) {
+            if (!tweetInDB || !providerIp) {
                 console.warn(`[fetchTweet] Provider returned no tweet data for ${tweetId}`)
                 return null
             }
@@ -2684,7 +2707,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     originalTweetData = tweetInDB[1]
                 } else if (loadMissingOriginalTweet) {
                     // Fallback: fetch original tweet separately
-                    originalTweetData = await this.fetchTweet(tweetData.originalTweetId, tweetData.originalAuthorId, false, fromDetailView)
+                    originalTweetData = await this.fetchTweet(
+                        tweetData.originalTweetId,
+                        tweetData.originalAuthorId,
+                        false,
+                        fromDetailView,
+                        false,
+                        false,
+                        { provider: providerIp },
+                    ).catch(() => null)
                     if (!originalTweetData) {
                         console.warn('[fetchTweet] Failed to fetch original tweet as fallback')
                     }
@@ -2708,15 +2739,18 @@ export const useTweetStore = defineStore('tweetStore', {
                 comments: [],
                 originalTweetId: tweetData.originalTweetId,
                 originalAuthorId: tweetData.originalAuthorId,
-                parentTweetId: readContext?.parentTweetId ?? tweetData.parentTweetId,
-                interactionHostAuthor: readContext?.interactionHostAuthor,
+                parentTweetId: parentId ?? tweetData.parentTweetId,
+                interactionHostAuthor: commentStorageAuthor,
                 provider: providerIp,
+                storageFormat: tweetData.storageFormat,
                 likeCount: tweetData.favoriteCount ?? tweetData.likeCount,
                 bookmarkCount: tweetData.bookmarkCount,
                 commentCount: tweetData.commentCount,
                 retweetCount: tweetData.retweetCount,
                 favorites: tweetData.favorites,
+                viewerSavedStateAtRoot: tweetData.viewerSavedStateAtRoot === true,
             }
+            this.applyViewerSavedFlags(tweet)
 
             // Build the originalTweet shell WITHOUT touching attachments yet.
             // Recursive fetchTweet may have already prepended a host onto each
@@ -2747,16 +2781,6 @@ export const useTweetStore = defineStore('tweetStore', {
                     retweetCount: originalTweetData.retweetCount,
                     favorites: originalTweetData.favorites,
                 }
-            }
-
-            // Pull just the IPFS hash out of whatever shape the input was in:
-            // either a raw hash or a host-prefixed full URL (from recursive
-            // fetchTweet). The hash is the segment after the final "/".
-            const extractHash = (m: string | undefined): string => {
-                if (!m) return ''
-                if (m.length <= 27) return m // already a raw hash
-                const idx = m.lastIndexOf('/')
-                return idx >= 0 ? m.substring(idx + 1) : m
             }
 
             // The outer tweet's attachment URLs were already built against
@@ -2813,7 +2837,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 tweet.originalTweet.provider = originalHost
                 if (tweet.originalTweet.attachments) {
                     tweet.originalTweet.attachments.forEach((e: MimeiFileType) => {
-                        e.mid = this.getMediaUrl(extractHash(e.mid), "http://" + originalHost)
+                        e.mid = this.getMediaUrl(attachmentReferenceId(e.mid), "http://" + originalHost)
                     })
                 }
             }
@@ -4151,47 +4175,27 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Toggles follow/unfollow status for the target user.
-         * @param followingId The user to follow or unfollow
-         * @returns true if following after toggle, false if unfollowed
+         * Sets whether the signed-in user follows the target user.
          */
-        async toggleFollowing(followingId: MimeiId): Promise<boolean> {
+        async toggleFollowing(followingId: MimeiId, wanted: boolean): Promise<boolean> {
             const loginUser = this.loginUser
             if (!loginUser) {
                 throw new Error(i18n.global.t('errors.loginToFollow'))
             }
 
-            // Route the call directly to loginUser's primary host (hostIds[0])
-            // so the backend's `userHostId === nodeId` check fires and the local
-            // handler runs. The cross-node delegation path in toggle_following.js
-            // drops the response payload (Java-Map-backed bridge object whose
-            // keys are not JS-enumerable), turning a clearly successful op into
-            // a client-side failure.
             const writableIp = await this.resolveWritableHostIp(loginUser)
             const homeClient = createPooledClient(writableIp, this.lapi.connectionPool)
-
-            // Follow can RPC to the home node and sync many tweets, so use the shared toggle timeout.
-            const originalTimeout = homeClient.timeout
             homeClient.timeout = TOGGLE_MUTATION_TIMEOUT_MS
-            let ret: unknown
-            try {
-                const followingUser = this.users.get(followingId)
-                    ?? await this.getUser(followingId)
-                const followingHostId = followingUser?.hostIds?.[0]
-                if (!followingHostId) {
-                    throw new Error(`Following user's root host is unavailable: ${followingId}`)
-                }
-                ret = await this.runWrite(homeClient, writableIp, "toggle_following", {
-                    aid: this.appId,
-                    ver: "last",
-                    version: "v2",
-                    followingid: followingId,
-                    followingid_hostid: followingHostId,
-                    userid: loginUser.mid,
-                })
-            } finally {
-                homeClient.timeout = originalTimeout
-            }
+            const targetRoot = this.getCachedUserForDisplay(followingId)?.hostIds?.[0]
+            const ret = await this.runWrite(homeClient, writableIp, "toggle_following", {
+                aid: this.appId,
+                ver: "last",
+                version: "v2",
+                followingid: followingId,
+                ...(targetRoot ? { followingid_hostid: targetRoot } : {}),
+                userid: loginUser.mid,
+                isfollowing: rpcBool(wanted),
+            })
 
             const isFollowing = parseToggleFollowedV2Result(ret)
             this.adoptWriteRouteForReads(loginUser, writableIp)
@@ -4346,7 +4350,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 // removedTweet was captured before the local cache was cleared above.
                 const originalTweetId = removedTweet?.originalTweetId
                 const originalAuthorId = removedTweet?.originalAuthorId
-                if (originalTweetId && !delegated) {
+                if (response?.peerUpdateDeferred !== true && originalTweetId && !delegated) {
                     try {
                         const original = await this.getTweet(originalTweetId, originalAuthorId)
                         if (original) {
@@ -4387,9 +4391,8 @@ export const useTweetStore = defineStore('tweetStore', {
         },
 
         /**
-         * Purges a successfully deleted tweet from every Web cache. Quotes keep
-         * their own content but lose the embedded deleted object; pure retweets
-         * are removed because they have no independently renderable body.
+         * Purges the deleted tweet from Web caches. Quotes and retweets remain
+         * available under their own IDs.
          */
         evictDeletedTweetFromCaches(tweetId: MimeiId) {
             this._deletedTweetIds.add(tweetId)
@@ -4645,13 +4648,61 @@ export const useTweetStore = defineStore('tweetStore', {
             return fsid
         },
 
+        async commentParentAuthorId(parentId: MimeiId, servingNode?: string): Promise<MimeiId> {
+            const cachedParent = this.getCachedTweetForDisplay(parentId)
+            if (cachedParent?.authorId) return cachedParent.authorId
+            if (!servingNode) throw new Error(i18n.global.t('errors.parentNotFound'))
+
+            const client = createPooledClient(servingNode, this.lapi.connectionPool)
+            const response = await client.RunMApp('get_tweet', {
+                aid: this.lapi.appId, ver: 'last', tweetid: parentId,
+                appuserid: this.loginUser?.mid ?? GUEST_ID,
+            })
+            const parent = Array.isArray(response) ? response[0] : response
+            if (!parent || parent.mid !== parentId || !parent.authorId) {
+                throw new Error(i18n.global.t('errors.parentNotFound'))
+            }
+            return parent.authorId
+        },
+
+        async retweetTweet(tweet: Tweet, knownParentId?: MimeiId, knownParentAuthorId?: MimeiId) {
+            const user = this.loginUser
+            if (!user) throw new Error(i18n.global.t('errors.notLoggedIn'))
+
+            const parentId = knownParentId ?? tweet.savedParentTweet?.mid
+                ?? (tweet.originalTweetId ? undefined : tweet.parentTweetId)
+            const isComment = !!parentId
+            if (parentId === tweet.mid || (!isComment && (knownParentAuthorId || tweet.interactionHostAuthor))) {
+                throw new Error(i18n.global.t('errors.parentNotFound'))
+            }
+            const originalAuthorId = parentId
+                ? knownParentAuthorId ?? tweet.savedParentTweet?.authorId ?? tweet.interactionHostAuthor?.mid
+                    ?? await this.commentParentAuthorId(parentId, tweet.provider)
+                : tweet.authorId
+            const original = parentId ? this.getCachedTweetForDisplay(parentId) ?? undefined : tweet
+            return this.uploadTweet({
+                authorId: user.mid,
+                timestamp: Date.now(),
+                originalTweetId: parentId ?? tweet.mid,
+                originalAuthorId,
+                ...(isComment ? {
+                    quotedCommentId: tweet.mid,
+                    title: tweet.title,
+                    content: tweet.content,
+                    attachments: tweet.attachments?.map(({ mid, type, size, fileName, timestamp, aspectRatio }) => ({
+                        mid: attachmentReferenceId(mid), type, size, fileName, timestamp, aspectRatio,
+                    })),
+                } : {}),
+            }, undefined, original)
+        },
+
         /**
          * Uploads a tweet or comment to the system
          * @param tweet a Tweet object to be uploaded
          * @param tweetId if none, a new tweet is created, otherwise a comment added to the tweetId
          * @returns a mid of the uploaded object
          */
-        async uploadTweet(tweet: any, tweetId?: MimeiId) {
+        async uploadTweet(tweet: any, tweetId?: MimeiId, original?: Tweet) {
             if (!this.loginUser) throw new Error(i18n.global.t('errors.notLoggedIn'))
 
             // A submission's id names the object deterministically on the node,
@@ -4730,10 +4781,15 @@ export const useTweetStore = defineStore('tweetStore', {
                     const writeOriginalTimeout = writeClient.timeout
                     writeClient.timeout = effectiveTimeout
                     try {
+                        const originalHost = tweet.originalAuthorId
+                            ? (original?.author?.hostIds?.[0]
+                                ?? this.getCachedUserForDisplay(tweet.originalAuthorId)?.hostIds?.[0])
+                            : undefined
                         const added = await this.runWrite(writeClient, writableIp, 'add_tweet', {
                             aid: this.appId, ver: 'last',
                             tweet: JSON.stringify(tweet),
                             hostid: loginUser.hostIds?.[0],
+                            ...(originalHost ? { originalauthorhostid: originalHost } : {}),
                             requestid,
                         })
                         // The tweet is stored on hostIds[0]; read it back from there
@@ -4761,6 +4817,14 @@ export const useTweetStore = defineStore('tweetStore', {
                 this.users.set(this.loginUser.mid, this.loginUser)
                 setStoredUser(this.loginUser.mid, this.loginUser)
                 setStoredLoginUser(this.loginUser)
+            }
+            const originalId = tweet.originalTweetId
+            const originalCount = ret.originalRetweetCount
+            if (typeof originalId === 'string' && originalId && typeof originalCount === 'number') {
+                for (const cached of [original, this.tweetIndex.get(originalId), this.originalTweetIndex.get(originalId),
+                    ...this.tweets.map(tweet => tweet.originalTweet)]) {
+                    if (cached && cached.mid === originalId) cached.retweetCount = originalCount
+                }
             }
             return ret.mid
         },
@@ -5128,53 +5192,75 @@ export const useTweetStore = defineStore('tweetStore', {
                 [stateParam]: rpcBool(wanted),
             }
 
+            const ownerIp = await this.resolveWritableHostIp(loginUser).catch(() => undefined)
+            const ownerCapabilities = ownerIp
+                ? await this.storageCapabilities(ownerIp).catch(() => undefined)
+                : undefined
             let authorRoute: { author: User; ip: string } | undefined
             let writableIp: string
-            try {
-                const author = await this.resolveTweetStorageAuthor(tweet)
-                writableIp = await this.resolveWritableHostIp(author)
-                authorRoute = { author, ip: writableIp }
-            } catch (error) {
-                // The backend can remove from the user's list if the author
-                // route is unavailable before sending the mutation.
-                if (wanted) throw error
-                writableIp = await this.resolveWritableHostIp(loginUser)
-                if (!(await this.storageCapabilities(writableIp)).engagementDelegation) throw error
-            }
+            if (ownerIp && ownerCapabilities?.independentSavedTweetWrites) {
+                writableIp = ownerIp
+                const storageTweet = tweet.parentTweetId
+                    ? this.tweetIndex.get(tweet.parentTweetId) ?? this.originalTweetIndex.get(tweet.parentTweetId)
+                    : tweet
+                const author = tweet.interactionHostAuthor
+                    ?? storageTweet?.author
+                    ?? (storageTweet && this.users.get(storageTweet.authorId))
+                const authorId = author?.mid ?? storageTweet?.authorId
+                if (authorId) params.authorid = authorId
+                if (author?.hostIds?.[0]) params.hostid = author.hostIds[0]
+            } else {
+                try {
+                    const author = await this.resolveTweetStorageAuthor(tweet)
+                    writableIp = await this.resolveWritableHostIp(author)
+                    authorRoute = { author, ip: writableIp }
+                } catch (error) {
+                    if (wanted) throw error
+                    writableIp = ownerIp ?? await this.resolveWritableHostIp(loginUser)
+                    const capabilities = ownerCapabilities ?? await this.storageCapabilities(writableIp)
+                    if (!capabilities.engagementDelegation) throw error
+                }
 
-            if (authorRoute) {
-                const { author, ip } = authorRoute
-                params.authorid = author.mid
-                const capabilities = await this.storageCapabilities(ip).catch(error => {
-                    console.warn(`[${entry}] engagementDelegation probe failed; using the old form`, error)
-                    return null
-                })
-                if (capabilities?.engagementDelegation) {
-                    params.hostid = author.hostIds?.[0]
-                    writableIp = await this.resolveWritableHostIp(loginUser)
+                if (authorRoute) {
+                    const { author, ip } = authorRoute
+                    params.authorid = author.mid
+                    if (author.hostIds?.[0]) params.hostid = author.hostIds[0]
+                    const capabilities = await this.storageCapabilities(ip).catch(error => {
+                        console.warn(`[${entry}] engagementDelegation probe failed; using the old form`, error)
+                        return null
+                    })
+                    if (capabilities?.engagementDelegation) {
+                        writableIp = ownerIp ?? await this.resolveWritableHostIp(loginUser)
+                    }
                 }
             }
 
             const client = createPooledClient(writableIp, this.lapi.connectionPool)
-            client.timeout = TOGGLE_MUTATION_TIMEOUT_MS
+            client.timeout = SAVED_TWEET_MUTATION_TIMEOUT_MS
             const ret = await this.runWrite(client, writableIp, entry, params)
-            const updatedTweet = this._applyServerTweet(tweet, ret, authorRoute ? undefined : kind)
+            const updatedTweet = this._applyServerTweet(tweet, ret, kind, wanted)
+            const pending = this.optimisticSavedListStates.get(tweet.mid)
+            if (pending?.[kind] === wanted) {
+                delete pending[kind]
+                if (pending.favorite === undefined && pending.bookmark === undefined) {
+                    this.optimisticSavedListStates.delete(tweet.mid)
+                }
+            }
             if (authorRoute) this.adoptWriteRouteForReads(authorRoute.author, authorRoute.ip)
-            this.adoptWriteRouteForReads(loginUser, await this.loginWritableIpForReadRoute(loginUser))
+            this.adoptWriteRouteForReads(loginUser, ownerCapabilities?.independentSavedTweetWrites
+                ? writableIp
+                : await this.loginWritableIpForReadRoute(loginUser))
             return updatedTweet
         },
 
-        _applyServerTweet(tweet: Tweet, ret: any, removedKind?: 'favorite' | 'bookmark'): Tweet {
+        _applyServerTweet(tweet: Tweet, ret: any, kind: 'favorite' | 'bookmark', wanted: boolean): Tweet {
             const response = (ret?.success && ret.data) ? ret.data : ret
-            if (response?.success && (response.tweet || (removedKind && response.user))) {
+            if (response?.success && (response.tweet || response.user)) {
                 let s = response.tweet
                 if (!s) {
-                    // A list-only removal returns the updated user and no tweet.
                     const favorites = this.resolvedInteractionFlags(tweet)
-                    favorites[removedKind === 'favorite' ? 0 : 1] = false
+                    favorites[kind === 'favorite' ? 0 : 1] = typeof response.saved === 'boolean' ? response.saved : wanted
                     s = { favorites }
-                    if (removedKind === 'favorite') s.favoriteCount = Math.max(0, (tweet.likeCount ?? 0) - 1)
-                    else s.bookmarkCount = Math.max(0, (tweet.bookmarkCount ?? 0) - 1)
                 }
                 const updated = { ...tweet,
                     likeCount: s.favoriteCount ?? tweet.likeCount,
@@ -5191,10 +5277,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     bookmark: updated.bookmarkOverride,
                 })
                 const idx = this.tweets.findIndex(e => e.mid == tweet.mid)
-                if (idx >= 0) {
-                    Object.assign(this.tweets[idx], updated)
+                if (!tweet.savedTweetUnavailable) {
+                    if (idx >= 0) Object.assign(this.tweets[idx], updated)
+                    localStorage.setItem(tweet.mid, JSON.stringify(tweetForSessionStorage(updated)))
                 }
-                localStorage.setItem(tweet.mid, JSON.stringify(tweetForSessionStorage(updated)))
 
                 // Update login user from server response (like Android's appUser.from)
                 if (response.user && this.loginUser) {
@@ -5604,6 +5690,7 @@ export const useTweetStore = defineStore('tweetStore', {
                             version: "v2",
                             followingid: followingId,
                             followingid_hostid: targetHostId,
+                            isfollowing: rpcBool(true),
                             userid: registeredUserId,
                             userid_hostid: registeredUserBlob?.hostIds?.[0],
                         })

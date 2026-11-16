@@ -108,6 +108,7 @@
     "showNewTweetsCapped": "{count} 条新推文",
     "forwardedBy": "由 {'@'}{name} 转发",
     "forwardedByYou": "由你转发",
+    "savedTweetUnavailable": "已保存的推文无法查看",
     "loadingQuotedTweet": "正在加载引用的推文...",
     "loadingAuthor": "加载中...",
     "loadingUsername": "加载中",

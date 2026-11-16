@@ -59,10 +59,10 @@ the end. Do not commit publication-only environment changes.
 
 ## 2. Prepare the Backend Sources
 
-Every release includes the current production `.go` sources from the root of
-`TweetBackendApp`. Exclude `*_test.go`, module files, documentation, local tooling,
-and signing keys. Both release and debug use this File-capable Go backend;
-`legacy-js/` is not a publication source.
+Every release includes the current production Go sources from the root of
+`TweetBackendApp`. The staging script embeds the build ID reported by
+`health` and excludes tests, module files, documentation, local tooling and
+signing keys. Both release and debug use this File-capable Go backend.
 
 Back up the existing package outside its application directory before uploading.
 Preserve existing download assets and browser dependencies. Do not replace an
@@ -108,9 +108,10 @@ cp -a /home/pi/demo/tweet1 "$backup_dir/"'
 Upload all production backend Go sources and the seven web assets:
 
 ```bash
+tweet_mapp_stage=$(mktemp -d)
+python3 ../TweetBackendApp/stage_mapp.py "$tweet_mapp_stage"
 rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
-  --exclude='*_test.go' --include='*.go' --exclude='*' \
-  ../TweetBackendApp/ "pi@$GEN8_IP:/home/pi/demo/tweet1/"
+  "$tweet_mapp_stage/" "pi@$GEN8_IP:/home/pi/demo/tweet1/"
 scp -P 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' \
   dist/bootstrap.min.js \
   dist/gtag.js \

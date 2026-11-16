@@ -43,6 +43,8 @@ interface User {
 };
 
 interface Tweet {
+    savedTweetUnavailable?: boolean;
+    viewerSavedStateAtRoot?: boolean;
     mid: MimeiId;
     authorId: MimeiId;
     author: User;

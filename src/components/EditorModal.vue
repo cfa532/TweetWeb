@@ -6,7 +6,7 @@ import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import { CidModal } from '@/views'
 import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
-import { MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
+import { attachmentReferenceId, MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
 import { requireLoginForWritableAction } from '@/lib/authNavigation'
 import { UserAvatar } from '@/components'
 
@@ -72,12 +72,6 @@ async function resolveEditAuthor(): Promise<User> {
   }
   resolvedEditAuthor.value = targetAuthor
   return targetAuthor
-}
-
-function attachmentReferenceId(mid: string): string {
-  const value = String(mid || '').trim()
-  const separator = value.lastIndexOf('/')
-  return separator >= 0 ? value.substring(separator + 1) : value
 }
 
 function displayAttachments(attachments: MimeiFileType[]): MimeiFileType[] {
@@ -484,10 +478,7 @@ async function onSubmit() {
           clientRequestId: tweet.clientRequestId + '-quote',
           timestamp: Date.now(),
         }
-        const quoteMid = await tweetStore.uploadTweet(quoteTweet, undefined)
-        if (quoteMid) {
-          await tweetStore.updateRetweetCount(parentTweet, quoteMid)
-        }
+        await tweetStore.uploadTweet(quoteTweet, undefined, parentTweet)
       } catch (quoteError) {
         console.warn('[TWEET-SUBMIT] Quote tweet upload failed (comment still posted):', quoteError)
       }

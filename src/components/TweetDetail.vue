@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, watch, computed, nextTick, triggerRef, pro
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
+import type { TweetReadContext } from '@/stores/tweetStore';
 import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
 import { LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isBrowserReload, isWeChatBrowser } from '@/lib';
@@ -25,6 +26,14 @@ provide('isInTweetDetailPage', true)
 
 const tweetId = computed(()=>route.params.tweetId as MimeiId)
 const authorId = computed(()=>route.params.authorId as MimeiId | undefined)
+const parentTweetId = computed(() =>
+    route.query.fromComment === 'true' && typeof route.query.parentTweetId === 'string' &&
+    route.query.parentTweetId !== tweetId.value ? route.query.parentTweetId : undefined
+)
+const parentAuthorId = computed(() =>
+    parentTweetId.value && typeof route.query.parentAuthorId === 'string' ? route.query.parentAuthorId : undefined
+)
+const isFromComment = computed(() => parentTweetId.value !== undefined)
 const tweet = ref()
 const originTweet = ref()
 const isRetweet = ref(false)
@@ -258,11 +267,24 @@ async function loadOriginalTweet(parentTweet: Tweet, myGeneration: number): Prom
     )
 }
 
+function readContextForDetail(cached?: Tweet | null): TweetReadContext | undefined {
+    if (parentTweetId.value) {
+        return { ...cached, parentTweetId: parentTweetId.value, storageAuthorId: parentAuthorId.value };
+    }
+    if (cached?.provider || cached?.interactionHostAuthor || (cached?.parentTweetId && !cached.originalTweetId)) {
+        return {
+            ...cached,
+            parentTweetId: cached.originalTweetId && !cached.interactionHostAuthor ? undefined : cached.parentTweetId,
+        };
+    }
+    return undefined;
+}
+
 async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
     const myGeneration = ++loadGeneration
 
     const cachedTweet = tweetStore.getCachedTweetForDisplay(tweetId.value)
-    const readContext = cachedTweet?.provider ? cachedTweet : undefined
+    const readContext = readContextForDetail(cachedTweet)
     const cachedAuthor = authorId.value
         ? tweetStore.getCachedUserForDisplay(authorId.value)
         : undefined
@@ -777,6 +799,10 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
     target.originalTweetId = refreshed.originalTweetId
     target.originalAuthorId = refreshed.originalAuthorId
     target.originalTweet = refreshed.originalTweet
+    if (refreshed.interactionHostAuthor) {
+        target.interactionHostAuthor = refreshed.interactionHostAuthor
+        target.retweetCount = refreshed.retweetCount
+    }
     target.comments = existingComments
 }
 
@@ -785,10 +811,8 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
 // painted. Which RPC serves it is the store's call — refresh_tweet only for an
 // author whose read node differs from root, get_tweet for everyone else.
 async function refreshDetailTarget(targetTweetId: MimeiId, targetAuthorId: MimeiId) {
-    console.log(`[TweetDetail] Refreshing ${targetTweetId} from its provider`)
-    const refreshed = await tweetStore.getTweet(targetTweetId, targetAuthorId, true, true)
-    console.log(`[TweetDetail] Completed refresh for ${targetTweetId}`)
-    return refreshed
+    const context = targetTweetId === tweetId.value ? readContextForDetail(tweet.value) : undefined
+    return tweetStore.fetchTweet(targetTweetId, targetAuthorId, true, true, true, false, context)
 }
 
 // Reloading the page is the user asking for current data, so the detail
@@ -865,64 +889,6 @@ onUnmounted(() => {
     }
     stopCommentRefreshLoop()
 })
-
-// Store navigation metadata in sessionStorage to persist across route changes
-const navigationMeta = ref<{
-    fromComment: boolean;
-    parentTweetId: string | undefined;
-    parentAuthorId: string | undefined;
-} | null>(null);
-
-const updateNavigationMeta = () => {
-    try {
-        // First check if we have navigation metadata in the URL query params
-        const fromQuery = {
-            fromComment: route.query.fromComment === 'true',
-            parentTweetId: route.query.parentTweetId as string | undefined,
-            parentAuthorId: route.query.parentAuthorId as string | undefined
-        };
-
-        // If we have valid navigation metadata from query params, store it in sessionStorage
-        if (fromQuery.fromComment && fromQuery.parentTweetId) {
-            sessionStorage.setItem('navigationMeta', JSON.stringify(fromQuery));
-            navigationMeta.value = fromQuery;
-            return;
-        }
-
-        // Otherwise, check sessionStorage for previously stored metadata
-        const stored = sessionStorage.getItem('navigationMeta');
-        if (stored) {
-            navigationMeta.value = JSON.parse(stored);
-            return;
-        }
-
-        navigationMeta.value = null;
-    } catch (error) {
-        console.warn('[updateNavigationMeta] Error parsing navigation meta:', error);
-        navigationMeta.value = null;
-    }
-};
-
-// Initialize navigation metadata
-updateNavigationMeta();
-
-// Watch for route changes and update navigation metadata
-watch(() => route.query, () => {
-    updateNavigationMeta();
-}, { immediate: true });
-
-// Clear invalid navigation metadata (when parentTweetId equals current tweetId)
-watch(tweetId, () => {
-    if (navigationMeta.value && navigationMeta.value.parentTweetId === tweetId.value) {
-        console.log('[TweetDetail] Clearing invalid navigation metadata (points to self)');
-        sessionStorage.removeItem('navigationMeta');
-        navigationMeta.value = null;
-    }
-});
-
-const isFromComment = computed(() => !!navigationMeta.value?.fromComment);
-const parentTweetId = computed(() => navigationMeta.value?.parentTweetId);
-const parentAuthorId = computed(() => navigationMeta.value?.parentAuthorId);
 
 // Vue Router's record of the entry behind this one, or undefined when the route
 // was opened cold from a URL and there is nothing to pop.
@@ -1111,7 +1077,9 @@ function retryLoad() {
                     <p v-else class="quoted-tweet-placeholder">{{ t('tweet.tweetNotFound') }}</p>
                 </blockquote>
 
-                <TweetActionBar :tweet="tweet" @updated="(t) => tweet = t" />
+                <TweetActionBar :tweet="tweet"
+                    :comment-parent-id="parentTweetId" :comment-parent-author-id="parentAuthorId"
+                    @updated="(t) => tweet = t" />
             </template>
         </div>
     </div>
@@ -1173,8 +1141,8 @@ function retryLoad() {
 
 <style scoped>
 .quoted-tweet {
-    margin: 8px 0 8px 32px;
-    border: 1px solid #e6ecf0;
+    margin: 8px 0;
+    border: 1px solid #edf1f5;
     border-radius: 8px;
     overflow: hidden;
     background-color: #d0d8e4;

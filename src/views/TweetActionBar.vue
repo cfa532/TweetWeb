@@ -17,6 +17,8 @@ const copied = ref(false);
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
+  commentParentId: { type: String, required: false },
+  commentParentAuthorId: { type: String, required: false },
 });
 
 const emit = defineEmits<{
@@ -53,27 +55,12 @@ function onComment() {
 
 async function onRetweet() {
   if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return;
-  const loginUser = tweetStore.loginUser;
-  if (!loginUser) return;
-
-  const original = { ...props.tweet };
-  // Optimistic update
-  const optimisticTweet = { ...original, retweetCount: (original.retweetCount ?? 0) + 1 };
-  emit('updated', optimisticTweet);
+  const target = { ...props.tweet };
   try {
-    const retweetPayload = {
-      authorId: loginUser.mid,
-      timestamp: Date.now(),
-      originalTweetId: original.mid,
-      originalAuthorId: original.authorId,
-    };
-    const newMid = await tweetStore.uploadTweet(retweetPayload);
-    if (newMid) {
-      const updatedOriginal = await tweetStore.updateRetweetCount(original, newMid);
-      emit('updated', updatedOriginal ?? optimisticTweet);
-    }
+    const previousCount = target.retweetCount;
+    await tweetStore.retweetTweet(target, props.commentParentId, props.commentParentAuthorId);
+    if (target.retweetCount !== previousCount) emit('updated', target);
   } catch (e) {
-    emit('updated', original);
     console.error('[onRetweet] failed:', e);
     alertStore.error(e, { fallbackMessage: t('tweet.retweetFailed') });
   }
@@ -101,7 +88,6 @@ async function onLike() {
   const desiredFavorite = !wasLiked;
   const optimisticTweet = tweetStore.applyOptimisticSavedTweet({
     ...original,
-    likeCount: Math.max(0, (original.likeCount ?? 0) + (wasLiked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, FAVORITE_IDX),
     favoriteOverride: desiredFavorite,
   }, 'favorite', desiredFavorite, wasLiked);
@@ -135,7 +121,6 @@ async function onBookmark() {
   const desiredBookmark = !wasBookmarked;
   const optimisticTweet = tweetStore.applyOptimisticSavedTweet({
     ...original,
-    bookmarkCount: Math.max(0, (original.bookmarkCount ?? 0) + (wasBookmarked ? -1 : 1)),
     favorites: flipFavoriteAt(original.favorites, BOOKMARK_IDX),
     bookmarkOverride: desiredBookmark,
   }, 'bookmark', desiredBookmark, wasBookmarked);
@@ -177,23 +162,23 @@ function closeShareMenu() {
 
 <template>
   <div class="action-bar" @click.stop>
-    <button class="action-btn" @click="onComment" :title="$t('tweet.comment')">
+    <button v-if="!tweet.savedTweetUnavailable" class="action-btn" @click="onComment" :title="$t('tweet.comment')">
       <font-awesome-icon :icon="['far', 'comment']" />
       <span v-if="tweet.commentCount" class="action-count">{{ formatCount(tweet.commentCount) }}</span>
     </button>
-    <button class="action-btn" @click="onRetweet" :title="$t('tweet.retweet')">
+    <button v-if="!tweet.savedTweetUnavailable" class="action-btn" @click="onRetweet" :title="$t('tweet.retweet')">
       <font-awesome-icon icon="retweet" />
       <span v-if="tweet.retweetCount" class="action-count">{{ formatCount(tweet.retweetCount) }}</span>
     </button>
-    <button class="action-btn" :class="{ 'action-liked': isLiked }" @click="onLike" :title="$t('tweet.like')">
+    <button v-if="!tweet.savedTweetUnavailable || isLiked" class="action-btn" :class="{ 'action-liked': isLiked }" @click="onLike" :title="$t('tweet.like')">
       <font-awesome-icon :icon="isLiked ? ['fas', 'heart'] : ['far', 'heart']" />
       <span v-if="tweet.likeCount" class="action-count">{{ formatCount(tweet.likeCount) }}</span>
     </button>
-    <button class="action-btn" :class="{ 'action-bookmarked': isBookmarked }" @click="onBookmark" :title="$t('tweet.bookmark')">
+    <button v-if="!tweet.savedTweetUnavailable || isBookmarked" class="action-btn" :class="{ 'action-bookmarked': isBookmarked }" @click="onBookmark" :title="$t('tweet.bookmark')">
       <font-awesome-icon :icon="isBookmarked ? ['fas', 'bookmark'] : ['far', 'bookmark']" />
       <span v-if="tweet.bookmarkCount" class="action-count">{{ formatCount(tweet.bookmarkCount) }}</span>
     </button>
-    <div class="share-wrapper">
+    <div v-if="!tweet.savedTweetUnavailable" class="share-wrapper">
       <button class="action-btn" @click="onShare" :title="$t('tweet.share')">
         <font-awesome-icon icon="share-from-square" />
       </button>

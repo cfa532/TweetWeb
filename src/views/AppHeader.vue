@@ -112,7 +112,7 @@ async function onProfileToggleFollow(event: Event) {
     localIsFollowing.value = !previous
     isTogglingProfileFollow.value = true
     try {
-        const nextState = await tweetStore.toggleFollowing(user.value.mid)
+        const nextState = await tweetStore.toggleFollowing(user.value.mid, !previous)
         localIsFollowing.value = nextState
         const id = user.value.mid
         if (nextState && !loginFollowingIds.value.includes(id)) {
