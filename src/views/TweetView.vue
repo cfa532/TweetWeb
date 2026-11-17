@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { AudioPlaylistPlayer, MediaView, ItemHeader, TweetActionBar } from '@/views';
+import ForwardedByLabel from '@/views/ForwardedByLabel.vue';
 import { useTweetStore } from '@/stores';
 import { isImageType, isVideoType, normalizeMediaType, tweetDetailPath } from '@/lib';
 import { UserAvatar } from '@/components';
@@ -27,7 +28,6 @@ const props = defineProps({
 
 const originalTweet = ref<Tweet | null>();
 const isRetweet = ref(false);
-const retweetedBy = ref<string | undefined>(undefined);
 const currentTweet = ref(props.tweet);
 
 // Feed scheduling is keyed by the rendered row (the retweet wrapper), while
@@ -59,8 +59,7 @@ onMounted(async () => {
         { provider: currentTweet.value.provider }
       ).catch(() => null);
 
-    if (originalTweet.value && currentTweet.value.author && !tweetHasOwnBody(currentTweet.value)) {
-      retweetedBy.value = currentTweet.value.author.username;
+    if (originalTweet.value && !tweetHasOwnBody(currentTweet.value)) {
       isRetweet.value = true;
     }
   }
@@ -75,9 +74,6 @@ const quoteText = computed(() =>
     .replace(/<[^>]+>/g, '')
     .trim()
 );
-const quoteForwardedBy = computed(() => currentTweet.value.authorId === tweetStore.loginUser?.mid
-  ? t('tweet.forwardedByYou')
-  : t('tweet.forwardedBy', { name: currentTweet.value.author?.username || currentTweet.value.authorId }));
 
 function cacheQuoteForDetail(tweet: Tweet) {
   sessionStorage.setItem('tweetDetail', JSON.stringify(tweet));
@@ -409,9 +405,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']"
     :data-tweet-mid='props.tweet.mid'
   >
-    <p v-if="!isQuoted && !isRetweet && currentTweet.originalTweetId" class="quote-forwarded-by">
-      {{ quoteForwardedBy }}
-    </p>
+    <ForwardedByLabel v-if="!isQuoted && currentTweet.originalTweetId" :tweet="currentTweet" />
     <div v-if="!currentTweet.savedTweetUnavailable" class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -419,7 +413,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         :author='originalTweet?.author'
         :timestamp='displayedTweet.timestamp as number'
         :is-retweet='isRetweet'
-        :by='retweetedBy'
         :parent-tweet='parentTweet'
         :is-comment='isComment'
         v-if='isRetweet && originalTweet'
@@ -708,11 +701,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   border-radius: 8px;
   overflow: hidden;
   background-color: #f0f2f5;
-}
-.quote-forwarded-by {
-  margin: 6px 12px 0;
-  color: #536471;
-  font-size: 0.8rem;
 }
 .quote-preview {
   display: flex;

@@ -15,8 +15,6 @@ const props = defineProps({
   /** Author id of the displayed tweet, used to pick up the User once it lands in the store. */
   authorId: { type: String, required: false },
   timestamp: { type: Number, required: false },
-  isRetweet: { type: Boolean, required: false, default: false },
-  by: { type: String, required: false },
   /** Omit the tweet currently shown on the detail page from the carousel */
   excludeTweetId: { type: String, required: false },
   tweet: { type: Object as PropType<Tweet>, required: false },
@@ -276,9 +274,6 @@ watch(
             @error='handleFallbackAvatarError' />
         </div>
         <div class='user-info flex-grow-1'>
-          <div v-if='isRetweet && by' class='label text-muted small'>
-            {{ by === tweetStore.loginUser?.username ? $t('tweet.forwardedByYou') : $t('tweet.forwardedBy', { name: by }) }}
-          </div>
           <div class='username-alias-time'>
             <span class='username fw-bold' :class='{ "loading-text": !headerAuthor }'>{{ authorDisplayName }}</span>
             <span class='alias text-muted' :class='{ "loading-text": !headerAuthor }'>@{{ headerAuthor?.username ||

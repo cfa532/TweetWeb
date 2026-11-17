@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useTweetStore } from "@/stores";
 import type { TweetReadContext } from '@/stores/tweetStore';
 import { AudioPlaylistPlayer, MediaView, DetailHeader, TweetView, TweetActionBar } from "@/views";
+import ForwardedByLabel from '@/views/ForwardedByLabel.vue';
 import { LoadingSpinner, PageLayout, TweetList } from "@/components";
 import { normalizeMediaType, isBrowserReload, isWeChatBrowser } from '@/lib';
 import {
@@ -969,12 +970,12 @@ function retryLoad() {
     </div>
 
     <div v-if="tweet" class="card mb-1">
+        <ForwardedByLabel v-if="isRetweet" :tweet="tweet" />
         <div class="card-header d-flex align-items-stretch">
             <!-- The header renders even when the author never resolved (DetailHeader
                  shows a placeholder), so the corner menu and timestamp stay reachable. -->
             <DetailHeader class="w-100" v-if="isRetweet" :author="tweet.originalTweet?.author ?? null"
                 :author-id="tweet.originalAuthorId" :timestamp="tweet.timestamp"
-                :is-retweet="isRetweet" :by="tweet.author?.username"
                 :exclude-tweet-id="tweet.originalTweet?.mid"
                 :tweet="tweet" :edit-tweet="tweet.originalTweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>

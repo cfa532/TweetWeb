@@ -15,7 +15,6 @@ const props = defineProps({
     author: {type: Object as PropType<User | null>, required: false},
     timestamp: {type: Number, required: false },
     isRetweet: {type: Boolean, required: false, default: false},
-    by: {type: String, required: false},
     tweet: {type: Object as PropType<Tweet>, required: false},
     actualTweet: {type: Object as PropType<Tweet>, required: false}, // The actual tweet to delete (for retweets, this is the retweet wrapper)
     parentTweet: {type: Object as PropType<Tweet>, required: false},
@@ -92,10 +91,6 @@ function openDetailView() {
     </div>
     <!-- User Info -->
     <div class='user-info flex-grow-1' @click.stop.prevent='openDetailView'>
-      <!-- Optional Label -->
-      <div v-if='isRetweet' class='label text-muted small'>
-        {{ by === tweetStore.loginUser?.username ? $t('tweet.forwardedByYou') : $t('tweet.forwardedBy', { name: by }) }}
-      </div>
       <!-- Username, Alias, and Time -->
       <div class='username-alias-time'>
         <span class='username fw-bold' :class='{ "loading-text": !headerAuthor }'>{{ authorDisplayName }}</span>
