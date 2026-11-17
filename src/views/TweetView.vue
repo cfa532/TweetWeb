@@ -35,9 +35,6 @@ const currentTweet = ref(props.tweet);
 // on the row ID so visibility and preload lookups use the same identity.
 provide(TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY, computed(() => props.tweet.mid));
 
-/** Matches .tweet-content-clamp line-height for max-height clamping (no ellipsis). */
-const CONTENT_CLAMP_LINE_HEIGHT = 1.5;
-
 function tweetHasOwnBody(tweet: Tweet | null | undefined): boolean {
   if (!tweet) return false;
   if (typeof tweet.title === 'string' && tweet.title.trim()) return true;
@@ -138,7 +135,7 @@ const tweetContentHtml = computed(() => {
 const isContentExpanded = ref(false);
 const contentClampMaxHeight = computed(() =>
   !isContentExpanded.value && props.maxContentLines && props.maxContentLines > 0
-    ? `${props.maxContentLines * CONTENT_CLAMP_LINE_HEIGHT}em`
+    ? `calc(${props.maxContentLines} * var(--tweet-post-line-height))`
     : 'none',
 );
 
@@ -442,10 +439,11 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
       </p>
       <div
         v-if='displayedTweet.content'
-        class='tweet-content-wrapper'
+        class='tweet-content-wrapper tweet-post-text'
         @click='onTextClick'
       >
-        <p ref='contentElement' class='tweet-content-clamp' v-html='tweetContentHtml'></p>
+        <p ref='contentElement' class='tweet-content-clamp' :style='{ maxHeight: contentClampMaxHeight }'
+          v-html='tweetContentHtml'></p>
         <button
           v-if='isContentClipped'
           type='button'
@@ -1200,7 +1198,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 
 .tweet-content-wrapper {
   text-align: left;
-  font-size: medium;
   padding: 4px 4px 0 4px;
   cursor: pointer;
 }
@@ -1209,8 +1206,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   margin: 0;
   white-space: pre-wrap;
   overflow: hidden;
-  line-height: v-bind('CONTENT_CLAMP_LINE_HEIGHT');
-  max-height: v-bind(contentClampMaxHeight);
 }
 
 .tweet-content-clamp :deep(a) {
@@ -1225,7 +1220,6 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   background: transparent;
   color: var(--bs-link-color, blue);
   text-decoration: none;
-  line-height: v-bind('CONTENT_CLAMP_LINE_HEIGHT');
   cursor: pointer;
 }
 

@@ -989,7 +989,7 @@ function retryLoad() {
 
             <p
                 v-if="originTweet.content"
-                class="card-text"
+                class="card-text tweet-post-text"
                 v-html="linkify(originTweet.content)"
             ></p>
 
@@ -1030,7 +1030,7 @@ function retryLoad() {
             <template v-else>
                 <p
                     v-if="tweet.content"
-                    class="card-text"
+                    class="card-text tweet-post-text"
                     v-html="linkify(tweet.content)"
                 ></p>
 
@@ -1221,7 +1221,6 @@ function retryLoad() {
 
 .card-text {
     text-align: left;
-    font-size: medium;
     white-space: pre-wrap;
     padding: 0px 8px;
 }
