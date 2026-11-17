@@ -27,6 +27,7 @@ const props = defineProps({
 });
 
 const originalTweet = ref<Tweet | null>();
+const forwardedCommentParent = ref<Tweet | null>();
 const isRetweet = ref(false);
 const currentTweet = ref(props.tweet);
 
@@ -61,13 +62,22 @@ onMounted(async () => {
 
     if (originalTweet.value && !tweetHasOwnBody(currentTweet.value)) {
       isRetweet.value = true;
+      const original = originalTweet.value;
+      if (!props.isQuoted && original.quotedCommentAuthorId && original.originalTweetId) {
+        forwardedCommentParent.value = original.originalTweet
+          || await tweetStore.fetchTweet(original.originalTweetId, original.originalAuthorId).catch(() => null);
+      }
     }
   }
 });
 
-const quoteAttachment = computed(() => originalTweet.value?.attachments?.[0]);
+const quotedTweet = computed(() => isRetweet.value ? forwardedCommentParent.value : originalTweet.value);
+const showQuote = computed(() => !props.isQuoted && (isRetweet.value
+  ? !!forwardedCommentParent.value
+  : !!(currentTweet.value.originalTweetId || currentTweet.value.savedParentTweet)));
+const quoteAttachment = computed(() => quotedTweet.value?.attachments?.[0]);
 const quoteText = computed(() =>
-  [originalTweet.value?.title, originalTweet.value?.content]
+  [quotedTweet.value?.title, quotedTweet.value?.content]
     .filter(Boolean)
     .join('\n\n')
     .replace(/<br\b[^>]*\/?>|<\/(?:p|div)>/gi, '\n')
@@ -405,7 +415,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
     :class="['tweet-container', isQuoted ? 'is-quoted' : 'card']"
     :data-tweet-mid='props.tweet.mid'
   >
-    <ForwardedByLabel v-if="!isQuoted && currentTweet.originalTweetId" :tweet="currentTweet" />
+    <ForwardedByLabel v-if="!isQuoted && isRetweet" :tweet="currentTweet" />
     <div v-if="!currentTweet.savedTweetUnavailable" class='card-header d-flex align-items-start' @click.prevent='openDetailView'>
       <ItemHeader
         :tweet='originalTweet'
@@ -651,14 +661,13 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
         </div>
       </div>
-      <!-- Embedded original tweet for quote tweets -->
-      <blockquote v-if="!isRetweet && !isQuoted && (currentTweet.originalTweetId || currentTweet.savedParentTweet)" class="quoted-tweet">
-        <RouterLink v-if="originalTweet" :to="tweetDetailPath(originalTweet)" class="quote-preview"
-          @click="cacheQuoteForDetail(originalTweet)">
+      <blockquote v-if="showQuote" class="quoted-tweet">
+        <RouterLink v-if="quotedTweet" :to="tweetDetailPath(quotedTweet)" class="quote-preview"
+          @click="cacheQuoteForDetail(quotedTweet)">
           <div class="quote-preview-author">
-            <UserAvatar v-if="originalTweet.author" :user="originalTweet.author" alt="" />
-            <strong>{{ originalTweet.author?.name || originalTweet.author?.username || originalTweet.authorId }}</strong>
-            <span v-if="originalTweet.author?.username">@{{ originalTweet.author.username }}</span>
+            <UserAvatar v-if="quotedTweet.author" :user="quotedTweet.author" alt="" />
+            <strong>{{ quotedTweet.author?.name || quotedTweet.author?.username || quotedTweet.authorId }}</strong>
+            <span v-if="quotedTweet.author?.username">@{{ quotedTweet.author.username }}</span>
           </div>
           <div class="quote-preview-body">
             <div v-if="quoteAttachment" class="quote-preview-media">

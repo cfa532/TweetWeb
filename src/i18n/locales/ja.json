@@ -146,6 +146,7 @@
     "showMore": "もっと見る",
     "likeFailed": "いいねに失敗しました。もう一度お試しください。",
     "bookmarkFailed": "ブックマークに失敗しました。もう一度お試しください。",
+    "retweetStarted": "リツイート中…",
     "retweetFailed": "リツイートに失敗しました。もう一度お試しください。"
   },
   "time": {

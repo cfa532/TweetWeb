@@ -2739,6 +2739,7 @@ export const useTweetStore = defineStore('tweetStore', {
                 comments: [],
                 originalTweetId: tweetData.originalTweetId,
                 originalAuthorId: tweetData.originalAuthorId,
+                quotedCommentAuthorId: tweetData.quotedCommentAuthorId,
                 parentTweetId: parentId ?? tweetData.parentTweetId,
                 interactionHostAuthor: commentStorageAuthor,
                 provider: providerIp,
@@ -2773,6 +2774,7 @@ export const useTweetStore = defineStore('tweetStore', {
                     comments: [],
                     originalTweetId: originalTweetData.originalTweetId,
                     originalAuthorId: originalTweetData.originalAuthorId,
+                    quotedCommentAuthorId: originalTweetData.quotedCommentAuthorId,
                     parentTweetId: originalTweetData.parentTweetId,
                     provider: providerIp,
                     likeCount: originalTweetData.favoriteCount ?? originalTweetData.likeCount,
@@ -4785,7 +4787,8 @@ export const useTweetStore = defineStore('tweetStore', {
                             ? (original?.author?.hostIds?.[0]
                                 ?? this.getCachedUserForDisplay(tweet.originalAuthorId)?.hostIds?.[0])
                             : undefined
-                        const added = await this.runWrite(writeClient, writableIp, 'add_tweet', {
+                        const entry = tweet.quotedCommentId ? 'retweet_comment' : 'add_tweet'
+                        const added = await this.runWrite(writeClient, writableIp, entry, {
                             aid: this.appId, ver: 'last',
                             tweet: JSON.stringify(tweet),
                             hostid: loginUser.hostIds?.[0],

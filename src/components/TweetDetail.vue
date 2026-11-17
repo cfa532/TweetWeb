@@ -37,6 +37,7 @@ const parentAuthorId = computed(() =>
 const isFromComment = computed(() => parentTweetId.value !== undefined)
 const tweet = ref()
 const originTweet = ref()
+const forwardedCommentParent = ref<Tweet | null>(null)
 const isRetweet = ref(false)
 const isLoading = ref(false)
 const isShowingTweetPlaceholder = ref(false)
@@ -294,6 +295,7 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
     if (!cachedTweet && cachedAuthor) initialTweet.author = cachedAuthor
     tweet.value = initialTweet
     originTweet.value = null
+    forwardedCommentParent.value = null
     isRetweet.value = false
     isShowingTweetPlaceholder.value = cachedTweet == null
     isOriginalTweetLoading.value = false
@@ -418,6 +420,13 @@ async function showTweet(myGeneration: number) {
                 isRetweet.value = true
                 // Comment and author updates must go through Vue's reactive owner.
                 void loadDetailComments(originTweet.value, myGeneration)
+                if (original.quotedCommentAuthorId && original.originalTweetId) {
+                    void loadOriginalTweet(original, myGeneration).then(parent => {
+                        if (myGeneration === loadGeneration) forwardedCommentParent.value = parent
+                    }).catch(error => {
+                        console.warn('[TweetDetail] Failed to load the forwarded comment parent:', error)
+                    })
+                }
             }
         } catch (error) {
             console.warn('[TweetDetail] Failed to load original tweet:', error)
@@ -470,6 +479,7 @@ watch(tweetId, async (newValue, oldValue)=>{
         // Clear current tweet and use the same loadDetail function with retry logic
         tweet.value = null
         originTweet.value = null
+        forwardedCommentParent.value = null
         isRetweet.value = false
         isShowingTweetPlaceholder.value = false
         isOriginalTweetLoading.value = false
@@ -799,6 +809,7 @@ function applyRefreshedTweet(target: Tweet, refreshed: Tweet) {
     target.provider = refreshed.provider
     target.originalTweetId = refreshed.originalTweetId
     target.originalAuthorId = refreshed.originalAuthorId
+    target.quotedCommentAuthorId = refreshed.quotedCommentAuthorId
     target.originalTweet = refreshed.originalTweet
     if (refreshed.interactionHostAuthor) {
         target.interactionHostAuthor = refreshed.interactionHostAuthor
@@ -974,13 +985,14 @@ function retryLoad() {
         <div class="card-header d-flex align-items-stretch">
             <!-- The header renders even when the author never resolved (DetailHeader
                  shows a placeholder), so the corner menu and timestamp stay reachable. -->
-            <DetailHeader class="w-100" v-if="isRetweet" :author="tweet.originalTweet?.author ?? null"
-                :author-id="tweet.originalAuthorId" :timestamp="tweet.timestamp"
-                :exclude-tweet-id="tweet.originalTweet?.mid"
-                :tweet="tweet" :edit-tweet="tweet.originalTweet" :after-delete="leaveDeletedTweet">
+            <DetailHeader class="w-100" v-if="isRetweet"
+                :author="originTweet.quotedCommentAuthorId ? null : (originTweet.author ?? null)"
+                :author-id="originTweet.quotedCommentAuthorId || tweet.originalAuthorId" :timestamp="tweet.timestamp"
+                :exclude-tweet-id="originTweet.mid"
+                :tweet="tweet" :edit-tweet="originTweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
-            <DetailHeader class="w-100" v-else :author="tweet.author ?? null"
-                :author-id="tweet.authorId" :timestamp="tweet.timestamp"
+            <DetailHeader class="w-100" v-else :author="tweet.quotedCommentAuthorId ? null : (tweet.author ?? null)"
+                :author-id="tweet.quotedCommentAuthorId || tweet.authorId" :timestamp="tweet.timestamp"
                 :exclude-tweet-id="tweet.mid" :is-comment="isFromComment"
                 :tweet="isShowingTweetPlaceholder ? undefined : tweet" :after-delete="leaveDeletedTweet">
             </DetailHeader>
@@ -1022,6 +1034,10 @@ function retryLoad() {
                     <span class='document-size'>{{ formatFileSize(doc.size) }}</span>
                 </div>
             </div>
+            <blockquote v-if="forwardedCommentParent" class="quoted-tweet">
+                <TweetView :tweet="forwardedCommentParent" :is-quoted="true"
+                    :max-content-lines="TWEET_LIST_CONTENT_MAX_LINES" />
+            </blockquote>
             <TweetActionBar :tweet="originTweet" @updated="(t) => originTweet = t" />
         </div>
         <div v-else class="card-body">

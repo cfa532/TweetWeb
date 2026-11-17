@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import type { PropType } from 'vue'
 import { useRouter } from 'vue-router';
 import { avatarSrc, tweetDetailPath } from '@/lib';
@@ -24,12 +24,18 @@ const router = useRouter()
 const timeDifference = useRelativeTime(() => props.timestamp);
 const tweetStore = useTweetStore()
 
+const quotedCommentAuthorId = computed(() => props.tweet?.quotedCommentAuthorId)
 const headerAuthor = computed<User | null>(() => {
+  if (quotedCommentAuthorId.value) return tweetStore.users.get(quotedCommentAuthorId.value) ?? null
   if (props.author) return props.author
   if (props.tweet?.author) return props.tweet.author
   const authorId = props.tweet?.authorId
   return authorId ? tweetStore.users.get(authorId) ?? null : null
 })
+
+watch(quotedCommentAuthorId, (id) => {
+  if (id && !tweetStore.users.has(id)) void tweetStore.getUser(id).catch(() => undefined)
+}, { immediate: true })
 
 /** Bold line in tweet header: use username when display name is missing (same idea as UserAccount profile). */
 const authorDisplayName = computed(() => {
@@ -61,7 +67,7 @@ function openUserPage(userId: string) {
 function handleAvatarError(event: Event) {
   const img = event.target as HTMLImageElement | null
   if (!img || img.dataset.refreshed === '1') return
-  const authorId = headerAuthor.value?.mid ?? props.tweet?.authorId
+  const authorId = headerAuthor.value?.mid ?? quotedCommentAuthorId.value ?? props.tweet?.authorId
   if (!authorId) return
   img.dataset.refreshed = '1'
   tweetStore.getUser(authorId, true).catch(() => undefined)

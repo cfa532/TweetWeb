@@ -146,6 +146,7 @@
     "showMore": "更多",
     "likeFailed": "点赞失败，请重试。",
     "bookmarkFailed": "收藏失败，请重试。",
+    "retweetStarted": "正在转发…",
     "retweetFailed": "转发失败，请重试。"
   },
   "time": {

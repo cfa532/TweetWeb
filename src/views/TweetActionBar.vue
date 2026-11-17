@@ -14,6 +14,7 @@ const tweetStore = useTweetStore();
 const alertStore = useAlertStore();
 const showShareMenu = ref(false);
 const copied = ref(false);
+let lastRetweetTap: { mid: string; time: number } | undefined;
 
 const props = defineProps({
   tweet: { type: Object as PropType<Tweet>, required: true },
@@ -55,6 +56,11 @@ function onComment() {
 
 async function onRetweet() {
   if (!requireLoginForWritableAction(!!tweetStore.loginUser, router, route.fullPath)) return;
+  const mid = props.tweet.mid;
+  const time = performance.now();
+  if (lastRetweetTap?.mid === mid && time - lastRetweetTap.time < 2000) return;
+  lastRetweetTap = { mid, time };
+  alertStore.info(t('tweet.retweetStarted'), { durationMs: 2000 });
   const target = { ...props.tweet };
   try {
     const previousCount = target.retweetCount;

@@ -146,6 +146,7 @@
     "showMore": "show more",
     "likeFailed": "Failed to like. Please try again.",
     "bookmarkFailed": "Failed to bookmark. Please try again.",
+    "retweetStarted": "Forwarding…",
     "retweetFailed": "Failed to retweet. Please try again."
   },
   "time": {
