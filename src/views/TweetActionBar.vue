@@ -169,24 +169,34 @@ function closeShareMenu() {
 <template>
   <div class="action-bar" @click.stop>
     <button v-if="!tweet.savedTweetUnavailable" class="action-btn" @click="onComment" :title="$t('tweet.comment')">
-      <font-awesome-icon :icon="['far', 'comment']" />
+      <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20.75,11C20.75,15.6 16.9,19 12,19H9.25L3.25,21L4.35,15.95C3.64,14.62 3.25,13.05 3.25,11.35C3.25,6.74 7.17,3.25 12,3.25C16.83,3.25 20.75,6.47 20.75,11Z" />
+      </svg>
       <span v-if="tweet.commentCount" class="action-count">{{ formatCount(tweet.commentCount) }}</span>
     </button>
     <button v-if="!tweet.savedTweetUnavailable" class="action-btn" @click="onRetweet" :title="$t('tweet.retweet')">
-      <font-awesome-icon icon="retweet" />
+      <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2.25,8L6,4.25L9.75,8M6,4.25V16.75C6,17.85 6.9,18.75 8,18.75H12.25M14.25,16L18,19.75L21.75,16M18,19.75V7.25C18,6.15 17.1,5.25 16,5.25H11.75" />
+      </svg>
       <span v-if="tweet.retweetCount" class="action-count">{{ formatCount(tweet.retweetCount) }}</span>
     </button>
     <button v-if="!tweet.savedTweetUnavailable || isLiked" class="action-btn" :class="{ 'action-liked': isLiked }" @click="onLike" :title="$t('tweet.like')">
-      <font-awesome-icon :icon="isLiked ? ['fas', 'heart'] : ['far', 'heart']" />
+      <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12,20.5L4.78,13.63C3.63,12.54 3,11.18 3,9.65C3,6.74 5.08,4.5 7.83,4.5C9.64,4.5 10.96,5.38 12,6.7C13.04,5.38 14.36,4.5 16.17,4.5C18.92,4.5 21,6.74 21,9.65C21,11.18 20.37,12.54 19.22,13.63L12,20.5Z" :fill="isLiked ? 'currentColor' : 'none'" />
+      </svg>
       <span v-if="tweet.likeCount" class="action-count">{{ formatCount(tweet.likeCount) }}</span>
     </button>
     <button v-if="!tweet.savedTweetUnavailable || isBookmarked" class="action-btn" :class="{ 'action-bookmarked': isBookmarked }" @click="onBookmark" :title="$t('tweet.bookmark')">
-      <font-awesome-icon :icon="isBookmarked ? ['fas', 'bookmark'] : ['far', 'bookmark']" />
+      <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6,3H18C18.55,3 19,3.45 19,4V21L12,17L5,21V4C5,3.45 5.45,3 6,3Z" :fill="isBookmarked ? 'currentColor' : 'none'" />
+      </svg>
       <span v-if="tweet.bookmarkCount" class="action-count">{{ formatCount(tweet.bookmarkCount) }}</span>
     </button>
     <div v-if="!tweet.savedTweetUnavailable" class="share-wrapper">
       <button class="action-btn" @click="onShare" :title="$t('tweet.share')">
-        <font-awesome-icon icon="share-from-square" />
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12,15V3M8,7L12,3L16,7M8,10H5C4.45,10 4,10.45 4,11V20C4,20.55 4.45,21 5,21H19C19.55,21 20,20.55 20,20V11C20,10.45 19.55,10 19,10H16" />
+        </svg>
       </button>
       <div v-if="showShareMenu" class="share-menu">
         <button class="share-menu-item" @click="copyLink">
@@ -220,6 +230,17 @@ function closeShareMenu() {
   padding: 6px 8px;
   border-radius: 50px;
   transition: color 0.2s, background-color 0.2s;
+}
+
+.action-icon {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .action-btn:hover {
