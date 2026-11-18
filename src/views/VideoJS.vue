@@ -2007,7 +2007,18 @@ function disableRightClick(event: MouseEvent) {
 function handleVisibilityChange() {
   if (document.hidden) {
     stopVideo();
+    return;
   }
+  // Returning to a tab whose hide tore HLS down. If this element is still the
+  // visible primary, mediaLoadState never changed, so the watcher that normally
+  // (re)sets up HLS cannot fire — re-acquire here or the element sits without
+  // a player while it is still the one the coordinator wants playing.
+  if (!isInTweetList.value || !video.value || !isHLS.value) return;
+  if (isHLSInitialized && hls) return;
+  if (props.mediaLoadState !== 'visible' || !isCoordinatorPrimary(video.value)) return;
+  isBuffering.value = true;
+  debugVideoLoad('resume after tab visible');
+  setupHLS();
 }
 
 // Request fullscreen for video
@@ -2415,6 +2426,11 @@ function stopVideo() {
   hasTriedPlaylistFallback = false;
   showVideoError.value = false;
   failedFragments.clear();
+  // The teardown just aborted the acquisition this element was showing a
+  // spinner for. Without this reset, a still-visible primary (tab hidden and
+  // re-shown) spins forever: mediaLoadState never changes, so nothing else
+  // re-triggers setup or clears the overlay.
+  isBuffering.value = false;
 }
 </script>
 
