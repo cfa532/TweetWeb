@@ -1591,6 +1591,15 @@ export const useTweetStore = defineStore('tweetStore', {
                             t.originalTweet.provider = t.originalTweet.author.providerIp
                             rewriteAttachmentHosts(t.originalTweet, t.originalTweet.author.providerIp)
                         }
+                        // Align with the users-Map reference like the outer author,
+                        // so getUser's later Object.assign of the resolved route
+                        // reaches this displayed copy too.
+                        const originalMapRef = this.users.get(t.originalTweet.authorId)
+                        if (originalMapRef) {
+                            t.originalTweet.author = originalMapRef
+                        } else {
+                            this.users.set(t.originalTweet.authorId, t.originalTweet.author)
+                        }
                     }
                     t.comments = []
 
@@ -1633,6 +1642,17 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
                             t.originalTweet.provider = t.originalTweet.author.providerIp
                             rewriteAttachmentHosts(t.originalTweet, t.originalTweet.author.providerIp)
+                        }
+                        // Align the original's author with the users-Map reference for
+                        // the same reason as the outer author below: getUser later
+                        // Object.assigns the freshly resolved route onto the map entry,
+                        // and this detached copy would never receive a providerIp
+                        // (avatar tooltip "Base IP: N/A" for the whole session).
+                        const originalMapRef = this.users.get(t.originalTweet.authorId)
+                        if (originalMapRef) {
+                            t.originalTweet.author = originalMapRef
+                        } else {
+                            this.users.set(t.originalTweet.authorId, t.originalTweet.author)
                         }
                     }
                     t.comments = []
@@ -1693,6 +1713,15 @@ export const useTweetStore = defineStore('tweetStore', {
                         if (attachNodePoolRoute(t.originalTweet.author, this.lapi.connectionPool)) {
                             t.originalTweet.provider = t.originalTweet.author.providerIp
                             rewriteAttachmentHosts(t.originalTweet, t.originalTweet.author.providerIp)
+                        }
+                        // Align with the users-Map reference like the outer author,
+                        // so getUser's later Object.assign of the resolved route
+                        // reaches this displayed copy too.
+                        const originalMapRef = this.users.get(t.originalTweet.authorId)
+                        if (originalMapRef) {
+                            t.originalTweet.author = originalMapRef
+                        } else {
+                            this.users.set(t.originalTweet.authorId, t.originalTweet.author)
                         }
                     }
                     t.comments = []
