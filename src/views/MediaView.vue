@@ -12,6 +12,7 @@ import {
 
 const props = defineProps({ 
     media: {type: Object as PropType<MimeiFileType>, required: true },
+    preferImagePreview: {type: Boolean, default: false},
     tweet: {type: Object as PropType<Tweet>, required: false},
     // Use PropType instead of Boolean constructor so omitted prop stays undefined.
     autoplay: {type: null as unknown as PropType<boolean | undefined>, required: false},

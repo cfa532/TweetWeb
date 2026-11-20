@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import type { PropType } from 'vue';
 import { Image, VideoJS } from '@/views';
 import { useTweetStore } from '@/stores';
-import { avatarSrc } from '@/lib';
+import { avatarSrc, imagePreviewUrl } from '@/lib';
 
 const props = defineProps({
   mediaList: { type: Array as PropType<MimeiFileType[]>, required: false },
@@ -262,7 +262,7 @@ function handleFullscreenImageSettled(media: MimeiFileType) {
 function thumbnailSrc(media: MimeiFileType, index: number): string | undefined {
   if (!media.type?.toLowerCase().includes('image')) return undefined;
   if (index === currentMediaIndex.value || currentImageSettled.value) {
-    return media.mid;
+    return imagePreviewUrl(media);
   }
   return undefined;
 }

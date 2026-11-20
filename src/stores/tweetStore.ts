@@ -4720,8 +4720,8 @@ export const useTweetStore = defineStore('tweetStore', {
                     quotedCommentId: tweet.mid,
                     title: tweet.title,
                     content: tweet.content,
-                    attachments: tweet.attachments?.map(({ mid, type, size, fileName, timestamp, aspectRatio }) => ({
-                        mid: attachmentReferenceId(mid), type, size, fileName, timestamp, aspectRatio,
+                    attachments: tweet.attachments?.map(({ mid, type, size, fileName, timestamp, aspectRatio, previewMid }) => ({
+                        mid: attachmentReferenceId(mid), type, size, fileName, timestamp, aspectRatio, previewMid,
                     })),
                 } : {}),
             }, undefined, original)

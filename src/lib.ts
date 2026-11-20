@@ -81,6 +81,18 @@ export function attachmentReferenceId(mid: string): string {
     return value.substring(value.lastIndexOf('/') + 1);
 }
 
+/** Feed previews live on the same serving node as the original. Keep previewMid
+ * as a reference ID so uploads and edits preserve the backend's child reference.
+ */
+export function imagePreviewUrl(media: Pick<MimeiFileType, 'mid' | 'previewMid'>): string {
+    if (!media.previewMid) return media.mid;
+    const url = new URL(media.mid);
+    url.pathname = `/${media.previewMid.length > 27 ? 'ipfs' : 'mm'}/${media.previewMid}`;
+    url.search = '';
+    url.hash = '';
+    return url.href;
+}
+
 /** Comment detail links carry the immediate parent's identity across reloads. */
 export function tweetDetailPath(
     tweet: Tweet,

@@ -95,6 +95,7 @@ interface FVPair {
 // Type of passing attachments as Mimei
 interface MimeiFileType {
     mid: string
+    previewMid?: MimeiId   // Small image for feeds; mid remains the original reference.
     type: string
     size?: number
     fileName?: string

@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router';
 import { AudioPlaylistPlayer, MediaView, ItemHeader, TweetActionBar } from '@/views';
 import ForwardedByLabel from '@/views/ForwardedByLabel.vue';
 import { useTweetStore } from '@/stores';
-import { isImageType, isVideoType, normalizeMediaType, tweetDetailPath } from '@/lib';
+import { imagePreviewUrl, isImageType, isVideoType, normalizeMediaType, tweetDetailPath } from '@/lib';
 import { UserAvatar } from '@/components';
 import {
   TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY,
@@ -466,6 +466,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         <!-- 1 item -->
         <div v-if='mediaAttachments.length === 1' class='single-attachment'>
           <MediaView
+            prefer-image-preview
             :key='mediaAttachments[0].mid'
             :media='mediaAttachments[0]'
             :tweet='displayedTweet'
@@ -480,6 +481,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         <template v-else-if='mediaAttachments.length === 2'>
           <div v-if='isPortrait(mediaAttachments[0]) && isPortrait(mediaAttachments[1])' class='grid-2-portrait'>
             <MediaView
+              prefer-image-preview
               v-for='(media, index) in mediaAttachments'
               :key='media.mid'
               :media='media'
@@ -492,6 +494,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div v-else-if='isLandscape(mediaAttachments[0]) && isLandscape(mediaAttachments[1])' class='grid-2-landscape'>
             <MediaView
+              prefer-image-preview
               v-for='(media, index) in mediaAttachments'
               :key='media.mid'
               :media='media'
@@ -504,6 +507,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div v-else class='grid-2-mixed'>
             <MediaView
+              prefer-image-preview
               :key='mediaAttachments[0].mid'
               :media='mediaAttachments[0]'
               :tweet='displayedTweet'
@@ -513,6 +517,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
               :class='["grid-item", isPortrait(mediaAttachments[0]) ? "grid-item-portrait" : "grid-item-landscape"]'
             ></MediaView>
             <MediaView
+              prefer-image-preview
               :key='mediaAttachments[1].mid'
               :media='mediaAttachments[1]'
               :tweet='displayedTweet'
@@ -528,6 +533,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         <template v-else-if='mediaAttachments.length === 3'>
           <div v-if='isPortrait(mediaAttachments[0]) && isPortrait(mediaAttachments[1]) && isPortrait(mediaAttachments[2])' class='grid-3-all-portrait'>
             <MediaView
+              prefer-image-preview
               :key='mediaAttachments[0].mid'
               :media='mediaAttachments[0]'
               :tweet='displayedTweet'
@@ -538,6 +544,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
             ></MediaView>
             <div class='grid-item-golden-right'>
               <MediaView
+                prefer-image-preview
                 v-for='idx in [1, 2]'
                 :key='mediaAttachments[idx].mid'
                 :media='mediaAttachments[idx]'
@@ -551,6 +558,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div v-else-if='isLandscape(mediaAttachments[0]) && isLandscape(mediaAttachments[1]) && isLandscape(mediaAttachments[2])' class='grid-3-all-landscape'>
             <MediaView
+              prefer-image-preview
               :key='mediaAttachments[0].mid'
               :media='mediaAttachments[0]'
               :tweet='displayedTweet'
@@ -561,6 +569,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
             ></MediaView>
             <div class='grid-item-golden-bottom'>
               <MediaView
+                prefer-image-preview
                 v-for='idx in [1, 2]'
                 :key='mediaAttachments[idx].mid'
                 :media='mediaAttachments[idx]'
@@ -574,6 +583,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div v-else-if='isPortrait(mediaAttachments[0])' class='grid-3-first-portrait'>
             <MediaView
+              prefer-image-preview
               :key='mediaAttachments[0].mid'
               :media='mediaAttachments[0]'
               :tweet='displayedTweet'
@@ -584,6 +594,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
             ></MediaView>
             <div class='grid-item-right-stacked'>
               <MediaView
+                prefer-image-preview
                 v-for='idx in [1, 2]'
                 :key='mediaAttachments[idx].mid'
                 :media='mediaAttachments[idx]'
@@ -597,6 +608,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div v-else class='grid-3-first-landscape'>
             <MediaView
+              prefer-image-preview
               :key='mediaAttachments[0].mid'
               :media='mediaAttachments[0]'
               :tweet='displayedTweet'
@@ -607,6 +619,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
             ></MediaView>
             <div class='grid-item-bottom-two'>
               <MediaView
+                prefer-image-preview
                 v-for='idx in [1, 2]'
                 :key='mediaAttachments[idx].mid'
                 :media='mediaAttachments[idx]'
@@ -624,6 +637,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
         <div v-else class='grid-4-plus'>
           <div class='grid-row'>
             <MediaView
+              prefer-image-preview
               v-for='idx in [0, 1]'
               :key='mediaAttachments[idx].mid'
               :media='mediaAttachments[idx]'
@@ -636,6 +650,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div class='grid-row'>
             <MediaView
+              prefer-image-preview
               v-for='idx in [2, 3]'
               :key='mediaAttachments[idx].mid'
               :media='mediaAttachments[idx]'
@@ -671,7 +686,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           </div>
           <div class="quote-preview-body">
             <div v-if="quoteAttachment" class="quote-preview-media">
-              <img v-if="isImageType(quoteAttachment.type)" :src="quoteAttachment.mid" alt=""
+              <img v-if="isImageType(quoteAttachment.type)" :src="imagePreviewUrl(quoteAttachment)" alt=""
                 loading="lazy" decoding="async" />
               <template v-else-if="isVideoType(quoteAttachment.type)">
                 <video v-if="normalizeMediaType(quoteAttachment.type) === 'video'"

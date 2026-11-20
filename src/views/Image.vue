@@ -1,14 +1,12 @@
-<script lang="ts">
-const renderedImageUrls = new Set<string>();
-</script>
-
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { PropType } from 'vue'
+import { imagePreviewUrl } from '@/lib'
 import { TWEET_MEDIA_PRELOAD_STALE_EVENT, type MediaLoadState } from '@/composables/useTweetMediaLoadingCoordinator'
 
 const props = defineProps({
     media: {type: Object as PropType<MimeiFileType>, required: true },
+    preferImagePreview: {type: Boolean, default: false},
     title: {type: String, required: false},
     index: {type: Number, required: false},
     mediaLoadState: {type: String as PropType<MediaLoadState>, required: false, default: 'visible'},
@@ -20,7 +18,7 @@ const emit = defineEmits<{
 const isLoaded = ref(false);
 const imageElement = ref<HTMLImageElement | null>(null);
 const imageSrc = ref('');
-const resolvedMediaMid = ref('');
+const sourceUrl = computed(() => props.preferImagePreview ? imagePreviewUrl(props.media) : props.media.mid);
 const shouldLoad = computed(() => props.mediaLoadState !== 'idle');
 let imageLoadEpoch = 0;
 let lastStalePreloadCancelEpoch = -1;
@@ -39,7 +37,6 @@ function markLoadedIfImageSettled() {
     if (!img) return;
     if (img.complete) {
         isLoaded.value = true;
-        renderedImageUrls.add(props.media.mid);
     }
 }
 
@@ -48,14 +45,15 @@ function handleImageSettled(event?: Event) {
     if (!img || img !== imageElement.value) return;
     if (img.getAttribute('src') !== imageSrc.value) return;
     isLoaded.value = true;
-    renderedImageUrls.add(props.media.mid);
     emit('settled', props.media);
 }
 
 function cancelImageLoad() {
     imageLoadEpoch += 1;
     const img = imageElement.value;
-    if (renderedImageUrls.has(props.media.mid) || img?.complete) {
+    // Only this element can prove its current source is settled. A completed
+    // load in another instance must not keep this instance's transfer alive.
+    if (img?.getAttribute('src') === imageSrc.value && img.complete) {
         isLoaded.value = true;
         return;
     }
@@ -64,7 +62,6 @@ function cancelImageLoad() {
         img.removeAttribute('src');
     }
     imageSrc.value = '';
-    resolvedMediaMid.value = '';
     isLoaded.value = false;
 }
 
@@ -82,29 +79,27 @@ async function resolveImageSource() {
     }
     const loadEpoch = ++imageLoadEpoch;
 
-    if (imageSrc.value && resolvedMediaMid.value === props.media.mid) {
+    if (imageSrc.value === sourceUrl.value) {
         await nextTick();
         if (loadEpoch !== imageLoadEpoch || !shouldLoad.value) return;
         markLoadedIfImageSettled();
         return;
     }
 
-    isLoaded.value = renderedImageUrls.has(props.media.mid);
-    imageSrc.value = props.media.mid;
-    resolvedMediaMid.value = props.media.mid;
+    isLoaded.value = false;
+    imageSrc.value = sourceUrl.value;
 
     await nextTick();
     if (loadEpoch !== imageLoadEpoch || !shouldLoad.value) return;
     markLoadedIfImageSettled();
 }
 
-watch(() => props.media.mid, async () => {
+watch(sourceUrl, async () => {
     if (imageElement.value && !imageElement.value.complete) {
         imageElement.value.removeAttribute('src');
     }
     imageSrc.value = '';
-    resolvedMediaMid.value = '';
-    isLoaded.value = renderedImageUrls.has(props.media.mid);
+    isLoaded.value = false;
     await resolveImageSource();
 });
 
@@ -117,6 +112,10 @@ watch(() => props.mediaLoadState, async (state, previousState) => {
     debugImageLoad(state === 'visible' ? 'load visible' : 'preload');
     await resolveImageSource();
 }, { immediate: true });
+
+// KeepAlive deactivation must release a pending image just like unmounting.
+onActivated(resolveImageSource);
+onDeactivated(cancelImageLoad);
 
 onMounted(() => {
     markLoadedIfImageSettled();
