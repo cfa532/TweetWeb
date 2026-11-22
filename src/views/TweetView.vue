@@ -76,6 +76,10 @@ const showQuote = computed(() => !props.isQuoted && (isRetweet.value
   ? !!forwardedCommentParent.value
   : !!(currentTweet.value.originalTweetId || currentTweet.value.savedParentTweet)));
 const quoteAttachment = computed(() => quotedTweet.value?.attachments?.[0]);
+// The quote card clips its text, but the browser still lays out all of it, so a
+// long quoted document slowed the feed. Render only a bounded prefix — far more
+// than the card can show (matches the iOS and Android quote cards).
+const QUOTE_PREVIEW_MAX_CHARS = 4096;
 const quoteText = computed(() =>
   [quotedTweet.value?.title, quotedTweet.value?.content]
     .filter(Boolean)
@@ -83,6 +87,7 @@ const quoteText = computed(() =>
     .replace(/<br\b[^>]*\/?>|<\/(?:p|div)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .trim()
+    .slice(0, QUOTE_PREVIEW_MAX_CHARS)
 );
 
 function cacheQuoteForDetail(tweet: Tweet) {
