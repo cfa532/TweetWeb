@@ -294,7 +294,8 @@ async function loadDetail(options: { forceRouteRefresh?: boolean } = {}) {
     const initialTweet = cachedTweet ?? makeTweetPlaceholder()
     if (!cachedTweet && cachedAuthor) initialTweet.author = cachedAuthor
     tweet.value = initialTweet
-    originTweet.value = null
+    // Keep the handed-off embed visible during the outer tweet's server read.
+    originTweet.value = initialTweet.originalTweet ?? null
     forwardedCommentParent.value = null
     isRetweet.value = false
     isShowingTweetPlaceholder.value = cachedTweet == null
@@ -1088,9 +1089,9 @@ function retryLoad() {
                         :is-quoted="true"
                         :max-content-lines="TWEET_LIST_CONTENT_MAX_LINES"
                     />
-                    <div v-else-if="isOriginalTweetLoading" class="d-flex justify-content-center py-4">
-                        <LoadingSpinner />
-                    </div>
+                    <p v-else-if="isLoading || isOriginalTweetLoading" class="quoted-tweet-placeholder">
+                        {{ t('tweet.loadingQuotedTweet') }}
+                    </p>
                     <p v-else class="quoted-tweet-placeholder">{{ t('tweet.tweetNotFound') }}</p>
                 </blockquote>
 
@@ -1164,10 +1165,7 @@ function retryLoad() {
     border: 1px solid #c5ced8;
     border-radius: 8px;
     overflow: hidden;
-    background-color: #d0d8e4;
-}
-.quoted-tweet :deep(.tweet-container) {
-    background-color: #d0d8e4;
+    background-color: #e8f4f4;
 }
 .quoted-tweet-placeholder {
     margin: 0;
@@ -1189,8 +1187,12 @@ function retryLoad() {
     margin-bottom: 1rem;
 }
 
-.comment-list > .card {
-    margin-bottom: 0;
+.comment-list :deep(.tweet-list-row) {
+    margin: 0;
+}
+
+.comment-list :deep(.tweet-list-row + .tweet-list-row) {
+    margin-top: 1px;
 }
 
 /* Loading retry message styling */

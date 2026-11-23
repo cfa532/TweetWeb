@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router';
 import { AudioPlaylistPlayer, MediaView, ItemHeader, TweetActionBar } from '@/views';
 import ForwardedByLabel from '@/views/ForwardedByLabel.vue';
 import { useTweetStore } from '@/stores';
-import { imagePreviewUrl, isImageType, isVideoType, normalizeMediaType, tweetDetailPath } from '@/lib';
+import { avatarSrc, imagePreviewUrl, isImageType, isVideoType, normalizeMediaType, tweetDetailPath } from '@/lib';
 import { UserAvatar } from '@/components';
 import {
   TWEET_MEDIA_COORDINATOR_TWEET_ID_KEY,
@@ -60,12 +60,16 @@ onMounted(async () => {
         { provider: currentTweet.value.provider }
       ).catch(() => null);
 
+    // Detail navigation must carry the embed already displayed in this row.
+    currentTweet.value.originalTweet = originalTweet.value;
+
     if (originalTweet.value && !tweetHasOwnBody(currentTweet.value)) {
       isRetweet.value = true;
       const original = originalTweet.value;
       if (!props.isQuoted && original.quotedCommentAuthorId && original.originalTweetId) {
         forwardedCommentParent.value = original.originalTweet
           || await tweetStore.fetchTweet(original.originalTweetId, original.originalAuthorId).catch(() => null);
+        original.originalTweet = forwardedCommentParent.value;
       }
     }
   }
@@ -686,8 +690,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
           @click="cacheQuoteForDetail(quotedTweet)">
           <div class="quote-preview-author">
             <UserAvatar v-if="quotedTweet.author" :user="quotedTweet.author" alt="" />
-            <strong>{{ quotedTweet.author?.name || quotedTweet.author?.username || quotedTweet.authorId }}</strong>
-            <span v-if="quotedTweet.author?.username">@{{ quotedTweet.author.username }}</span>
+            <img v-else :src="avatarSrc(undefined)" alt="" />
+            <strong :class="{ 'loading-text': !quotedTweet.author }">{{ quotedTweet.author?.name || quotedTweet.author?.username || t('tweet.loadingAuthor') }}</strong>
+            <span :class="{ 'loading-text': !quotedTweet.author }">@{{ quotedTweet.author?.username || t('tweet.loadingUsername') }}</span>
           </div>
           <div class="quote-preview-body">
             <div v-if="quoteAttachment" class="quote-preview-media">
@@ -721,7 +726,9 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   scroll-margin-top: 52px;
 }
 .tweet-container.is-quoted {
-  background-color: #d0d8e4;
+  --bs-card-cap-bg: transparent;
+  background-color: #e8f4f4;
+  padding-bottom: 16px;
 }
 .quoted-tweet {
   margin: 8px 0;
@@ -729,7 +736,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   border: 1px solid #c5ced8;
   border-radius: 8px;
   overflow: hidden;
-  background-color: #f0f2f5;
+  background-color: #e8f4f4;
 }
 .quote-preview {
   display: flex;
@@ -738,10 +745,10 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   min-height: 0;
   flex-direction: column;
   gap: 6px;
-  padding: 8px;
+  padding: 8px 8px 16px;
   color: inherit;
   text-decoration: none;
-  background: var(--bs-body-bg);
+  background-color: inherit;
 }
 .quote-preview:hover {
   color: inherit;
@@ -823,7 +830,7 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
   color: #657786;
   font-size: 14px;
   /* Match the background the embedded tweet itself uses (.tweet-container.is-quoted) */
-  background-color: #d0d8e4;
+  background-color: #e8f4f4;
 }
 
 /* Remove card styling on mobile for flush layout */
