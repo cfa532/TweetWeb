@@ -723,10 +723,8 @@ async function handleDocumentClick(event: MouseEvent, doc: MimeiFileType) {
 .tweet-container.is-quoted {
   background-color: #d0d8e4;
 }
-/* Indented past the avatar column so an embedded tweet reads as part of this
-   tweet rather than as a reply below it. */
 .quoted-tweet {
-  margin: 8px 0 8px 52px;
+  margin: 8px 0;
   padding: 0;
   border: 1px solid #c5ced8;
   border-radius: 8px;

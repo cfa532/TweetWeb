@@ -1157,7 +1157,7 @@ function retryLoad() {
 </template>
 
 <style scoped>
-/* Indented past the avatar column, as in TweetView, so the embedded tweet does
+/* Indented past the avatar column so the embedded tweet does
    not read as one of the comments listed below it. */
 .quoted-tweet {
     margin: 8px 0 8px 52px;
