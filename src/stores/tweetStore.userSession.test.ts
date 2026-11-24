@@ -142,14 +142,14 @@ describe('caller sessions on writes', () => {
     })
 
     // A legacy account: Leither on its root has no guest for it yet.
-    async function legacyLoginStore(bindReply: any) {
+    async function legacyLoginStore(bindReply: any, mid = 'legacy-1') {
         const store = useTweetStore()
         store.storageCapabilities = vi.fn(async () => ({
             formats: new Set(), userSessions: true, commentDelegation: false, checkedAt: Date.now(),
         })) as any
-        store.lapi.client = { RunMApp: vi.fn().mockResolvedValue('legacy-1') } as any
-        store.getUser = vi.fn(async () => ({ mid: 'legacy-1', providerIp: '10.0.0.5:8002', hostIds: ['root-host'] })) as any
-        await rootAccountAt(store, 'legacy-1', '10.0.0.5:8002')
+        store.lapi.client = { RunMApp: vi.fn().mockResolvedValue(mid) } as any
+        store.getUser = vi.fn(async () => ({ mid, providerIp: '10.0.0.5:8002', hostIds: ['root-host'] })) as any
+        await rootAccountAt(store, mid, '10.0.0.5:8002')
         store.addFollowing = vi.fn() as any
         probeClient.Login = vi.fn()
             .mockRejectedValueOnce(new Error('1102:login info error'))
@@ -186,6 +186,22 @@ describe('caller sessions on writes', () => {
 
         expect(user?.mid).toBe('legacy-1')
         expect(probeClient.RunMApp).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not retry the guest sign-in on writes when Leither refused it at login', async () => {
+        // Its own account: sessions opened by earlier tests stay in the module.
+        const store = await legacyLoginStore(undefined, 'unbindable-1')
+        // The name is taken in Leither by someone else: neither sign-in works.
+        probeClient.Register = vi.fn().mockRejectedValue(new Error('name exists'))
+        probeClient.Login = vi.fn().mockRejectedValue(new Error('1102:login info error'))
+
+        await store.login('gen8', 'pw')
+
+        const client = { timeout: 0, Login: vi.fn(), RunMApp: vi.fn().mockResolvedValue({ success: true }) }
+        const params: Record<string, any> = { userid: 'unbindable-1' }
+        await store.runWrite(client, '10.0.0.5:8002', 'delete_tweet', params)
+        expect(client.Login).not.toHaveBeenCalled()
+        expect(params.usersid).toBeUndefined()
     })
 
     it('does not register a guest when the app login fails', async () => {

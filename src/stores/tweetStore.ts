@@ -4141,7 +4141,10 @@ export const useTweetStore = defineStore('tweetStore', {
                         setStoredLoginUser(user)
                         // Keep the guest credential for this tab: later writes
                         // re-open Leither sessions with it on the user's root.
-                        storeCredential(userId, username, password)
+                        // Only when this login opened one, as at registration and
+                        // on Android: when the root's Leither refuses the guest
+                        // (1102), every write would retry that sign-in and fail.
+                        if (cachedSession(userId, loginIp)) storeCredential(userId, username, password)
                         user.client = createPooledClient(user.providerIp, this.lapi.connectionPool)
                         this._user = user
                         this.addFollowing(userId)
