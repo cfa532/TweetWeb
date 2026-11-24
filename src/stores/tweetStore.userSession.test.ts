@@ -141,6 +141,62 @@ describe('caller sessions on writes', () => {
         expect(client.RunMApp).toHaveBeenCalledTimes(2)
     })
 
+    // A legacy account: Leither on its root has no guest for it yet.
+    async function legacyLoginStore(bindReply: any) {
+        const store = useTweetStore()
+        store.storageCapabilities = vi.fn(async () => ({
+            formats: new Set(), userSessions: true, commentDelegation: false, checkedAt: Date.now(),
+        })) as any
+        store.lapi.client = { RunMApp: vi.fn().mockResolvedValue('legacy-1') } as any
+        store.getUser = vi.fn(async () => ({ mid: 'legacy-1', providerIp: '10.0.0.5:8002', hostIds: ['root-host'] })) as any
+        await rootAccountAt(store, 'legacy-1', '10.0.0.5:8002')
+        store.addFollowing = vi.fn() as any
+        probeClient.Login = vi.fn()
+            .mockRejectedValueOnce(new Error('1102:login info error'))
+            .mockResolvedValueOnce({ Sid: 'guest-sid', Uid: 'guest-uid' })
+        probeClient.Register = vi.fn().mockResolvedValue('guest-uid')
+        probeClient.RunMApp = vi.fn()
+            .mockResolvedValueOnce({ success: true, status: 'success' })
+            .mockResolvedValueOnce(bindReply)
+        return store
+    }
+
+    it('registers a Leither guest for a legacy account once its password is verified', async () => {
+        const store = await legacyLoginStore({ success: true, status: 'success' })
+
+        await store.login('dom', 'pw')
+
+        expect(probeClient.Register).toHaveBeenCalledWith('dom', 'pw', '')
+        const [first, second] = probeClient.RunMApp.mock.calls
+        expect(first[1].usersid).toBeUndefined()
+        expect(second[0]).toBe('login')
+        expect(second[1]).toMatchObject({ username: 'dom', password: 'pw', usersid: 'guest-sid' })
+        // Writes from this tab now carry the bound guest's session.
+        const client = { timeout: 0, Login: vi.fn(), RunMApp: vi.fn().mockResolvedValue({ success: true }) }
+        const params: Record<string, any> = { userid: 'legacy-1' }
+        await store.runWrite(client, '10.0.0.5:8002', 'delete_tweet', params)
+        expect(client.Login).not.toHaveBeenCalled()
+        expect(params.usersid).toBe('guest-sid')
+    })
+
+    it('keeps the login when the root refuses to bind the legacy account', async () => {
+        const store = await legacyLoginStore({ success: false, message: 'Wrong password' })
+
+        const user = await store.login('dom', 'pw')
+
+        expect(user?.mid).toBe('legacy-1')
+        expect(probeClient.RunMApp).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not register a guest when the app login fails', async () => {
+        const store = await legacyLoginStore(undefined)
+        probeClient.RunMApp = vi.fn().mockResolvedValue({ success: false, message: 'Wrong password' })
+
+        await expect(store.login('dom', 'typo')).rejects.toThrow()
+
+        expect(probeClient.Register).not.toHaveBeenCalled()
+    })
+
     it('reads the session flags out of the node health reply', async () => {
         const store = useTweetStore()
         probeClient.RunMApp.mockResolvedValue({

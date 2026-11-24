@@ -4025,8 +4025,10 @@ export const useTweetStore = defineStore('tweetStore', {
                     const loginIp = await this.resolveWritableHostIp(user)
                     const loginClient = createPooledClient(loginIp, this.lapi.connectionPool)
                     let usersid: string | undefined
+                    let sessionsSupported = false
                     try {
-                        if ((await this.storageCapabilities(loginIp)).userSessions) {
+                        sessionsSupported = (await this.storageCapabilities(loginIp)).userSessions
+                        if (sessionsSupported) {
                             const reply = await leitherLogin(loginClient, username, password)
                             if (reply) {
                                 rememberSession(userId, loginIp, reply.Sid)
@@ -4060,6 +4062,30 @@ export const useTweetStore = defineStore('tweetStore', {
                                 rememberSession(userId, loginIp, renewed.Sid)
                                 loginParams.usersid = renewed.Sid
                                 ret = await loginClient.RunMApp("login", loginParams)
+                            }
+                        }
+                        if (sessionsSupported && !usersid && (ret?.success === true || ret?.status === 'success')) {
+                            // An account created before sessions keeps its password in
+                            // the account and has no guest in Leither. The password was
+                            // just verified, so register that guest on the root and log
+                            // in once more with its session: the root binds the account
+                            // to it (bindAccount). As on Android, a failure leaves this
+                            // login as it is, and its writes go out without a session.
+                            try {
+                                // Fails when Leither already knows the name; the sign-in
+                                // settles whether the password matches.
+                                await leitherRegister(loginClient, username, password)
+                                const guest = await leitherLogin(loginClient, username, password)
+                                if (guest) {
+                                    const bound = await loginClient.RunMApp("login", { ...loginParams, usersid: guest.Sid })
+                                    if (bound?.success === true || bound?.status === 'success') {
+                                        rememberSession(userId, loginIp, guest.Sid)
+                                    } else {
+                                        console.warn('[login] The root did not bind the legacy account', bound)
+                                    }
+                                }
+                            } catch (error) {
+                                console.warn('[login] Could not bind the legacy account on its root', error)
                             }
                         }
                     } finally {
