@@ -73,7 +73,12 @@ let heicDecoder: Promise<HeicTo> | null = null;
 function loadHeicDecoder(): Promise<HeicTo> {
   heicDecoder ??= new Promise<HeicTo>((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'heic-to.js';
+    // heic-to.js is published beside index_entry.js. Leither serves both from
+    // the app's Mimei (/mm/<mid>:<ver>/), not from the page's own address, so
+    // resolve against this bundle's URL. The dev server runs this file from
+    // src/ and serves public/ at its root.
+    const assetBase = import.meta.env.DEV ? `${location.origin}/` : import.meta.url;
+    script.src = new URL('heic-to.js', assetBase).href;
     script.onload = () => {
       const decoder = (window as any).HeicTo;
       if (decoder) resolve(decoder);
