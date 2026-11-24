@@ -105,7 +105,8 @@ backup_dir=$(mktemp -d /home/pi/demo/tweet1-before-release.XXXXXX)
 cp -a /home/pi/demo/tweet1 "$backup_dir/"'
 ```
 
-Upload all production backend Go sources and the seven web assets:
+Upload all production backend Go sources and the eight web assets.
+`heic-to.js` is the HEIC decoder the editor loads only when a HEIC photo is picked:
 
 ```bash
 tweet_mapp_stage=$(mktemp -d)
@@ -115,6 +116,7 @@ rsync -av -e 'ssh -p 220 -o HostKeyAlias=[gen8.leither.uk]:220' \
 scp -P 220 -o 'HostKeyAlias=[gen8.leither.uk]:220' \
   dist/bootstrap.min.js \
   dist/gtag.js \
+  dist/heic-to.js \
   dist/hprose.js \
   dist/ic_splash.png \
   dist/index.html \
@@ -195,7 +197,7 @@ Cloudflare publication is pending.
 - [ ] gen8 freshly resolved; required `HostKeyAlias` used for connections.
 - [ ] Existing gen8 package backed up outside its application directory.
 - [ ] `npm run build` succeeded.
-- [ ] Current production Go sources and all seven release web assets uploaded.
+- [ ] Current production Go sources and all eight release web assets uploaded.
 - [ ] `bash -e ./tweet1.sh` succeeded; publication version recorded from its output.
 - [ ] Same `dist` published to Cloudflare, or Cloudflare explicitly deferred.
 - [ ] One site-root HTTP availability check succeeded with HTTP 200.

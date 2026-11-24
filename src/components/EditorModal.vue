@@ -5,7 +5,7 @@ import { Loading, Preview, CidPreview } from '@/views'
 import { useTweetStore, useAlertStore } from '@/stores'
 import { useRoute, useRouter } from 'vue-router';
 import { CidModal } from '@/views'
-import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType } from '@/utils/uploadUtils'
+import { uploadVideo, getVideoAspectRatio, getImageAspectRatio, getMediaType, isHeicFile, convertHeicToJpeg } from '@/utils/uploadUtils'
 import { attachmentReferenceId, MEDIA_TYPES, isVideoType, isImageType } from '@/lib'
 import { requireLoginForWritableAction } from '@/lib/authNavigation'
 import { UserAvatar } from '@/components'
@@ -584,12 +584,26 @@ async function onSelect(e: Event) {
     let totalSize = 0;
     filesUpload.value.forEach(f => totalSize += f.size);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    // Copied first: a drop's file list is emptied once this handler awaits.
+    const picked = Array.from(files);
+    for (let i = 0; i < picked.length; i++) {
+      let file = picked[i];
 
       if (file.size === 0) {
         useAlertStore().error(t('editor.emptyFile', { name: file.name }));
         continue;
+      }
+
+      // HEIC becomes JPEG here, so the preview, the size limit and the upload
+      // all see the file that is posted.
+      if (isHeicFile(file)) {
+        try {
+          file = await convertHeicToJpeg(file);
+        } catch (error) {
+          console.error(`[HEIC] Could not convert ${file.name}:`, error);
+          useAlertStore().error(t('editor.heicConversionFailed', { name: file.name }));
+          continue;
+        }
       }
 
       totalSize += file.size;

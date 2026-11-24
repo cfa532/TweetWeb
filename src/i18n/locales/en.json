@@ -177,6 +177,7 @@
     "tweetUploaded": "Tweet uploaded successfully!",
     "uploadSizeExceeds": "Total upload size exceeds 4GB limit.",
     "emptyFile": "File {name} is empty. Choose the original file and try again.",
+    "heicConversionFailed": "Could not convert {name} from HEIC. Try again, or choose a JPEG or PNG.",
     "fileTooLarge": "File {name} is too large. Maximum size is 4GB.",
     "networkError": "Network error uploading {name}",
     "uploadTimeout": "Upload timeout for {name}",

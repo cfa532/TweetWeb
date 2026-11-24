@@ -56,6 +56,57 @@ export async function compressImage(file: File): Promise<File> {
 
 
 /**
+ * HEIC/HEIF, the iPhone photo format. Chrome, Edge and Firefox cannot decode
+ * it, so neither the editor nor most viewers could show it as uploaded.
+ * Browsers on Windows may report no type for it, so the extension counts too.
+ */
+export function isHeicFile(file: File): boolean {
+  return /^image\/hei[cf](-sequence)?$/i.test(file.type) || /\.hei[cf]$/i.test(file.name);
+}
+
+type HeicTo = (args: { blob: Blob; type: 'image/jpeg'; quality: number }) => Promise<Blob>;
+
+let heicDecoder: Promise<HeicTo> | null = null;
+
+// The decoder is about 3 MB of WebAssembly. It is served beside hprose.js and
+// fetched only when someone picks a HEIC image in a browser that cannot read it.
+function loadHeicDecoder(): Promise<HeicTo> {
+  heicDecoder ??= new Promise<HeicTo>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'heic-to.js';
+    script.onload = () => {
+      const decoder = (window as any).HeicTo;
+      if (decoder) resolve(decoder);
+      else reject(new Error('HEIC decoder did not load'));
+    };
+    script.onerror = () => reject(new Error('HEIC decoder did not load'));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    // A failed fetch must not stick: the next HEIC pick tries again.
+    heicDecoder = null;
+    throw error;
+  });
+  return heicDecoder;
+}
+
+/**
+ * Re-encodes a HEIC/HEIF image as JPEG at 80% quality, the form iOS and
+ * Android upload. Safari decodes HEIC itself; other browsers use the decoder.
+ */
+export async function convertHeicToJpeg(file: File): Promise<File> {
+  let jpeg: Blob;
+  try {
+    jpeg = await compressImage(file);
+  } catch {
+    const heicTo = await loadHeicDecoder();
+    jpeg = await heicTo({ blob: file, type: 'image/jpeg', quality: 0.8 });
+  }
+  const name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+  console.log(`[HEIC] ${file.name} (${(file.size / 1024).toFixed(1)}KB) -> ${name} (${(jpeg.size / 1024).toFixed(1)}KB)`);
+  return new File([jpeg], name, { type: 'image/jpeg', lastModified: file.lastModified });
+}
+
+/**
  * Normalizes a small video file (<50MB) to MP4 format with max 720p resolution
  * Uses the same pattern as uploadVideo - single file upload with status polling
  * @param file The video file to normalize (must be <50MB)
