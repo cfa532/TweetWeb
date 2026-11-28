@@ -5112,27 +5112,45 @@ export const useTweetStore = defineStore('tweetStore', {
                     throw new Error(ret?.message || i18n.global.t('tweet.failedUpdateTweet'))
                 }
                 this.adoptWriteRouteForReads(loginUser, writableIp)
-                // Update local tweet in store
-                const idx = this.tweets.findIndex(t => t.mid === tweetId)
-                if (idx !== -1) {
-                    this.tweets[idx].content = content
+                // The detail view edits its own fetched copy. Feed rows render the
+                // same tweet as a top-level entry, a cached original, or a
+                // retweet/quote row's embedded original. Apply the edit to every
+                // cached copy so all of those rows show it.
+                const cachedTweets = new Set<Tweet>([
+                    this.tweetIndex.get(tweetId),
+                    this.originalTweetIndex.get(tweetId),
+                    ...this.tweets.filter(tweet => tweet.mid === tweetId),
+                    ...this.originalTweets.filter(tweet => tweet.mid === tweetId),
+                    ...this.tweets
+                        .map(tweet => tweet.originalTweet)
+                        .filter(original => original?.mid === tweetId),
+                ].filter((tweet): tweet is Tweet => !!tweet))
+                for (const cachedTweet of cachedTweets) {
+                    cachedTweet.content = content
                     if (attachmentReferences !== undefined) {
-                        this.tweets[idx].attachments = attachmentReferences.map(attachment => ({
+                        cachedTweet.attachments = attachmentReferences.map(attachment => ({
                             ...attachment,
                             mid: this.getMediaUrl(attachment.mid, `http://${authorIp}`),
                             downloadable: options?.downloadable ?? attachment.downloadable,
                         }))
                     }
                     if (options?.downloadable !== undefined) {
-                        this.tweets[idx].downloadable = options.downloadable
+                        cachedTweet.downloadable = options.downloadable
                     }
                     if (options?.isPrivate !== undefined) {
-                        this.tweets[idx].isPrivate = options.isPrivate
+                        cachedTweet.isPrivate = options.isPrivate
                     }
-                    console.log('[updateTweet] Updated local tweet cache', { tweetId, tweetIndex: idx })
-                } else {
-                    console.log('[updateTweet] Tweet was not in local cache after server update', { tweetId })
                 }
+                // Rows mounted later read sessionStorage before the network.
+                const [updatedCopy] = cachedTweets
+                if (updatedCopy && sessionStorage.getItem(tweetId)) {
+                    try {
+                        sessionStorage.setItem(tweetId, JSON.stringify(tweetForSessionStorage(updatedCopy)))
+                    } catch (error) {
+                        console.warn('[updateTweet] Failed to cache updated tweet:', error)
+                    }
+                }
+                console.log('[updateTweet] Updated cached tweet copies', { tweetId, copies: cachedTweets.size })
                 console.log('[updateTweet] Update completed', { tweetId, returnedMid: ret.mid })
                 return ret.mid
             } catch (error) {
