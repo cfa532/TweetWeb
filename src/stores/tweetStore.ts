@@ -3818,11 +3818,15 @@ export const useTweetStore = defineStore('tweetStore', {
                 }
 
                 // Phase 2: atomically replace tweet.comments with fresh server data.
-                // Preserve any locally-created comments not yet returned by the server
-                // (e.g. optimistic inserts).
+                // Page 0 is authoritative for the span it covers: a held comment it
+                // does not return has been deleted. Only when the page is full can an
+                // older held comment still exist, on a later page (loadMoreComments).
                 const freshMids = new Set(validComments.map(c => c.mid))
-                const localOnly = (tweet.comments ?? []).filter(c => !freshMids.has(c.mid))
-                tweet.comments = [...validComments, ...localOnly]
+                const oldestFresh = Math.min(...validComments.map(c => c.timestamp as number))
+                const laterPages = comments.length >= params.ps
+                    ? (tweet.comments ?? []).filter(c => !freshMids.has(c.mid) && (c.timestamp as number) < oldestFresh)
+                    : []
+                tweet.comments = [...validComments, ...laterPages]
 
                 // Phase 3: resolve authors asynchronously and write them onto the
                 // proxied entries inside tweet.comments.
@@ -4647,8 +4651,9 @@ export const useTweetStore = defineStore('tweetStore', {
             deleteClient.timeout = DELETE_MUTATION_TIMEOUT_MS
 
             // Call delete_comment API with proper parameters matching server expectations
+            let reply: any
             try {
-                await this.runWrite(deleteClient, deleteIp, "delete_comment", {
+                reply = await this.runWrite(deleteClient, deleteIp, "delete_comment", {
                     aid: this.appId,
                     ver: "last",
                     appuserid: this.loginUser.mid,  // User requesting deletion (comment author or parent tweet author)
@@ -4658,6 +4663,11 @@ export const useTweetStore = defineStore('tweetStore', {
                 })
             } finally {
                 deleteClient.timeout = originalTimeout
+            }
+            // The backend reports a refused or failed deletion as a
+            // {success: false, message} reply rather than an RPC error.
+            if (!reply?.success) {
+                throw new Error(reply?.message || i18n.global.t('tweet.failedDeleteTweet'))
             }
             this.adoptWriteRouteForReads(parentAuthor, writableIp)
 
@@ -4677,6 +4687,13 @@ export const useTweetStore = defineStore('tweetStore', {
                     }
                 }
                 return false
+            }
+
+            // The saved comment list paints first on the next visit; drop the
+            // deleted comment from it too.
+            const cachedComments = getLocalCache<any[]>(commentsCacheKey(parentTweetId))
+            if (cachedComments) {
+                setLocalCache(commentsCacheKey(parentTweetId), cachedComments.filter(c => c?.mid !== commentId))
             }
 
             // Remove from tweets array
