@@ -5034,8 +5034,8 @@ export const useTweetStore = defineStore('tweetStore', {
             }
         },
         /**
-         * Updates an existing tweet's content and, when supplied, its complete
-         * attachment list. Omitting attachments preserves the server-side list
+         * Updates an existing tweet's content and, when supplied, its title and
+         * complete attachment list. Omitting attachments preserves the server-side list
          * for legacy content-only admin edits.
          */
         async updateTweet(
@@ -5043,7 +5043,7 @@ export const useTweetStore = defineStore('tweetStore', {
             content: string,
             authorId?: MimeiId,
             attachments?: MimeiFileType[],
-            options?: { downloadable?: boolean; isPrivate?: boolean },
+            options?: { title?: string; downloadable?: boolean; isPrivate?: boolean },
         ) {
             const loginUser = this.loginUser
             if (!loginUser) {
@@ -5100,6 +5100,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 if (attachmentReferences !== undefined) {
                     request.attachments = JSON.stringify(attachmentReferences)
                 }
+                if (options?.title !== undefined) {
+                    request.title = options.title
+                }
                 if (options?.downloadable !== undefined) {
                     request.downloadable = options.downloadable
                 }
@@ -5127,6 +5130,9 @@ export const useTweetStore = defineStore('tweetStore', {
                 ].filter((tweet): tweet is Tweet => !!tweet))
                 for (const cachedTweet of cachedTweets) {
                     cachedTweet.content = content
+                    if (options?.title !== undefined) {
+                        cachedTweet.title = options.title
+                    }
                     if (attachmentReferences !== undefined) {
                         cachedTweet.attachments = attachmentReferences.map(attachment => ({
                             ...attachment,

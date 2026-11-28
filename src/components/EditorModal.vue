@@ -175,6 +175,7 @@ async function retryUpload<T>(
 onMounted(async () => {
   if (props.editTweet) {
     tweet.value = props.editTweet
+    tweetTitle.value = props.editTweet.title || ''
     txtConent.value = props.editTweet.content || ''
     mmFiles.value = [...(props.editTweet.attachments || [])]
     downloadable.value = props.editTweet.downloadable ?? true
@@ -399,6 +400,7 @@ async function onSubmit() {
     // MMAddRef pins each CID, so imported attachments need no separate pin call.
 
     if (props.editTweet) {
+      const title = tweetTitle.value || ''
       const content = txtConent.value || ''
       // Feed attachments contain display URLs, while update_tweet and Mimei
       // references require the underlying CID/MID only.
@@ -411,11 +413,12 @@ async function onSubmit() {
         content,
         props.editTweet.authorId,
         attachmentReferences,
-        { downloadable: downloadable.value, isPrivate: isPrivate.value },
+        { title, downloadable: downloadable.value, isPrivate: isPrivate.value },
       )
       if (!result) {
         throw new Error(t('errors.updateNoResponse'))
       }
+      props.editTweet.title = title
       props.editTweet.content = content
       props.editTweet.attachments = displayAttachments(attachmentReferences)
       props.editTweet.downloadable = downloadable.value
@@ -771,7 +774,7 @@ function handleDragEnd() {
       </div>
         <div class='editor-content' @dragover.prevent='dragOver' @dragleave='dragLeave' @drop.prevent='onSelect'>
         <div>
-          <input v-if='!isEditing' type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
+          <input type='text' :placeholder="$t('editor.titlePlaceholder')" v-model='tweetTitle' class='input-caption' />
         </div>
         <div class='input-container'>
           <textarea v-model='txtConent' :placeholder="$t('editor.contentPlaceholder')" class='input-textarea'></textarea>
